@@ -26,6 +26,7 @@ from claude_guard.checks import git_conventions
 from claude_guard.deny import Verdict, deny
 from claude_guard.footguns import footgun
 from claude_guard.judge import Decision, judge
+from claude_guard.nudges import nudge, seen
 from claude_guard.readonly import readonly
 from claude_guard.rules import load_rules
 from claude_guard.tables import scratch_roots
@@ -99,19 +100,49 @@ ASK_REASON = (
 )
 
 
-def pre_tool_use_json(v: Verdict) -> str | None:
+def pre_tool_use_json(v: Verdict, nudge_text: str | None = None) -> str | None:
     """The PreToolUse stdout the bash prints: deny (:601-611), ask (hook-input.sh:83, :69),
     allow with updatedInput and additionalContext (:1133-1140). None for no decision. An ask
-    carries updatedInput too when it stands in for the --force upgrade (_combine)."""
+    carries updatedInput too when it stands in for the --force upgrade (_combine).
+
+    `nudge_text` (claude_guard.nudges) rides along as additionalContext on any verdict but
+    a deny, and on its own when there is no decision."""
+    if v.kind == "deny":
+        nudge_text = None
     if v.kind == "none":
-        return None
+        if not nudge_text:
+            return None
+        return json.dumps(
+            {"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": nudge_text}}
+        )
     out: dict = {"hookEventName": "PreToolUse", "permissionDecision": v.kind}
     if v.kind != "allow":
         out["permissionDecisionReason"] = v.reason
+    context = [v.context] if v.updated_command is not None else []
     if v.updated_command is not None:
         out["updatedInput"] = {"command": v.updated_command}
-        out["additionalContext"] = v.context
+    if nudge_text:
+        context.append(nudge_text)
+    if context:
+        out["additionalContext"] = "\n\n".join(c for c in context if c)
     return json.dumps({"hookSpecificOutput": out})
+
+
+def nudge_for(command: str, stdin_text: str) -> str | None:
+    """The context nudge for `command`, or None when it trips no rule or the session has
+    already seen that rule's nudge. Never raises: a nudge is advice, and a failure in it
+    must not reach the deny side's ask."""
+    try:
+        found = nudge(command)
+        if found is None:
+            return None
+        data = json.loads(stdin_text)
+        path = data.get("transcript_path") if isinstance(data, dict) else None
+        if seen(path if isinstance(path, str) else "", found[0]):
+            return None
+        return found[1]
+    except Exception:
+        return None
 
 
 ASK_JSON = pre_tool_use_json(Verdict("ask", "exception", ASK_REASON))
@@ -164,7 +195,7 @@ def pre_tool_use(stdin_text: str, env: Mapping[str, str]) -> str | None:
     verdict = _combine(rules, conventions(command, cwd))
     if verdict.kind == "none":
         verdict = readonly(command, cwd, env) or verdict
-    return pre_tool_use_json(verdict)
+    return pre_tool_use_json(verdict, nudge_for(command, stdin_text))
 
 
 _RANK = {"deny": 3, "ask": 2, "allow": 1, "none": 0}

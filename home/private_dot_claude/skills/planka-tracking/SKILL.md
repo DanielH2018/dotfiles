@@ -49,8 +49,9 @@ Name the outcome, not the files touched. The same sentence should serve as the P
 
 ## Write the session-log comment before you stop
 
-The Stop hook posts `~/.claude/planka/summary/$CLAUDE_SESSION_ID` when it exists, and a
-bare "paused at `<sha>`" when it does not. Write the file whenever the session did
+The Stop hook posts `~/.claude/planka/summary/$CLAUDE_SESSION_ID` when it exists. When it
+does not, the hook blocks the first stop of a session that claimed a card and names the
+file to write; after that it posts a bare "paused at `<sha>`". Write the file whenever the session did
 something worth reading later:
 
 ```bash

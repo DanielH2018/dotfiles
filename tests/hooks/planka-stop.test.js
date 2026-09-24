@@ -81,6 +81,39 @@ test('a claimed session with no summary still says something true', { skip }, ()
   assert.match(waitForContent(captured), /paused/i);
 });
 
+// The two below spawn no real CLI on the block path, so they run everywhere rather than
+// behind the board gate above.
+function fireWithTranscript({ bin, state, dir }, transcriptText) {
+  const transcript = path.join(dir, 'session.jsonl');
+  fs.writeFileSync(transcript, transcriptText);
+  return spawnSync('bash', [HOOK], {
+    encoding: 'utf8',
+    input: JSON.stringify({ session_id: 'sess-1', transcript_path: transcript }),
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, PLANKA_STATE_DIR: state },
+  });
+}
+
+test('a claimed session with no summary is blocked once and posts nothing that pass', () => {
+  const env = setup();
+  claim(env.state);
+  const r = fireWithTranscript(env, '{"message":{"role":"user","content":"go"}}\n');
+  assert.strictEqual(r.status, 0);
+  const out = JSON.parse(r.stdout);
+  assert.strictEqual(out.decision, 'block');
+  assert.match(out.reason, /\[planka-stop:summary\]/);
+  assert.ok(out.reason.includes(path.join(env.state, 'summary', 'sess-1')), 'names the file to write');
+  assert.strictEqual(fs.existsSync(env.captured), false, 'the blocking pass posts no comment');
+});
+
+test('a session already asked once is not blocked again', () => {
+  const env = setup();
+  claim(env.state);
+  const r = fireWithTranscript(env,
+    '{"message":{"role":"user","content":"Stop hook feedback:\\n[planka-stop:summary] x"}}\n');
+  assert.strictEqual(r.status, 0);
+  assert.strictEqual(r.stdout.trim(), '', 'no second block');
+});
+
 test('PLANKA_TRACKING=0 comments nothing even for a claimed session', { skip }, () => {
   const { bin, state, captured } = setup();
   claim(state);

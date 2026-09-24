@@ -11,6 +11,7 @@ paths:
 - Never add `NOT NULL` or a new foreign key to a populated table without a default/backfill first — it takes a lock and can fail existing rows.
 - Batch large backfills; avoid long-running transactions and exclusive locks on hot tables.
 - Before merging, run the `migration-reviewer` agent for the full locking / rollback / PCI review — don't restate that checklist here.
+- `stop-checks.py` blocks once per session that wrote a migration naming no down step or reversibility (an `.up.sql` needs its `.down.sql`), or that dispatched no `migration-reviewer`.
 
 ## Comments
 

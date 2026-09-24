@@ -34,8 +34,27 @@ STATE_DIR="${PLANKA_STATE_DIR:-$HOME/.claude/planka}"
 [ -f "$STATE_DIR/claimed/$SESSION_ID" ] || exit 0
 
 # A prose summary is the skill's job, written to this file during the session.
-# Absent one, say something true and cheap rather than inventing detail.
 SUMMARY_FILE="$STATE_DIR/summary/$SESSION_ID"
+
+# The planka-tracking skill says to write it before stopping; this makes that a
+# block, once per session. The block reason carries SUMMARY_TAG, and the harness
+# records a Stop hook's reason in the transcript, so a transcript already holding the
+# tag means this session was asked once. No transcript to read means no way to keep
+# it to once, so the hook does not block and the fallback below posts instead. The
+# blocking pass posts nothing: the next Stop posts, so the card gets one comment.
+SUMMARY_TAG='[planka-stop:summary]'
+if [ ! -s "$SUMMARY_FILE" ]; then
+  TRANSCRIPT="$(hook_field '.transcript_path // empty')"
+  if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ] && ! grep -qF -- "$SUMMARY_TAG" "$TRANSCRIPT"; then
+    jq -n --arg tag "$SUMMARY_TAG" --arg file "$SUMMARY_FILE" '{
+      decision: "block",
+      reason: ("\($tag) This session claimed a Planka card and has written no session-log summary. Write \($file) with three things, in this order: what changed, what was verified and with which command, what is next. Then stop again; the Stop hook posts it as the card comment. This asks once per session.")
+    }'
+    exit 0
+  fi
+fi
+
+# Absent a summary, say something true and cheap rather than inventing detail.
 if [ -s "$SUMMARY_FILE" ]; then
   TEXT="$(cat "$SUMMARY_FILE")"
 else

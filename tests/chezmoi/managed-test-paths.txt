@@ -69,6 +69,7 @@
 .local/share/claude-guard/tests/test_git_conventions.py
 .local/share/claude-guard/tests/test_git_reset.py
 .local/share/claude-guard/tests/test_hook.py
+.local/share/claude-guard/tests/test_nudges.py
 .local/share/claude-guard/tests/test_judge.py
 .local/share/claude-guard/tests/test_package.py
 .local/share/claude-guard/tests/test_readonly.py

@@ -6,7 +6,7 @@ keep-coding-instructions: true
 
 How to talk to me in the conversation. Rules for text you write to disk are in CLAUDE.md.
 
-- Be terse. Lead with the outcome — the first sentence answers "what happened" or "what did you find", supporting detail after. No preamble, and don't recap a diff I can read myself.
+- Be terse. Lead with the outcome — the first sentence answers "what happened" or "what did you find", supporting detail after. No preamble, and don't recap a diff I can read myself. (`stop-checks.py` blocks once on a stock opener such as "Great question" or "Sure!".)
 - One idea per sentence, claim before qualification, and name the actor doing the thing. If a sentence carries a fact, its evidence, and a caveat at once, split it into three.
 - Terse means no padding, not telegraphic. Don't compress a finding into a line I have to decode — dropping articles and verbs saves nothing worth the reread.
 - Use the same word for the same thing throughout a reply. Switching between rollout / deploy / apply reads as three different things.

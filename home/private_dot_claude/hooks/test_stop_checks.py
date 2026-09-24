@@ -54,13 +54,30 @@ def evaluate(reply: str, records=(), env=None) -> str | None:
     """The hook's decision for `reply` over a transcript of `records`."""
     with tempfile.TemporaryDirectory(prefix="stop-checks-") as tmp:
         transcript = Path(tmp) / "session.jsonl"
-        transcript.write_text("".join(json.dumps(r) + "\n" for r in records))
+        # Compact separators, as Claude Code writes them: the hook's session scan
+        # prefilters lines on the literal byte string `"type":"create"`.
+        lines = (json.dumps(r, separators=(",", ":")) + "\n" for r in records)
+        transcript.write_text("".join(lines))
         payload = {"transcript_path": str(transcript), "last_assistant_message": reply}
         return mod.evaluate(payload, dict(env or ENV))
 
 
 def tagged(reason: str | None, name: str) -> bool:
     return reason is not None and f"[stop-checks:{name}]" in reason
+
+
+def tool(name: str, **data) -> dict:
+    block = {"type": "tool_use", "id": "t", "name": name, "input": data}
+    return {"message": {"role": "assistant", "content": [block]}}
+
+
+def created(path: str) -> list[dict]:
+    """A Write that created `path`: the call, and the result record naming it new."""
+    result = {
+        "message": {"role": "user", "content": [{"type": "tool_result"}]},
+        "toolUseResult": {"type": "create", "filePath": path},
+    }
+    return [tool("Write", file_path=path, content="x"), result]
 
 
 # ---------------------------------------------------------------- artifact-link-last
@@ -151,6 +168,167 @@ check(
         "artifact-link-last",
     ),
 )
+
+
+# ---------------------------------------------------------------- preamble
+
+check(
+    "a reply opening on a stock preamble blocks",
+    tagged(evaluate("Great question! The cache was stale."), "preamble"),
+)
+check(
+    "'You're absolutely right' as an opener blocks",
+    tagged(evaluate("You're absolutely right, the path was wrong."), "preamble"),
+)
+check(
+    "a reply that leads with the outcome passes",
+    not tagged(evaluate("The cache was stale; the fix is in #12."), "preamble"),
+)
+check(
+    "a first word that only starts like an opener passes",
+    not tagged(evaluate("Sure-footed parsing needs a lexer."), "preamble"),
+)
+
+# ---------------------------------------------------------------- evidence-for-claims
+
+CLAIM = "Fixed the retry. All tests pass."
+check(
+    "a tests-pass claim with no test run in the session blocks",
+    tagged(
+        evaluate(CLAIM, [user("fix it"), tool("Bash", command="ls")]),
+        "evidence-for-claims",
+    ),
+)
+check(
+    "a tests-pass claim after a pytest run passes",
+    not tagged(
+        evaluate(CLAIM, [user("fix it"), tool("Bash", command="uv run pytest -q")]),
+        "evidence-for-claims",
+    ),
+)
+check(
+    "a lint claim with only a test run blocks",
+    tagged(
+        evaluate(
+            "The linter is clean.", [user("x"), tool("Bash", command="node --test")]
+        ),
+        "evidence-for-claims",
+    ),
+)
+check(
+    "a claim the reply marks unverified passes",
+    not tagged(
+        evaluate("Tests pass locally is unverified: I did not run them.", [user("x")]),
+        "evidence-for-claims",
+    ),
+)
+
+# ---------------------------------------------------------------- tests-for-source
+
+SRC = "/work/repo/src/ledger.py"
+check(
+    "a new source file with no test file touched blocks",
+    tagged(evaluate("Done.", [user("x"), *created(SRC)]), "tests-for-source"),
+)
+check(
+    "a new source file plus an edited test file passes",
+    not tagged(
+        evaluate(
+            "Done.",
+            [
+                user("x"),
+                *created(SRC),
+                tool("Edit", file_path="/work/repo/tests/test_ledger.py"),
+            ],
+        ),
+        "tests-for-source",
+    ),
+)
+check(
+    "editing an existing source file (no create) passes",
+    not tagged(
+        evaluate("Done.", [user("x"), tool("Edit", file_path=SRC)]), "tests-for-source"
+    ),
+)
+check(
+    "a scratch file under /tmp passes",
+    not tagged(
+        evaluate("Done.", [user("x"), *created("/tmp/probe.py")]), "tests-for-source"
+    ),
+)
+check(
+    "the session check stays quiet once it has fired anywhere in the session",
+    not tagged(
+        evaluate(
+            "Done.",
+            [
+                user("x"),
+                *created(SRC),
+                feedback("[stop-checks:tests-for-source] x"),
+                user("next thing"),
+            ],
+        ),
+        "tests-for-source",
+    ),
+)
+
+# ---------------------------------------------------------------- migration
+
+with tempfile.TemporaryDirectory(prefix="stop-checks-mig-") as mig_tmp:
+    mig = Path(mig_tmp) / "migrations"
+    mig.mkdir()
+    one_way = mig / "0002_drop_col.sql"
+    one_way.write_text("ALTER TABLE orders DROP COLUMN legacy;\n")
+    both = mig / "0003_add_col.sql"
+    both.write_text("-- up\nALTER TABLE t ADD c int;\n-- down\nALTER TABLE t DROP c;\n")
+    up_only = mig / "0004_idx.up.sql"
+    up_only.write_text("CREATE INDEX i ON t(c);\n")
+    reviewed = tool("Agent", subagent_type="migration-reviewer", prompt="review")
+
+    check(
+        "a migration with no down step blocks",
+        tagged(
+            evaluate(
+                "Done.", [user("x"), tool("Write", file_path=str(one_way)), reviewed]
+            ),
+            "migration",
+        ),
+    )
+    check(
+        "a reversible, reviewed migration passes",
+        not tagged(
+            evaluate(
+                "Done.", [user("x"), tool("Write", file_path=str(both)), reviewed]
+            ),
+            "migration",
+        ),
+    )
+    check(
+        "an unreviewed reversible migration blocks",
+        tagged(
+            evaluate("Done.", [user("x"), tool("Write", file_path=str(both))]),
+            "migration",
+        ),
+    )
+    check(
+        "an .up.sql without its .down.sql sibling blocks",
+        tagged(
+            evaluate(
+                "Done.", [user("x"), tool("Write", file_path=str(up_only)), reviewed]
+            ),
+            "migration",
+        ),
+    )
+    (mig / "0004_idx.down.sql").write_text("DROP INDEX i;\n")
+    check(
+        "an .up.sql with its .down.sql sibling passes",
+        not tagged(
+            evaluate(
+                "Done.", [user("x"), tool("Write", file_path=str(up_only)), reviewed]
+            ),
+            "migration",
+        ),
+    )
 
 
 # ---------------------------------------------------------------- the process

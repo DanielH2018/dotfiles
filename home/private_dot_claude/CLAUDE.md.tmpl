@@ -105,13 +105,15 @@ owns test content, where `pr-review-prep` owns diff shape.
 
 Before you write a stub or a textual assertion, read that skill's *Anti-patterns* section: it lists five ways a test stays green while checking nothing.
 
+`stop-checks.py` blocks once per session when the session created a source file and edited no test file.
+
 ## Verification & self-checking
 
 You already sanity-check your work as you go, so don't bolt a second pass on top of it — no "final verification step" appended to routine tasks, no re-reading a file you just wrote to confirm the edit landed, no subagent dispatched to double-check something you finished yourself.
 
 That sentence governs `superpowers:requesting-code-review`, which fires on task completion and dispatches exactly that subagent. Don't invoke it on your own initiative; user instructions take precedence over skills, and this is the instruction. Asked for a review, run one. `superpowers:verification-before-completion` is not in conflict — what it asks for is the evidence rule below.
 
-What doesn't relax is **evidence before claims**. If you tell me tests pass, the linter is clean, the build succeeds, or a bug is fixed, you ran that command in this session and read its output. Don't extrapolate from an earlier run or from "the code looks right" — when you haven't run it, say the status is unverified.
+What doesn't relax is **evidence before claims**. If you tell me tests pass, the linter is clean, the build succeeds, or a bug is fixed, you ran that command in this session and read its output. Don't extrapolate from an earlier run or from "the code looks right" — when you haven't run it, say the status is unverified. `stop-checks.py` blocks once when a reply says the tests pass or the linter is clean and no Bash command in the session looks like that run.
 
 Scope the proof to the change while you work: the tests covering what you touched, plus targeted lint and typecheck. The full suite runs before a change is merged or landed — where a pre-push or CI gate already runs it, that gate is the one that runs it, not a hand-rolled repeat.
 
@@ -157,10 +159,11 @@ Long sessions die of a thousand medium tool calls, never one big one. Every extr
 - When a result offloads (`<persisted-output>`, above ~30 KB, 0.18% of calls), grep the persisted path rather than re-running the command with a tighter limit.
 - Same principle for JSON whose shape you don't already know (a `gh api` response, an MCP tool result, a large config): `gron file.json | rg keyword` finds the exact dotted path in one shot, which you then feed to a targeted `jq` query — instead of dumping the whole blob into context or spending several turns on exploratory `jq keys` calls. Reach for `jq` directly when you already know the schema; reach for `gron` first when you don't.
 - When shell tools run out and the reflex is `python3 -c`, reach for `jsonq` instead — it is allowlisted, where `python3 -c` is ask-listed and costs a prompt every time. It is a closed subset of Python syntax over JSON with **no attribute access**, which is the one thing priors get wrong; `jsonq --functions` prints every callable name, and reading it beats guessing at the syntax. A `python3 -` heredoc is worse than a prompt: the secrets hook blocks it outright. Genuine computation that `jsonq` can't express is still a fair reason to pay the prompt.
+- claude-guard adds a one-line nudge, once per session per rule, for an unpiped `git log` with no count or range, an unpiped `ls -R`, a transcript grep with no `cut` stage, and a `python3 -c` over JSON (`claude_guard/nudges.py`).
 
 ## Delegating to subagents
 
-If answering a question would take 3+ exploratory calls — searching for something whose location you don't already know — dispatch a subagent and keep only its findings. The targeted read is the exception: when you already know the file and the symbol, just read it, however many calls that takes.
+If answering a question would take 3+ exploratory calls — searching for something whose location you don't already know — dispatch a subagent and keep only its findings. The targeted read is the exception: when you already know the file and the symbol, just read it, however many calls that takes. `explore-nudge.sh` adds a reminder when a Grep or Glob is the third exploratory call in a row.
 
 Before fanning out subagents or building a Workflow, load the `orchestrating-subagents` skill for agent counts, brief structure, cost levers, and the vetting patterns.
 
