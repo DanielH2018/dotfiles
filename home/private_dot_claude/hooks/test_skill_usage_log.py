@@ -26,6 +26,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from _testkit import check, finish
+
 HERE = Path(__file__).resolve().parent
 HOOK = HERE / "executable_skill-usage-log.sh"
 if not HOOK.exists():  # deployed copy drops chezmoi's mode prefix
@@ -35,17 +37,6 @@ if not HOOK.exists():  # deployed copy drops chezmoi's mode prefix
 # --git-common-dir` to resolve cwd_repo, and GIT_DIR/GIT_WORK_TREE outrank -C.
 for _var in [k for k in os.environ if k.startswith("GIT_")]:
     del os.environ[_var]
-
-failures = []
-ran = 0
-
-
-def check(name, condition):
-    global ran
-    ran += 1
-    print(f"{'ok  ' if condition else 'FAIL'} {name}")
-    if not condition:
-        failures.append(name)
 
 
 def run_hook(payload, home_dir, cwd, extra_env=None):
@@ -226,8 +217,4 @@ with tempfile.TemporaryDirectory() as tmp:
         bool(lines) and lines[0].get("cwd_repo") == root.name,
     )
 
-print()
-if failures:
-    print(f"{len(failures)} failure(s): {', '.join(failures)}")
-    raise SystemExit(1)
-print(f"OK {ran}")
+finish()

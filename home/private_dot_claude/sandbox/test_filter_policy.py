@@ -15,48 +15,14 @@ keys is vacuous against `{"hostconfig":{"privileged":true}}`, and one that
 matches the raw target misses `/v1.43/containers/%63reate`.
 """
 
-import importlib.util
 import json
 import os
 import shutil
 import tempfile
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+from _sandbox_testlib import create, load
 
-
-def _canon_lib():
-    """canon.py sits somewhere different in each tree this suite runs from.
-
-    Deployed it is under ~/.local/share; in the chezmoi source it is two levels
-    up under dot_local; in the filter container both files are bind-mounted flat
-    into /opt. Resolving all three is why the deployed copy of this suite used to
-    die on import with a path that only ever existed in the source tree.
-    """
-    for candidate in (
-        os.path.join(HERE, "canon.py"),
-        os.path.join(HERE, "..", "..", "dot_local", "share", "canon", "canon.py"),
-        os.path.expanduser("~/.local/share/canon/canon.py"),
-    ):
-        if os.path.exists(candidate):
-            return os.path.abspath(candidate)
-    raise SystemExit(f"{os.path.basename(__file__)}: cannot find canon.py")
-
-
-os.environ.setdefault("CANON_LIB", _canon_lib())
-
-
-def _load(filename, modname):
-    """Load a sandbox module by path, under its source or deployed name."""
-    path = os.path.join(HERE, filename)
-    if not os.path.exists(path):
-        path = os.path.join(HERE, "executable_" + filename)
-    spec = importlib.util.spec_from_file_location(modname, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-policy = _load("filter_policy.py", "filter_policy")
+policy = load("filter_policy.py", "filter_policy")
 
 WS = "/workspace/repo"
 
@@ -83,10 +49,6 @@ def denied(path, body):
     except policy.Denied as exc:
         return str(exc)
     return None
-
-
-def create(host_config):
-    return {"Image": "alpine", "HostConfig": host_config}
 
 
 # --- what a create request may ask for ----------------------------------------

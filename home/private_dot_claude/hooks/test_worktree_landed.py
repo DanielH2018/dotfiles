@@ -13,9 +13,10 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
+
+from _testkit import check, finish, git
 
 HERE = Path(__file__).resolve().parent
 HOOK = HERE / "executable_worktree-landed.sh"
@@ -29,9 +30,6 @@ if not HOOK.exists():  # deployed copy drops chezmoi's mode prefix
 # the hook fired in.
 for _var in [k for k in os.environ if k.startswith("GIT_")]:
     del os.environ[_var]
-
-failures = []
-ran = 0
 
 # A stand-in for `gh pr list --head <branch> --state merged --json <fields>`.
 # $STUB_MERGED holds one `<branch> <head-sha>` row per merged PR, so a test can
@@ -65,14 +63,6 @@ GH_STUB.write_text(
 GH_STUB.chmod(0o755)
 
 
-def check(name, condition):
-    global ran
-    ran += 1
-    print(f"{'ok  ' if condition else 'FAIL'} {name}")
-    if not condition:
-        failures.append(name)
-
-
 def run(cwd, stop_hook_active=False, **env):
     """Run the hook in cwd; return its decision, or None when it stayed silent.
 
@@ -97,12 +87,6 @@ def run(cwd, stop_hook_active=False, **env):
     if result.returncode != 0:
         return {"error": result.stderr.strip() or f"exit {result.returncode}"}
     return json.loads(result.stdout) if result.stdout.strip() else None
-
-
-def git(args, cwd):
-    return subprocess.run(
-        ["git", *args], cwd=cwd, capture_output=True, text=True, check=True
-    )
 
 
 def merged_rows(*rows):
@@ -421,8 +405,4 @@ with tempfile.TemporaryDirectory() as tmp:
 
 shutil.rmtree(STUB_DIR, ignore_errors=True)
 
-print()
-if failures:
-    print(f"{len(failures)} failed: {', '.join(failures)}")
-    sys.exit(1)
-print(f"OK {ran}")
+finish()

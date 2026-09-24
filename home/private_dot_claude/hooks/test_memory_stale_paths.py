@@ -17,6 +17,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from _testkit import check, finish
+
 # Importing the hook below would otherwise write a __pycache__ into the chezmoi source
 # tree, which config-soak walks by filesystem and would then track as config.
 sys.dont_write_bytecode = True
@@ -34,18 +36,6 @@ spec.loader.exec_module(mod)
 # See test_prune_worktrees.py: GIT_DIR outranks cwd, and git exports it to every hook.
 for _var in [k for k in os.environ if k.startswith("GIT_")]:
     del os.environ[_var]
-
-failures = []
-ran = 0
-
-
-def check(name, condition):
-    global ran
-    ran += 1
-    print(f"{'ok  ' if condition else 'FAIL'} {name}")
-    if not condition:
-        failures.append(name)
-
 
 with tempfile.TemporaryDirectory() as tmp:
     # .resolve() because the checks below compare against paths the code under test
@@ -379,8 +369,4 @@ with tempfile.TemporaryDirectory() as tmp:
         outside.returncode == 0 and outside.stdout == "",
     )
 
-print()
-if failures:
-    print(f"{len(failures)} failed: {', '.join(failures)}")
-    sys.exit(1)
-print(f"OK {ran}")
+finish()

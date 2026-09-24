@@ -27,6 +27,8 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from _testkit import check, finish
+
 HERE = Path(__file__).resolve().parent
 # hooks/ -> private_dot_claude/ -> home/ -> repo root
 BIN = HERE.parent.parent.parent / "bin" / "skill-usage"
@@ -42,18 +44,6 @@ def run(env_extra):
         check=False,
     )
     return result
-
-
-failures = []
-ran = 0
-
-
-def check(name, condition):
-    global ran
-    ran += 1
-    print(f"{'ok  ' if condition else 'FAIL'} {name}")
-    if not condition:
-        failures.append(name)
 
 
 with tempfile.TemporaryDirectory() as tmp:
@@ -181,8 +171,4 @@ with tempfile.TemporaryDirectory() as tmp:
         fired_idx is not None and lines[fired_idx].split()[2] == "1",
     )
 
-print()
-if failures:
-    print(f"{len(failures)} failure(s): {', '.join(failures)}")
-    raise SystemExit(1)
-print(f"OK {ran}")
+finish()

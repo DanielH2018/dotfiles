@@ -87,7 +87,9 @@ test('the opt-out marker excludes a file, and its absence includes one', () => {
 //   - module-level `test_*` functions, run by a `__main__` globals() scan
 //     (the sandbox suites);
 //   - `check(name, condition)` calls, one printed `ok  `/`FAIL` line each,
-//     counted by the helper itself (the hooks suites). A check inside a loop
+//     counted by the helper itself (the hooks suites). The helper lives in
+//     hooks/_testkit.py and is imported by name, `from _testkit import check`,
+//     so a call site stays a bare `check(...)` for the count below. A check inside a loop
 //     runs once per iteration, so for this shape the call-site count is a
 //     floor, not an equality -- ran below it means a block of checks was never
 //     reached, which is the failure the count exists to catch.
@@ -110,7 +112,11 @@ for node in tree.body:
         coroutines.append(node.name)
     else:
         sync.append(node.name)
-has_check = any(isinstance(n, ast.FunctionDef) and n.name == "check" for n in tree.body)
+has_check = any(
+    (isinstance(n, ast.FunctionDef) and n.name == "check")
+    or (isinstance(n, ast.ImportFrom) and any((a.asname or a.name) == "check" for a in n.names))
+    for n in tree.body
+)
 checks = sum(
     1 for n in ast.walk(tree)
     if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "check"

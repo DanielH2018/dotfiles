@@ -18,9 +18,10 @@ large share of this config's read commands, so it gets its own case.
 import json
 import os
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
+
+from _testkit import check, finish
 
 HERE = Path(__file__).resolve().parent
 HOOK = HERE / "executable_bash-write-fanout.sh"
@@ -68,17 +69,6 @@ def _have_parser():
 
 
 HAVE_PARSER = _have_parser()
-
-failures = []
-ran = 0
-
-
-def check(name, condition):
-    global ran
-    ran += 1
-    print(f"{'ok  ' if condition else 'FAIL'} {name}")
-    if not condition:
-        failures.append(name)
 
 
 def extracted(command, cwd, env_extra=None):
@@ -307,8 +297,4 @@ with tempfile.TemporaryDirectory() as tmp:
         fanned(str(root / "no-such-tmpdir")).get("reason") == "stub-lint",
     )
 
-print()
-if failures:
-    print(f"{len(failures)} failure(s): {', '.join(failures)}")
-    sys.exit(1)
-print(f"OK {ran}")
+finish()

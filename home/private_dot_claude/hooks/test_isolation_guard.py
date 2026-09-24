@@ -14,8 +14,9 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
+
+from _testkit import check, finish
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOOK = os.path.join(HERE, "executable_isolation-guard.sh")
@@ -55,18 +56,6 @@ def run_hook(file_path, job, cwd):
     return "deny", json.loads(p.stdout)["hookSpecificOutput"][
         "permissionDecisionReason"
     ]
-
-
-failures = []
-ran = 0
-
-
-def check(name, condition):
-    global ran
-    ran += 1
-    print(f"{'ok  ' if condition else 'FAIL'} {name}")
-    if not condition:
-        failures.append(name)
 
 
 def main():
@@ -140,11 +129,7 @@ def main():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-    print()
-    if failures:
-        print(f"{len(failures)} failed: {', '.join(failures)}")
-        sys.exit(1)
-    print(f"OK {ran}")
+    finish()
 
 
 if __name__ == "__main__":

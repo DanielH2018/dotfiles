@@ -20,6 +20,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from _testkit import check, finish, git
+
 # Importing the hook below would otherwise write a __pycache__ into the chezmoi source
 # tree, which config-soak walks by filesystem and would then track as config.
 sys.dont_write_bytecode = True
@@ -53,17 +55,6 @@ spec.loader.exec_module(mod)
 # every env dict built from os.environ below.
 for _var in [k for k in os.environ if k.startswith("GIT_")]:
     del os.environ[_var]
-
-failures = []
-ran = 0
-
-
-def check(name, condition):
-    global ran
-    ran += 1
-    print(f"{'ok  ' if condition else 'FAIL'} {name}")
-    if not condition:
-        failures.append(name)
 
 
 def wt(path="/w", head="abc", branch="b", locked=False, reason=""):
@@ -208,12 +199,6 @@ check(
 check("is_dirty fails closed when git errors", mod.is_dirty("/nonexistent-path-xyz"))
 
 # ── end to end ────────────────────────────────────────────────────────────────
-
-
-def git(args, cwd):
-    return subprocess.run(
-        ["git", *args], cwd=cwd, capture_output=True, text=True, check=True
-    )
 
 
 def build_repo(root):
@@ -607,8 +592,4 @@ with tempfile.TemporaryDirectory() as tmp:
         "event=branch_deleted" in log and "event=orphan_branch_deleted" in log,
     )
 
-print()
-if failures:
-    print(f"{len(failures)} failed: {', '.join(failures)}")
-    sys.exit(1)
-print(f"OK {ran}")
+finish()
