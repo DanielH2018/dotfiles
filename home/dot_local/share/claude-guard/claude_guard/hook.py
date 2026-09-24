@@ -23,6 +23,7 @@ import json
 from collections.abc import Mapping
 
 from claude_guard.deny import Verdict, deny
+from claude_guard.footguns import footgun
 from claude_guard.judge import Decision, judge
 from claude_guard.rules import load_rules
 from claude_guard.tables import scratch_roots
@@ -126,6 +127,22 @@ def pre_tool_use(stdin_text: str, env: Mapping[str, str]) -> str | None:
     if command is None:
         return None
     try:
-        return pre_tool_use_json(deny(command, "", env))
+        return pre_tool_use_json(merge(deny(command, "", env), footgun(command)))
     except Exception:
         return ASK_JSON
+
+
+_RANK = {"deny": 3, "ask": 2, "allow": 1, "none": 0}
+
+
+def merge(danger: Verdict, slip: Verdict | None) -> Verdict:
+    """One PreToolUse verdict from the deny rules and the footgun rules.
+
+    deny beats ask beats allow, as two separate hooks' verdicts would merge in the harness.
+    On a tie the deny rules win, because they ran first and carry the older message. A
+    footgun deny therefore overrides the --force-with-lease upgrade's allow: the upgrade
+    rewrites one push, and the other stage it would have waved through is the mistake.
+    """
+    if slip is None or _RANK[slip.kind] <= _RANK[danger.kind]:
+        return danger
+    return slip
