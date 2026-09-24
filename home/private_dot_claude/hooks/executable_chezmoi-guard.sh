@@ -46,76 +46,12 @@ case "$FILE" in
   "$HOME"/.local/share/chezmoi/*|"$HOME"/Repositories/*|"$HOME"/Documents/*) exit 0 ;;
 esac
 
-# Negative cache in front of the chezmoi call. Starting the binary costs ~41ms and this
-# hook runs after every Edit and Write (~900/day), while the overwhelming majority of those
-# edits are to files chezmoi has never managed — scratch dirs, worktrees, repos. Caching the
-# managed set turns that question into a string match; `chezmoi managed` costs ~33ms once
-# per change to its inputs instead of ~41ms every time.
-#
-# Used ONLY to skip: a path absent from the cache exits, a path present falls through to the
-# real `source-path` call below, which stays the authority on where the source is. That
-# asymmetry is what makes a stale cache safe in one direction — a file that has *stopped*
-# being managed still hits source-path, which fails, and the hook exits as it always did.
-#
-# The direction that is not free is a file that BECOMES managed, so the cache is keyed on
-# its inputs rather than on its age (#579): a cksum of every path in the source tree, the
-# contents of its .chezmoi* control files, and the chezmoi config. `chezmoi add`, a new
-# .chezmoiignore line, a branch switch and a config edit all change the key, and the next
-# call refetches. File contents outside the .chezmoi* files are left out: they decide what
-# a target renders to, not whether it is managed. Measured 2026-09-23 against this repo's
-# source, the key below takes ~13ms, against ~34ms for `chezmoi managed`.
-#
-# The key walks the default source dir; CHEZMOI_GUARD_SOURCE_DIR points it elsewhere. With
-# no such directory there is nothing to key on, so every call asks chezmoi.
-# CHEZMOI_GUARD_CACHE=0 turns the cache off.
-_cg_src="${CHEZMOI_GUARD_SOURCE_DIR:-$HOME/.local/share/chezmoi}"
-if [ "${CHEZMOI_GUARD_CACHE:-1}" != 0 ] && [ -d "$_cg_src" ]; then
-  _cg_cache="${XDG_CACHE_HOME:-$HOME/.cache}/claude-hooks/chezmoi-managed"
-  _cg_fresh=''
-  # Walk the tree chezmoi reads: the .chezmoiroot subdirectory when there is one, so an edit
-  # to repo tooling beside it (bin/, tests/) is not a miss. .chezmoiroot itself is in the key.
-  _cg_root="$_cg_src"
-  if [ -f "$_cg_src/.chezmoiroot" ]; then
-    _cg_sub=''
-    IFS= read -r _cg_sub < "$_cg_src/.chezmoiroot" 2>/dev/null
-    [ -n "$_cg_sub" ] && [ -d "$_cg_src/$_cg_sub" ] && _cg_root="$_cg_src/$_cg_sub"
-  fi
-  # Two walks rather than one: interleaving -print with an -exec'd cat would leave the
-  # order of the two streams to buffering, and a key that varies between identical trees
-  # never hits. .git and the worktrees under .claude are not source state.
-  _cg_key=$( {
-    cat "$_cg_src/.chezmoiroot"
-    find "$_cg_root" \( -path "$_cg_root/.git" -o -path "$_cg_root/.claude" \) -prune -o -print
-    find "$_cg_root" \( -path "$_cg_root/.git" -o -path "$_cg_root/.claude" \) -prune -o \
-      -type f -name '.chezmoi*' -exec cat {} +
-    cat "${XDG_CONFIG_HOME:-$HOME/.config}"/chezmoi/chezmoi.*
-  } 2>/dev/null | cksum)
-  # -f, not -s: "chezmoi manages nothing here" is a legitimate answer and an empty cache is
-  # the correct way to record it. Testing for non-empty instead made that case look like a
-  # failed refresh, so the cache never engaged and every call still paid for chezmoi.
-  if [ -f "$_cg_cache" ] && [ -f "$_cg_cache.key" ]; then
-    _cg_old=''
-    IFS= read -r _cg_old < "$_cg_cache.key" 2>/dev/null
-    [ "$_cg_old" = "$_cg_key" ] && _cg_fresh=1
-  fi
-  if [ -z "$_cg_fresh" ]; then
-    mkdir -p "${_cg_cache%/*}" 2>/dev/null
-    # Exit status is the only signal that separates "nothing is managed" from "the query
-    # failed". A failed refresh leaves no cache, so the next call asks chezmoi directly.
-    # The key lands after the list, so a reader never pairs a new key with an old list.
-    if chezmoi managed --path-style=absolute > "$_cg_cache.tmp" 2>/dev/null \
-      && mv -f "$_cg_cache.tmp" "$_cg_cache" 2>/dev/null \
-      && printf '%s\n' "$_cg_key" > "$_cg_cache.key.tmp" 2>/dev/null \
-      && mv -f "$_cg_cache.key.tmp" "$_cg_cache.key" 2>/dev/null; then
-      _cg_fresh=1
-    else
-      rm -f "$_cg_cache.tmp" "$_cg_cache.key.tmp" 2>/dev/null
-    fi
-  fi
-  # Exact whole-line match: a prefix match would claim files that merely live under a
-  # managed directory, and chezmoi manages directories as entries in their own right.
-  [ -n "$_cg_fresh" ] && ! grep -qxF "$FILE" "$_cg_cache" 2>/dev/null && exit 0
-fi
+# Skip unmanaged files without starting chezmoi. The cache, its key and its knobs are
+# chezmoi-managed-lib.sh's, shared with chezmoi-edit-guard.sh; a listed file still goes to
+# source-path below, which stays the authority.
+# shellcheck source=/dev/null
+. "${BASH_SOURCE[0]%/*}/chezmoi-managed-lib.sh"
+chezmoi_managed_skip "$FILE" && exit 0
 
 # source-path exits non-zero when the file isn't managed by chezmoi.
 SRC=$(chezmoi source-path "$FILE" 2>/dev/null) || exit 0

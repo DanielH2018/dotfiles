@@ -20,12 +20,21 @@ const skip = skipUnless('bash', 'jq');
 const HOME = scratch(os.tmpdir(), 'czeg-home-');
 const BIN = scratch(os.tmpdir(), 'czeg-bin-');
 const SRC = path.join(HOME, '.local', 'share', 'chezmoi', 'home');
-// source-path maps by target, the way chezmoi v2.71.1 answers for these shapes.
+// A real source dir, because the shared managed-set cache is keyed on it (#613).
+fs.mkdirSync(SRC, { recursive: true });
+fs.writeFileSync(path.join(SRC, 'dot_gitconfig'), 'x\n');
+// source-path maps by target, the way chezmoi v2.71.1 answers for these shapes. CALLS
+// records each verb, and EXTRA lists targets that became managed after the first call.
+const CALLS = path.join(BIN, 'calls.log');
+const EXTRA = path.join(BIN, 'extra-managed');
 fs.writeFileSync(path.join(BIN, 'chezmoi'), `#!/bin/bash
+echo "$1" >> ${JSON.stringify(CALLS)}
 case "$1" in
   managed) printf '%s\\n' "$HOME/.claude/settings.json" "$HOME/.claude/CLAUDE.md" \\
-             "$HOME/.claude/hooks/notify.sh" "$HOME/.gitconfig" "$HOME/.config/once" ;;
+             "$HOME/.claude/hooks/notify.sh" "$HOME/.gitconfig" "$HOME/.config/once"
+           cat ${JSON.stringify(EXTRA)} 2>/dev/null || true ;;
   source-path)
+    grep -qxF "$2" ${JSON.stringify(EXTRA)} 2>/dev/null && { echo "${SRC}/dot_new.tmpl"; exit 0; }
     case "$2" in
       "$HOME/.claude/settings.json") echo "${SRC}/private_dot_claude/modify_settings.json.sh.tmpl" ;;
       "$HOME/.claude/CLAUDE.md") echo "${SRC}/private_dot_claude/CLAUDE.md.tmpl" ;;
@@ -38,8 +47,16 @@ case "$1" in
 esac
 `, { mode: 0o755 });
 
-function decide(file_path, extraEnv = {}) {
-  const out = execFileSync('bash', [HOOK], {
+const callCount = (verb) => (fs.existsSync(CALLS)
+  ? fs.readFileSync(CALLS, 'utf8').split('\n').filter((l) => l === verb).length
+  : 0);
+const reset = () => {
+  fs.rmSync(CALLS, { force: true });
+  fs.rmSync(path.join(HOME, '.cache', 'claude-hooks'), { recursive: true, force: true });
+};
+
+function decide(file_path, extraEnv = {}, hook = HOOK) {
+  const out = execFileSync('bash', [hook], {
     input: JSON.stringify({ tool_input: { file_path } }),
     encoding: 'utf8',
     env: {
@@ -77,4 +94,28 @@ test('passes a plain managed file, a create_ target and an unmanaged file', { sk
 
 test('the session-level override turns it off', { skip }, () => {
   assert.strictEqual(decide(path.join(HOME, '.claude', 'CLAUDE.md'), { CHEZMOI_EDIT_GUARD: 'off' }), null);
+});
+
+// ---- the managed-set cache, shared with chezmoi-guard.sh (#613) ------------------------
+
+test('a cache chezmoi-guard.sh wrote answers this hook without a second lookup', { skip }, () => {
+  reset();
+  const f = path.join(HOME, 'scratch.txt');
+  const postHook = srcPath('private_dot_claude', 'hooks', 'executable_chezmoi-guard.sh');
+  assert.strictEqual(decide(f, {}, postHook), null);
+  assert.strictEqual(decide(f), null);
+  assert.strictEqual(callCount('managed'), 1, 'both hooks must read one cache');
+  assert.strictEqual(callCount('source-path'), 0);
+});
+
+test('a target that becomes managed is denied on the next call, not after a TTL', { skip }, (t) => {
+  reset();
+  const f = path.join(HOME, '.config', 'new');
+  assert.strictEqual(decide(f), null);
+  const added = path.join(SRC, 'dot_config', 'new.tmpl');
+  fs.mkdirSync(path.dirname(added), { recursive: true });
+  fs.writeFileSync(added, 'x\n');
+  fs.writeFileSync(EXTRA, `${f}\n`);
+  t.after(() => [added, EXTRA].forEach((p) => fs.rmSync(p, { force: true })));
+  assert.strictEqual(decide(f).permissionDecision, 'deny');
 });

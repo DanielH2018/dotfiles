@@ -55,31 +55,13 @@ case "$FILE" in
   */.claude/worktrees/*) exit 0 ;;
 esac
 
-# Negative cache of the managed set, for the reason chezmoi-guard.sh gives: this runs before
-# every Edit and Write and almost none of them touch a managed file, so a string match
-# replaces a ~41ms chezmoi start. Used only to SKIP; a path in the cache still goes to
-# source-path below, which stays the authority. A file that becomes managed inside the TTL
-# is missed, which is a missed deny, never a wrong one. Its own file, not chezmoi-guard.sh's,
-# so neither hook depends on the other's format.
-CACHE_TTL="${CHEZMOI_GUARD_CACHE_TTL:-300}"
-case "$CACHE_TTL" in ''|*[!0-9]*) CACHE_TTL=300 ;; esac
-if [ "$CACHE_TTL" -gt 0 ]; then
-  cache="${XDG_CACHE_HOME:-$HOME/.cache}/claude-hooks/chezmoi-managed-pre"
-  fresh=''
-  if [ -f "$cache" ]; then
-    age=$(( $(date +%s) - $(stat -c %Y "$cache" 2>/dev/null || stat -f %m "$cache" 2>/dev/null || echo 0) ))
-    [ "$age" -ge 0 ] && [ "$age" -lt "$CACHE_TTL" ] && fresh=1
-  fi
-  if [ -z "$fresh" ]; then
-    mkdir -p "${cache%/*}" 2>/dev/null
-    if chezmoi managed --path-style=absolute > "$cache.$$" 2>/dev/null; then
-      mv -f "$cache.$$" "$cache" 2>/dev/null && fresh=1
-    else
-      rm -f "$cache.$$" 2>/dev/null
-    fi
-  fi
-  [ -n "$fresh" ] && ! grep -qxF "$FILE" "$cache" 2>/dev/null && exit 0
-fi
+# Skip unmanaged files without starting chezmoi: this runs before every Edit and Write and
+# almost none of them touch a managed file. The cache is chezmoi-managed-lib.sh's, shared
+# with chezmoi-guard.sh and keyed on the source tree, so a file that becomes managed misses
+# it on the next call. A listed file still goes to source-path below, the authority.
+# shellcheck source=/dev/null
+. "${BASH_SOURCE[0]%/*}/chezmoi-managed-lib.sh"
+chezmoi_managed_skip "$FILE" && exit 0
 
 SRC=$(chezmoi source-path "$FILE" 2>/dev/null) || exit 0
 [ -n "$SRC" ] || exit 0

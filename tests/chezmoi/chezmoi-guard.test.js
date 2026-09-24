@@ -135,16 +135,15 @@ test('CHEZMOI_GUARD_CACHE=0 turns the cache off', { skip }, () => {
 });
 
 // Freshness is a key over the source tree, not an age (#579). The pair: an unchanged tree
-// hits however old the cache files are, and a changed tree misses however new they are.
-const cacheFiles = () => ['chezmoi-managed', 'chezmoi-managed.key']
-  .map((n) => path.join(HOME, '.cache', 'claude-hooks', n));
+// hits however old the cache file is, and a changed tree misses however new it is.
+const cacheFile = () => path.join(HOME, '.cache', 'claude-hooks', 'chezmoi-managed');
 
 test('an old cache still hits while the source tree is unchanged', { skip }, () => {
   clearCache(); resetCalls();
   const f = path.join(HOME, 'unmanaged.txt');
   context(f);
   const dayAgo = new Date(Date.now() - 86400 * 1000);
-  for (const p of cacheFiles()) fs.utimesSync(p, dayAgo, dayAgo);
+  fs.utimesSync(cacheFile(), dayAgo, dayAgo);
   context(f);
   assert.strictEqual(callCount('managed'), 1, 'age alone must not force a refetch');
 });

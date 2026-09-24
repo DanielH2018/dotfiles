@@ -57,6 +57,11 @@
       "landed": "2026-08-09T19:04:35.602Z"
     },
     {
+      "path": "home/private_dot_claude/hooks/chezmoi-managed-lib.sh",
+      "hash": "6099d07102833d50832f28116a1dbed12124f8a1a28a1a1c326a2e091b6b371f",
+      "landed": "2026-09-24T17:07:46.613Z"
+    },
+    {
       "path": "home/private_dot_claude/hooks/executable_artifact-commit-track.sh",
       "hash": "2d3e4a1b3d0f7f48ab4edc9f48cdeddd9b371df482a4baa2a9c6508e7bfd21e3",
       "landed": "2026-09-23T14:33:16.333Z"
@@ -98,13 +103,13 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_chezmoi-edit-guard.sh",
-      "hash": "cec20b0d587869e2118a52d31cd468b896f8528f554be1d590ec8c85e4071db8",
-      "landed": "2026-09-23T21:08:01.792Z"
+      "hash": "bdfaddec0dcb1ad730f09545678c50553530f8e5ee9144f36cf6787c773dee33",
+      "landed": "2026-09-24T17:07:46.613Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_chezmoi-guard.sh",
-      "hash": "ea6c9d48ea744533243c6dff4628542d302ca096001993a0ee9af5904a2af53a",
-      "landed": "2026-09-23T21:07:00.242Z"
+      "hash": "a89f0f0eeb81bafca6e1ab1e21209e0f470d2f49579812d23a87827251a5db94",
+      "landed": "2026-09-24T17:07:46.613Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_git-conventions-guard.sh",
