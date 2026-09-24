@@ -12,9 +12,9 @@
 #   * call add_mount_relabel(), which stays in the launcher because the rootless
 #     podman relabelling it does is not this file's subject;
 #   * write no launcher globals at all;
-#   * CALL `exit 1` when the proxy or the filter fails to come up inside the time
-#     budget wait_for_running() applies — everything except wait_for_running itself,
-#     which returns non-zero and lets its caller decide.
+#   * CALL `exit 1` when the proxy fails to report healthy, or the filter fails to
+#     report running, inside the shared time budget — everything except the two wait
+#     functions and last_health_probe, which return and let their caller decide.
 #
 # That last point is the difference from sandbox-worktree.sh, whose header promises
 # its functions never exit so tests can source them freely. These can and do: a
@@ -68,6 +68,88 @@ wait_for_running() {
   done
 }
 
+# wait_for_healthy <container> — block until the container's own health check passes.
+#
+# Running is not serving. The socket proxy is haproxy in front of the host's docker
+# socket, and its process can be up while haproxy is still loading, or while the
+# socket it forwards to answers nothing (a dockerd restart leaves the bind mount on a
+# dead inode). The sandbox started next would then get connection errors from its
+# first `docker` call. start_proxy declares a --health-cmd that fetches /version
+# through haproxy, so `healthy` means one request made the whole round trip. This
+# gate waits for that instead of for .State.Status.
+#
+# It applies the same budget as wait_for_running, and start_proxy passes that budget
+# as --health-start-period too. Probe failures inside the start period do not count
+# towards --health-retries, so a proxy that comes up slowly on a loaded host stays
+# `starting` rather than turning `unhealthy` before the budget runs out.
+#
+# Returns 1, with the newest health-probe result on stderr, when the container
+#   * reports `unhealthy`;
+#   * is running and reports no health status at all — it was started without a
+#     health check, so waiting could never succeed;
+#   * exits or disappears (same reasoning as wait_for_running);
+#   * is still `starting` when the budget runs out.
+wait_for_healthy() {
+  local name=$1
+  local budget=${SANDBOX_PROXY_START_TIMEOUT:-30}
+  local deadline=$((SECONDS + budget))
+  local out state health seen=0
+
+  while :; do
+    # A bare {{.State.Health.Status}} is a template error on a container without a
+    # health check, and with stderr discarded that reads the same as "gone". The
+    # {{if}} turns it into an explicit `none`.
+    out=$(docker inspect -f '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$name" 2>/dev/null)
+    state=${out%% *}
+    health=${out#* }
+    [ "$health" != "$out" ] && [ -n "$health" ] || health=none
+    case "$state" in
+      '') [ "$seen" -eq 0 ] || { printf 'Error: %s exited before it was ready\n' "$name" >&2; return 1; } ;;
+      exited|dead) printf 'Error: %s exited before it was ready (%s)\n' "$name" "$state" >&2; return 1 ;;
+      *) seen=1 ;;
+    esac
+
+    case "$health" in
+      healthy) return 0 ;;
+      unhealthy)
+        printf 'Error: %s reports unhealthy\n' "$name" >&2
+        last_health_probe "$name" >&2
+        return 1 ;;
+      starting) ;;
+      *)
+        # A created-but-not-started container has no health state yet either. Only a
+        # running one without it is known never to get one.
+        if [ "$state" = running ]; then
+          printf 'Error: %s reports no health status; it must be started with --health-cmd\n' "$name" >&2
+          return 1
+        fi ;;
+    esac
+
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      printf 'Error: %s did not report healthy within %ss (health: %s)\n' "$name" "$budget" "$health" >&2
+      last_health_probe "$name" >&2
+      return 1
+    fi
+    sleep 0.2
+  done
+}
+
+# last_health_probe <container> — print one line naming the newest health-probe
+# result. The engine keeps the last few probes in .State.Health.Log, and %q keeps a
+# multi-line probe output on the one line this prints.
+last_health_probe() {
+  local last
+  last=$(docker inspect -f '{{if .State.Health}}{{range .State.Health.Log}}exit {{.ExitCode}}: {{printf "%q" .Output}}{{"\n"}}{{end}}{{end}}' "$1" 2>/dev/null | grep . | tail -n 1)
+  if [ -n "$last" ]; then
+    printf '  last health probe: %s\n' "$last"
+  else
+    # Docker runs the first probe one --health-interval after start. Rootless podman
+    # runs probes from systemd timers and runs none where it cannot create them, so a
+    # proxy that stays `starting` with no probe at all points at the engine.
+    printf '  no health probe has run yet\n'
+  fi
+}
+
 # --- Docker socket proxy management ---
 start_proxy() {
   # Clean up any stale proxy/filter/network from a previous run
@@ -102,11 +184,22 @@ start_proxy() {
   # case Docker's embedded resolver (127.0.0.11) never registers it and the
   # sandbox can't reach DOCKER_HOST by name. Attach a short, stable alias on
   # the isolated per-run network and point DOCKER_HOST at that instead.
+  #
+  # The health check is what wait_for_healthy gates on. /version is served only when
+  # haproxy is up AND the docker socket behind it answers, and the image ships
+  # busybox wget. The 2s interval sets how soon after start the first probe runs,
+  # which bounds how long every launch waits. The start period is the whole start
+  # budget, so slow probes on a loaded host are not counted as failures.
   docker run -d --rm \
     --name "$PROXY_NAME" \
     --network "$PROXY_NETWORK_NAME" \
     --network-alias "$PROXY_ALIAS" \
     --cap-drop all \
+    --health-cmd 'wget -qO /dev/null http://localhost:2375/version || exit 1' \
+    --health-interval 2s \
+    --health-timeout 5s \
+    --health-retries 3 \
+    --health-start-period "${SANDBOX_PROXY_START_TIMEOUT:-30}s" \
     -v /var/run/docker.sock:/var/run/docker.sock:ro \
     -e LOG_LEVEL=info \
     -e CONTAINERS=1 \
@@ -135,8 +228,13 @@ start_proxy() {
     -e TASKS=0 \
     "$PROXY_IMAGE" >/dev/null
 
-  # Wait for proxy container to be running
-  wait_for_running "$PROXY_NAME" || exit 1
+  # A proxy that failed its health check is still Running, and the launcher installs
+  # its cleanup trap only after start_proxy returns. Without stop_proxy here, it would
+  # outlive the failed launch, still holding the docker socket.
+  if ! wait_for_healthy "$PROXY_NAME"; then
+    stop_proxy >/dev/null   # docker rm echoes each removed name
+    exit 1
+  fi
 
   start_filter
 
@@ -176,6 +274,7 @@ start_filter() {
 
   if ! wait_for_running "$FILTER_NAME"; then
     docker logs "$FILTER_NAME" 2>&1 | tail -20 >&2 || true
+    stop_proxy >/dev/null   # the proxy is healthy by now; see the note in start_proxy
     exit 1
   fi
 }

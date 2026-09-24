@@ -1,5 +1,6 @@
-// Coverage for wait_for_running() in sandbox-proxy.sh — the gate both the socket
-// proxy and the create-filter pass through before the sandbox is allowed to run.
+// Coverage for the start gates in sandbox-proxy.sh: wait_for_running(), which the
+// create-filter passes through, and wait_for_healthy(), which the socket proxy
+// passes through (at the end of this file). The sandbox runs only after both pass.
 //
 // It used to count attempts: 15 polls of `docker inspect`, then "failed to start
 // after 15 attempts". A poll count is not a wait. Each iteration costs one inspect
@@ -28,11 +29,13 @@ const PROXY_LIB = srcPath('private_dot_claude', 'sandbox', 'executable_sandbox-p
 const skip = process.platform === 'win32' ? 'sandbox lib is Unix-only' : skipUnless('bash');
 
 // A docker stub whose `inspect` walks STATES, one per call, repeating the last entry
-// once it runs out. DELAY makes each call slow, standing in for a loaded host.
-function dockerStub(states, delay = '0') {
+// once it runs out. DELAY makes each call slow, standing in for a loaded host. A
+// query for the health log is answered from LOG instead and does not consume a state.
+function dockerStub(states, delay = '0', log = '') {
   const dir = scratch(os.tmpdir(), 'proxy-wait-');
   fs.writeFileSync(path.join(dir, 'docker'), `#!/bin/bash
 [ "$1" = inspect ] || exit 0
+case "$3" in *Health.Log*) printf '%b' ${JSON.stringify(log)}; exit 0 ;; esac
 sleep ${delay}
 n=0
 [ -f "$STUB_CALLS" ] && n=$(cat "$STUB_CALLS")
@@ -46,9 +49,9 @@ printf '%s\\n' "\${states[$i]}"
   return dir;
 }
 
-function waitFor(stubDir, { timeout = '30' } = {}) {
+function waitFor(stubDir, { timeout = '30', gate = 'wait_for_running' } = {}) {
   const started = Date.now();
-  const r = run('bash', ['-c', `. "$1"; wait_for_running proxy-ctr`, 'bash', PROXY_LIB], {
+  const r = run('bash', ['-c', `. "$1"; ${gate} proxy-ctr`, 'bash', PROXY_LIB], {
     env: {
       ...process.env,
       PATH: `${stubDir}:${process.env.PATH}`,
@@ -84,4 +87,52 @@ test('fails fast when the container has gone rather than waiting out the budget'
   assert.strictEqual(r.code, 1);
   assert.match(r.stderr, /exited before it was ready/);
   assert.ok(r.elapsed < 5000, `waited ${r.elapsed}ms for a container that was already gone`);
+});
+
+// --- wait_for_healthy, the proxy's gate. Running is not serving: haproxy can be up
+// with nothing answering behind it, so start_proxy declares a --health-cmd and the
+// gate waits on .State.Health.Status. Each state here is what the gate's status query
+// prints: "<.State.Status> <health>".
+const waitHealthy = (stub, opts = {}) => waitFor(stub, { ...opts, gate: 'wait_for_healthy' });
+
+test('health gate passes once the health check reports healthy', { skip }, () => {
+  const r = waitHealthy(dockerStub(['running healthy']));
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.strictEqual(r.stderr, '');
+});
+
+// The case the gate exists for: Running from the second poll, serving only from the
+// fourth. wait_for_running would have returned on the second.
+test('health gate keeps waiting while the container is running but still starting', { skip }, () => {
+  const stub = dockerStub(['created none', 'running starting', 'running starting', 'running healthy']);
+  const r = waitHealthy(stub);
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.strictEqual(fs.readFileSync(path.join(stub, 'calls'), 'utf8'), '4',
+    'the gate returned before the health check passed');
+});
+
+test('health gate fails on unhealthy and prints the last probe result', { skip }, () => {
+  const log = 'exit 1: "old probe"\nexit 1: "wget: can\'t connect to remote host"\n';
+  const r = waitHealthy(dockerStub(['running unhealthy'], '0', log));
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /proxy-ctr reports unhealthy/);
+  assert.match(r.stderr, /last health probe: exit 1: "wget: can't connect to remote host"/);
+  assert.doesNotMatch(r.stderr, /old probe/, 'only the newest probe is printed');
+});
+
+// A running container with no health state never gets one, so waiting out the budget
+// could only delay a failure that is already decided.
+test('health gate fails fast when the container declares no health check', { skip }, () => {
+  const r = waitHealthy(dockerStub(['running none']), { timeout: '30' });
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /reports no health status; it must be started with --health-cmd/);
+  assert.ok(r.elapsed < 5000, `waited ${r.elapsed}ms for a container that has no health check`);
+});
+
+test('health gate gives up at the budget while starting, and says no probe has run', { skip }, () => {
+  const r = waitHealthy(dockerStub(['running starting']), { timeout: '1' });
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /did not report healthy within 1s \(health: starting\)/);
+  assert.match(r.stderr, /no health probe has run yet/);
+  assert.ok(r.elapsed < 4000, `waited ${r.elapsed}ms for a 1s budget`);
 });
