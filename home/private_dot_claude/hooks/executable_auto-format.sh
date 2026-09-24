@@ -8,7 +8,8 @@
 # PostToolUse hook: auto-format files after Claude writes or edits them.
 # Dispatches based on extension. Skips when the formatter isn't installed, saying so on
 # stderr once per tool per day.
-# Exit 0 always so formatting failures don't break Claude's flow; errors go to stderr.
+# Exit 0 so formatting failures don't break Claude's flow; errors go to stderr. The one
+# exit 1 is a missing run-bounded.sh, a broken install rather than a formatting failure.
 
 set -u
 
@@ -24,6 +25,22 @@ FILE_PATH=$(hook_field '.tool_input.file_path // empty')
 [ -z "$FILE_PATH" ] && exit 0
 [ ! -f "$FILE_PATH" ] && exit 0
 
+# Every formatter runs through run_bounded, like every other hook child (#581). A hung
+# formatter used to hold the hook until the harness killed it at 30s, which reads as a
+# hook error and says nothing about which tool hung. A missing library is a broken
+# install: say so and exit 1, which the harness reports as a non-blocking hook error,
+# rather than run the formatters with no bound.
+RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/run-bounded.sh}"
+# shellcheck source=/dev/null
+if ! . "$RUN_BOUNDED_PATH" 2>/dev/null || ! command -v run_bounded >/dev/null 2>&1; then
+  printf 'auto-format: cannot load %s; %s left unformatted\n' \
+    "$RUN_BOUNDED_PATH" "${FILE_PATH##*/}" >&2
+  exit 1
+fi
+# Per formatter, in seconds. Two of them run for a .py file, and both have to finish
+# inside the hook's own 30s.
+FMT_TIMEOUT_S="${AUTO_FORMAT_TIMEOUT_S:-12}"
+
 # Formatters stay optional — a machine with no Go toolchain should still be able to edit a
 # .go file. What was wrong is that a skip looked exactly like a successful format: prettier
 # is absent on this host, so every .js/.json/.yaml/.md edit silently went unformatted and
@@ -32,8 +49,14 @@ _fmt_state="${XDG_STATE_HOME:-$HOME/.local/state}/claude-auto-format"
 
 run_if_installed() {
   if command -v "$1" >/dev/null 2>&1; then
-    "$@" 2>&1
-    return
+    run_bounded "$FMT_TIMEOUT_S" 1048576 -- "$@"
+    # A formatter's own non-zero exit stays quiet, as it always has. One that was cut off
+    # did not format the file, and may have left it half-written, so that is said.
+    if [ "$RB_STATUS" != ok ]; then
+      printf 'auto-format: %s did not finish on %s within %ss (%s); check the file\n' \
+        "$1" "${FILE_PATH##*/}" "$FMT_TIMEOUT_S" "$RB_STATUS" >&2
+    fi
+    return 0
   fi
   # One marker per tool, refreshed daily, so the directory stays bounded instead of
   # growing a file per tool per day.

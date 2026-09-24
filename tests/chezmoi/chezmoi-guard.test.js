@@ -34,12 +34,13 @@ echo "$1" >> ${JSON.stringify(CALLS)}
 case "$1" in
   managed) printf '%s\\n' "$HOME/tmplfile" "$HOME/plainfile" ;;
   source-path)
+    [ -n "\${CZ_STUB_SLOW_LOOKUP:-}" ] && sleep 30
     case "$2" in
       *tmplfile*) echo "/fake/src/dot_config.tmpl" ;;
       *plainfile*) echo "/fake/src/dot_config" ;;
       *) exit 1 ;;
     esac ;;
-  add) exit 0 ;;
+  add) [ -n "\${CZ_STUB_SLOW_ADD:-}" ] && sleep 30; exit 0 ;;
   chattr) exit 0 ;;
   *) exit 0 ;;
 esac
@@ -196,4 +197,38 @@ test('with no source dir the hook asks chezmoi every time', { skip }, () => {
   context(f, env);
   assert.strictEqual(callCount('managed'), 0, 'nothing to key on, so nothing is cached');
   assert.strictEqual(callCount('source-path'), 2);
+});
+
+// ---- every chezmoi call is bounded (#581) ----------------------------------------------
+//
+// A chezmoi that hung used to hold the hook until the harness killed it at 15s, leaving
+// the edit unsynced with nothing said. The stub sleeps 30s on request; with a 1s bound the
+// hook must return well inside that and name what did not finish. The accepting half of
+// each pair is 'a plain managed file is re-synced into the source' above.
+// run_bounded needs timeout(1), and without one every call reports not evaluated.
+const skipBounded = skipUnless('bash', 'jq', 'timeout');
+
+function timed(file, env) {
+  const started = Date.now();
+  const msg = context(file, { CHEZMOI_GUARD_TIMEOUT_S: '1', CHEZMOI_GUARD_CACHE: '0', ...env });
+  return { msg, seconds: (Date.now() - started) / 1000 };
+}
+
+test('a hung chezmoi add is cut off and reported, not left to the harness', { skip: skipBounded }, () => {
+  const { msg, seconds } = timed(path.join(HOME, 'plainfile'), { CZ_STUB_SLOW_ADD: '1' });
+  assert.ok(seconds < 10, `took ${seconds}s`);
+  assert.match(msg, /could not re-sync.*did not finish within 1s \(timeout\)/);
+});
+
+test('a hung source-path lookup is reported as not evaluated, not as unmanaged', { skip: skipBounded }, () => {
+  const { msg, seconds } = timed(path.join(HOME, 'plainfile'), { CZ_STUB_SLOW_LOOKUP: '1' });
+  assert.ok(seconds < 10, `took ${seconds}s`);
+  assert.match(msg, /source-path.*did not answer.*not evaluated/);
+});
+
+test('a missing run-bounded.sh is reported as not evaluated', { skip }, () => {
+  const msg = context(path.join(HOME, 'plainfile'), {
+    CHEZMOI_GUARD_CACHE: '0', RUN_BOUNDED_LIB: path.join(BIN, 'no-such-lib.sh'),
+  });
+  assert.match(msg, /cannot load .*not evaluated/);
 });

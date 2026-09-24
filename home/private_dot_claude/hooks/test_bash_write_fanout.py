@@ -19,6 +19,7 @@ import json
 import os
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from _testkit import check, finish
@@ -261,6 +262,9 @@ with tempfile.TemporaryDirectory() as tmp:
     hookdir.mkdir()
     (hookdir / "bash-write-fanout.sh").write_text(HOOK.read_text())
     (hookdir / "hook-input.sh").write_text((HOOK.parent / "hook-input.sh").read_text())
+    (hookdir / "run-bounded.sh").write_text(
+        (HOOK.parent / "run-bounded.sh").read_text()
+    )
     stub = hookdir / "lint-after-edit.sh"
     stub.write_text(
         "#!/bin/bash\ncat >/dev/null\n"
@@ -268,7 +272,7 @@ with tempfile.TemporaryDirectory() as tmp:
     )
     stub.chmod(0o755)
 
-    def fanned(tmpdir):
+    def fanned(tmpdir, env_extra=None):
         result = subprocess.run(
             ["bash", str(hookdir / "bash-write-fanout.sh")],
             cwd=root,
@@ -281,7 +285,12 @@ with tempfile.TemporaryDirectory() as tmp:
             ),
             capture_output=True,
             text=True,
-            env={**os.environ, "CLAUDE_GUARD_HOME": str(GUARD_SRC), "TMPDIR": tmpdir},
+            env={
+                **os.environ,
+                "CLAUDE_GUARD_HOME": str(GUARD_SRC),
+                "TMPDIR": tmpdir,
+                **(env_extra or {}),
+            },
         )
         try:
             return json.loads(result.stdout)
@@ -292,9 +301,45 @@ with tempfile.TemporaryDirectory() as tmp:
         "the fan-out reports a downstream block",
         fanned(tmp).get("reason") == "stub-lint",
     )
+    # run_bounded needs a tempfile of its own, so with none no hook can run bounded.
+    # What must not happen is the old silent skip: each one is named as not evaluated.
+    no_tmp = json.dumps(fanned(str(root / "no-such-tmpdir")))
     check(
-        "and still does with no writable TMPDIR",
-        fanned(str(root / "no-such-tmpdir")).get("reason") == "stub-lint",
+        "and with no writable TMPDIR names each hook as not evaluated",
+        "lint-after-edit.sh did not finish" in no_tmp and "not evaluated" in no_tmp,
+    )
+
+    # ── every downstream hook is bounded (#581) ─────────────────────────────────────
+    #
+    # A downstream hook that hangs used to hold the fan-out until the harness killed it
+    # at 300s, taking every other hook's output with it. Each hook now gets the timeout
+    # its own header declares. The slow stub declares 1s and sleeps 30: the fan-out must
+    # return well inside that, still carry the lint block, and name the stub.
+    slow = hookdir / "auto-format.sh"
+    slow.write_text("#!/bin/bash\n#   timeout: 1\ncat >/dev/null\nsleep 30\n")
+    slow.chmod(0o755)
+    started = time.monotonic()
+    hung = fanned(tmp)
+    elapsed = time.monotonic() - started
+    slow.unlink()
+    check("a hung downstream hook is cut off at its own timeout", elapsed < 15)
+    check(
+        "and named as not evaluated, alongside the block that did run",
+        hung.get("reason", "").startswith("stub-lint")
+        and "auto-format.sh did not finish" in hung.get("reason", ""),
+    )
+    check(
+        "a spent budget runs nothing and says so",
+        "out of time before lint-after-edit.sh"
+        in json.dumps(fanned(tmp, {"BASH_WRITE_FANOUT_BUDGET_S": "0"})),
+    )
+
+    # Without run-bounded.sh nothing may run unbounded: the paths come back as a block
+    # naming the missing library, never as a quiet pass.
+    check(
+        "a missing run-bounded.sh blocks as not evaluated",
+        "cannot load"
+        in fanned(tmp, {"RUN_BOUNDED_LIB": str(root / "nope.sh")}).get("reason", ""),
     )
 
 finish()

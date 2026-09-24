@@ -308,12 +308,48 @@ fi
 
 DOWNSTREAM=(auto-format.sh lint-after-edit.sh chezmoi-guard.sh link-artifact.sh)
 
+# Every downstream hook runs through run_bounded, like every other hook child (#581). They
+# used to run bare, so one that hung ran into this hook's own 300s limit, and the harness
+# then killed the fan-out and threw away every other hook's output with it. The library is
+# required: without it nothing below may run unbounded, so the paths are reported as not
+# evaluated. A block, as lint-after-edit.sh does for the same broken install, because the
+# chezmoi re-sync skipped here is what stops the next apply reverting the write.
+RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-$HOOK_DIR/run-bounded.sh}"
+# shellcheck source=/dev/null
+if ! . "$RUN_BOUNDED_PATH" 2>/dev/null || ! command -v run_bounded >/dev/null 2>&1; then
+  jq -n --arg lib "$RUN_BOUNDED_PATH" --arg paths "${PATHS[*]}" '{decision: "block",
+    reason: ("bash-write-fanout: cannot load \($lib), so the Edit|Write hooks (format, lint, "
+      + "chezmoi re-sync) did not run on \($paths) -- not evaluated. Restore it "
+      + "(chezmoi apply ~/.claude/hooks) and re-run them by hand.")}'
+  exit 0
+fi
+
+# Each hook gets the timeout its own gen-hooks header declares, which is what the harness
+# would give it on an Edit or Write. The fan-out as a whole gets a deadline under this
+# hook's own 300s: eight paths times lint-after-edit's 300s is far past it, and a hook
+# started with no time left is reported as not evaluated rather than killed with the rest.
+hook_timeout() {
+  local t
+  t=$(sed -n 's/^#   timeout: *\([0-9][0-9]*\).*/\1/p' "$1" 2>/dev/null)
+  t=${t%%[!0-9]*}
+  printf '%s\n' "${t:-30}"
+}
+FANOUT_DEADLINE=$((SECONDS + ${BASH_WRITE_FANOUT_BUDGET_S:-280}))
+FANOUT_CAP_BYTES=1048576
+
 # Collected in a variable, not a tempfile. `OUTPUTS=$(mktemp) || exit 0` used to skip the
 # whole fan-out when the tempfile could not be made -- a guard that silently did nothing, on
 # the one path where the four hooks it re-drives would otherwise never run (#581). Removing
 # the tempfile removes the failure rather than choosing an outcome for it: each downstream
 # hook's output is a few lines of JSON or text, so holding it in memory costs nothing.
+# run_bounded does make a tempfile of its own. Where it cannot, each hook is reported below
+# as not evaluated (error), which is a report rather than a skip.
+#
+# NOTEVAL collects the hooks that did not run to completion. It is kept apart from the
+# hooks' own output because the merge drops plain context when a hook blocks, and a hook
+# that was not evaluated must be named whichever way the merge goes.
 OUTPUTS=""
+NOTEVAL=""
 for p in "${PATHS[@]}"; do
   # tool_name says Write because that is what the downstream hooks are written against;
   # tool_response.filePath is carried too, since link-artifact.sh reads either.
@@ -323,7 +359,26 @@ for p in "${PATHS[@]}"; do
   }') || continue
   for h in "${DOWNSTREAM[@]}"; do
     [ -x "$HOOK_DIR/$h" ] || continue
-    out=$(printf '%s' "$payload" | "$HOOK_DIR/$h" 2>/dev/null)
+    left=$((FANOUT_DEADLINE - SECONDS))
+    if [ "$left" -lt 1 ]; then
+      NOTEVAL="${NOTEVAL}bash-write-fanout: out of time before $h ran on $p -- not evaluated
+"
+      continue
+    fi
+    t=$(hook_timeout "$HOOK_DIR/$h")
+    [ "$t" -le "$left" ] || t=$left
+    # The pipe runs inside the bounded child: piped INTO run_bounded, the function would
+    # run in a subshell and its RB_* results would be lost. The hook's stderr stays out of
+    # RB_OUT, which run_bounded merges, so a warning line cannot corrupt a JSON block.
+    # shellcheck disable=SC2016  # $1/$2 belong to the inner bash
+    run_bounded "$t" "$FANOUT_CAP_BYTES" -- \
+      bash -c 'printf %s "$1" | "$2" 2>/dev/null' _ "$payload" "$HOOK_DIR/$h"
+    if [ "$RB_STATUS" != ok ]; then
+      NOTEVAL="${NOTEVAL}bash-write-fanout: $h did not finish on $p within ${t}s ($RB_STATUS) -- not evaluated
+"
+      continue
+    fi
+    out=$RB_OUT
     [ -n "$out" ] || continue
     # One document per line, because the merge below splits on newlines. lint-after-edit.sh
     # emits its block through a bare `jq -n`, which pretty-prints across lines, and each
@@ -336,16 +391,16 @@ for p in "${PATHS[@]}"; do
   done
 done
 
-if [ -z "$OUTPUTS" ]; then exit 0; fi
+if [ -z "$OUTPUTS$NOTEVAL" ]; then exit 0; fi
 
 # Merge. A hook may emit at most one JSON document, so four hooks' worth of output has to
 # collapse into one: any `block` decision wins and its reasons are concatenated, otherwise
 # every additionalContext and every line of plain text is joined into a single context
-# string. Plain stdout is kept rather than dropped — auto-format.sh reports a missing
+# string. The not-evaluated lines are appended to whichever one it is. Plain stdout is kept rather than dropped — auto-format.sh reports a missing
 # formatter that way, and losing it would make the fanout quieter than a real edit.
 # Piped rather than fed as a here-string: bash backs a here-string with a tempfile on many
 # versions, which would bring back the dependency the variable above removed.
-printf '%s' "$OUTPUTS" | jq -Rs '
+printf '%s' "$OUTPUTS" | jq -Rs --arg noteval "$NOTEVAL" '
   [ split("\n")[] | select(length > 0)
     | . as $line | (try ($line | fromjson) catch {plain: $line}) ] as $docs
   | ( [ $docs[] | select(.decision == "block") | .reason | select(. != null) ] ) as $blocks
@@ -353,12 +408,13 @@ printf '%s' "$OUTPUTS" | jq -Rs '
         | if .hookSpecificOutput.additionalContext then .hookSpecificOutput.additionalContext
           elif .plain then .plain
           else empty end ] ) as $ctx
+  | ( [ $noteval | split("\n")[] | select(length > 0) ] ) as $ne
   | if ($blocks | length) > 0 then
-      { decision: "block", reason: ($blocks | join("\n\n")) }
-    elif ($ctx | length) > 0 then
+      { decision: "block", reason: (($blocks + $ne) | join("\n\n")) }
+    elif (($ctx + $ne) | length) > 0 then
       { hookSpecificOutput: {
           hookEventName: "PostToolUse",
-          additionalContext: ($ctx | join("\n")) } }
+          additionalContext: (($ctx + $ne) | join("\n")) } }
     else empty end
 '
 

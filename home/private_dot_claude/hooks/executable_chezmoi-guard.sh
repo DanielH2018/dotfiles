@@ -53,15 +53,40 @@ esac
 . "${BASH_SOURCE[0]%/*}/chezmoi-managed-lib.sh"
 chezmoi_managed_skip "$FILE" && exit 0
 
-# source-path exits non-zero when the file isn't managed by chezmoi.
-SRC=$(chezmoi source-path "$FILE" 2>/dev/null) || exit 0
-[ -n "$SRC" ] || exit 0
-
 emit() {
   jq -n --arg msg "$1" '{
     hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: $msg }
   }'
 }
+
+# Every chezmoi call below runs through run_bounded, like every other hook child (#581).
+# They used to run bare, so a chezmoi that hung held the hook until the harness killed it
+# at 15s, and the edit was left unsynced with nothing said. The three bounds add up to
+# less than that 15s. CHEZMOI_GUARD_TIMEOUT_S sets all three, for the tests.
+#
+# A missing library is reported rather than run around: this file may be managed, and if it
+# is, the next apply reverts the edit unless someone re-syncs it.
+RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/run-bounded.sh}"
+# shellcheck source=/dev/null
+if ! . "$RUN_BOUNDED_PATH" 2>/dev/null || ! command -v run_bounded >/dev/null 2>&1; then
+  emit "chezmoi-guard: cannot load $RUN_BOUNDED_PATH, so $FILE was not checked against the chezmoi source -- not evaluated. If it is managed, run \`chezmoi add $FILE\`."
+  exit 0
+fi
+T_LOOKUP=${CHEZMOI_GUARD_TIMEOUT_S:-3}
+T_ADD=${CHEZMOI_GUARD_TIMEOUT_S:-8}
+T_CHATTR=${CHEZMOI_GUARD_TIMEOUT_S:-2}
+
+# source-path exits non-zero when the file isn't managed by chezmoi. Its stderr is dropped
+# inside the child, because run_bounded merges the two streams and SRC must be the path alone.
+# shellcheck disable=SC2016  # $1 belongs to the inner bash
+run_bounded "$T_LOOKUP" 65536 -- bash -c 'exec chezmoi source-path "$1" 2>/dev/null' _ "$FILE"
+if [ "$RB_STATUS" != ok ]; then
+  emit "chezmoi-guard: \`chezmoi source-path\` did not answer within ${T_LOOKUP}s ($RB_STATUS), so it is unknown whether $FILE is managed -- not evaluated. Check \`chezmoi status\`."
+  exit 0
+fi
+[ "$RB_EXIT" -eq 0 ] || exit 0
+SRC=$RB_OUT
+[ -n "$SRC" ] || exit 0
 
 case "$(basename "$SRC")" in
   *.tmpl|modify_*|create_*|run_*|symlink_*)
@@ -70,14 +95,23 @@ case "$(basename "$SRC")" in
     ;;
 esac
 
-if chezmoi add "$FILE" >/dev/null 2>&1; then
+run_bounded "$T_ADD" 65536 -- chezmoi add "$FILE"
+if [ "$RB_STATUS" = ok ] && [ "$RB_EXIT" -eq 0 ]; then
   # Windows has no exec bit, so `chezmoi add` re-adds the file without the
   # executable_ attribute the source had — restore it or a later apply on
   # macOS/Linux strips the exec bit and the hook/script stops running.
+  note=''
   case "$(basename "$SRC")" in
-    executable_*|*_executable_*) chezmoi chattr +executable "$FILE" >/dev/null 2>&1 ;;
+    executable_*|*_executable_*)
+      run_bounded "$T_CHATTR" 65536 -- chezmoi chattr +executable "$FILE"
+      if [ "$RB_STATUS" != ok ] || [ "$RB_EXIT" -ne 0 ]; then
+        note=" But \`chezmoi chattr +executable\` did not complete ($RB_STATUS), so the source may have lost its executable_ prefix -- check it."
+      fi
+      ;;
   esac
-  emit "chezmoi: re-synced source for managed file $FILE. Commit it in ~/.local/share/chezmoi when ready."
+  emit "chezmoi: re-synced source for managed file $FILE. Commit it in ~/.local/share/chezmoi when ready.$note"
+elif [ "$RB_STATUS" != ok ]; then
+  emit "chezmoi: could not re-sync source for managed file $FILE — \`chezmoi add\` did not finish within ${T_ADD}s ($RB_STATUS). Check \`chezmoi status\`."
 else
   emit "chezmoi: could not re-sync source for managed file $FILE — check \`chezmoi status\`."
 fi
