@@ -78,13 +78,13 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_auto-format.sh",
-      "hash": "eba6aa74eb1c9f5790bd9fd9de67a773bbc00544c72281c0d7b1f429ef29c5da",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "ef97fce8de99884b0bf07df4b2f6bb45d60f1e93837c870169b576c3641971ff",
+      "landed": "2026-09-24T20:29:15.796Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_bash-write-fanout.sh",
-      "hash": "0487a38983de68b1a99d351b54aedf7207d296bdcd98b5d54e2f3b487da43037",
-      "landed": "2026-09-23T21:05:47.255Z"
+      "hash": "29c81edc782223a09706c9050c0bed3bd5be466b78ef340ee401fd4119d04bab",
+      "landed": "2026-09-24T20:29:15.796Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_check-before-stop.sh",
@@ -108,8 +108,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_chezmoi-guard.sh",
-      "hash": "a89f0f0eeb81bafca6e1ab1e21209e0f470d2f49579812d23a87827251a5db94",
-      "landed": "2026-09-24T17:07:46.613Z"
+      "hash": "299cce7e3d1ff5d95636ce396202ea4908745a60d6eb2252f6635117c017f471",
+      "landed": "2026-09-24T20:29:15.796Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_guard-permission-request.sh",
@@ -308,8 +308,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_bash_write_fanout.py",
-      "hash": "a32d7341bbeca14f5b423421fc90b5403a5573a831bcffa6d8314f8e9c2c1902",
-      "landed": "2026-09-24T17:06:06.813Z"
+      "hash": "28e4c3db66bb3982ea5a72a22248629de0ff02acd79c6618d2a79b2321dbf617",
+      "landed": "2026-09-24T20:29:15.796Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_isolation_guard.py",
