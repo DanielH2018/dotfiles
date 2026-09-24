@@ -46,10 +46,10 @@ function makeBmp1x1(b, g, r) {
 // Slurp all of stdin into a file using only bash builtins (`cat` is an
 // external command, and PATH is deliberately narrowed to just our stubs).
 //
-// Every wl-copy stub that is handed `input:` must read it. A stub that exits without
-// reading closes the pipe while node may still be writing, and run() rethrows that as
-// `spawnSync /usr/bin/bash EPIPE` -- a scheduling-dependent failure (#666). A test whose
-// child exits before any read, such as a missing backend, passes no `input:` at all.
+// Every wl-copy stub that is handed `input:` must read it, because the tests assert what
+// the stub received. A stub that exits without reading used to fail as `spawnSync
+// /usr/bin/bash EPIPE` (#666); run() now returns the exit status in that case (#668). A
+// test whose child exits before any read, such as a missing backend, passes no `input:`.
 function slurpStdinTo(fileExpr) {
   return `IFS= read -r -d '' _body <&0 || true\nprintf '%s' "$_body" > ${fileExpr}`;
 }

@@ -9,6 +9,12 @@
 // an exit code, because a test that wanted `code === 1` must not be satisfied by a script it
 // never ran.
 //
+// EPIPE is the one error that returns, and only when the child produced a real exit. A
+// child that exits before it reads `input` closes the pipe while node is still writing it,
+// so spawnSync sets `error` to EPIPE and also reports the child's status or signal (#668).
+// That child ran, so its exit is the answer. A test that needs its input consumed asserts
+// that directly. An EPIPE with neither a status nor a signal still throws.
+//
 // Fourteen test files carried the same wrapper around execFileSync -- `try { const stdout =
 // execFileSync(...); return { code: 0, stdout, stderr: '' }; } catch (e) { return { code:
 // e.status, stdout: e.stdout || '', stderr: e.stderr || '' }; }` -- which is a spawnSync with
@@ -25,7 +31,8 @@ function run(cmd, args = [], { cwd, env, input, timeout } = {}) {
   const r = spawnSync(cmd, args, {
     cwd, env, input, timeout, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
   });
-  if (r.error) throw r.error;
+  const childExited = r.status !== null || r.signal !== null;
+  if (r.error && !(r.error.code === 'EPIPE' && childExited)) throw r.error;
   return { stdout: r.stdout, stderr: r.stderr, code: r.status, signal: r.signal };
 }
 

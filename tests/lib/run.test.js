@@ -28,3 +28,19 @@ test('input, cwd and env reach the child', () => {
 test('a command that cannot start throws instead of returning a code', () => {
   assert.throws(() => run('no-such-command-526-zz', []), /ENOENT/);
 });
+
+// A child that exits without reading its stdin makes node's write of `input` fail with
+// EPIPE, while spawnSync still reports the child's real exit (#668). The child ran, so its
+// status is the answer. 1 MiB is far past the pipe buffer, so the write is still in flight
+// when the child exits.
+const MIB = 'x'.repeat(1024 * 1024);
+
+test('a child that exits without reading a large input returns its status', () => {
+  const r = run('sh', ['-c', 'exit 7'], { input: MIB });
+  assert.strictEqual(r.code, 7);
+  assert.strictEqual(r.signal, null);
+});
+
+test('a command that cannot start still throws when it is handed input', () => {
+  assert.throws(() => run('no-such-command-668-zz', [], { input: MIB }), /ENOENT/);
+});
