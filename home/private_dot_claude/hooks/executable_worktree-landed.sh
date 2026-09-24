@@ -39,9 +39,12 @@
 # enough to authorise `-D`. `git cherry`, which prune-worktrees.py falls back to, is
 # not: patch-id equality is why that sweeper REPORTS instead of reaping, and a Stop hook
 # can only block, so handing a session something a person has to adjudicate is worse than
-# staying quiet. The gh call is the one network call in this file. It is reached only when
-# the free local test has already failed, it is timeout-bounded, and every failure — no gh,
-# no auth, no GitHub remote, an API error — falls through to silence.
+# staying quiet. The lookup is `claude_worktree.forge_says_merged`, the same one
+# prune-worktrees.py and the server repo's pruner use, run here as
+# `claude_worktree.py forge-merged`. It is the one network call in this file. It is reached
+# only when the free local test has already failed, it is timeout-bounded, and every
+# failure — no module, no gh, no auth, no GitHub remote, an API error — falls through to
+# silence.
 #
 # Cleanup is three things, not one: leave the worktree, delete the branch it left behind,
 # fast-forward the primary checkout. THE TWO MERGE SHAPES NEED DIFFERENT ORDERS, which is why
@@ -137,28 +140,24 @@ if ! git merge-base --is-ancestor HEAD "$DEFAULT" 2>/dev/null; then
     exit 0
   fi
 
-  # Ask for the merged PRs' HEAD COMMITS, not for a count of them. A branch NAME is not
-  # evidence that this tip merged: names are reused freely here, and DanielH2018/server's
-  # prune_worktrees.py `pr_head_says_merged` records three PRs opened from one reused name
-  # on 2026-08-27. Counting matches authorised `-D` — the one destructive step in the squash
-  # procedure — on the strength of a string. The upstream test above catches the common
-  # shape of that (a tip that moved after the push), but not the shape that matters: after a
-  # merge with branch deletion `@{upstream}` no longer resolves, so nothing is left to
-  # disagree with and every name match passed.
-  #
-  # So compare SHAs. `--limit 30`, not 1: with a reused name the PR whose head is this tip
-  # need not be the most recent one, and `--limit 1` would answer with a sibling's.
-  GH="${GH_BIN:-gh}"
-  command -v "$GH" >/dev/null 2>&1 || exit 0
+  # Ask whether a merged PR's HEAD COMMIT is this tip, not whether one exists for the
+  # name. A branch NAME is not evidence that this tip merged: names are reused freely, and
+  # counting matches authorised `-D` — the one destructive step in the squash procedure —
+  # on the strength of a string. The upstream test above catches the common shape of that
+  # (a tip that moved after the push), but not the shape that matters: after a merge with
+  # branch deletion `@{upstream}` no longer resolves, so nothing is left to disagree with.
+  # `forge_says_merged` compares SHAs, and its docstring has the rest. GH_BIN reaches it
+  # through the environment.
+  CW_HOME="${CLAUDE_WORKTREE_HOME:-$HOME/.local/share/claude-worktree}"
+  [ -f "$CW_HOME/claude_worktree.py" ] || exit 0
+  command -v python3 >/dev/null 2>&1 || exit 0
   HEAD_SHA=$(git rev-parse HEAD 2>/dev/null) || exit 0
   [ -n "$HEAD_SHA" ] || exit 0
-  # Every status but a clean exit falls through to silence, as the header says. RB_OUT
-  # carries gh's stderr as well, which is harmless here: only a whole-line match on a
-  # 40-hex SHA counts.
-  run_bounded 5 65536 -- "$GH" pr list --head "$BRANCH" --state merged --limit 30 \
-    --json headRefOid --jq '.[].headRefOid'
+  # Exit 0 is a confirmed merge. Every other status falls through to silence, as the
+  # header says.
+  run_bounded 5 65536 -- python3 "$CW_HOME/claude_worktree.py" forge-merged \
+    "$BRANCH" "$HEAD_SHA"
   if [ "$RB_STATUS" != ok ] || [ "$RB_EXIT" -ne 0 ]; then exit 0; fi
-  printf '%s\n' "$RB_OUT" | grep -qxF "$HEAD_SHA" || exit 0
   LANDED_AS="its pull request is merged into $DEFAULT"
   REWRITTEN=1
 fi

@@ -45,16 +45,24 @@ unlocked and then removed.
 Removal never passes `--force`: git's own refusal on a tree containing modified or
 untracked files is the last line of defence behind the dirty check.
 
-Merged-ness is judged against the local `origin/<default>` ref as it already stands. The
-hook does no network I/O, so a stale ref makes it keep a tree it could have removed —
-never the reverse.
+Merged-ness is judged against the local `origin/<default>` ref as it already stands, so
+a stale ref makes it keep a tree it could have removed — never the reverse.
 
-"Merged" is judged three ways, cheapest first, and only the first one acts.
+"Merged" is judged four ways, cheapest first, and only the first and last act.
 
 Ancestry is the one that removes. Once HEAD is an ancestor of the default branch the
-argument above holds and the tree goes. The other two exist because a squash or rebase
+argument above holds and the tree goes. The next two exist because a squash or rebase
 merge rewrites the commits, so the branch tip is never an ancestor and the tree would
-be kept forever with nothing said. Both are reported, never acted on.
+be kept forever with nothing said. On their own they are reported, never acted on.
+
+The fourth asks GitHub, and only about a tree or branch the second or third flagged.
+`claude_worktree.forge_says_merged` returns True only when a merged PR's head is exactly
+this tip, which is provenance: the work on this branch is the work that merged. That
+tree is removed, and its branch deleted with `-D` once its tip still equals that head.
+It is the only network call here, so every lookup shares one budget
+(`FORGE_BUDGET_S`). A lookup the budget cannot fit, or any gh failure, leaves the
+verdict at REVIEW. This is the check the server repo's pruner already made; before it,
+the two reporters gave opposite verdicts on the same tree (#617).
 
 `git cherry` catches the rebase case: it compares by patch-id, and a branch every one
 of whose commits already has an equivalent on the default branch emits no `+` lines.
@@ -82,11 +90,12 @@ from acting. The operator decides.
 Removing a worktree leaves its branch behind. Nothing else deletes it, so every session
 that isolates its work used to leave a permanent ref. A successful removal is now
 followed by `git branch -d`, and a second sweep covers session branches that have no
-worktree at all. Always `-d`, never `-D`: git's own refusal is the same backstop this
+worktree at all. `-d` is the default: git's own refusal is the same backstop this
 script already relies on for `worktree remove`. That is also why the cherry and
-merge-tree cases are report-only in both sweeps — `-d` would refuse them anyway. What
-`-d` accepts is narrower than "merged" and depends on when you ask; `delete_branch` has
-the mechanism and why a refusal does not prove the branch still holds work.
+merge-tree cases are report-only in both sweeps — `-d` would refuse them anyway. The one
+`-D` is a branch whose exact tip the forge says merged. What `-d` accepts is narrower
+than "merged" and depends on when you ask; `delete_branch` has the mechanism and why a
+refusal does not prove the branch still holds work.
 
 The orphan branches the cherry and merge-tree tests flag are counted, not listed. They
 accumulate: `-d` refuses every one of them, so nothing ever clears them. Listing each
@@ -113,6 +122,7 @@ import argparse
 import os
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -133,6 +143,7 @@ try:
         Worktree,
         cherry_says_landed,
         default_ref,
+        forge_says_merged,
         merge_tree_says_contained,
         parse_worktree_list,
         session_is_alive,
@@ -165,6 +176,11 @@ SESSION_BRANCH_PREFIX = "worktree-"
 # The server repo's pruner is the one it names: it adds the forge check this hook lacks.
 OWN_PRUNER = Path("scripts") / "dev" / "prune_worktrees.py"
 
+# The whole run's allowance for GitHub lookups. The hook's timeout is 15 s and the local
+# git work takes a few of those; a lookup that would start past the budget is skipped,
+# which leaves its tree at REVIEW rather than risking the hook's own kill.
+FORGE_BUDGET_S = 6.0
+
 LOG_PATH = (
     Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
     / "logs"
@@ -179,6 +195,7 @@ def classify(
     is_current: bool,
     equivalent: bool = False,
     contained: bool = False,
+    forge: bool = False,
 ) -> tuple[str, str]:
     """Return (verdict, reason) for one worktree.
 
@@ -192,7 +209,8 @@ def classify(
     proves this branch is where the work came from. The two get distinct reasons
     because they are settled differently: a patch-id match can be a branch that is
     merely older than the default branch, a content match can be one later work
-    superseded.
+    superseded. `forge` settles which: a merged PR whose head is this exact tip makes
+    the tree REMOVABLE.
     """
     if is_current:
         return KEEP, "this session's own worktree"
@@ -203,6 +221,11 @@ def classify(
     if tree.branch is None:
         return KEEP, "detached HEAD — no branch to check"
     if not merged:
+        if forge:
+            return REMOVABLE, (
+                f"{tree.branch} merged as a pull request from exactly this tip, clean, "
+                "unlocked"
+            )
         if equivalent:
             return REVIEW, (
                 f"{tree.branch} is not an ancestor of the default branch, but every "
@@ -347,8 +370,8 @@ def remove(repo: str, tree: Worktree) -> tuple[bool, str]:
     return result.returncode == 0, result.stderr.strip()
 
 
-def delete_branch(repo: str, branch: str) -> bool:
-    """Delete a branch with `-d`. Never `-D`.
+def delete_branch(repo: str, branch: str, merged_head: str = "") -> bool:
+    """Delete a branch with `-d`, or with `-D` when the forge confirmed `merged_head`.
 
     `-d` refuses a branch that is not merged into HEAD **or its upstream**, which makes
     git the arbiter rather than this script — the same division of labour `worktree
@@ -369,9 +392,18 @@ def delete_branch(repo: str, branch: str) -> bool:
     is an error worth reporting. What a refusal does cost is a person: `-D` is then the
     only thing that deletes the branch, and this script will not reach for it. The
     REVIEW verdict exists to put that branch in front of someone.
+
+    `merged_head` is the tip GitHub says a merged PR came from. `-D` runs only while the
+    branch still points at it: a commit made after that check is work the forge never
+    saw, and then `-d` decides as usual.
     """
+    flag = "-d"
+    if merged_head and _git(["rev-parse", f"refs/heads/{branch}"], cwd=repo) == (
+        merged_head
+    ):
+        flag = "-D"
     result = subprocess.run(
-        ["git", "branch", "-d", branch],
+        ["git", "branch", flag, branch],
         cwd=repo,
         capture_output=True,
         text=True,
@@ -467,7 +499,17 @@ def main() -> int:
 
     target = default_ref(repo)
     here = Path.cwd().resolve()
+    deadline = time.monotonic() + FORGE_BUDGET_S
 
+    def forge_confirms(branch: str, head: str) -> bool:
+        remaining = deadline - time.monotonic()
+        if remaining < 1.0:
+            return False
+        return forge_says_merged(repo, branch, head, timeout=min(5.0, remaining))
+
+    # Trees and branches the forge confirmed, keyed to the head it confirmed, so the
+    # branch deletion can re-check that the tip has not moved since.
+    confirmed: dict[str, str] = {}
     removable, review = [], []
     for tree in sessions:
         resolved = Path(tree.path).resolve()
@@ -488,14 +530,30 @@ def main() -> int:
             and tree.branch is not None
             and is_contained(repo, tree.branch, target)
         )
+        dirty = is_dirty(tree.path)
+        is_current = here == resolved or resolved in here.parents
         verdict, reason = classify(
             tree,
             merged=merged,
-            dirty=is_dirty(tree.path),
-            is_current=here == resolved or resolved in here.parents,
+            dirty=dirty,
+            is_current=is_current,
             equivalent=equivalent,
             contained=contained,
         )
+        # Only a tree that would otherwise say "establish which" reaches the network.
+        if (
+            verdict == REVIEW
+            and tree.branch is not None
+            and forge_confirms(tree.branch, tree.head)
+        ):
+            confirmed[tree.branch] = tree.head
+            verdict, reason = classify(
+                tree,
+                merged=merged,
+                dirty=dirty,
+                is_current=is_current,
+                forge=True,
+            )
         if verdict == REMOVABLE:
             removable.append(tree)
         elif verdict == REVIEW:
@@ -519,19 +577,32 @@ def main() -> int:
         and bool(target)
         and (is_equivalent(repo, b, target) or is_contained(repo, b, target))
     ]
+    # The forge settles an orphan the same way it settles a tree.
+    orphan_forge = []
+    for b in orphan_review:
+        tip = _git(["rev-parse", f"refs/heads/{b}"], cwd=repo)
+        if tip and forge_confirms(b, tip):
+            confirmed[b] = tip
+            orphan_forge.append(b)
+    orphan_review = [b for b in orphan_review if b not in orphan_forge]
 
     if not args.prune:
         for tree in removable:
+            how = (
+                "merged as a pull request from exactly this tip"
+                if tree.branch in confirmed
+                else "merged"
+            )
             print(
                 f"[{REMOVABLE:9}] {tree.path}\n"
-                f"            {tree.branch} merged, clean, unlocked"
+                f"            {tree.branch} {how}, clean, unlocked"
             )
         for tree, reason in review:
             print(f"[{REVIEW:9}] {tree.path}\n            {reason}")
-        for branch in orphan_merged:
+        for branch in orphan_merged + orphan_forge:
             print(f"[{REMOVABLE:9}] branch {branch}\n            merged, no worktree")
         report_orphans(orphan_review, args.orphans)
-        total = len(removable) + len(orphan_merged)
+        total = len(removable) + len(orphan_merged) + len(orphan_forge)
         if total:
             print(f"\n{total} removable — re-run with --prune to remove")
         elif not review and not orphan_review:
@@ -546,15 +617,17 @@ def main() -> int:
             log(f"event=worktree_pruned path={tree.path} branch={tree.branch}")
             # Only after the worktree is gone: git refuses to delete a checked-out
             # branch, so the order is a precondition rather than a preference.
-            if tree.branch and delete_branch(repo, tree.branch):
+            if tree.branch and delete_branch(
+                repo, tree.branch, confirmed.get(tree.branch, "")
+            ):
                 branches.append(tree.branch)
                 log(f"event=branch_deleted branch={tree.branch}")
         else:
             failed.append((tree, error))
             log(f"event=worktree_prune_failed path={tree.path} error={error}")
 
-    for branch in orphan_merged:
-        if delete_branch(repo, branch):
+    for branch in orphan_merged + orphan_forge:
+        if delete_branch(repo, branch, confirmed.get(branch, "")):
             branches.append(branch)
             log(f"event=orphan_branch_deleted branch={branch}")
 

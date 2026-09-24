@@ -23,6 +23,13 @@ HOOK = HERE / "executable_worktree-landed.sh"
 if not HOOK.exists():  # deployed copy drops chezmoi's mode prefix
     HOOK = HERE / "worktree-landed.sh"
 
+# The squash fallback runs the claude-worktree package's forge lookup. In the source
+# tree, point the hook at the package beside it; the deployed copy falls through to
+# ~/.local/share/claude-worktree, as test_prune_worktrees.py does.
+_PACKAGE_SOURCE = HERE.parent.parent / "dot_local" / "share" / "claude-worktree"
+if _PACKAGE_SOURCE.is_dir():
+    os.environ.setdefault("CLAUDE_WORKTREE_HOME", str(_PACKAGE_SOURCE))
+
 # Scrub git's own environment before anything runs. These tests build real repositories
 # in a temp dir and drive them with `cwd=`, but GIT_DIR and GIT_WORK_TREE outrank cwd —
 # and git exports both to every hook it runs. Under a pre-commit or pre-push hook an
@@ -56,7 +63,10 @@ GH_STUB.write_text(
     "  esac\n"
     "done\n"
     'case "$fields" in\n'
-    '  *headRefOid*) awk -v b="$branch" \'$1 == b { print $2 }\' "$STUB_MERGED" ;;\n'
+    # headRefOid is answered as gh's JSON, which is what claude_worktree parses.
+    '  *headRefOid*) awk -v b="$branch" \'BEGIN { printf "[" } $1 == b '
+    '{ printf "%s{\\"headRefOid\\": \\"%s\\"}", s, $2; s = "," } '
+    'END { print "]" }\' "$STUB_MERGED" ;;\n'
     '  *) awk -v b="$branch" \'$1 == b { n++ } END { print n+0 }\' "$STUB_MERGED" ;;\n'
     "esac\n"
 )

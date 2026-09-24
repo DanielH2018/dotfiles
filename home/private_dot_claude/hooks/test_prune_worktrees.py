@@ -14,6 +14,7 @@ never unlocks passes every unit test and removes nothing at all.
 """
 
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -458,7 +459,24 @@ def build_branch_repo(root):
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp).resolve()  # see the note on the first temp root above
     repo, trees = build_branch_repo(root)
-    env = {**os.environ, "CLAUDE_CONFIG_DIR": str(root / "cfg")}
+    # A stub `gh` answering from a table, empty until the forge block at the end, so no
+    # run here reaches the network and every squash case is left to the local signals.
+    merged_prs = root / "merged-prs.json"
+    merged_prs.write_text("[]")
+    gh_stub = root / "gh"
+    gh_stub.write_text(
+        f"#!{sys.executable}\n"
+        "import json, sys\n"
+        "branch = sys.argv[sys.argv.index('--head') + 1]\n"
+        f"rows = json.load(open({str(merged_prs)!r}))\n"
+        "print(json.dumps([{'headRefOid': h} for b, h in rows if b == branch]))\n"
+    )
+    gh_stub.chmod(0o755)
+    env = {
+        **os.environ,
+        "CLAUDE_CONFIG_DIR": str(root / "cfg"),
+        "GH_BIN": str(gh_stub),
+    }
 
     check(
         "is_equivalent sees a squash-merged branch",
@@ -590,6 +608,70 @@ with tempfile.TemporaryDirectory() as tmp:
     check(
         "logs both branch deletions",
         "event=branch_deleted" in log and "event=orphan_branch_deleted" in log,
+    )
+
+    # The forge settles what the local signals only flag. GitHub says it merged the
+    # squashed tree's exact tip and the collapsed orphan's exact tip, so both go, branch
+    # and all. The collapsed TREE's branch name has a merged PR too, but from another
+    # tip -- a reused name -- so it stays at review, as does the patch-id orphan, which
+    # the forge says nothing about.
+    def tip(ref):
+        return git(["rev-parse", ref], repo).stdout.strip()
+
+    merged_prs.write_text(
+        json.dumps(
+            [
+                ["worktree-squashed", tip("worktree-squashed")],
+                ["worktree-orphan-collapsed", tip("worktree-orphan-collapsed")],
+                ["worktree-collapsed", "0" * 40],
+            ]
+        )
+    )
+    forge_report = subprocess.run(
+        [sys.executable, str(SCRIPT)], cwd=repo, capture_output=True, text=True, env=env
+    )
+    check(
+        "report calls the forge-confirmed tree removable",
+        f"[{mod.REMOVABLE:9}] {trees / 'squashed'}" in forge_report.stdout
+        and "exactly this tip" in forge_report.stdout,
+    )
+    subprocess.run(
+        [sys.executable, str(SCRIPT), "--prune"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    branches = git(
+        ["for-each-ref", "--format=%(refname:short)", "refs/heads/"], repo
+    ).stdout.split()
+    check("the forge-confirmed worktree is gone", not (trees / "squashed").exists())
+    check("its branch is deleted with -D", "worktree-squashed" not in branches)
+    check(
+        "the forge-confirmed orphan is deleted",
+        "worktree-orphan-collapsed" not in branches,
+    )
+    check(
+        "a merged PR from another tip of the same name keeps the tree",
+        (trees / "collapsed").exists() and "worktree-collapsed" in branches,
+    )
+    check(
+        "an orphan the forge knows nothing about survives",
+        "worktree-orphan-squashed" in branches,
+    )
+
+    # A failing forge is no verdict: the tree the stub would confirm stays at review.
+    failing = {**env, "GH_BIN": "false"}
+    failed_report = subprocess.run(
+        [sys.executable, str(SCRIPT)],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=failing,
+    )
+    check(
+        "a failing gh leaves the collapsed tree at review",
+        f"[{mod.REVIEW:9}] {trees / 'collapsed'}" in failed_report.stdout,
     )
 
 finish()

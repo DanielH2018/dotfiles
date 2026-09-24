@@ -13,8 +13,10 @@ while the session lives its lock reads as in-use. ExitWorktree can, because the 
 the directory before removing it. So the cleanup has to be asked for in-session, and a Stop
 hook is the only place that fires after the merge and before the session goes away.
 
-`prune-worktrees.py` is the backstop, not the plan. It reaps trees, but it deletes **no**
-branches — there is no branch sweep in it.
+`prune-worktrees.py` is the backstop, not the plan. It reaps trees, and it deletes their
+branches with `-d`, plus orphaned session branches. It uses `-D` only on a branch whose
+exact tip GitHub says a merged PR came from. It runs one session late for the tree the
+merging session stands in.
 
 ## The two merge shapes need opposite orders
 

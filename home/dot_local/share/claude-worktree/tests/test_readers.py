@@ -6,17 +6,22 @@ except `default_ref`, which runs a single read-only git query.
 Run: PYTHONPATH=. uv run --no-project --with pytest pytest
 """
 
+import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
+import claude_worktree
 import pytest
 from claude_worktree import (
     Worktree,
     cherry_says_landed,
     default_ref,
+    forge_says_merged,
     merge_tree_says_contained,
     parse_worktree_list,
+    pr_head_says_merged,
     session_is_alive,
 )
 
@@ -206,3 +211,111 @@ def test_default_ref_guesses_main_then_master_without_origin_head(repo):
 
 def test_default_ref_is_none_with_no_merge_target(repo):
     assert default_ref(str(repo)) is None
+
+
+# --- pr_head_says_merged: the forge settles what a drifted squash merge cannot -------
+
+
+def test_pr_head_matching_the_tip_reads_as_merged():
+    tip = "aaaa111"
+    assert pr_head_says_merged(f'[{{"headRefOid": "{tip}"}}]', tip)
+
+
+def test_pr_head_from_a_different_tip_does_not_read_as_merged():
+    # A reused branch name: two merged PRs, neither from this tip.
+    stdout = '[{"headRefOid": "aaaa111"}, {"headRefOid": "bbbb222"}]'
+    assert not pr_head_says_merged(stdout, "cccc333")
+
+
+def test_pr_head_with_no_merged_prs_does_not_read_as_merged():
+    assert not pr_head_says_merged("[]", "aaaa111")
+
+
+def test_pr_head_survives_gh_returning_nothing():
+    assert not pr_head_says_merged("", "aaaa111")
+
+
+def test_pr_head_survives_malformed_json():
+    assert not pr_head_says_merged("not json at all", "aaaa111")
+
+
+def test_pr_head_survives_json_that_is_not_a_list():
+    assert not pr_head_says_merged('{"headRefOid": "aaaa111"}', "aaaa111")
+
+
+# --- forge_says_merged: one bounded, memoised `gh pr list` ----------------------------
+
+
+@pytest.fixture
+def gh_stub(tmp_path, monkeypatch):
+    """A `gh` that answers `pr list --head <b>` from a table and counts its calls.
+
+    Returns (set_merged, calls): set_merged takes (branch, head) rows, and calls() is
+    how many times the stub ran. The memo is cleared so each test starts cold.
+    """
+    table = tmp_path / "merged.json"
+    count = tmp_path / "calls"
+    table.write_text("[]")
+    stub = tmp_path / "gh"
+    stub.write_text(
+        f"#!{sys.executable}\n"
+        "import json, sys\n"
+        f"open({str(count)!r}, 'a').write('x\\n')\n"
+        "branch = sys.argv[sys.argv.index('--head') + 1]\n"
+        f"rows = json.load(open({str(table)!r}))\n"
+        "print(json.dumps([{'headRefOid': h} for b, h in rows if b == branch]))\n"
+    )
+    stub.chmod(0o755)
+    monkeypatch.setenv("GH_BIN", str(stub))
+    monkeypatch.setattr(claude_worktree, "_FORGE_MEMO", {})
+
+    def set_merged(*rows):
+        table.write_text(json.dumps(rows))
+
+    def calls():
+        return len(count.read_text().splitlines()) if count.exists() else 0
+
+    return set_merged, calls
+
+
+def test_forge_says_merged_when_a_merged_pr_has_this_head(gh_stub, tmp_path):
+    set_merged, _ = gh_stub
+    set_merged(("worktree-x", "aaaa111"))
+    assert forge_says_merged(str(tmp_path), "worktree-x", "aaaa111")
+
+
+def test_forge_does_not_say_merged_for_another_tip_of_a_reused_name(gh_stub, tmp_path):
+    set_merged, _ = gh_stub
+    set_merged(("worktree-x", "aaaa111"))
+    assert not forge_says_merged(str(tmp_path), "worktree-x", "bbbb222")
+
+
+def test_forge_failure_reads_as_not_merged(monkeypatch, tmp_path):
+    monkeypatch.setattr(claude_worktree, "_FORGE_MEMO", {})
+    monkeypatch.setenv("GH_BIN", str(tmp_path / "no-such-gh"))
+    assert not forge_says_merged(str(tmp_path), "worktree-x", "aaaa111")
+    monkeypatch.setenv("GH_BIN", "false")
+    assert not forge_says_merged(str(tmp_path), "worktree-y", "aaaa111")
+
+
+def test_forge_asks_once_per_branch_and_head(gh_stub, tmp_path):
+    set_merged, calls = gh_stub
+    set_merged(("worktree-x", "aaaa111"))
+    for _ in range(3):
+        assert forge_says_merged(str(tmp_path), "worktree-x", "aaaa111")
+    assert calls() == 1
+
+
+def test_forge_merged_command_exits_zero_only_on_a_match(gh_stub, tmp_path):
+    set_merged, _ = gh_stub
+    set_merged(("worktree-x", "aaaa111"))
+    script = Path(claude_worktree.__file__)
+
+    def run(*args):
+        return subprocess.run(
+            [sys.executable, str(script), *args], cwd=tmp_path, check=False
+        ).returncode
+
+    assert run("forge-merged", "worktree-x", "aaaa111") == 0
+    assert run("forge-merged", "worktree-x", "bbbb222") == 1
+    assert run("forge-merged") == 2
