@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "46afbac5cb8b14a90ef0cc42b3eec0eab53ab64b03ca3f9c772162954fb54f19",
-      "landed": "2026-09-24T20:30:37.475Z"
+      "hash": "3c234991bb0df9671c294242e0760b75e0d5e1df0789f707800167d94cc5f757",
+      "landed": "2026-09-24T20:40:06.087Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -18,8 +18,8 @@
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "4a020fe535245631b89ad59db4610f61179ab023a7037457037a5f28c01d383d",
-      "landed": "2026-09-24T20:30:37.475Z"
+      "hash": "7316f51ef0337b1a5704e443349c37f60c5546f9a57e18b321d806d300e3c29d",
+      "landed": "2026-09-24T20:40:06.087Z"
     },
     {
       "path": "home/private_dot_claude/agents/chore.md",
@@ -112,6 +112,11 @@
       "landed": "2026-09-24T20:29:15.796Z"
     },
     {
+      "path": "home/private_dot_claude/hooks/executable_explore-nudge.sh",
+      "hash": "85d575a48cd55f7fe37cafc9b15f8fc19a706a5056beea53e231a77f6098fccd",
+      "landed": "2026-09-24T20:40:06.087Z"
+    },
+    {
       "path": "home/private_dot_claude/hooks/executable_guard-permission-request.sh",
       "hash": "1700483981430246860f496302abafadf27ce8ea62179b6a5017b6945de51111",
       "landed": "2026-09-18T22:57:37.560Z"
@@ -168,8 +173,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_planka-stop.sh",
-      "hash": "c236476ee588a4cc12089c098136877113980de307b6140432c25f21ba5e341e",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "f390767fa2bb0d408b403021fb8553f50903af6a9e33b22d2d4cd5614b8a769a",
+      "landed": "2026-09-24T20:40:06.087Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_play-sound.sh",
@@ -243,8 +248,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_stop-checks.py",
-      "hash": "88e8e24dd639823e282b34de1bf296727f005619f9ed4e79daa5b7c4f0e031e6",
-      "landed": "2026-09-24T20:30:37.475Z"
+      "hash": "5fd367efe55c468d1b4d8d148920074f6a7b914e92939b6f168c3c6b3c7c8277",
+      "landed": "2026-09-24T20:40:06.087Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_stop-failure.sh",
@@ -353,8 +358,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_stop_checks.py",
-      "hash": "b8bd5d41960212e367b11d02910306baa844d8c1ac8160cb44d095c014c048d1",
-      "landed": "2026-09-24T20:30:37.475Z"
+      "hash": "d7c08d1881f8bd71b7ed7149520fb45eafc2ee7f072ec9ee6680d89ad5bbeedf",
+      "landed": "2026-09-24T20:40:06.087Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_worktree_landed.py",
@@ -368,8 +373,8 @@
     },
     {
       "path": "home/private_dot_claude/output-styles/daniel-voice.md",
-      "hash": "e04e0227e4d7fe98e07eda43249d28011dafd1eecbda478d3355b1d3b9e7fea1",
-      "landed": "2026-08-20T12:10:04.087Z"
+      "hash": "69e8f6f97df1d78e9bf8bf5f3cf524a2d71684c4cbbac0ed67fb382392af79f3",
+      "landed": "2026-09-24T20:40:06.087Z"
     },
     {
       "path": "home/private_dot_claude/rules/anti-slop.md",
@@ -413,8 +418,8 @@
     },
     {
       "path": "home/private_dot_claude/rules/sql.md",
-      "hash": "16aad1f59de7b80b982f5fdd407815e6ac094f73618e72257a54cf16e15f21f4",
-      "landed": "2026-09-02T12:14:48.417Z"
+      "hash": "265583f1b354dd45e92996d1b15d5f79f77785278a3315479a82ebe7ef9a8494",
+      "landed": "2026-09-24T20:40:06.087Z"
     },
     {
       "path": "home/private_dot_claude/rules/typescript.md",
@@ -548,8 +553,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/planka-tracking/SKILL.md",
-      "hash": "9473bd24d9b665143bfe68f9e7e4d0c48bd8c2bfaf55dfa3ae1c6183b1ba5dad",
-      "landed": "2026-09-24T18:41:43.608Z"
+      "hash": "928011d1a5cc97ab2190b1de41d2ab7a1dc34ae17d48c160b9defab4f896a7b2",
+      "landed": "2026-09-24T20:40:06.087Z"
     },
     {
       "path": "home/private_dot_claude/skills/pr-authoring/SKILL.md",
