@@ -98,3 +98,19 @@ def test_the_hook_nudges_once_per_session(tmp_path):
     # The harness records additionalContext in the transcript; simulate that.
     transcript.write_text(json.dumps({"attachment": {"content": [first]}}) + "\n")
     assert nudge_for("git log", stdin) is None
+
+
+def test_a_subagent_reads_its_own_transcript_for_the_once_rule(tmp_path):
+    from claude_guard.hook import context_transcript, nudge_for
+
+    parent = tmp_path / "sess.jsonl"
+    parent.write_text(json.dumps({"content": [f"{tag('unbounded-log')} x"]}) + "\n")
+    payload = {"transcript_path": str(parent), "agent_id": "a1"}
+    own = tmp_path / "sess" / "subagents" / "agent-a1.jsonl"
+    assert context_transcript(payload) == str(own)
+    # The parent saw the nudge, the subagent has not: the subagent still gets it.
+    stdin = json.dumps({"tool_input": {"command": "git log"}, **payload})
+    assert nudge_for("git log", stdin)
+    own.parent.mkdir(parents=True)
+    own.write_text(json.dumps({"content": [f"{tag('unbounded-log')} x"]}) + "\n")
+    assert nudge_for("git log", stdin) is None

@@ -137,12 +137,29 @@ def nudge_for(command: str, stdin_text: str) -> str | None:
         if found is None:
             return None
         data = json.loads(stdin_text)
-        path = data.get("transcript_path") if isinstance(data, dict) else None
-        if seen(path if isinstance(path, str) else "", found[0]):
+        if not isinstance(data, dict):
+            data = {}
+        if seen(context_transcript(data), found[0]):
             return None
         return found[1]
     except Exception:
         return None
+
+
+def context_transcript(data: dict) -> str:
+    """The transcript that records this caller's additionalContext.
+
+    A subagent's payload carries the PARENT's `transcript_path` plus its own `agent_id`,
+    and the harness writes the subagent's context to
+    `<parent without .jsonl>/subagents/agent-<agent_id>.jsonl` (measured 2026-09-24: a
+    nudge repeated on every call in a subagent until the lookup moved there)."""
+    path = data.get("transcript_path")
+    if not isinstance(path, str) or not path:
+        return ""
+    agent = data.get("agent_id")
+    if isinstance(agent, str) and agent and path.endswith(".jsonl"):
+        return f"{path[: -len('.jsonl')]}/subagents/agent-{agent}.jsonl"
+    return path
 
 
 ASK_JSON = pre_tool_use_json(Verdict("ask", "exception", ASK_REASON))
