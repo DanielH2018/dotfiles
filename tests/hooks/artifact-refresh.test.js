@@ -133,11 +133,11 @@ function runSeed(cwd, stateDir, sessionId = SID) {
 // before it, `post` credits this session with what it added. This is the whole
 // attribution mechanism -- a session that never runs it records nothing.
 function runTrack(cwd, stateDir, mode,
-  { sessionId = SID, cmd = 'git commit -qm x', guardHome = GUARD } = {}) {
+  { sessionId = SID, cmd = 'git commit -qm x', guardHome = GUARD, env = {} } = {}) {
   const r = spawnSync('bash', [TRACK, mode], {
     input: JSON.stringify({ session_id: sessionId, tool_input: { command: cmd } }),
     cwd, encoding: 'utf8',
-    env: { ...process.env, CLAUDE_ARTIFACT_STATE_DIR: stateDir, CLAUDE_GUARD_HOME: guardHome },
+    env: { ...process.env, CLAUDE_ARTIFACT_STATE_DIR: stateDir, CLAUDE_GUARD_HOME: guardHome, ...env },
   });
   assert.strictEqual(r.status, 0, `track hook (${mode}) exits 0 (stderr: ${r.stderr})`);
   assert.strictEqual((r.stdout || '').trim(), '', `track hook (${mode}) says nothing`);
@@ -695,6 +695,29 @@ test('with no claude_guard package the text filter still claims a commit', () =>
   runTrack(a, st, 'pre', { cmd: "git commit -qm 'x'", guardHome: noguard });
   gitCommit(a, 'kept');
   runTrack(a, st, 'post', { cmd: "git commit -qm 'x'", guardHome: noguard });
+  assert.deepStrictEqual(
+    fs.readFileSync(path.join(st, `${sessionSlug(a, SID)}.mine`), 'utf8').trim().split('\n'),
+    ['kept'], 'the fallback records the commit');
+});
+
+// A hung `uv python find` used to hold both halves with no bound (#657). It is bounded
+// now, and a lookup that does not finish is the same as no interpreter: the text filter
+// decides, as in the test above.
+test('a hung interpreter lookup is cut off and the text filter still claims a commit', () => {
+  const { root, work } = repoWithOrigin();
+  const st = state(root);
+  const a = worktree(work, root, 'wt-a', 'slice-one');
+  runSeed(a, st);
+  const bin = path.join(root, 'hung-uv-bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'uv'), '#!/bin/bash\nsleep 30\n', { mode: 0o755 });
+  const env = { PATH: `${bin}:${process.env.PATH}` };
+  const started = Date.now();
+  runTrack(a, st, 'pre', { cmd: "git commit -qm 'x'", env });
+  gitCommit(a, 'kept');
+  runTrack(a, st, 'post', { cmd: "git commit -qm 'x'", env });
+  const seconds = (Date.now() - started) / 1000;
+  assert.ok(seconds < 15, `took ${seconds}s`);
   assert.deepStrictEqual(
     fs.readFileSync(path.join(st, `${sessionSlug(a, SID)}.mine`), 'utf8').trim().split('\n'),
     ['kept'], 'the fallback records the commit');

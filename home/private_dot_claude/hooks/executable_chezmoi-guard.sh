@@ -46,13 +46,6 @@ case "$FILE" in
   "$HOME"/.local/share/chezmoi/*|"$HOME"/Repositories/*|"$HOME"/Documents/*) exit 0 ;;
 esac
 
-# Skip unmanaged files without starting chezmoi. The cache, its key and its knobs are
-# chezmoi-managed-lib.sh's, shared with chezmoi-edit-guard.sh; a listed file still goes to
-# source-path below, which stays the authority.
-# shellcheck source=/dev/null
-. "${BASH_SOURCE[0]%/*}/chezmoi-managed-lib.sh"
-chezmoi_managed_skip "$FILE" && exit 0
-
 emit() {
   jq -n --arg msg "$1" '{
     hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: $msg }
@@ -61,8 +54,9 @@ emit() {
 
 # Every chezmoi call below runs through run_bounded, like every other hook child (#581).
 # They used to run bare, so a chezmoi that hung held the hook until the harness killed it
-# at 15s, and the edit was left unsynced with nothing said. The three bounds add up to
-# less than that 15s. CHEZMOI_GUARD_TIMEOUT_S sets all three, for the tests.
+# at 15s, and the edit was left unsynced with nothing said. The four bounds add up to
+# less than that 15s: 2s for chezmoi-managed-lib.sh's `chezmoi managed`, then the three
+# below. CHEZMOI_GUARD_TIMEOUT_S sets those three, for the tests.
 #
 # A missing library is reported rather than run around: this file may be managed, and if it
 # is, the next apply reverts the edit unless someone re-syncs it.
@@ -73,8 +67,16 @@ if ! . "$RUN_BOUNDED_PATH" 2>/dev/null || ! command -v run_bounded >/dev/null 2>
   exit 0
 fi
 T_LOOKUP=${CHEZMOI_GUARD_TIMEOUT_S:-3}
-T_ADD=${CHEZMOI_GUARD_TIMEOUT_S:-8}
+T_ADD=${CHEZMOI_GUARD_TIMEOUT_S:-7}
 T_CHATTR=${CHEZMOI_GUARD_TIMEOUT_S:-2}
+
+# Skip unmanaged files without starting chezmoi. The cache, its key and its knobs are
+# chezmoi-managed-lib.sh's, shared with chezmoi-edit-guard.sh; a listed file still goes to
+# source-path below, which stays the authority. After the library load, because the
+# cache refresh runs through run_bounded too (#657).
+# shellcheck source=/dev/null
+. "${BASH_SOURCE[0]%/*}/chezmoi-managed-lib.sh"
+chezmoi_managed_skip "$FILE" && exit 0
 
 # source-path exits non-zero when the file isn't managed by chezmoi. Its stderr is dropped
 # inside the child, because run_bounded merges the two streams and SRC must be the path alone.

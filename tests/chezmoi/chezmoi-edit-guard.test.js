@@ -30,10 +30,12 @@ const EXTRA = path.join(BIN, 'extra-managed');
 fs.writeFileSync(path.join(BIN, 'chezmoi'), `#!/bin/bash
 echo "$1" >> ${JSON.stringify(CALLS)}
 case "$1" in
-  managed) printf '%s\\n' "$HOME/.claude/settings.json" "$HOME/.claude/CLAUDE.md" \\
+  managed) [ -n "\${CZ_STUB_SLOW_MANAGED:-}" ] && sleep 30
+           printf '%s\\n' "$HOME/.claude/settings.json" "$HOME/.claude/CLAUDE.md" \\
              "$HOME/.claude/hooks/notify.sh" "$HOME/.gitconfig" "$HOME/.config/once"
            cat ${JSON.stringify(EXTRA)} 2>/dev/null || true ;;
   source-path)
+    [ -n "\${CZ_STUB_SLOW_LOOKUP:-}" ] && sleep 30
     grep -qxF "$2" ${JSON.stringify(EXTRA)} 2>/dev/null && { echo "${SRC}/dot_new.tmpl"; exit 0; }
     case "$2" in
       "$HOME/.claude/settings.json") echo "${SRC}/private_dot_claude/modify_settings.json.sh.tmpl" ;;
@@ -118,4 +120,48 @@ test('a target that becomes managed is denied on the next call, not after a TTL'
   fs.writeFileSync(EXTRA, `${f}\n`);
   t.after(() => [added, EXTRA].forEach((p) => fs.rmSync(p, { force: true })));
   assert.strictEqual(decide(f).permissionDecision, 'deny');
+});
+
+// ---- every chezmoi call is bounded, and a lookup that cannot finish asks (#657) ---------
+//
+// source-path used to run bare behind `|| exit 0`, so a chezmoi that hung or failed read
+// exactly like an unmanaged file: no decision, and the edit to a template's output went
+// through. A lookup that does not finish is now an ask that names it. The accepting half of
+// each pair is 'passes a plain managed file, a create_ target and an unmanaged file' above.
+// run_bounded needs timeout(1), and without one every lookup reports not evaluated.
+const skipBounded = skipUnless('bash', 'jq', 'timeout');
+
+function timed(file, env) {
+  const started = Date.now();
+  const d = decide(file, env);
+  return { d, seconds: (Date.now() - started) / 1000 };
+}
+
+test('a hung source-path lookup asks, naming what did not finish', { skip: skipBounded }, () => {
+  const { d, seconds } = timed(path.join(HOME, '.claude', 'CLAUDE.md'), {
+    CZ_STUB_SLOW_LOOKUP: '1', CHEZMOI_EDIT_GUARD_TIMEOUT_S: '1', CHEZMOI_GUARD_CACHE: '0',
+  });
+  assert.ok(seconds < 10, `took ${seconds}s`);
+  assert.strictEqual(d && d.permissionDecision, 'ask');
+  assert.match(d.permissionDecisionReason, /source-path.*did not answer within 1s \(timeout\).*not evaluated/s);
+});
+
+test('a hung chezmoi managed is cut off and leaves no cache behind', { skip: skipBounded }, () => {
+  reset();
+  const { d, seconds } = timed(path.join(HOME, 'scratch.txt'), {
+    CZ_STUB_SLOW_MANAGED: '1', CHEZMOI_MANAGED_TIMEOUT_S: '1',
+  });
+  assert.ok(seconds < 10, `took ${seconds}s`);
+  // With no cache the authority answers: scratch.txt is unmanaged, so no decision.
+  assert.strictEqual(d, null);
+  assert.strictEqual(callCount('source-path'), 1);
+  assert.ok(!fs.existsSync(path.join(HOME, '.cache', 'claude-hooks', 'chezmoi-managed')));
+});
+
+test('a missing run-bounded.sh asks rather than running chezmoi unbounded', { skip }, () => {
+  reset();
+  const d = decide(path.join(HOME, 'scratch.txt'), { RUN_BOUNDED_LIB: path.join(BIN, 'no-such-lib.sh') });
+  assert.strictEqual(d && d.permissionDecision, 'ask');
+  assert.match(d.permissionDecisionReason, /cannot load .*not evaluated/);
+  assert.strictEqual(callCount('source-path') + callCount('managed'), 0);
 });

@@ -223,6 +223,23 @@ with tempfile.TemporaryDirectory() as tmp:
         )
         == ["a.txt"],
     )
+    # A hung `uv python find` used to hold the hook with no bound (#657). The lookup is
+    # bounded now, and one that does not finish is the same as no interpreter: the regex
+    # decides, and the heredoc body is still not read as a redirect.
+    stub_bin = root / "hung-uv-bin"
+    stub_bin.mkdir()
+    (stub_bin / "uv").write_text("#!/bin/bash\nsleep 30\n")
+    (stub_bin / "uv").chmod(0o755)
+    started = time.monotonic()
+    hung_uv = extracted(
+        "cat > a.txt <<'EOF'\n> b.txt\nEOF",
+        root,
+        {"PATH": f"{stub_bin}:{os.environ['PATH']}"},
+    )
+    check(
+        "a hung interpreter lookup is cut off and the regex decides",
+        hung_uv == ["a.txt"] and time.monotonic() - started < 15,
+    )
     check(
         "an unreadable command fans out nothing",
         extracted("cat > a.txt <<'EOF'\nbody\nEOF\necho \"unbalanced > b.txt", root)

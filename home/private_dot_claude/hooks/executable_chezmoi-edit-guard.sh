@@ -22,8 +22,16 @@
 #
 # Override for a deliberate throwaway edit: start the session with CHEZMOI_EDIT_GUARD=off.
 #
-# Every failure is no decision: no chezmoi, no jq, a source-path that fails. A missed deny
-# leaves chezmoi-guard.sh's warning in place, which is what happened before this hook.
+# No chezmoi and no jq are no decision: with no chezmoi nothing is managed, and a missed
+# deny leaves chezmoi-guard.sh's warning in place. A source-path that exits non-zero is an
+# unmanaged file, also no decision.
+#
+# A lookup that could not finish is different, and asks (#657). Every chezmoi call runs
+# through run_bounded (#581), and one that times out, is killed, or cannot start says
+# nothing about whether the file is managed. It used to share `|| exit 0` with the
+# unmanaged case, so a hung chezmoi let an edit to a template's output through. The ask
+# names what did not finish. A missing run-bounded.sh asks for the same reason: the lookup
+# cannot run bounded, so it does not run.
 
 set -u
 
@@ -38,6 +46,17 @@ hook_require_jq noop || exit 0
 
 FILE=$(hook_field '.tool_input.file_path // .tool_input.notebook_path // empty')
 [ -n "$FILE" ] || exit 0
+
+ask() {
+  jq -n --arg reason "chezmoi-edit-guard: $1 -- not evaluated, so it is unknown whether $FILE is rendered from a template or script source. If it is, a hand edit is reverted by the next \`chezmoi apply\`: check with \`chezmoi source-path $FILE\`. Starting the session with CHEZMOI_EDIT_GUARD=off turns this guard off." '{
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "ask",
+      permissionDecisionReason: $reason
+    }
+  }'
+  exit 0
+}
 
 # Windows: Claude Code passes C:/Users/... while $HOME is /c/Users/... (chezmoi-guard.sh).
 if command -v cygpath >/dev/null 2>&1; then
@@ -59,11 +78,27 @@ esac
 # almost none of them touch a managed file. The cache is chezmoi-managed-lib.sh's, shared
 # with chezmoi-guard.sh and keyed on the source tree, so a file that becomes managed misses
 # it on the next call. A listed file still goes to source-path below, the authority.
+#
+# run-bounded.sh is loaded first, because the cache refresh in chezmoi-managed-lib.sh runs
+# through it too. The two bounds share this hook's 10s: the lib's 2s for `chezmoi managed`,
+# then 3s for source-path. CHEZMOI_EDIT_GUARD_TIMEOUT_S sets the second, for the tests.
+RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/run-bounded.sh}"
+# shellcheck source=/dev/null
+if ! . "$RUN_BOUNDED_PATH" 2>/dev/null || ! command -v run_bounded >/dev/null 2>&1; then
+  ask "cannot load $RUN_BOUNDED_PATH, so chezmoi was not asked"
+fi
 # shellcheck source=/dev/null
 . "${BASH_SOURCE[0]%/*}/chezmoi-managed-lib.sh"
 chezmoi_managed_skip "$FILE" && exit 0
 
-SRC=$(chezmoi source-path "$FILE" 2>/dev/null) || exit 0
+# Its stderr is dropped inside the child, because run_bounded merges the two streams and
+# SRC must be the path alone.
+T_LOOKUP=${CHEZMOI_EDIT_GUARD_TIMEOUT_S:-3}
+# shellcheck disable=SC2016  # $1 belongs to the inner bash
+run_bounded "$T_LOOKUP" 65536 -- bash -c 'exec chezmoi source-path "$1" 2>/dev/null' _ "$FILE"
+[ "$RB_STATUS" = ok ] || ask "\`chezmoi source-path\` did not answer within ${T_LOOKUP}s ($RB_STATUS)"
+[ "$RB_EXIT" -eq 0 ] || exit 0
+SRC=$RB_OUT
 [ -n "$SRC" ] || exit 0
 
 case "${SRC##*/}" in

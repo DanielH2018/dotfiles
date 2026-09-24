@@ -85,6 +85,33 @@ case "$COMMAND" in
   *) exit 0 ;;
 esac
 
+# ── bounds ───────────────────────────────────────────────────────────────────────
+#
+# Every child below runs through run_bounded, like every other hook child (#581, #657).
+# They used to run bare, and `STATUS=$(chezmoi status) || exit 0` let the apply through
+# whenever status failed. A hung chezmoi ran into the harness's 15s kill instead, which
+# is also a pass. Now a status or source-path lookup that does not finish asks, and names
+# what did not finish.
+#
+# The bounds fit each registration's timeout. Pre (15s): 2s for the interpreter lookup,
+# 3s for the parser, 2s for source-path, 5s for status, 12s in all. Post (20s): the same
+# 2s and 3s, then 10s for diff. CHEZMOI_APPLY_GUARD_TIMEOUT_S sets the three chezmoi
+# bounds, for the tests. The parser's two keep their defaults, since the parser only
+# chooses between itself and the text fallback.
+#
+# Loaded after the prefilter, so a Bash call that never names chezmoi pays nothing. A
+# missing library is not fatal here. The parser needs it, so without it the text fallback
+# decides. Only an apply then asks, below, since no chezmoi call can run bounded.
+RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/run-bounded.sh}"
+NO_RB=''
+# shellcheck source=/dev/null
+if ! . "$RUN_BOUNDED_PATH" 2>/dev/null || ! command -v run_bounded >/dev/null 2>&1; then
+  NO_RB=1
+fi
+T_SOURCE_PATH=${CHEZMOI_APPLY_GUARD_TIMEOUT_S:-2}
+T_CZSTATUS=${CHEZMOI_APPLY_GUARD_TIMEOUT_S:-5}
+T_DIFF=${CHEZMOI_APPLY_GUARD_TIMEOUT_S:-10}
+
 # ── the parsed decision ──────────────────────────────────────────────────────────
 #
 # Prints one of:
@@ -99,12 +126,22 @@ esac
 # worktree's own venv, -S -P stop a cwd-local claude_guard.py shadowing the package.
 GUARD_SHARE="${CLAUDE_GUARD_HOME:-${HOME:-}/.local/share/claude-guard}"
 
+#
+# Both children are bounded. A lookup or a parse that does not finish returns 1, which
+# is the same fallback as no interpreter. Their stderr is dropped inside the child,
+# because run_bounded merges it into the output this function prints.
 parsed_decision() {
+  [ -z "$NO_RB" ] || return 1
   [ -f "$GUARD_SHARE/claude_guard/segment.py" ] || return 1
   local py
-  py=$(uv python find --no-project --managed-python --system 3.14 2>/dev/null) || return 1
+  run_bounded 2 4096 -- \
+    bash -c 'exec uv python find --no-project --managed-python --system 3.14 2>/dev/null' </dev/null
+  [ "$RB_STATUS" = ok ] && [ "$RB_EXIT" -eq 0 ] || return 1
+  py=$RB_OUT
   [ -x "$py" ] || return 1
-  CG_SHARE="$GUARD_SHARE" "$py" -S -P -c '
+  # shellcheck disable=SC2016  # $1..$3 belong to the inner bash
+  run_bounded 3 65536 -- bash -c 'CG_SHARE="$1" exec "$2" -S -P -c "$3" 2>/dev/null' _ \
+    "$GUARD_SHARE" "$py" '
 import os, shlex, sys
 
 sys.path.insert(0, os.environ["CG_SHARE"])
@@ -245,7 +282,9 @@ else:
     print(("primary" if reads_primary else "noprimary") + ("+sourced" if sourced else ""))
     for t in targets:
         print(t)
-' 2>/dev/null <<<"$COMMAND"
+' <<<"$COMMAND"
+  [ "$RB_STATUS" = ok ] && [ "$RB_EXIT" -eq 0 ] || return 1
+  printf '%s\n' "$RB_OUT"
 }
 
 # ── the flattened-text fallback ──────────────────────────────────────────────────
@@ -354,14 +393,45 @@ TARGETS=$(printf '%s' "$DECISION" | tail -n +4)
 # what this message used to suggest.
 OVERRIDE="${COMMAND:0:$OFFSET}CHEZMOI_APPLY_GUARD=off ${COMMAND:$OFFSET}"
 
+# A check this hook could not complete. The apply stops for a human rather than going
+# through unchecked, and the override is named for when the operator decides to go ahead.
+ask() {
+  jq -n --arg reason "chezmoi-apply-guard: $1 -- not evaluated, so it is unknown whether this apply reverts a file something other than chezmoi wrote, or deploys from a source checkout behind origin/main. Check \`chezmoi status\` before approving. To skip the guard:
+
+  ${OVERRIDE}" '{
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "ask",
+      permissionDecisionReason: $reason
+    }
+  }'
+  exit 0
+}
+
+post_note() {
+  jq -n --arg msg "chezmoi-apply-guard: $1 -- not evaluated, so it is unknown what this --source apply left ahead of the primary source checkout. Run \`chezmoi diff\` to see it." '{
+    hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: $msg }
+  }'
+  exit 0
+}
+
+if [ -n "$NO_RB" ]; then
+  if [ "$MODE" = "post" ]; then
+    case "$READS" in *+sourced) post_note "cannot load $RUN_BOUNDED_PATH, so chezmoi diff did not run" ;; esac
+    exit 0
+  fi
+  ask "cannot load $RUN_BOUNDED_PATH, so chezmoi was not asked"
+fi
+
 # ── post: what an --source apply left ahead of the primary checkout ─────────────
 #
 # Deploying from a worktree is how unlanded config gets tested, and it leaves $HOME
 # AHEAD of what the primary checkout can reproduce: the next plain apply reverts it.
 # `chezmoi diff` against the default source shows exactly that, so after an --source
 # apply this prints it (#583). Encrypted entries and scripts are excluded, since the
-# diff renders both and this output lands in the transcript. Bounded, and silent on
-# any chezmoi failure: a missing diff is a missed reminder, never a failed command.
+# diff renders both and this output lands in the transcript. Bounded, and silent when
+# chezmoi exits non-zero: a missing diff is a missed reminder, never a failed command.
+# A diff that did not finish is named, so its silence is not read as "nothing ahead".
 if [ "$MODE" = "post" ]; then
   case "$READS" in *+sourced) ;; *) exit 0 ;; esac
   DIFF_ARGS=()
@@ -372,7 +442,15 @@ if [ "$MODE" = "post" ]; then
   done <<EOF
 $TARGETS
 EOF
-  DIFF=$(chezmoi diff --no-pager --exclude=encrypted,scripts ${DIFF_ARGS[@]+"${DIFF_ARGS[@]}"} 2>/dev/null) || exit 0
+  # A byte cap well past LIMIT, so a cut-off diff still fills the excerpt below.
+  run_bounded "$T_DIFF" 1048576 -- bash -c 'exec chezmoi "$@" 2>/dev/null' _ \
+    diff --no-pager --exclude=encrypted,scripts ${DIFF_ARGS[@]+"${DIFF_ARGS[@]}"}
+  case "$RB_STATUS" in
+    ok) [ "$RB_EXIT" -eq 0 ] || exit 0 ;;
+    truncated) ;;
+    *) post_note "\`chezmoi diff\` did not finish within ${T_DIFF}s ($RB_STATUS)" ;;
+  esac
+  DIFF=$RB_OUT
   [ -n "$DIFF" ] || exit 0
   LIMIT=6000
   if [ "${#DIFF}" -gt "$LIMIT" ]; then
@@ -414,12 +492,23 @@ deny() {
 # remote-tracking ref from any worktree; a landing from another machine is invisible
 # here until something fetches. Any git failure is no opinion.
 #
+# DECIDED: the three git calls below run without run_bounded. They read local refs only
+# (rev-list, rev-parse, symbolic-ref; no fetch, no network), answered in under 10ms when
+# measured, and cannot block on anything a hook bound protects against. A bound would add
+# a tempfile and a timeout(1) fork to each, for a hang no one has seen. chezmoi's own
+# lookups here are bounded, since chezmoi reads config and templates that can stall (#657).
+#
 # Parser-only. The flattened-text fallback matches `chezmoi … apply` anywhere in the text,
 # including a commit message or a heredoc body that mentions it, and the window this check
 # fires in (just after a landing) is exactly when sessions write such messages. Before this
 # block, a fallback match with no status conflict passed; it still does.
 if [ "${READS%%+*}" = "primary" ]; then
-  SRC_DIR=$(chezmoi source-path 2>/dev/null) || SRC_DIR=''
+  # A non-zero exit keeps its old meaning, no opinion. A lookup that did not finish asks:
+  # this is the one check that catches a revert of what just landed.
+  run_bounded "$T_SOURCE_PATH" 65536 -- bash -c 'exec chezmoi source-path 2>/dev/null'
+  [ "$RB_STATUS" = ok ] || ask "\`chezmoi source-path\` did not answer within ${T_SOURCE_PATH}s ($RB_STATUS)"
+  SRC_DIR=''
+  [ "$RB_EXIT" -ne 0 ] || SRC_DIR=$RB_OUT
   if [ -n "$SRC_DIR" ] && [ -d "$SRC_DIR" ]; then
     BEHIND=$(git -C "$SRC_DIR" rev-list --count HEAD..refs/remotes/origin/main 2>/dev/null) || BEHIND=''
     case "$BEHIND" in ''|*[!0-9]*) BEHIND=0 ;; esac
@@ -444,8 +533,15 @@ fi
 
 # Whole-tree status: cheap enough here (this hook only fires on an apply) and it
 # avoids having to parse chezmoi's own flags out of the command line to find the
-# targets. Our own failure must never block the user's command.
-STATUS=$(chezmoi status --path-style=absolute 2>/dev/null) || exit 0
+# targets. A status that fails, times out, or is cut off by the byte cap is not a
+# clean tree: it asks, rather than letting the apply through unchecked (#657). An ask
+# stops for a human without refusing, so the override is still one approval away.
+run_bounded "$T_CZSTATUS" 1048576 -- bash -c 'exec chezmoi status --path-style=absolute 2>/dev/null'
+if [ "$RB_STATUS" != ok ]; then
+  ask "\`chezmoi status\` did not finish within ${T_CZSTATUS}s ($RB_STATUS)"
+fi
+[ "$RB_EXIT" -eq 0 ] || ask "\`chezmoi status\` failed (exit $RB_EXIT)"
+STATUS=$RB_OUT
 [ -n "$STATUS" ] || exit 0
 
 # Column 1 in [ADM] means the deployed entry changed since chezmoi last wrote it;

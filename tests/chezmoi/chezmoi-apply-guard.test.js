@@ -38,8 +38,11 @@ const skipParsed = skip || (managedPython ? false : 'no uv-managed 3.14');
 const BIN = scratch(os.tmpdir(), 'czag-bin-');
 fs.writeFileSync(path.join(BIN, 'chezmoi'), `#!/bin/bash
 # status, source-path and diff are consulted by the hook; echo the fixture it was given.
+# STUB_SLOW=<verb> makes that verb hang; STUB_STATUS_EXIT sets status's exit code.
+[ "\${STUB_SLOW:-}" = "$1" ] && sleep 30
 case "$1" in
-  status) printf '%s' "$STUB_STATUS"; [ -n "$STUB_STATUS" ] && printf '\\n' ;;
+  status) printf '%s' "$STUB_STATUS"; [ -n "$STUB_STATUS" ] && printf '\\n'
+          exit "\${STUB_STATUS_EXIT:-0}" ;;
   source-path) printf '%s' "\${STUB_SOURCE_PATH:-}" ;;
   diff) printf '%s\\n' "$*" > "\${STUB_DIFF_ARGS:-/dev/null}"; printf '%s' "\${STUB_DIFF:-}" ;;
   *) exit 0 ;;
@@ -141,8 +144,7 @@ test('a flag value that looks like a path is not treated as a target', { skip },
   denies('chezmoi --source=/home/daniel/.local/share/chezmoi apply');
 });
 
-test('stays silent when chezmoi status fails', { skip }, () => {
-  // Stub returns nothing for an unknown subcommand shape; hook must not block.
+test('stays silent when chezmoi status reports nothing to overwrite', { skip }, () => {
   allows('chezmoi apply', CLEAN);
 });
 
@@ -337,4 +339,54 @@ test('the text fallback ignores quoted and quoted-heredoc text', { skip }, () =>
   // A substitution inside double quotes runs, so that text still counts.
   denies('echo "$(chezmoi apply)"', CLOBBER, empty);
   denies('chezmoi apply', CLOBBER, empty);
+});
+
+// ── a lookup that cannot finish asks instead of allowing (#657) ─────────────────────
+//
+// `STATUS=$(chezmoi status) || exit 0` let the apply through whenever status failed, and
+// every chezmoi call here ran with no bound, so a hung one ran into the harness's 15s kill,
+// which is also a pass. Each is now bounded, and a status or source-path lookup that does
+// not finish asks. The accepting halves are 'allows the normal workflow' and 'allows an
+// apply from a source checkout level with origin/main' above. run_bounded needs timeout(1).
+const skipBounded = skipUnless('bash', 'jq', 'timeout');
+
+function timedRun(command, env, args) {
+  const started = Date.now();
+  const d = run(command, { CHEZMOI_APPLY_GUARD_TIMEOUT_S: '1', ...env }, args);
+  return { d, seconds: (Date.now() - started) / 1000 };
+}
+
+test('a chezmoi status that fails asks rather than allowing the apply', { skip }, () => {
+  const d = run('chezmoi apply', { STUB_STATUS: CLOBBER, STUB_STATUS_EXIT: '1' });
+  assert.strictEqual(d && d.permissionDecision, 'ask');
+  assert.match(d.permissionDecisionReason, /chezmoi status.*exit 1.*not evaluated/s);
+  assert.match(d.permissionDecisionReason, /CHEZMOI_APPLY_GUARD=off chezmoi apply/);
+});
+
+test('a hung chezmoi status is cut off and asks', { skip: skipBounded }, () => {
+  const { d, seconds } = timedRun('chezmoi apply', { STUB_SLOW: 'status' });
+  assert.ok(seconds < 10, `took ${seconds}s`);
+  assert.strictEqual(d && d.permissionDecision, 'ask');
+  assert.match(d.permissionDecisionReason, /chezmoi status.*within 1s \(timeout\)/s);
+});
+
+test('a hung source-path lookup is cut off and asks', { skip: skipBounded }, () => {
+  const { d, seconds } = timedRun('chezmoi apply', { STUB_SLOW: 'source-path' });
+  assert.ok(seconds < 10, `took ${seconds}s`);
+  assert.strictEqual(d && d.permissionDecision, 'ask');
+  assert.match(d.permissionDecisionReason, /source-path.*within 1s \(timeout\)/s);
+});
+
+test('a hung post-apply diff is cut off and reported as not evaluated', { skip: skipParsed || skipBounded }, () => {
+  const { d, seconds } = timedRun('chezmoi apply --source /wt/home', { STUB_SLOW: 'diff' }, ['post']);
+  assert.ok(seconds < 10, `took ${seconds}s`);
+  assert.match(d.additionalContext, /chezmoi diff.*within 1s \(timeout\).*not evaluated/s);
+});
+
+test('a missing run-bounded.sh asks on an apply and stays out of other chezmoi commands', { skip }, () => {
+  const env = { RUN_BOUNDED_LIB: '/nonexistent/run-bounded.sh' };
+  const d = run('chezmoi apply', env);
+  assert.strictEqual(d && d.permissionDecision, 'ask');
+  assert.match(d.permissionDecisionReason, /cannot load .*not evaluated/);
+  assert.strictEqual(run('chezmoi status', env), null);
 });

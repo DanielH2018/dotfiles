@@ -122,14 +122,28 @@ landcmd='(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+
 # The parser is an improvement, never a dependency: no interpreter, no package, or a
 # command it refuses to read all leave the regex verdict standing, which is what this
 # hook did before.
+#
+# Both children run through run_bounded (#581, #657): 2s for the interpreter lookup, 3s
+# for the parse, inside this hook's 10s. One that does not finish returns 1, the same as
+# no interpreter, so the regex verdict stands. A missing run-bounded.sh is that case too:
+# the parser is optional here, so it is skipped rather than run unbounded.
 GUARD_SHARE="${CLAUDE_GUARD_HOME:-${HOME:-}/.local/share/claude-guard}"
+# shellcheck source=/dev/null
+. "${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/run-bounded.sh}" 2>/dev/null
 
 parsed_verdict() {
+  command -v run_bounded >/dev/null 2>&1 || return 1
   [ -f "$GUARD_SHARE/claude_guard/segment.py" ] || return 1
   local py
-  py=$(uv python find --no-project --managed-python --system 3.14 2>/dev/null) || return 1
+  run_bounded 2 4096 -- \
+    bash -c 'exec uv python find --no-project --managed-python --system 3.14 2>/dev/null' </dev/null
+  [ "$RB_STATUS" = ok ] && [ "$RB_EXIT" -eq 0 ] || return 1
+  py=$RB_OUT
   [ -x "$py" ] || return 1
-  CG_SHARE="$GUARD_SHARE" "$py" -S -P -c '
+  # stderr is dropped inside the child: run_bounded merges it into the verdict.
+  # shellcheck disable=SC2016  # $1..$3 belong to the inner bash
+  run_bounded 3 4096 -- bash -c 'CG_SHARE="$1" exec "$2" -S -P -c "$3" 2>/dev/null' _ \
+    "$GUARD_SHARE" "$py" '
 import os, shlex, sys
 
 sys.path.insert(0, os.environ["CG_SHARE"])
@@ -189,7 +203,9 @@ for piece in [s.text for s in p.segments] + list(p.substitutions):
         verdict = "import"
 
 print(verdict)
-' 2>/dev/null <<<"$cmd"
+' <<<"$cmd"
+  [ "$RB_STATUS" = ok ] && [ "$RB_EXIT" -eq 0 ] || return 1
+  printf '%s\n' "$RB_OUT"
 }
 
 VERDICT=$(parsed_verdict) || VERDICT=''
@@ -204,6 +220,11 @@ session=$(hook_field '.session_id // empty')
 # shellcheck source=/dev/null
 . "${ARTIFACT_STATE_LIB:-${BASH_SOURCE[0]%/*}/artifact-state.sh}"
 
+# DECIDED: the git calls from here down run without run_bounded (#657). They are local
+# plumbing (rev-parse, log over refs already on disk; no fetch, no network), and they only
+# run after the filter above has matched a commit-shaped command. A bound would add a
+# tempfile and a timeout(1) fork to each for a hang no one has seen, and this hook is a
+# recorder whose failure costs a missed nudge, not a guard.
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 wt=$(artifact_worktree_slug) || exit 0
 ref=$(artifact_upstream_ref) || exit 0

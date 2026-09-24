@@ -102,14 +102,30 @@ BACKSLASH=$'\x5c'
 # Gated on `<<` in the text, not on `>`: `2>/dev/null` is in a large share of ordinary
 # commands, and paying for an interpreter on those would put a Python start in front of
 # most Bash calls.
+#
+# Both children run through run_bounded (#581, #657): 2s for the interpreter lookup, 3s
+# for the parse. One that does not finish returns 1, the same as no interpreter, so the
+# regex decides. It must never return 0 with nothing printed, which would read as
+# "unreadable" and fan out nothing. The library is sourced here, ahead of its first use;
+# a missing one is reported as a block further down, before any downstream hook runs.
 GUARD_SHARE="${CLAUDE_GUARD_HOME:-${HOME:-}/.local/share/claude-guard}"
+RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-$HOOK_DIR/run-bounded.sh}"
+# shellcheck source=/dev/null
+. "$RUN_BOUNDED_PATH" 2>/dev/null
 
 parsed_strip_heredocs() {
+  command -v run_bounded >/dev/null 2>&1 || return 1
   [ -f "$GUARD_SHARE/claude_guard/segment.py" ] || return 1
   local py
-  py=$(uv python find --no-project --managed-python --system 3.14 2>/dev/null) || return 1
+  run_bounded 2 4096 -- \
+    bash -c 'exec uv python find --no-project --managed-python --system 3.14 2>/dev/null' </dev/null
+  [ "$RB_STATUS" = ok ] && [ "$RB_EXIT" -eq 0 ] || return 1
+  py=$RB_OUT
   [ -x "$py" ] || return 1
-  CG_SHARE="$GUARD_SHARE" "$py" -S -P -c '
+  # stderr is dropped inside the child: run_bounded merges it into the text returned.
+  # shellcheck disable=SC2016  # $1..$3 belong to the inner bash
+  run_bounded 3 1048576 -- bash -c 'CG_SHARE="$1" exec "$2" -S -P -c "$3" 2>/dev/null' _ \
+    "$GUARD_SHARE" "$py" '
 import os, sys
 
 sys.path.insert(0, os.environ["CG_SHARE"])
@@ -125,7 +141,9 @@ if not p.ok:
 SEP = {"&&": " && ", "||": " || ", ";": " ; ", "|": " | ", "&": " & ",
        "newline": "\n", "eof": ""}
 sys.stdout.write("".join(s.text + SEP.get(s.sep, " ") for s in p.segments))
-' 2>/dev/null <<<"$1"
+' <<<"$1"
+  [ "$RB_STATUS" = ok ] && [ "$RB_EXIT" -eq 0 ] || return 1
+  printf '%s' "$RB_OUT"
 }
 
 strip_heredocs() {
@@ -313,10 +331,9 @@ DOWNSTREAM=(auto-format.sh lint-after-edit.sh chezmoi-guard.sh link-artifact.sh)
 # then killed the fan-out and threw away every other hook's output with it. The library is
 # required: without it nothing below may run unbounded, so the paths are reported as not
 # evaluated. A block, as lint-after-edit.sh does for the same broken install, because the
-# chezmoi re-sync skipped here is what stops the next apply reverting the write.
-RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-$HOOK_DIR/run-bounded.sh}"
-# shellcheck source=/dev/null
-if ! . "$RUN_BOUNDED_PATH" 2>/dev/null || ! command -v run_bounded >/dev/null 2>&1; then
+# chezmoi re-sync skipped here is what stops the next apply reverting the write. The
+# library was sourced above, ahead of the heredoc parser.
+if ! command -v run_bounded >/dev/null 2>&1; then
   jq -n --arg lib "$RUN_BOUNDED_PATH" --arg paths "${PATHS[*]}" '{decision: "block",
     reason: ("bash-write-fanout: cannot load \($lib), so the Edit|Write hooks (format, lint, "
       + "chezmoi re-sync) did not run on \($paths) -- not evaluated. Restore it "
