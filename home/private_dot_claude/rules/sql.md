@@ -12,6 +12,18 @@ paths:
 - Batch large backfills; avoid long-running transactions and exclusive locks on hot tables.
 - Before merging, run the `migration-reviewer` agent for the full locking / rollback / PCI review — don't restate that checklist here.
 - `stop-checks.py` blocks once per session that wrote a migration naming no down step or reversibility (an `.up.sql` needs its `.down.sql`), or that dispatched no `migration-reviewer`.
+- To enforce reversibility at merge time, a project repo with migrations calls the dotfiles reusable workflow. It fails a PR that adds a migration with no down step:
+
+  ```yaml
+  jobs:
+    migration-gate:
+      uses: DanielH2018/dotfiles/.github/workflows/migration-gate.yml@<full commit sha>
+      # with:
+      #   paths: |          # default: **/migrations/**, **/migration/**, **/db/migrate/**
+      #     db/schema/**
+  ```
+
+  Pin a full commit SHA, which also pins the gate's script. The dotfiles file `.github/migration-gate/migration_gate.py` documents what counts as a down step for each migration shape: paired `.sql` files, dbmate and goose sections, Flyway undo files, Alembic `downgrade()`, Rails `down`/`change`, and knex/TypeORM `down`. To mark a migration irreversible on purpose, add the comment line `-- migration-gate: irreversible: <reason>` (or with `#` or `//`).
 
 ## Comments
 
