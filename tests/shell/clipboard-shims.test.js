@@ -45,6 +45,11 @@ function makeBmp1x1(b, g, r) {
 
 // Slurp all of stdin into a file using only bash builtins (`cat` is an
 // external command, and PATH is deliberately narrowed to just our stubs).
+//
+// Every wl-copy stub that is handed `input:` must read it. A stub that exits without
+// reading closes the pipe while node may still be writing, and run() rethrows that as
+// `spawnSync /usr/bin/bash EPIPE` -- a scheduling-dependent failure (#666). A test whose
+// child exits before any read, such as a missing backend, passes no `input:` at all.
 function slurpStdinTo(fileExpr) {
   return `IFS= read -r -d '' _body <&0 || true\nprintf '%s' "$_body" > ${fileExpr}`;
 }
@@ -86,7 +91,7 @@ for (const [label, script] of [['xclip', XCLIP], ['xsel', XSEL]]) {
     const dir = scratch(os.tmpdir(), 'clip-shim-');
     const argvFile = path.join(dir, 'argv.txt');
     makeStub(dir, 'wl-copy', `printf '%s' "$*" > ${JSON.stringify(argvFile)}`);
-    run(script, [], { env: { ...process.env, PATH: dir }, wsl: false, input: 'x' });
+    run(script, [], { env: { ...process.env, PATH: dir }, wsl: false });
     assert.ok(!fs.existsSync(argvFile), `${label} must not forward to wl-copy off WSL`);
   });
 }
@@ -149,16 +154,18 @@ test('xclip -t image/png -o forwards the type so binary reads stay intact', { sk
 test('xclip -t <type> on the copy path forwards the type to wl-copy', { skip }, () => {
   const dir = scratch(os.tmpdir(), 'clip-shim-');
   const argvFile = path.join(dir, 'argv.txt');
-  makeStub(dir, 'wl-copy', `printf '%s' "$*" > ${JSON.stringify(argvFile)}`);
+  const stdinFile = path.join(dir, 'stdin.txt');
+  makeStub(dir, 'wl-copy', `printf '%s' "$*" > ${JSON.stringify(argvFile)}\n${slurpStdinTo(JSON.stringify(stdinFile))}`);
   const r = run(XCLIP, ['-selection', 'clipboard', '-t', 'image/png'], { env: { ...process.env, PATH: dir }, input: 'x' });
   assert.strictEqual(r.code, 0);
   assert.strictEqual(fs.readFileSync(argvFile, 'utf8'), '--type image/png');
+  assert.strictEqual(fs.readFileSync(stdinFile, 'utf8'), 'x', 'the typed copy still forwards stdin');
 });
 
 // --- xclip: missing backend ---
 test('xclip fails loudly when wl-copy is missing from PATH', { skip }, () => {
   const dir = scratch(os.tmpdir(), 'clip-shim-'); // empty — no wl-copy/wl-paste stub
-  const r = run(XCLIP, [], { env: { ...process.env, PATH: dir }, input: 'x' });
+  const r = run(XCLIP, [], { env: { ...process.env, PATH: dir } });
   assert.notStrictEqual(r.code, 0);
   assert.match(r.stderr, /wl-copy/);
 });
