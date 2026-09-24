@@ -90,6 +90,11 @@ elif verb == "all":
         parts["reduction"])
     # Serialized exactly as the CLI does, since the rollup matches on the text.
     print(json.dumps(payload, indent=None, ensure_ascii=False))
+elif verb == "subagents":
+    a = json.loads(sys.stdin.read())
+    print(json.dumps(m.report_subagents(a["responses"], m.subagent_queries("7d"), a["now"], "7d")))
+elif verb == "squeries":
+    print(json.dumps(m.subagent_queries(sys.argv[2])))
 elif verb == "rotated":
     print(json.dumps(m._rotated_into_window(sys.argv[2], float(sys.argv[3]))))
 elif verb == "readrecs":
@@ -528,11 +533,48 @@ test('bytes reports an empty stack as zero rather than crashing', { skip }, () =
 // validated before interpolation, and this is what proves the validation runs.
 test('a window that is not a duration never reaches the query', { skip }, () => {
   for (const bad of ['7d] | drop __error__ [1h', '1h;ls', '../etc', '5', 'd']) {
-    const r = otelq(['savings', 'bytes', '--since', bad]);
-    assert.strictEqual(r.code, 2, `--since ${bad} must be refused`);
-    assert.match(r.err, /bad duration/);
-    assert.ok(!r.err.includes('Traceback'), 'a refusal, not a crash');
+    for (const report of ['bytes', 'subagents']) {
+      const r = otelq(['savings', report, '--since', bad]);
+      assert.strictEqual(r.code, 2, `savings ${report} --since ${bad} must be refused`);
+      assert.match(r.err, /bad duration/);
+      assert.ok(!r.err.includes('Traceback'), 'a refusal, not a crash');
+    }
   }
+});
+
+// ---------------------------------------------------------------------------
+// savings subagents — the rows tests/fixtures/subagent-cost.json snapshots.
+
+const vector = (label, rows, at = 1790197590) => ({
+  data: { result: Object.entries(rows).map(([k, v]) => ({ metric: label ? { [label]: k } : {}, value: [at, v] })) },
+});
+
+test('subagents keys rows by label and keeps the strings Loki returned', { skip }, () => {
+  const responses = {
+    cost_usd_by_query_source: vector('query_source', { sdk: '1.5', agent_summary: '0.10000000000000001' }),
+    requests_by_query_source: vector('query_source', { agent_summary: '12' }),
+    subagent_completed_by_is_async: vector('is_async', { true: '3' }),
+    agent_summary_input_tokens: vector(null, { all: '100' }),
+    agent_summary_cache_read_tokens: vector(null, { all: '9000' }),
+    agent_summary_output_tokens: vector(null, { all: '7' }),
+  };
+  const out = JSON.parse(drive(['subagents'], JSON.stringify({ responses, now: 1 })));
+  assert.deepStrictEqual(Object.keys(out.cost_usd_by_query_source), ['agent_summary', 'sdk']);
+  assert.strictEqual(out.cost_usd_by_query_source.agent_summary, '0.10000000000000001');
+  assert.deepStrictEqual(out.subagent_completed_by_is_async, { true: '3' });
+  assert.deepStrictEqual(out.agent_summary_tokens, { input: '100', cache_read: '9000', output: '7' });
+  // The window end is Loki's evaluation time, and the date is taken in UTC as jq's was.
+  assert.strictEqual(out.window_end_epoch, 1790197590);
+  assert.strictEqual(out.measured, '2026-09-23');
+});
+
+test('subagents reports an empty window as nulls, not a crash', { skip }, () => {
+  const out = JSON.parse(drive(['subagents'], JSON.stringify({ responses: {}, now: 1790197590 })));
+  assert.deepStrictEqual(out.cost_usd_by_query_source, {});
+  assert.deepStrictEqual(out.agent_summary_tokens, { input: null, cache_read: null, output: null });
+  assert.strictEqual(out.window_end_epoch, 1790197590);
+  const rendered = drive(['srows'], JSON.stringify(out));
+  assert.match(rendered, /subagent cost rows over 7d/, '--rows needs its own branch');
 });
 
 // ---------------------------------------------------------------------------

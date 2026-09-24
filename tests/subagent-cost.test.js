@@ -13,6 +13,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 
 const { repoPath, srcPath } = require('./lib/paths');
+const { run } = require('./lib/run');
 
 const FIXTURE = JSON.parse(fs.readFileSync(repoPath('tests', 'fixtures', 'subagent-cost.json'), 'utf8'));
 const SKILL = srcPath('private_dot_claude', 'skills', 'orchestrating-subagents', 'SKILL.md');
@@ -77,4 +78,19 @@ test('the snapshot holds the rows the figures are derived from', () => {
   }
   assert.ok(Number(FIXTURE.subagent_completed_by_is_async.true) > 0, 'no subagent_completed rows');
   assert.match(FIXTURE.measured, /^\d{4}-\d{2}-\d{2}$/);
+});
+
+// otelq savings subagents owns the queries (#611). The snapshot records the ones it ran, so
+// a query edited in otelq without a refresh leaves the prose describing a query nobody runs.
+test('the snapshot was taken with the queries otelq runs today', () => {
+  const OTELQ = srcPath('dot_local', 'bin', 'executable_otelq');
+  // otelq has no .py suffix, so the loader is named, as in otelq.test.js.
+  const load = 'import importlib.util, json, sys\nfrom importlib.machinery import SourceFileLoader\n'
+    + 'loader = SourceFileLoader("otelq", sys.argv[1])\n'
+    + 'm = importlib.util.module_from_spec(importlib.util.spec_from_loader("otelq", loader))\n'
+    + 'loader.exec_module(m)\n'
+    + 'print(json.dumps(m.subagent_queries(sys.argv[2])))';
+  const r = run('python3', ['-c', load, OTELQ, FIXTURE.window]);
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.deepStrictEqual(JSON.parse(r.stdout), FIXTURE.queries);
 });

@@ -87,8 +87,9 @@ brief ending "report what you find" buys a narrative you then carry for the rest
 session; one ending "return a table with columns X, Y, Z" does not.
 
 **Subagents carry a second cost line, `agent_summary`.** Measured 2026-09-23 over 7 days
-(`tests/fixtures/subagent-cost.json` holds the queries and rows): subagents cost $688 of
-list-price tokens and `agent_summary` requests cost a further $136. That is $0.92 per
+(`otelq savings subagents` reports the rows, and `tests/fixtures/subagent-cost.json` holds
+this snapshot of them): subagents cost $688 of list-price tokens and `agent_summary`
+requests cost a further $136. That is $0.92 per
 `subagent_completed` event across 149 of them, and 17% of the all-in cost of delegating. Every
 one of those events came from a background subagent. The line is not one pass over the
 returned report. There were 12.9 `agent_summary` requests per completed subagent, and each

@@ -727,7 +727,96 @@ def report_trend(records, window):
     }
 
 
+_CLAUDE = '{service_name="claude-code"}'
+
+# (key, label) for the grouped queries. The keys are the ones
+# tests/fixtures/subagent-cost.json stores, so its refresh script writes this report's
+# output as the fixture without reshaping it.
+_SUBAGENT_GROUPS = (
+    ("cost_usd_by_query_source", "query_source"),
+    ("requests_by_query_source", "query_source"),
+    ("subagent_completed_by_is_async", "is_async"),
+)
+_SUBAGENT_TOKENS = (("input", "input_tokens"), ("cache_read", "cache_read_tokens"),
+                    ("output", "output_tokens"))
+
+
+def subagent_queries(since):
+    """The LogQL behind the subagent-cost figures in orchestrating-subagents/SKILL.md.
+
+    `since` becomes a range literal inside each query, so it is validated first, as in
+    `_bytes_by_tool`.
+    """
+    parse_duration(since)
+    rng = f"[{since}]"
+    api = f'{_CLAUDE} | event_name="api_request"'
+    queries = {
+        "cost_usd_by_query_source":
+            f"sum by (query_source) (sum_over_time({api} | unwrap cost_usd {rng}))",
+        "requests_by_query_source":
+            f"sum by (query_source) (count_over_time({api} {rng}))",
+        "subagent_completed_by_is_async":
+            f'sum by (is_async) (count_over_time({_CLAUDE} '
+            f'| event_name="subagent_completed" {rng}))',
+    }
+    for _name, field in _SUBAGENT_TOKENS:
+        queries[f"agent_summary_{field}"] = (
+            f'sum(sum_over_time({api} | query_source="agent_summary" | unwrap {field} '
+            f"{rng}))")
+    return queries
+
+
+def report_subagents(responses, queries, now, window):
+    """What subagents and their `agent_summary` requests cost, as raw per-label rows.
+
+    Values stay the strings Loki returned. tests/subagent-cost.test.js derives
+    the figures SKILL.md quotes from these rows, and that test holds the definitions.
+    """
+    def result(key):
+        return ((responses.get(key) or {}).get("data") or {}).get("result") or []
+
+    def rows(key, label):
+        out = {}
+        for series in result(key):
+            name = (series.get("metric") or {}).get(label) or "all"
+            out[name] = (series.get("value") or [None, None])[1]
+        return dict(sorted(out.items()))
+
+    def total(key):
+        found = result(key)
+        return found[0]["value"][1] if found else None
+
+    # Loki echoes the evaluation time on every sample. Take it from there when there is
+    # one, so the recorded window end is the one the numbers were computed at.
+    first = result("cost_usd_by_query_source")
+    at = first[0]["value"][0] if first else int(now)
+    payload = {
+        "report": "subagents",
+        "measured": time.strftime("%Y-%m-%d", time.gmtime(at)),
+        "window": window,
+        "window_end_epoch": at,
+        "queries": dict(sorted(queries.items())),
+    }
+    for key, label in _SUBAGENT_GROUPS:
+        payload[key] = rows(key, label)
+    payload["agent_summary_tokens"] = {
+        name: total(f"agent_summary_{field}") for name, field in _SUBAGENT_TOKENS}
+    return payload
+
+
+def cmd_savings_subagents(ns, now):
+    # One `now` for all six queries, so every one evaluates over the same window.
+    queries = subagent_queries(ns.since)
+    responses = {key: _get(LOKI, "/loki/api/v1/query",
+                           {"query": q, "time": str(int(now))}, ns.timeout)
+                 for key, q in queries.items()}
+    return report_subagents(responses, queries, now, ns.since)
+
+
 def cmd_savings(ns, now):
+    if ns.report == "subagents":
+        return cmd_savings_subagents(ns, now)
+
     if ns.report == "reduction":
         return cmd_savings_reduction(ns, now)
 
@@ -842,6 +931,16 @@ def _savings_rows(payload):
                          "otel-savings-rollup.timer enabled?")
         return "\n".join(lines)
 
+    if payload["report"] == "subagents":
+        lines = [f"-\tsubagent cost rows over {payload['window']}, measured "
+                 f"{payload['measured']}"]
+        for key, label in _SUBAGENT_GROUPS:
+            for name, value in payload[key].items():
+                lines.append(f"{value}\t{key}\t{label}={name}")
+        for name, value in payload["agent_summary_tokens"].items():
+            lines.append(f"{value}\tagent_summary_tokens\t{name}")
+        return "\n".join(lines)
+
     if payload["report"] == "all":
         return "\n".join(f"{v}\t{k}" for k, v in payload.items()
                          if isinstance(v, (int, float)))
@@ -951,13 +1050,14 @@ def main(argv=None):
         parents=[common])
     p.add_argument("report", nargs="?", default="prompts",
                    choices=("prompts", "bytes", "failures", "subst", "reduction",
-                            "all", "trend"),
+                            "all", "trend", "subagents"),
                    help="prompts: interruptions still on the table (default). "
                         "bytes: where context goes. failures: the retry tax. "
                         "subst: is the rule holding. "
                         "reduction: bytes the filter tools removed. "
                         "all: every headline on one line, for the rollup. "
-                        "trend: the rollup as a series")
+                        "trend: the rollup as a series. "
+                        "subagents: the rows behind the subagent-cost figures")
     p.add_argument("--since", default="7d", help="window (default: 7d)")
 
     ns = parser.parse_args(argv)
