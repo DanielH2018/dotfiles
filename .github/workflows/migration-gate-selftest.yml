@@ -1,0 +1,9 @@
+# Throwaway caller for PR proof of #659; never merged.
+name: migration-gate-selftest
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  migration-gate:
+    uses: DanielH2018/dotfiles/.github/workflows/migration-gate.yml@53121a07980d2c768bc4567f41d24cc7043f6b62
