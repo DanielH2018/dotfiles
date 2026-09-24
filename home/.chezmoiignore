@@ -121,14 +121,6 @@ Scripts
 .claude/scheduled/run-skill.sh
 {{ end }}
 
-# tasklist.exe / taskkill.exe symlinks point into /mnt/c (taskkill is used by agentview to
-# end Windows panes), so deploy them only on WSL (a linux kernel reporting "microsoft").
-# Elsewhere they'd be dangling symlinks.
-{{ if not (and (eq .chezmoi.os "linux") (includeTemplate "is-wsl" .)) }}
-.local/bin/tasklist.exe
-.local/bin/taskkill.exe
-{{ end }}
-
 # yazi: plugin & flavor code is vendored by `ya pkg install` from the tracked
 # package.toml, so don't manage the fetched dirs — except the hand-written
 # linemode-cycle plugin, which IS tracked here.

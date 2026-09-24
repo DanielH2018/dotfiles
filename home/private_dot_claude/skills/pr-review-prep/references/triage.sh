@@ -56,7 +56,7 @@ metrics() {
   while read -r sha; do
     subj="$(git log -1 --format=%s "$sha")"
     rawmsg="$(git log -1 --format=%B "$sha")"
-    if echo "$subj" | grep -Eqi 'wip|fixup|squash|address (review|feedback|comments)|typo|lint' \
+    if grep -Eqi 'wip|fixup|squash|address (review|feedback|comments)|typo|lint' <<<"$subj" \
        || [ -z "$(echo "$rawmsg" | tr -d '[:space:]')" ]; then
       fixups=$((fixups+1))
     fi

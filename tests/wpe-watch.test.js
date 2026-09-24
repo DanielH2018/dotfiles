@@ -196,6 +196,25 @@ test('ignores a wpe that answers `resolved` with usage text', { skip }, () => {
   assert.match(out, /no usable output list/);
 });
 
+// Under pipefail, `printf "$out" | grep -qv` fails when grep exits at the first bad line and
+// printf then takes SIGPIPE on the rest, which skipped the `return 1` and accepted the output
+// (dotfiles #650). Output longer than the pipe buffer makes that deterministic.
+test('rejects usage text followed by a long tail', { skip }, () => {
+  const sb = sandboxWithOldWpe(['DP-1']);
+  write(
+    path.join(sb.bin, 'wpe'),
+    `#!/usr/bin/env bash
+case "$1" in
+  restart) echo restart >> ${JSON.stringify(path.join(sb.dir, 'restarts'))} ;;
+  *) echo 'usage: wpe <command>'; yes DP-9 | head -n 100000 ;;
+esac
+`,
+  );
+  const out = run(sb);
+  assert.ok(!sb.restarted(), 'a bad first line must reject the whole output');
+  assert.match(out, /no usable output list/);
+});
+
 test('does not act when two consecutive reads disagree', { skip }, () => {
   const sb = sandbox({
     // Mid-flip: the second display appears between the two reads.

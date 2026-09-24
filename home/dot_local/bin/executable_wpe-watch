@@ -63,7 +63,9 @@ drawing() {
 wanted() {
   local out
   out="$("$WPE" resolved 2>/dev/null)" || return 1
-  printf '%s\n' "$out" | grep -qvE '^[A-Za-z0-9_-]*$' && return 1
+  # A herestring, not a pipe: under pipefail, grep -q exiting at the first bad line leaves the
+  # writer to take SIGPIPE, the pipeline reads as failed, and the `return 1` is skipped.
+  grep -qvE '^[A-Za-z0-9_-]*$' <<<"$out" && return 1
   printf '%s\n' "$out" | sed '/^$/d' | sort -u
 }
 

@@ -50,3 +50,9 @@
 # the /reprime skill every ~30 calls, and carried no repo fact. The skill stays for manual use,
 # and session-end.sh counts tool calls from the transcript instead of this hook's counter.
 .claude/hooks/reprime-nudge.sh
+
+# #636: the WSL symlinks into /mnt/c/Windows/System32. taskkill was how agentview ended a
+# Windows pane, and nothing has called either since agentview was removed (#376); the operator
+# confirmed no caller on the work laptop or desktop.
+.local/bin/tasklist.exe
+.local/bin/taskkill.exe

@@ -560,9 +560,11 @@ list_sessions() {
   # Main repo session (no worktree). The run id is anchored to end of line, as at
   # the --shell probe above: unanchored, "<base>-[0-9a-f]" also matches a WORKTREE
   # instance whose name merely starts with a hex character, so a running `alpha`
-  # would report the main repo as running too.
+  # would report the main repo as running too. Both probes read a herestring, not a
+  # pipe: under pipefail, grep -q exiting at an early match leaves echo to take
+  # SIGPIPE on a long listing, and the match reads as "stopped".
   local main_status="stopped"
-  if echo "$running_containers" | grep -qE "^claudebot-${base_instance}-[0-9a-f]+$"; then
+  if grep -qE "^claudebot-${base_instance}-[0-9a-f]+$" <<<"$running_containers"; then
     main_status="running"
   fi
   printf "  %-12s %-30s %-10s %s\n" "NAME" "BRANCH" "STATUS" "RESUME"
@@ -579,7 +581,7 @@ list_sessions() {
   while IFS=$'\t' read -r wt_name wt_branch wt_path; do
     wt_instance="${base_instance}-${wt_name}"
     wt_status="stopped"
-    if echo "$running_containers" | grep -qE "^claudebot-${wt_instance}-[0-9a-f]+$"; then
+    if grep -qE "^claudebot-${wt_instance}-[0-9a-f]+$" <<<"$running_containers"; then
       wt_status="running"
     fi
     if [[ "$wt_branch" == claude/* ]]; then

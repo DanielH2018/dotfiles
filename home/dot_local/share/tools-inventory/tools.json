@@ -975,23 +975,6 @@
       "desc": "Convert a BMP on stdin to a PNG on stdout, stdlib only, no Pillow. WSLg mirrors the Windows clipboard image only as <code>image/bmp</code>, but Claude Code and the API accept png/jpeg/gif/webp. Handles the 24- and 32-bit <code>BITMAPINFOHEADER</code> bitmaps WSLg emits and exits non-zero on anything else, so the xclip shim falls back cleanly."
     },
     {
-      "id": "tasklist",
-      "name": "tasklist.exe",
-      "alias": "· taskkill.exe",
-      "group": "shims",
-      "source": "dot_local/bin/symlink_tasklist.exe",
-      "alsoCovers": ["dot_local/bin/symlink_taskkill.exe"],
-      "deployed": ".local/bin/tasklist.exe",
-      "lang": "bash",
-      "langLabel": "symlinks",
-      "noLines": true,
-      "plat": ["wsl"],
-      "platLabel": "WSL only",
-      "role": ["shim"],
-      "badges": [{ "cls": "b-inert", "text": "no caller since agentview was removed" }],
-      "desc": "Symlinks into <code>/mnt/c/Windows/System32</code> — <code>taskkill</code> was how agentview ended a Windows pane. Deployed only on WSL (a Linux kernel reporting \"microsoft\"); anywhere else they would be dangling."
-    },
-    {
       "id": "discord",
       "name": "discord",
       "group": "shims",

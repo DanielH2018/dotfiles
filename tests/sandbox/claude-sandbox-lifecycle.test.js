@@ -317,11 +317,12 @@ function sessionsFixture(worktrees = [{ name: 'alpha', branch: 'claude/alpha' },
   return { root, repo };
 }
 
-function listRun(f, { running = '', sessionsBase = null } = {}) {
+function listRun(f, { running = '', sessionsBase = null, fillerLines = 0 } = {}) {
+  const filler = fillerLines ? `; yes claudebot-filler-0 | head -n ${fillerLines}` : '';
   const r = drive('list_sessions', {
     lib: true,
     env: { REPO_PATH: f.repo, SESSIONS_BASE: sessionsBase ?? path.join(f.root, 'sessions') },
-    pre: `docker() { printf '%s\\n' ${q(running)}; }`,
+    pre: `docker() { printf '%s\\n' ${q(running)}${filler}; }`,
   });
   const rows = r.stdout.split('\n').filter((l) => /^ {2}\S/.test(l) && !/^ {2}(NAME|----)/.test(l));
   return { ...r, rows };
@@ -382,6 +383,17 @@ test('a real main-session container is still detected', { skip }, () => {
     'main reports running when its own container is up');
   assert.ok(r.rows.filter((l) => !l.includes('(main)')).every((l) => l.includes('stopped')),
     'no worktree is dragged along by the main session');
+});
+
+test('a match on an early line survives a long docker ps listing', { skip }, () => {
+  // Under pipefail, `echo "$list" | grep -q` fails when grep exits at its
+  // first match and echo then takes SIGPIPE on the rest. A listing longer than
+  // the pipe buffer makes that deterministic: the running session read as
+  // stopped (dotfiles #650).
+  const f = sessionsFixture();
+  const r = listRun(f, { running: `claudebot-demo-${repoHash(f.repo)}-1a2b3c`, fillerLines: 50000 });
+  assert.ok(r.rows.find((l) => l.includes('(main)')).includes('running'),
+    'main reports running even when its container is listed before a long tail');
 });
 
 test('a worktree probe does not match a longer worktree name', { skip }, () => {
