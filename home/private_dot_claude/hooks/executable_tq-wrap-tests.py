@@ -112,7 +112,19 @@ def one_simple_command(command):
     )
 
 
-def rewrite(command):
+def in_isolated_worktree(cwd):
+    """Whether `cwd` is inside a Claude Code worktree under `.claude/worktrees/`.
+
+    Claude Code refuses a worktree-isolated session's git command when a launcher
+    stands in front of it, because it cannot prove where the git call runs. A
+    `tq git log` is exactly that shape, so there the rewrite would turn a working
+    read into a refused one (DanielH2018/server#2454). EnterWorktree and
+    `isolation: "worktree"` agents both place their checkout under this path.
+    """
+    return f"{os.sep}.claude{os.sep}worktrees{os.sep}" in os.path.join(cwd, "")
+
+
+def rewrite(command, cwd=""):
     """The command to run instead, or None to leave this one alone."""
     if os.environ.get("TQ_OFF") or not os.path.exists(TQ_SOURCE):
         return None
@@ -129,6 +141,8 @@ def rewrite(command):
     except ValueError:  # unbalanced quotes: not ours to interpret
         return None
     if not argv:
+        return None
+    if os.path.basename(argv[0]) == "git" and in_isolated_worktree(cwd):
         return None
     detect, candidates = load_detect()
     # Both the shortlist and the decision come from tq's own module. Keeping a
@@ -151,7 +165,7 @@ def main():
         return
     command = (payload.get("tool_input") or {}).get("command") or ""
     try:
-        updated = rewrite(command)
+        updated = rewrite(command, payload.get("cwd") or "")
     except Exception:  # noqa: BLE001
         # Both catches are deliberately blind, and that is the whole design:
         # this hook stands in front of every Bash call the agent makes, so any

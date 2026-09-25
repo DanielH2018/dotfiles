@@ -51,8 +51,8 @@ if (have('python3')) {
   hardenedGuard = hardenedCopy(scratch(os.tmpdir(), 'tq-hook-guard-'), GUARD_SRC);
 }
 
-function runHook(command, { tool = 'Bash', env = {}, raw = null } = {}) {
-  const input = raw !== null ? raw : JSON.stringify({ tool_name: tool, tool_input: { command } });
+function runHook(command, { tool = 'Bash', env = {}, raw = null, cwd } = {}) {
+  const input = raw !== null ? raw : JSON.stringify({ tool_name: tool, tool_input: { command }, cwd });
   // TQ_OFF must not reach the hook from the ambient environment. `.githooks/pre-push`
   // documents `TQ_OFF=1 git push` as the supported way to get raw runner output, and because
   // rewrite() returns None on TQ_OFF, inheriting it turned the three rewrite assertions below
@@ -128,6 +128,22 @@ test('the sweeps that dominate context are routed too', { skip }, () => {
   // Still not mistaken for the runner it merely names: this is a grep survey,
   // and nothing injects pytest's reporter flags into it.
   assert.strictEqual(rewritten('grep pytest notes.txt'), 'tq grep pytest notes.txt');
+});
+
+test('git is left alone inside a Claude worktree, where a launcher in front of it is refused', { skip }, () => {
+  // Claude Code refuses `tq git ...` in a worktree-isolated session because it
+  // cannot prove where a git call behind a launcher runs (server#2454).
+  const cwd = '/repo/.claude/worktrees/some-branch';
+  assert.strictEqual(rewritten('git log --oneline -3', { cwd }), null);
+  assert.strictEqual(rewritten('git diff --stat main', { cwd: `${cwd}/sub` }), null);
+  // Only git: the other sweeps are still routed there.
+  assert.strictEqual(rewritten('rg TODO src', { cwd }), 'tq rg TODO src');
+  // A primary checkout, or a directory merely named like one, still wraps git.
+  assert.strictEqual(rewritten('git log --oneline -3', { cwd: '/repo' }), 'tq git log --oneline -3');
+  assert.strictEqual(
+    rewritten('git log --oneline -3', { cwd: '/repo/.claude/worktrees-old' }),
+    'tq git log --oneline -3',
+  );
 });
 
 test('a command that writes or runs something is never claimed', { skip }, () => {
