@@ -3,6 +3,30 @@
 Re-record after any edit to the skill's `description`, which is the only field this
 eval measures. A result is valid only for the model that produced it.
 
+## 2026-09-25 (pr-review-prep folded in) · opus · 3 runs/case · 8/8
+
+Peers in the isolated config: `gh-stack`, `receiving-code-review`.
+
+| Case | Expect | Fired | Verdict |
+|---|---|---|---|
+| write-pr-description | fires | 3/3 | pass |
+| what-should-it-say | fires | 3/3 | pass |
+| empty-body | fires | 3/3 | pass |
+| gh-pr-create | fires | 3/3 | pass |
+| commit-message | silent | 0/3 | pass |
+| review-diff | silent | 0/3 | pass |
+| split-branch | silent | 0/3 | pass |
+| rebase-howto | silent | 0/3 | pass |
+
+Two things changed since the 2026-08-29 run. The description dropped the clause
+`` `pr-review-prep` covers whether the diff is shaped to be reviewed``, because that skill was
+deleted and its size-and-history check moved into this one. The eval's peer list dropped
+`pr-review-prep` for the same reason.
+
+The case to watch was `split-branch`. With the clause gone, the description names only
+`gh-stack` as the owner of splitting, and this skill now owns the size check that sits next to
+splitting. It stayed at 0/3.
+
 ## 2026-08-29 (after the description fix) · opus · 8/8
 
 | Case | Expect | Fired | Verdict |
