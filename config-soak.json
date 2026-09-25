@@ -263,8 +263,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_tq-wrap-tests.py",
-      "hash": "a5d786d9755007a9eeec36b2be061d621614fa3d5c687f14a145b065fc20387f",
-      "landed": "2026-09-23T23:52:45.409Z"
+      "hash": "287346fe00f8de7f7c569e67729b38edaaff6beb46f26aa48c2be0e56d21d365",
+      "landed": "2026-09-25T12:46:48.719Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_tq-wrap-tests.sh",
