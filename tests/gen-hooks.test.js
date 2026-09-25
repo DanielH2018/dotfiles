@@ -214,6 +214,7 @@ const NOT_A_HOOK = {
   'allow-readonly-remote.sh': 'deleted in the claude-guard slice 3 cutover; homelab/SKILL.md cites it as what judge() ported',
   'conftest.py': 'pytest\'s own filename, in rules/python.md',
   'install.sh': 'the work-laptop-config repo\'s installer',
+  'land.sh': 'the server repo\'s merge tool, in pr-authoring/SKILL.md',
   'probe.py': 'the server repo\'s diagnostics entry point',
   'run-skill.sh': 'the launchd runner in ~/.local/bin, not a hook',
   'telemetry-health.sh': 'a script on the homelab server',
