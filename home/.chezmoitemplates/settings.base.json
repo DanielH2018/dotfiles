@@ -461,6 +461,11 @@
       "$defaults",
       "Read-only kubectl against the homelab k3s cluster (get, logs, describe, top, events, explain, api-resources, diff) is routine and needs no confirmation — the default credential is a read-only ServiceAccount that cannot do anything else",
       "Running the repo's own test and lint tooling is routine: `uv run pytest`, `prek run`, `ansible-lint`, and `uv run python scripts/diagnostics/probe.py` (read-only diagnostics)",
+      {{/* Denied as "External System Writes" on 2026-09-25 while polling a fan-out wave. The
+           command reaches two hosts and GitHub, which is what the classifier keyed on, but every
+           reach is a read: cmd_status in scripts/dev/fanout_place.py loads the manifest, runs the
+           batch status read over ssh, and asks GitHub for merged PRs, and writes nothing. */}}
+      "`uv run python scripts/dev/fanout_place.py status <run-id>` in ~/server is routine and read-only: it loads a fan-out run's manifest, reads each batch's transient user unit and worktree report over ssh on daniel-box and daniel-server, and asks GitHub whether each batch branch has a merged PR. It writes nothing on either host, in the manifest, or on GitHub",
       "Editing ansible/vars/secrets.yml through `sops` is routine — it is the sanctioned way to change a secret, and the file stays encrypted at rest",
       {{/* Sessions here manage their own worktrees end to end; the permission tiers cover the
            tool calls, this covers the shell half so the classifier doesn't hesitate on cleanup.
