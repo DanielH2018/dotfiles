@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "b5849fdba2e93c7502dda35e6c554c66be43fdbb21d70bf762e1038bb32f1d3d",
-      "landed": "2026-09-25T12:53:12.590Z"
+      "hash": "840ea5e0c6f75b7588be1dcf38086c8e34a441d30824f01c29c8eb85a4a7d57c",
+      "landed": "2026-09-25T13:33:08.320Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -18,8 +18,8 @@
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "7316f51ef0337b1a5704e443349c37f60c5546f9a57e18b321d806d300e3c29d",
-      "landed": "2026-09-24T20:40:06.087Z"
+      "hash": "21fa4ed7011f875651501c2a73728d2c7119a1ee7045bfa95adbbad0ece17030",
+      "landed": "2026-09-25T13:33:08.320Z"
     },
     {
       "path": "home/private_dot_claude/agents/chore.md",
@@ -33,8 +33,8 @@
     },
     {
       "path": "home/private_dot_claude/agents/implementer.md",
-      "hash": "3982ac6fb752cfb84a73bc1e0396e3451bde7edd17eb5ddb075bb09138cc2d41",
-      "landed": "2026-07-26T00:05:12.535Z"
+      "hash": "573dfe0d45116e202890d9dcd676821a6d277aa7959d8d58f869e94ecdd0ca83",
+      "landed": "2026-09-25T13:33:08.320Z"
     },
     {
       "path": "home/private_dot_claude/agents/migration-reviewer.md",
@@ -328,8 +328,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_isolation_guard.py",
-      "hash": "1992ebb3d6c1c0d109ac1b7127ec9f189a800d6a207ed76baa01d73136852454",
-      "landed": "2026-09-24T17:06:06.813Z"
+      "hash": "99a6d8fe1f91df9a61c67f3dad1c7b33d8f85704bffb8630c92c3f01c2590148",
+      "landed": "2026-09-25T13:33:08.320Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_memory_upkeep.py",
@@ -442,14 +442,9 @@
       "landed": "2026-09-24T17:39:07.114Z"
     },
     {
-      "path": "home/private_dot_claude/skills/codebase-design/SKILL.md",
-      "hash": "c9928d26405842c81faa72438219a6174c394612e27c14846d74c59f8ae1cc0a",
-      "landed": "2026-07-25T23:57:09.741Z"
-    },
-    {
       "path": "home/private_dot_claude/skills/config-lint/SKILL.md",
-      "hash": "18ca5ed7a97779760be6221ead6b827a95e3d781c12ab794b8386a80821396bb",
-      "landed": "2026-07-25T23:57:09.741Z"
+      "hash": "a0294d3ca011d9954e52ba6140f081d6d406fb30c8b1581392021acabec064dc",
+      "landed": "2026-09-25T13:33:08.320Z"
     },
     {
       "path": "home/private_dot_claude/skills/config-lint/scripts/config-lint.js",
@@ -463,18 +458,13 @@
     },
     {
       "path": "home/private_dot_claude/skills/deep-understanding/SKILL.md",
-      "hash": "d57a8d52bd7e5ba5799d115c650c32d877090cdb6d66dac17b7a8180e0896fc8",
-      "landed": "2026-07-25T23:57:09.741Z"
+      "hash": "5aaed273014e306d19943154b4fd495b8df75aceff3f00d64d4893ac398c10a2",
+      "landed": "2026-09-25T13:33:08.320Z"
     },
     {
       "path": "home/private_dot_claude/skills/distill-scan/SKILL.md",
       "hash": "edbd1dc82c6c459b93d365a63069f8d899d2560e94c7fa38dbf70f4ebc128fde",
       "landed": "2026-07-09T21:18:00.291Z"
-    },
-    {
-      "path": "home/private_dot_claude/skills/domain-modeling/SKILL.md",
-      "hash": "2a7f0325a7939a094debcf375731a0157bb798459b1cb9e1b489898f2b3cf948",
-      "landed": "2026-07-25T23:57:09.741Z"
     },
     {
       "path": "home/private_dot_claude/skills/gh-stack/SKILL.md",
@@ -502,14 +492,9 @@
       "landed": "2026-07-25T23:57:40.952Z"
     },
     {
-      "path": "home/private_dot_claude/skills/grilling/SKILL.md",
-      "hash": "7fe693588d5d03566f7ea717474f9522923a76b5802b935c91653722402fa72c",
-      "landed": "2026-07-25T23:57:09.741Z"
-    },
-    {
       "path": "home/private_dot_claude/skills/handoff/SKILL.md",
-      "hash": "8fee26651fc4a26ba9ca80b3b06fc0bb42762ba2b52850087ec8365a6f2ad281",
-      "landed": "2026-07-26T18:30:24.162Z"
+      "hash": "3fd311f41121c9f913ae3b34b11eeaed0e586bf666cd1910eebd02fe6396a276",
+      "landed": "2026-09-25T13:33:08.320Z"
     },
     {
       "path": "home/private_dot_claude/skills/homelab/SKILL.md",
@@ -523,8 +508,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/learning-quiz/SKILL.md",
-      "hash": "f36540445bd0caa2d254bc33640ae074fc58f8936c39b40dbf04bd1efa63183c",
-      "landed": "2026-08-19T18:24:31.120Z"
+      "hash": "09ea2b69cc4eea2ff351bb57e8804d702b93d9a98ef56170418ec0724faf64ae",
+      "landed": "2026-09-25T13:33:08.320Z"
     },
     {
       "path": "home/private_dot_claude/skills/learning-quiz/scripts/executable_cards.sh",
@@ -558,18 +543,18 @@
     },
     {
       "path": "home/private_dot_claude/skills/pr-authoring/SKILL.md",
-      "hash": "8cc2b23a03f38b51d936ba94b5d9fdeebf60d769cd3a02dbfaac69011587b64c",
-      "landed": "2026-08-29T16:29:26.208Z"
+      "hash": "34c9d47e14f400474f960000d5c9b3c472802049436a5c42f249ebceed8dbed5",
+      "landed": "2026-09-25T13:33:08.320Z"
     },
     {
       "path": "home/private_dot_claude/skills/pr-authoring/evals/README.md",
-      "hash": "6616787097a9378f9c57a0b6d7208e4022230e6713f977e970209be7d48fd4f9",
-      "landed": "2026-08-29T16:45:12.008Z"
+      "hash": "d6f04e51504ae7b7be632888268bbf9aa9d508c12a709432c04fa6e3f5ca4422",
+      "landed": "2026-09-25T13:33:08.320Z"
     },
     {
       "path": "home/private_dot_claude/skills/pr-authoring/evals/cases.json",
-      "hash": "002f8f290b3fc7aa6ea5a689ecacef224765673aeaf81e24a0f53c787cae54aa",
-      "landed": "2026-08-29T16:29:26.208Z"
+      "hash": "1c0813ff7bc2114f974d62a04509d79749e189344b9271974d9fee737f745cfe",
+      "landed": "2026-09-25T13:33:08.320Z"
     },
     {
       "path": "home/private_dot_claude/skills/pr-authoring/evals/executable_run.sh",
@@ -582,89 +567,19 @@
       "landed": "2026-08-29T16:29:26.208Z"
     },
     {
-      "path": "home/private_dot_claude/skills/pr-feedback/SKILL.md",
-      "hash": "683a2ed97132573875c5af4edc005c51c4ec5d50d50e77dfa392f91707bc47e3",
-      "landed": "2026-07-25T23:57:09.741Z"
-    },
-    {
-      "path": "home/private_dot_claude/skills/pr-feedback/scripts/executable_fetch.sh",
-      "hash": "d2163b2eadc4f381e5a685d95a1f7f8b48ec5aa8ca26c175bb7c7dda68ba0076",
-      "landed": "2026-07-09T16:04:31.305Z"
-    },
-    {
-      "path": "home/private_dot_claude/skills/pr-feedback/scripts/executable_render.sh",
-      "hash": "f253edcdf7a30463d9075652e4ec62c42249bcd84f4cd80d38218719183cb6d9",
-      "landed": "2026-07-09T16:04:31.305Z"
-    },
-    {
-      "path": "home/private_dot_claude/skills/pr-feedback/scripts/executable_test_fetch.sh",
-      "hash": "c65f66eefd09b5cf2c53031a8373a2cfea8aa58fc00e29925ab91f4140ef2f46",
-      "landed": "2026-07-25T01:23:11.477Z"
-    },
-    {
-      "path": "home/private_dot_claude/skills/pr-feedback/scripts/executable_test_render.sh",
-      "hash": "a14c26363051b83514e55dc902a7616bc752c1bcd2ff8ac093331e3c1d61b1bd",
-      "landed": "2026-07-25T01:23:11.477Z"
-    },
-    {
-      "path": "home/private_dot_claude/skills/pr-feedback/scripts/fixtures/comment_only.json",
-      "hash": "6b7395df6f31bf039bc90e3d554072c354dba1a08370b71420e14b506cd47ae8",
-      "landed": "2026-07-09T16:04:31.305Z"
-    },
-    {
-      "path": "home/private_dot_claude/skills/pr-feedback/scripts/fixtures/empty.json",
-      "hash": "659a36837102bb3419543e7dc11a96e86900da638f9b23f18e2d75bb12085ecc",
-      "landed": "2026-07-09T16:04:31.305Z"
-    },
-    {
-      "path": "home/private_dot_claude/skills/pr-feedback/scripts/fixtures/failing.json",
-      "hash": "410da54352aa529f29819d41ce9542c6fd3c3be0080fca7f461fa757c033e4cf",
-      "landed": "2026-07-09T16:04:31.305Z"
-    },
-    {
-      "path": "home/private_dot_claude/skills/pr-feedback/scripts/fixtures/mixed.json",
-      "hash": "0691f69046ae7e18bb279ff90e6f15882889f2ac8e904374c08f2d484af5add8",
-      "landed": "2026-07-09T16:04:31.305Z"
-    },
-    {
-      "path": "home/private_dot_claude/skills/pr-feedback/scripts/fixtures/noise.json",
-      "hash": "b9df751a0f0dc7e575cf1c335f5e8d3a76d65ae19b5fe0a6a3919a6810ed3591",
-      "landed": "2026-07-09T16:04:31.305Z"
-    },
-    {
-      "path": "home/private_dot_claude/skills/pr-feedback/scripts/fixtures/rollup_fail.json",
-      "hash": "3f07ccae0d666efb1496360d21076557b858365e25c5db323d53258280336e0b",
-      "landed": "2026-07-09T16:04:31.305Z"
-    },
-    {
-      "path": "home/private_dot_claude/skills/pr-feedback/scripts/transform.jq",
-      "hash": "2ee167e55c07abf5d34a04c06ac2ccd0249af8d1a669a06524bee3c97e8180d2",
-      "landed": "2026-07-09T16:04:31.305Z"
-    },
-    {
-      "path": "home/private_dot_claude/skills/pr-feedback/templates/report.html",
-      "hash": "3fabb96c536ada451ec0eb22b4cfa4ad8b2453152f8b8ab376b477dafe70a511",
-      "landed": "2026-07-25T01:23:11.477Z"
-    },
-    {
-      "path": "home/private_dot_claude/skills/pr-review-prep/SKILL.md",
-      "hash": "8fff07c0ba7e516a2ed5882a6f319ec1ca8fb7808a62a526b8870bb352f09e95",
-      "landed": "2026-09-23T14:12:56.201Z"
-    },
-    {
-      "path": "home/private_dot_claude/skills/pr-review-prep/references/test_triage.sh",
+      "path": "home/private_dot_claude/skills/pr-authoring/references/test_triage.sh",
       "hash": "31f13751ebf6a98ea75798da4155357dcb2c8c999fa39ad9d932954b15b15272",
-      "landed": "2026-09-24T19:57:23.335Z"
+      "landed": "2026-09-25T13:33:08.320Z"
     },
     {
-      "path": "home/private_dot_claude/skills/pr-review-prep/references/triage.sh",
+      "path": "home/private_dot_claude/skills/pr-authoring/references/triage.sh",
       "hash": "859819c85c7713cafbf563ce5ac7ffd652546adebe2a33640af2e7a8f8558d83",
-      "landed": "2026-09-24T20:22:04.701Z"
+      "landed": "2026-09-25T13:33:08.320Z"
     },
     {
       "path": "home/private_dot_claude/skills/prep/SKILL.md",
-      "hash": "970d61fa55a8e12d1f7225c6afcaafae2e1bf87a88e7c8438589a31804f8e756",
-      "landed": "2026-07-25T23:57:09.741Z"
+      "hash": "d22b1be19160ffda51d24fb782e5250cb8c8a625937c6762131870f34552ac09",
+      "landed": "2026-09-25T13:33:08.320Z"
     },
     {
       "path": "home/private_dot_claude/skills/reprime/SKILL.md",
@@ -772,19 +687,14 @@
       "landed": "2026-09-22T12:33:16.543Z"
     },
     {
-      "path": "home/private_dot_claude/skills/skill-router/SKILL.md.tmpl",
-      "hash": "939c7bbbacf4497af27bc754251f76d943ab2de06e2fc5e3be41c390153d399e",
-      "landed": "2026-09-22T12:33:08.418Z"
-    },
-    {
       "path": "home/private_dot_claude/skills/test-scenario-hygiene/SKILL.md",
-      "hash": "47a25ef92e338d4c3463a84c7926a06bcda0788d8d4d087be8791ba6bdc1f849",
-      "landed": "2026-09-24T13:50:38.459Z"
+      "hash": "7c33773f4bf870ff3b05839e70fdc7a503d8ebd6d5d9d2529dd3b938c5303ed8",
+      "landed": "2026-09-25T13:33:08.320Z"
     },
     {
       "path": "home/private_dot_claude/skills/writing-great-skills/SKILL.md",
-      "hash": "f990ba2f9b079c2a7e1d5482c8dc0916e614e589e74b909b472f7da7f286d38c",
-      "landed": "2026-08-07T17:45:09.554Z"
+      "hash": "ab92f33d04031ecbc70c6a0f56ad0cc0cb748068051db6f5160f8e071a9fa27f",
+      "landed": "2026-09-25T13:33:08.320Z"
     }
   ]
 }
