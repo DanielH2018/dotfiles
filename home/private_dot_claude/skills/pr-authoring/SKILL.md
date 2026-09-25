@@ -119,6 +119,18 @@ Where merging does not deploy, close with the command that does, and the thing t
 afterwards. Where nothing is needed, say "nothing to deploy" rather than leaving it blank —
 a blank section reads as forgotten.
 
+### Only a fixed issue gets a closing keyword
+
+The body's own `Closes #N` line is the only closing keyword it carries, and it names only
+the issues this PR fixes. GitHub closes an issue on merge whenever `close`, `closes`,
+`closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves` or `resolved` precedes `#N`,
+whatever the rest of the sentence says. PR #2510's body said "Filed and not fixed: #2509",
+and GitHub closed #2509 two seconds after the merge. List a follow-up you did not fix
+with no keyword before its number: `Filed for later: #N`.
+
+In the server repo, `land.sh --arm-merge` refuses a body that carries such a stray closing
+reference (`stray_closing_refs` in `scripts/deploy_tools/land_lib/merge.py`).
+
 ## What belongs in one PR
 
 Composition, not size. *Measure the diff* below handles a diff you already have; these two rules
@@ -176,6 +188,7 @@ numbered reading-order review comments. Without one, skip the step.
 - [ ] The body opens on a fact, not on `This PR`.
 - [ ] Every alternative a reviewer would propose is named and refuted with evidence.
 - [ ] Every verification claim quotes output you read this session.
+- [ ] A closing keyword precedes only the issues this PR fixes.
 - [ ] The repo's PR template sections are filled, not deleted.
 - [ ] Draft (`gh pr create --draft`) if CI has not run or the branch is still moving.
 
