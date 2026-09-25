@@ -5,8 +5,7 @@
 // Treats ~/.claude config (settings.base.json, hooks, agents, skills, CLAUDE.md)
 // like code: a change must be consciously acknowledged (`land`) before it is
 // considered reviewed, and is only flagged `stable` after an observation window.
-// This is the deterministic, mechanical complement to the agent-driven
-// `review-setup` skill: no LLM, no judgement, just a fingerprint ledger.
+// It is deterministic and mechanical: no LLM, no judgement, just a fingerprint ledger.
 //
 // Usage:
 //   config-soak status [--json] [--strict]   report + exit non-zero if unreviewed

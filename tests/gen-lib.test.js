@@ -1,6 +1,6 @@
 'use strict';
-// bin/gen-lib.js holds the marker splice and the `--check` report that gen-hooks and
-// gen-skill-router splice with, and that all three generators report with (#563). Each
+// bin/gen-lib.js holds the marker splice and the `--check` report that gen-hooks
+// splices with, and that both generators report with (#563). Each
 // generator's own suite pins its marker syntax end to end; these pin the shared contract:
 // the splice keeps both marker lines and everything outside them, it refuses a missing,
 // doubled or reversed marker, and the report returns the verdict it prints.

@@ -83,7 +83,7 @@ answering questions happen in place as usual, and a session already inside
 - **A squash merge makes the PR title the commit subject**, so the commit rules above are the title rules: imperative, sentence case, no `feat:`/`fix:` prefix, no ticket, naming the outcome rather than the files touched. `guard-pre-tool-use.sh` denies a `gh pr create`/`edit` title or a `planka card` title with such a prefix or a ticket id.
 - A PR body exists to stop the reviewer re-deriving what you already worked out. Open on the measured symptom, name the alternatives you rejected and why, and quote real command output for every verification claim.
 - Fill a repo's `.github/pull_request_template.md` when one exists rather than replacing its sections.
-- The long form is the `pr-authoring` skill; `pr-review-prep` owns diff size and commit history, `gh-stack` owns splitting.
+- The long form is the `pr-authoring` skill, which also owns diff size and commit history; `gh-stack` owns splitting.
 
 ## GitHub
 
@@ -101,7 +101,7 @@ permanent test file. This governs extras only: every behaviour the task asks for
 with no change in task success.)
 
 The sweep that enforces that at the end of a change is the `test-scenario-hygiene` skill; it
-owns test content, where `pr-review-prep` owns diff shape.
+owns test content, where `pr-authoring` owns diff shape.
 
 Before you write a stub or a textual assertion, read that skill's *Anti-patterns* section: it lists five ways a test stays green while checking nothing.
 

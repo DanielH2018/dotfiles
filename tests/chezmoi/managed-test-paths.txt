@@ -23,16 +23,7 @@
 .claude/sandbox/test_gh_pr_guard.py
 .claude/skills/config-lint/scripts/config-lint.test.js
 .claude/skills/learning-quiz/scripts/test_cards.sh
-.claude/skills/pr-feedback/scripts/fixtures
-.claude/skills/pr-feedback/scripts/fixtures/comment_only.json
-.claude/skills/pr-feedback/scripts/fixtures/empty.json
-.claude/skills/pr-feedback/scripts/fixtures/failing.json
-.claude/skills/pr-feedback/scripts/fixtures/mixed.json
-.claude/skills/pr-feedback/scripts/fixtures/noise.json
-.claude/skills/pr-feedback/scripts/fixtures/rollup_fail.json
-.claude/skills/pr-feedback/scripts/test_fetch.sh
-.claude/skills/pr-feedback/scripts/test_render.sh
-.claude/skills/pr-review-prep/references/test_triage.sh
+.claude/skills/pr-authoring/references/test_triage.sh
 .claude/skills/security-audit/validate-coverage-ledger.test.cjs
 .claude/skills/security-audit/validate-findings.test.cjs
 .claude/skills/test-scenario-hygiene

@@ -2,7 +2,8 @@
 // Shared plumbing for the bin/gen-* generators: splicing a rendered block into the slot a
 // file declares, and the regenerate-and-diff report behind each generator's `--check`.
 //
-// gen-hooks, gen-skill-router and gen-lint-files each carried their own copy of both (#563).
+// gen-hooks, gen-lint-files and the since-deleted gen-skill-router each carried their own
+// copy of both (#563).
 // The copies had already drifted apart in how they reported a missing marker, and a fix to
 // one never reached the other two.
 //
@@ -12,10 +13,10 @@
 // Replace the lines strictly between the one line matching `begin.test` and the one line
 // matching `end.test`, keeping both marker lines and everything outside them.
 //
-// The markers are predicates rather than strings because each generator's syntax differs: a
-// chezmoi `{{/* */}}` comment in settings.base.json, an HTML comment in skill-router's
-// SKILL.md.tmpl. `render(beginLine)` receives the begin marker's line, which gen-hooks reads
-// for its indentation, and returns the new interior as one string.
+// The markers are predicates rather than strings so a generator can match its own syntax,
+// such as the chezmoi `{{/* */}}` comment in settings.base.json.
+// `render(beginLine)` receives the begin marker's line, which gen-hooks reads for its
+// indentation, and returns the new interior as one string.
 //
 // Throws when either marker is missing or doubled, or when the end marker comes first. The
 // generator fills the slot the file declares; it does not invent where the slot goes.
@@ -59,7 +60,7 @@ function firstDiffLine(a, b) {
 // The `--check` verdict for one generated file. Prints the up-to-date line on stdout, or the
 // out-of-date line plus the first differing line on stderr, and returns whether the file was
 // up to date. The caller decides the exit code, because gen-lint-files checks two files
-// before exiting and gen-skill-router adds a diagnosis after the diff.
+// before exiting.
 //
 //   tool      the generator name, as in `bin/<tool>`
 //   rel       the checked file, relative to the repo root

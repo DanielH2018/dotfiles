@@ -113,7 +113,7 @@ network call, however narrow, and that crosses the line the other three don't. I
 location, so a worktree must run its own copy, and that compound form is the shape
 `claude_guard.judge` auto-approves for the allow-listed verbs.
 
-It is the deterministic complement to the LLM-driven `/review-setup` skill. See
+It is deterministic: no LLM and no judgement, only a fingerprint ledger. See
 `docs/specs/2026-07-08-config-soak-gate-design.md` for the design rationale, including the
 `outcomes` addition.
 

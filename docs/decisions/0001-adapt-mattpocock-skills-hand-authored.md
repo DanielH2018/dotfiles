@@ -1,6 +1,8 @@
 # 0001 — Skills adapted from mattpocock/skills are hand-authored, not installed
 
-**Status:** accepted (2026-07-14)
+**Status:** accepted (2026-07-14). #622 (2026-09-25) deleted `skill-router`, `grilling`,
+`domain-modeling` and `codebase-design`, which had no recorded invocation; the hand-authoring
+decision still governs `writing-great-skills`.
 
 ## Context
 

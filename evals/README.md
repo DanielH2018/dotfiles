@@ -143,7 +143,7 @@ fidelity boundary as agents — this grades the skill's prompt/behavior, not Ski
 loading plumbing, and `--tools ""` means a case's input must say when there is nothing to
 inspect, or the skill will reasonably ask for a repo it can't reach.
 
-A skill whose source is chezmoi-templated (`SKILL.md.tmpl`, e.g. `skill-router`, gated by
+A skill whose source is chezmoi-templated (`SKILL.md.tmpl`, gated by
 machine) is rendered with `chezmoi execute-template` before grading, so it needs `chezmoi`
 on PATH. That resolves the template against **this machine's** data, meaning a gated skill
 is graded as the variant this machine deploys — on a personal box, work-only sections are
@@ -153,29 +153,24 @@ returned INCONCLUSIVE, unnoticed, for eight days.
 
 ### Skill triage (2026-07-24, extended 2026-08-02)
 
-Which of the 18 repo skills have cases, and why the rest don't. A skill only gets a case
+Which repo skills have cases, and why the rest don't. A skill only gets a case
 if a single no-tools turn can exhibit a falsifiable behavior from its contract. Keep this
 table in step with `home/private_dot_claude/skills/` — the three skills added after the
 original pass sat untriaged for a week, which reads the same as "deliberately skipped".
 
 | Skill | Verdict |
 |---|---|
-| `grilling` | cases — one-question / recommendation / no-deliverables contract |
 | `prep` | cases — gear routing: trivial skips intake, medium produces the block and stops |
-| `skill-router` | cases — named situation routes to the named skill, regex-gradable |
 | `artifact-design` | cases — self-contained HTML: no external assets, inline CSS |
-| `pr-feedback` | cases — fixed markers/header/zero-PR line on inline sample data |
-| `pr-review-prep` | cases — verbalized safety gates (force-with-lease, stop on guard failure) |
+| `pr-authoring` | cases — verbalized safety gates in *Measure the diff* (force-with-lease, stop on guard failure) |
 | `gh-stack` | cases — non-interactive flag contract (`view --json`, `submit --auto`) |
 | `handoff` | cases — corrections and error strings must survive verbatim, dead ends kept |
 | `orchestrating-subagents` | cases — agent count lands in the stated band; brief carries objective/format/budget |
 | `building-evals` | skip — methodology reference; no falsifiable single-turn output |
 | `homelab` | skip — connection details and an ssh verb allowlist; nothing to exhibit without the server |
-| `codebase-design` | skip — vocabulary rule is judge-only and echoes of banned words false-fail |
 | `config-lint` | skip — pass 1 is script-bound; placement review too open-ended to anchor |
 | `deep-understanding` | skip — the comprehension loop is inherently multi-turn |
 | `distill-scan` | skip — the regex validation loop needs node execution |
-| `domain-modeling` | skip — provenance behavior needs the vault to source against |
 | `reprime` | skip — its core act is re-reading external rule files |
 | `writing-great-skills` | skip — open-ended authoring judgment, low regression value |
 

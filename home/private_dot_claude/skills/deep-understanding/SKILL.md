@@ -1,6 +1,6 @@
 ---
 name: deep-understanding
-description: Use when the user wants to *learn* something, not just get it done — "teach me", "help me understand", "walk me through", "ELI5", "quiz me" — or when onboarding into an unfamiliar codebase, grasping a PR before approving it, or unpicking an incident's root cause. Understanding is the deliverable, not the change. Not for stress-testing a plan (use grilling).
+description: Use when the user wants to *learn* something, not just get it done — "teach me", "help me understand", "walk me through", "ELI5", "quiz me" — or when onboarding into an unfamiliar codebase, grasping a PR before approving it, or unpicking an incident's root cause. Understanding is the deliverable, not the change. Not for stress-testing a plan.
 metadata:
     author: daniel
     version: 0.1.0

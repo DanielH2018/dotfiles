@@ -29,8 +29,8 @@ so a case costs one decision rather than a full task.
 
 ## The isolation is the eval
 
-Every run uses a throwaway `CLAUDE_CONFIG_DIR` holding only `pr-authoring` and the three
-skills it must be told apart from — `pr-review-prep`, `gh-stack`, `receiving-code-review`.
+Every run uses a throwaway `CLAUDE_CONFIG_DIR` holding only `pr-authoring` and the two
+skills it must be told apart from — `gh-stack` and `receiving-code-review`.
 No `CLAUDE.md`, no hooks, no plugins.
 
 Without that, the numbers are worthless. The real config loads `superpowers:using-superpowers`,

@@ -201,7 +201,7 @@ test('gen-hooks --check fails when the hooks directory gains an executable that 
 // not -- the repo's own "assert an identifier, not the prose" rule turned on its own prose.
 
 // A citation is the BARE filename. The leading path is what tells a hook apart from every
-// other script the docs name: `scripts/fetch.sh`, `references/triage.sh` and
+// other script the docs name: `scripts/test_cards.sh`, `references/triage.sh` and
 // `~/server/.claude/hooks/auto-approve-remote-ssh.sh` all say where they live, and none of
 // them lives in this repo's hooks directory. What is left is the form the issue is about.
 const DOCS_DIR = srcPath('private_dot_claude');
@@ -213,13 +213,12 @@ const CITATION = /(?:^|[^/A-Za-z0-9_.-])([A-Za-z0-9_][A-Za-z0-9_.-]*\.(?:sh|py))
 const NOT_A_HOOK = {
   'allow-readonly-remote.sh': 'deleted in the claude-guard slice 3 cutover; homelab/SKILL.md cites it as what judge() ported',
   'conftest.py': 'pytest\'s own filename, in rules/python.md',
-  'fetch.sh': 'a pr-feedback skill script, named bare once beside its path-qualified form',
   'install.sh': 'the work-laptop-config repo\'s installer',
   'probe.py': 'the server repo\'s diagnostics entry point',
   'run-skill.sh': 'the launchd runner in ~/.local/bin, not a hook',
   'telemetry-health.sh': 'a script on the homelab server',
   'test_cards.sh': 'a learning-quiz skill test',
-  'triage.sh': 'a pr-review-prep skill reference script',
+  'triage.sh': 'a pr-authoring skill reference script',
 };
 
 function docTexts() {

@@ -984,20 +984,16 @@
        transcripts (2026-08-17 → 08-29) while its name + description sat in the always-resident
        skill listing, which is budgeted at ~1% of the context window and was over it. Together
        these are ~824 est. resident tokens per session. Delete an entry to restore the skill.
+       #622 deleted six of the ten (codebase-design, domain-modeling, grilling, pr-feedback,
+       pr-review-prep, skill-router) and folded pr-review-prep's checks into pr-authoring.
        `reprime` is "user-invocable-only" rather than "off": it stays out of the model's
        listing but in the `/` menu, because it is the manual replacement for the reprime-nudge
        hook retired in #621, and "off" hides a skill from the menu too. */}}
   "skillOverrides": {
-    "codebase-design": "off",
     "config-lint": "off",
-    "domain-modeling": "off",
-    "grilling": "off",
     "handoff": "off",
     "learning-quiz": "off",
-    "pr-feedback": "off",
-    "pr-review-prep": "off",
-    "reprime": "user-invocable-only",
-    "skill-router": "off"
+    "reprime": "user-invocable-only"
   },
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true,

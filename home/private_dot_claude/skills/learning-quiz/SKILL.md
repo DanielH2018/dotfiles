@@ -52,15 +52,14 @@ the point is recall, and a preview of what is coming is a list of hints.
 
 ## STEP 2 — Ask one question at a time
 
-Use the `grilling` primitive's one-question rule rather than reimplementing it:
-ask, then wait for the answer before the next question. The turn ends on the
-question mark; nothing rides along after it.
+Ask exactly one question per turn: ask, then wait for the answer before the next
+question. The turn ends on the question mark; nothing rides along after it.
 
-Two departures from `grilling`, because this is a quiz and not a design review:
+Two rules differ from a design interview, because this is a quiz:
 
-- **Do not carry your own recommended answer.** Grilling proposes an answer so
-  the user reacts to a proposal. Here the answer is the thing being tested, so
-  proposing it defeats the exercise.
+- **Do not carry your own recommended answer.** A design interview proposes an
+  answer so the user reacts to a proposal. Here the answer is the thing being
+  tested, so proposing it defeats the exercise.
 - **Ask about the card, not the plan.** Derive the question from the card's body —
   the concept, why it matters, and the catch. Aim at the catch: it is the part
   that is easy to get wrong and therefore the part worth reviewing.

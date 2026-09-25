@@ -95,7 +95,7 @@ Branch/push state · PR + CI status · dirty files
 
 **Suggested skills** names what the successor should invoke for the *immediate next
 step*, and when — not an inventory. Check `ls ~/.claude/skills` and the plugin list
-if unsure what's installed; `/skill-router` is the fallback pointer.
+if unsure what's installed.
 
 ## Argument = focus
 

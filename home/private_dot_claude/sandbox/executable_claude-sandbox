@@ -851,7 +851,7 @@ DOCKER_ARGS=(
   -v "$HOME/.claude/plugins:$HOME/.claude/plugins:ro"
   # User-level commands and agents (read-only). Nested mounts inside the
   # state volume, like plugins above. Makes personal slash commands (e.g.
-  # /review-loop) and subagents (e.g. implementer) available in every repo.
+  # /config-map) and subagents (e.g. implementer) available in every repo.
   -v "$HOME/.claude/commands:/home/claudebot/.claude/commands:ro"
   -v "$HOME/.claude/agents:/home/claudebot/.claude/agents:ro"
   # Config files — bind-mounted (not baked into image) so edits don't

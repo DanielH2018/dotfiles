@@ -2,7 +2,7 @@
   "skill": "pr-authoring",
   "model": "opus",
   "runs": 3,
-  "peers": ["pr-review-prep", "gh-stack", "receiving-code-review"],
+  "peers": ["gh-stack", "receiving-code-review"],
   "cases": [
     {
       "name": "write-pr-description",
@@ -44,7 +44,7 @@
       "name": "split-branch",
       "expect": "silent",
       "input": "This branch touches 40 files across three unrelated concerns. Should I split it up?",
-      "why": "Diff shape, which the skill's Precedence section hands to pr-review-prep and gh-stack."
+      "why": "Splitting, which the skill's Precedence section hands to gh-stack."
     },
     {
       "name": "rebase-howto",

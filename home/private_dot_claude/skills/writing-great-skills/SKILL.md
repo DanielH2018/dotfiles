@@ -28,8 +28,8 @@ made in different places:
   description becomes a one-line human-facing summary.
 
 Pick model-invocation only when the agent (or another skill) must reach it on its own.
-When user-invoked skills pile past what you can hold in your head, the cure is a **router**
-(`/skill-router`) — one skill that names the others and when to reach for each.
+When user-invoked skills pile past what you can hold in your head, the cure is a **router**:
+one skill that names the others and when to reach for each.
 
 ## Model-invoked descriptions fire on symptoms
 
@@ -71,4 +71,4 @@ knows the skill would take).
 
 The meta-skill you consult while building the rest of the set — not a step in a chain. Its
 natural neighbour is any router, the direct cure for the cognitive load user-invoked skills
-pile up. When unsure which skill fits, `/skill-router`.
+pile up.

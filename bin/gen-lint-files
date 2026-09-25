@@ -7,7 +7,7 @@
 // extension, and a shebang only types a file that is executable). Those names were three
 // hand-typed lists, plus a fourth copy in pyproject.toml's `extend-include` that had drifted
 // to 1 name of 11. This walks `git ls-files -s`, tags every extensionless tracked file by its
-// shebang, and writes all four from that one census — the same shape as bin/gen-skill-router,
+// shebang, and writes all four from that one census — the same shape as bin/gen-hooks,
 // so the lists cannot drift from the tree (regenerated) and the tree cannot outgrow them
 // silently (--check fails).
 //

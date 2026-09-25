@@ -56,3 +56,20 @@
 # confirmed no caller on the work laptop or desktop.
 .local/bin/tasklist.exe
 .local/bin/taskkill.exe
+
+# #622: skills and commands with no recorded use. The six skills had been off in
+# skillOverrides since 2026-08-29; pr-review-prep's checks and triage.sh moved into
+# pr-authoring. The review commands and their two shared references had no invocation on any
+# machine.
+.claude/skills/codebase-design
+.claude/skills/domain-modeling
+.claude/skills/grilling
+.claude/skills/pr-feedback
+.claude/skills/pr-review-prep
+.claude/skills/skill-router
+.claude/commands/review-and-fix.md
+.claude/commands/review-arbiter.md
+.claude/commands/review-loop.md
+.claude/commands/review-setup.md
+.claude/commands/review-setup-loop.md
+.claude/command-references

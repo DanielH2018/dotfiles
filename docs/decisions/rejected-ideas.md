@@ -11,4 +11,4 @@ Recorded 2026-07-14 during the adaptation project (see chezmoi ADR 0001).
 - **Inventing triage-role Jira labels** (`ready-for-agent`, etc.) — rejected. Would pollute
   shared team label taxonomy; PROC's native status workflow is used instead (see work-repo ADR 0001).
 - **Replacing superpowers skills** (brainstorming/writing-plans/tdd) — rejected. Kept in
-  parallel; `skill-router` arbitrates which to reach for.
+  parallel.

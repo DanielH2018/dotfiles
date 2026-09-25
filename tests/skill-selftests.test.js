@@ -13,9 +13,7 @@ const { srcPath } = require('./lib/paths');
 const skip = skipUnless('bash');
 
 const SUITES = [
-  srcPath('private_dot_claude', 'skills', 'pr-feedback', 'scripts', 'executable_test_fetch.sh'),
-  srcPath('private_dot_claude', 'skills', 'pr-feedback', 'scripts', 'executable_test_render.sh'),
-  srcPath('private_dot_claude', 'skills', 'pr-review-prep', 'references', 'test_triage.sh'),
+  srcPath('private_dot_claude', 'skills', 'pr-authoring', 'references', 'test_triage.sh'),
 ];
 
 for (const script of SUITES) {

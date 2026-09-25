@@ -184,8 +184,6 @@ if [ "$tree_cached" -eq 0 ]; then
   #    commands/ and output-styles/ were outside this glob until 2026-08-17, so 13 files
   #    that steer behaviour every session were scored by nothing. output-styles is the one
   #    that matters most: daniel-voice.md is part of the system prompt on every turn.
-  #    commands/references/*.md needs its own line — `ls commands/*.md` does not recurse,
-  #    and loop-driver.md holds the mechanics the two loop commands both defer to.
   #    Measured before widening: the new minimum is commands/config-map.md at 58, so this
   #    does not move the floor.
   QUALITY_MIN_SCORE="${QUALITY_MIN_SCORE:-52}"
@@ -193,7 +191,6 @@ if [ "$tree_cached" -eq 0 ]; then
               home/private_dot_claude/skills/*/SKILL.md \
               home/private_dot_claude/rules/*.md \
               home/private_dot_claude/commands/*.md \
-              home/private_dot_claude/commands/references/*.md \
               home/private_dot_claude/output-styles/*.md \
               home/private_dot_claude/CLAUDE.md.tmpl 2>/dev/null)
   if [ -n "$QFILES" ]; then

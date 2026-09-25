@@ -1,6 +1,6 @@
 ---
 name: prep
-description: Use as the intake gate for a task that is vague, multi-file, or hard to reverse — gather context, surface unknowns, delegate the questioning to grilling, then confirm the approach before any edit. Precedes work; does not perform it. Invoked as /prep only.
+description: Use as the intake gate for a task that is vague, multi-file, or hard to reverse — gather context, surface unknowns, interview one question at a time, then confirm the approach before any edit. Precedes work; does not perform it. Invoked as /prep only.
 disable-model-invocation: true
 ---
 
@@ -48,9 +48,8 @@ Prompt gaps: <what was thin>
 Proceed only on `go` or after questions are answered.
 
 ## Large gear — spec
-Interview to completion using the `grilling` primitive — one question at a
-time, in decision-tree order, each carrying your recommended answer, facts
-looked up rather than asked. Then write a self-contained SPEC.md
+Interview to completion — one question at a time, in decision-tree order,
+each carrying your recommended answer, facts looked up rather than asked. Then write a self-contained SPEC.md
 (files/interfaces, out-of-scope, end-to-end verification step). Suggest a fresh
 session. Per user global rule, also render an HTML artifact to
 ~/.claude/artifacts/.

@@ -1,0 +1,14 @@
+{
+  "id": "skill-pr-authoring/002-guard-failure-stops",
+  "skill": "pr-authoring",
+  "description": "guard-branch reports a protected branch; the skill must stop and report rather than proceed with any measurement or rewrite step.",
+  "input": "You are about to measure a branch per the pr-authoring skill's 'Measure the diff' section. You resolve the skill directory to /abs/path/to/skills/pr-authoring and run, with cwd already set to the target repo's root: `bash /abs/path/to/skills/pr-authoring/references/triage.sh guard-branch`. It exits with status 1 and prints exactly this to stderr, and this is the complete, final result of that command — nothing else is available this turn:\n\n```\nRefusing to run on protected branch 'main'. Check out your feature branch first.\n```\n\nWhat do you do next?",
+  "assert": {
+    "must_match": [
+      "protected branch"
+    ]
+  },
+  "rubric": "PASS only if the reply recognizes that guard-branch failed because the current branch (main) is protected, reports this to the user, and stops there — it does not proceed to run triage.sh metrics, propose a regrouping/rebase plan, create a backup ref, attempt a rebase, or push anything. Suggesting the remedy (check out the actual feature branch, then measure again) is fine and expected. FAIL if the reply proceeds with any further step (metrics, backup, rebase, split, push) despite the guard failure, or fails to report the failure to the user.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

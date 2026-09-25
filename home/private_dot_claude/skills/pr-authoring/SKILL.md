@@ -1,6 +1,6 @@
 ---
 name: pr-authoring
-description: Use when writing the text of a pull request — its title, its body, or the summary passed to `gh pr create` — however short the request. Triggers on "write the PR description", "open a PR", "what should this PR say", "the PR body", "summarize this branch for review", a PR left with an empty or template-only body, or a title that names the files touched instead of the outcome. A one-line ask still loads it: the title becomes the squash-merge commit subject, so writing one freehand is how the convention drifts. Covers what the PR SAYS. `pr-review-prep` covers whether the diff is shaped to be reviewed, `gh-stack` covers splitting it, and a commit message on its own is neither.
+description: Use when writing the text of a pull request — its title, its body, or the summary passed to `gh pr create` — however short the request. Triggers on "write the PR description", "open a PR", "what should this PR say", "the PR body", "summarize this branch for review", a PR left with an empty or template-only body, or a title that names the files touched instead of the outcome. A one-line ask still loads it: the title becomes the squash-merge commit subject, so writing one freehand is how the convention drifts. Covers what the PR SAYS. `gh-stack` covers splitting the diff, and a commit message on its own is neither.
 ---
 
 # pr-authoring
@@ -14,8 +14,8 @@ rule below serves that one job.
    sections rather than replacing them; the rules here govern *how you write inside*
    those sections. Check for it before drafting: `ls .github/pull_request_template.md
    .github/PULL_REQUEST_TEMPLATE.md`.
-2. **This skill owns the prose.** Size, splitting, and commit history belong to
-   `pr-review-prep`; stacking belongs to `gh-stack`; dispatching review agents belongs
+2. **This skill owns the prose, and the size and history check.** Splitting and
+   stacking belong to `gh-stack`; dispatching review agents belongs
    to the `## Code review` rule in `~/.claude/CLAUDE.md`. Do not restate their rules
    here or in the PR — a second source of truth on "how big is too big" is how this
    goes wrong.
@@ -121,7 +121,7 @@ a blank section reads as forgotten.
 
 ## What belongs in one PR
 
-Composition, not size. `pr-review-prep` measures a diff you already have; these two rules
+Composition, not size. *Measure the diff* below handles a diff you already have; these two rules
 decide what goes into it in the first place, and neither one is a line count.
 
 - **A refactor travels alone.** A pure refactor mixed with a behaviour change makes both
@@ -131,6 +131,41 @@ decide what goes into it in the first place, and neither one is a line count.
 - **Tests for the change ride along with it.** The tests covering new behaviour belong in
   the same PR as the behaviour. Test work that stands on its own goes separately:
   validating already-merged code, refactoring helpers, introducing a framework.
+
+## Measure the diff
+
+Before drafting the body of a feature-branch PR, measure the branch. The deterministic
+git math lives in `references/triage.sh` beside this file. It runs every git call in the
+working directory, so invoke it by absolute path from the target repo's root.
+
+1. `triage.sh guard-branch` exits non-zero on the default branch. Stop there.
+2. Run `git fetch origin`, then count the changed files' independent groups yourself:
+   group by top-level module, and map each test to the module it covers. Pass that count
+   to `triage.sh metrics <groups>`.
+3. Report the readout as one line, for example
+   `Review cost: 14 files · +320/−40 · 5 commits (+1 merge, +2 fixup) · 2 separable concerns`.
+   Add the recommendation that `needs_history_cleanup` and `split_worthy` imply.
+
+Both flags are advisory, and the user confirms before any rewrite.
+
+- **`split_worthy`** hands the split to `gh-stack`.
+- **`needs_history_cleanup`** means merge commits, fixup-style commits, or more than six
+  commits. To clean the history:
+  1. Save a restore point with `REF=$(triage.sh backup)`, and tell the user
+     `git reset --hard $REF` undoes everything.
+  2. Rebase onto `origin/<default>`. Resolve conflicts or hand them back; never
+     `--skip` silently.
+  3. Save a second ref, `CHECKPOINT=$(triage.sh backup)`. The regroup must preserve this
+     post-rebase tree, which differs from `$REF` whenever the rebase pulled in upstream work.
+  4. Propose the target commits in prose, each with a why-focused message. Fold a commit
+     that reverses an earlier approach into the commit it corrects.
+  5. On confirmation, run `GIT_EDITOR=true GIT_SEQUENCE_EDITOR='cp <todo>' git rebase -i
+     <base>`. The todo uses `fixup`, not `squash`, and an `exec git commit --amend -m ...`
+     after each group, so no step opens an editor.
+  6. `triage.sh assert-tree-equal "$CHECKPOINT"` must exit 0. Otherwise stop, show its
+     diff, and do not push.
+  7. Push with `git push --force-with-lease` after the user confirms. Never plain
+     `--force`, never `--no-verify`.
 
 ## Before you open it
 

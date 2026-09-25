@@ -16,8 +16,8 @@ Use this skill when auditing `~/.claude` or a project `.claude/` for drift, or
 before you hand-edit a hook `command` path, a permission rule, or a CLAUDE.md
 `@`-include and want to know whether it still resolves. Reach for it any time
 a skill or hook silently stops firing — that's frequently a dead plugin toggle
-or an orphaned script path this catches. It only reports; hand off to the
-review-setup skill when you also want the fixes applied for you.
+or an orphaned script path this catches. It only reports; it applies no
+fixes.
 
 ## 1 — Deterministic drift scan
 

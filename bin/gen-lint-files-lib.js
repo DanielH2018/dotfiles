@@ -2,7 +2,7 @@
 // Pure, deterministic logic for `bin/gen-lint-files`. No fs/git/process access lives here:
 // the wrapper reads `git ls-files -s` and each candidate's first line, and hands them in as
 // plain objects, so every function below is a total function of its arguments
-// (gen-skill-router-lib.js's precedent).
+// (gen-hooks-lib.js's precedent).
 //
 // What this generates, and why it is generated at all. Each lint hook in
 // .pre-commit-config.yaml classifies files by `types`/`types_or`, which identifies a file by
