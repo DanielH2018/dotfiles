@@ -57,9 +57,12 @@ function run(env = {}) {
 }
 
 test('a judge that answers has its verdict passed through', { skip }, () => {
-  const r = run();
+  // A 10s bound, not the 1s the hung cases use: under the full parallel suite, spawning bash,
+  // the stub uv and the stub judge can take longer than 1s, and the hook then correctly
+  // prints nothing.
+  const r = run({ CLAUDE_GUARD_TIMEOUT_S: '10' });
   assert.strictEqual(r.status, 0);
-  assert.strictEqual(r.stdout.trim(), ALLOW);
+  assert.strictEqual(r.stdout.trim(), ALLOW, `stderr: ${r.stderr}`);
 });
 
 test('a hung uv python find is cut off, prints nothing, and says why', { skip }, () => {
