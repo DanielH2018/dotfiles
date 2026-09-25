@@ -167,6 +167,9 @@ Both flags are advisory, and the user confirms before any rewrite.
   7. Push with `git push --force-with-lease` after the user confirms. Never plain
      `--force`, never `--no-verify`.
 
+Once the draft PR is open, run a `pr-curator` agent if one is installed. It posts
+numbered reading-order review comments. Without one, skip the step.
+
 ## Before you open it
 
 - [ ] The title reads as a commit subject and names the outcome.
