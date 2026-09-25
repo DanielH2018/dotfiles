@@ -59,7 +59,9 @@ def run_hook(file_path, job, cwd):
 
 
 def main():
-    tmp = tempfile.mkdtemp(prefix="isolation-guard-test-")
+    # realpath: macOS mkdtemp returns /var/folders/..., but git rev-parse --show-toplevel
+    # resolves the /var symlink to /private/var, so the guard names the resolved path.
+    tmp = os.path.realpath(tempfile.mkdtemp(prefix="isolation-guard-test-"))
     try:
         # A real git repo standing in for a shared/primary checkout.
         repo = os.path.join(tmp, "repo")
