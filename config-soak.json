@@ -293,8 +293,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_worktree-landed.sh",
-      "hash": "cd824abd868c118a8abd1053bacbf9b4ee6b2d279a5b50b2bc11be79c2444575",
-      "landed": "2026-09-24T18:02:14.033Z"
+      "hash": "1559d6cb78f8388c6e65dcf15ece68e470034acd507bacb9dab9bc62f44d8379",
+      "landed": "2026-09-26T18:42:28.602Z"
     },
     {
       "path": "home/private_dot_claude/hooks/hook-input.sh",
@@ -363,13 +363,13 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_worktree_landed.py",
-      "hash": "841cd207bd9592f4438a96afbd7fe83221fc50003279ab3e9e09eac2a423edff",
-      "landed": "2026-09-24T18:02:14.033Z"
+      "hash": "debe91b5db09f5ffe89417e46800042b443efcd804960d4facf8915136be2780",
+      "landed": "2026-09-26T18:42:28.602Z"
     },
     {
       "path": "home/private_dot_claude/hooks/worktree-landed.md",
-      "hash": "c3fd337ed0581581912604fb5cf14b3cbf9db88f5463ad63ffa2c783bfb23f68",
-      "landed": "2026-09-24T18:02:14.033Z"
+      "hash": "f241cd97aa00b2c40ae33e6ed63009209a66da05c4819a2e7eb851ca5a5ff16e",
+      "landed": "2026-09-26T18:42:28.602Z"
     },
     {
       "path": "home/private_dot_claude/output-styles/daniel-voice.md",
