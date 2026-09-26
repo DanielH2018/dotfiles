@@ -775,14 +775,19 @@
             "type": "command",
             "command": "~/.claude/hooks/link-artifact.sh",
             "timeout": 10
-          },
+          }
+        ]
+      }{{ if .work }},
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
           {
             "type": "command",
             "command": "~/.claude/hooks/planka-claim.sh",
             "timeout": 10
           }
         ]
-      },
+      }{{ end }}{{ if .work }},
       {
         "matcher": "TodoWrite",
         "hooks": [
@@ -792,7 +797,7 @@
             "timeout": 10
           }
         ]
-      },
+      }{{ end }},
       {
         "matcher": "WebFetch|WebSearch|mcp__.*",
         "hooks": [
@@ -866,12 +871,20 @@
             "type": "command",
             "command": "~/.claude/hooks/check-before-stop.sh",
             "timeout": 10
-          },
+          }
+        ]
+      }{{ if .work }},
+      {
+        "hooks": [
           {
             "type": "command",
             "command": "~/.claude/hooks/planka-stop.sh",
             "timeout": 10
-          },
+          }
+        ]
+      }{{ end }},
+      {
+        "hooks": [
           {
             "type": "command",
             "command": "~/.claude/hooks/premature-done.py",

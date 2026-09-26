@@ -4,6 +4,7 @@
 #   matcher: Edit|Write|NotebookEdit
 #   timeout: 10
 #   order: 70
+#   when: .work
 # First edit of a session claims the branch's Planka card. A marker
 # file in the state dir makes it once-per-session rather than
 # once-per-edit, and the CLI exits 0 in silence on a machine with no

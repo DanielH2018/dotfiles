@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "ab88cb6aa691396899d5708cb27ecd65eb111dab86140baf0dedfb11dcee129f",
-      "landed": "2026-09-26T18:08:34.434Z"
+      "hash": "4a8c1c9cac77af247c1a21d5e00ede612b4afb219da2589dbd06bf5ac1e6ead8",
+      "landed": "2026-09-26T18:16:57.900Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -18,8 +18,8 @@
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "21fa4ed7011f875651501c2a73728d2c7119a1ee7045bfa95adbbad0ece17030",
-      "landed": "2026-09-25T13:33:08.320Z"
+      "hash": "27fe8addb16e1e30abc7c20ee83239e695995b781622f7ad292e5c7e7e6f034c",
+      "landed": "2026-09-26T18:16:57.900Z"
     },
     {
       "path": "home/private_dot_claude/agents/chore.md",
@@ -163,18 +163,18 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_planka-claim.sh",
-      "hash": "6a116289bd50910a1c7d921d5294627dbed36951e71df93fdf58e30f4da8fff1",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "4ea6b69796b4644ce307f21077b12c3a372c290768e84e025e36f10903a25ba0",
+      "landed": "2026-09-26T18:16:57.900Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_planka-plan.sh",
-      "hash": "a8460717b6091fadeb86fe22936941eaa67ca574549747c70c6e9591c8c9649d",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "e361873ca9e78e432d4af5ecbdce6ff81595ab859e1dc01acc0ca475cc42cb64",
+      "landed": "2026-09-26T18:16:57.900Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_planka-stop.sh",
-      "hash": "f390767fa2bb0d408b403021fb8553f50903af6a9e33b22d2d4cd5614b8a769a",
-      "landed": "2026-09-24T20:40:06.087Z"
+      "hash": "2457fcc8928d049a9c20069d131cf337fc1b5e19ea46ac960e9f4b0097265ef2",
+      "landed": "2026-09-26T18:16:57.900Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_play-sound.sh",

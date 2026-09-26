@@ -332,3 +332,15 @@ AppData
 .warp
 AppData
 {{ end }}
+
+{{ if not .work }}
+# Planka session tracking exists only on the work laptop: the board and its password (macOS
+# keychain) live there. Elsewhere the skill is dead weight in every session's skill listing, and
+# the hooks and CLI only no-op. The hook registrations carry a matching `when: .work`, and
+# .chezmoiremove deletes the copies already deployed before this gate existed.
+.claude/skills/planka-tracking
+.claude/hooks/planka-claim.sh
+.claude/hooks/planka-plan.sh
+.claude/hooks/planka-stop.sh
+.local/bin/planka
+{{ end }}

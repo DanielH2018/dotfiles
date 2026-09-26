@@ -3,6 +3,7 @@
 #   event: Stop
 #   timeout: 10
 #   order: 20
+#   when: .work
 # One session-log comment on the Planka card, and only for a session that
 # claimed one — the claim marker is the evidence that this session edited
 # something, so a read-only session leaves no trace on the board.

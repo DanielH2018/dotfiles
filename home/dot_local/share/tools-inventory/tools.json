@@ -243,7 +243,7 @@
       "plat": ["mac"],
       "platLabel": "macOS (login keychain)",
       "role": ["hook", "typed"],
-      "badges": [{ "cls": "b-how", "text": "PostToolUse and Stop hooks" }, { "cls": "b-inert", "text": "chezmoi deploys it everywhere; soft-fails without the macOS keychain" }],
+      "badges": [{ "cls": "b-how", "text": "PostToolUse and Stop hooks" }, { "cls": "b-inert", "text": "chezmoi deploys it only where the work flag is set" }],
       "desc": "Record Claude Code session work on the local Planka board.",
       "why": "It sits on the PostToolUse and Stop paths, so every expected failure exits 0 with a line in the log: it must never fail an edit or block a stop. The Planka password lives in the macOS login keychain, the same pattern the work overlay uses for its other keys."
     },
