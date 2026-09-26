@@ -353,6 +353,14 @@ with tempfile.TemporaryDirectory() as tmp:
         "no active EnterWorktree session" in squash_reason
         and "go on to step 2" in squash_reason,
     )
+    # The cleanup turn is output the user scrolls past; the block keeps it to one line.
+    check(
+        "both blocks ask for a one-line, un-narrated cleanup",
+        all(
+            "without asking or narrating" in r and "reply in one line" in r
+            for r in (reason, squash_reason)
+        ),
+    )
     # The ancestry path must not learn -D from its neighbour: a refusal there is a
     # signal, not an obstacle.
     check(

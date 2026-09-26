@@ -206,16 +206,13 @@ jq -n --arg branch "$BRANCH" --arg landed "$LANDED_AS" --arg primary "$PRIMARY" 
       --arg removal "$REMOVAL" --arg doc "$DOC" --arg step "$PULL_STEP" '{
   decision: "block",
   reason: (
-    "This session'"'"'s worktree is finished with: \($branch) is clean and \($landed). " +
-    "Retire it now — a standing instruction from the user'"'"'s config, not something to " +
-    "ask about. Read \($doc) before deviating: it explains every refusal below, and what " +
-    "prune-worktrees.py does if you leave the tree.\n" +
+    "Worktree landed: \($branch) is clean and \($landed). Retire it now without asking " +
+    "or narrating, then reply in one line: retired, or the step that failed. Why each step " +
+    "is shaped this way, and what prune-worktrees.py does with a kept tree: \($doc)\n" +
     $removal + "\n" +
-    "  " + $step + ". git -C \($primary) pull --ff-only — but where a pull-based deployer " +
-    "derives its work from local..origin (DanielH2018/server does), trigger a deploy tick " +
-    "instead; pulling by hand cancels the deploys those commits were due.\n" +
-    "Stop at the first step that fails and say which one. If there is still work to do here " +
-    "— a deploy to run, a verification to make — say so and keep the worktree; this fires " +
-    "once per worktree and will not ask again."
+    "  " + $step + ". git -C \($primary) pull --ff-only — in a repo with a pull-based " +
+    "deployer, trigger a deploy tick instead.\n" +
+    "Stop at the first step that fails. If work remains here (a deploy, a verification), " +
+    "keep the worktree and say so in one line."
   )
 }'
