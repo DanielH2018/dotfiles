@@ -75,6 +75,22 @@ The hand path works, and the order was measured on 2026-08-22:
 **Never `--force` on `git worktree remove`.** Git's refusal on a tree holding uncommitted files
 is the backstop that makes the whole procedure safe.
 
+## Sessions a script launched into their tree
+
+ExitWorktree acts only on a tree that `EnterWorktree` created in the same session. A session a
+script started inside its worktree, such as a Remote Control bridge session, gets "No-op:
+there is no active EnterWorktree session to exit" for either action. The block used to read
+that reply as the failed first step, so the session stopped with its tree still registered.
+The server repo's transcripts from 2026-09-19 to 2026-09-26 hold 45 such no-ops (dotfiles#683).
+The block therefore reads the no-op as a skipped step. On the ancestor path the session runs
+the `git worktree remove` that ExitWorktree would have run. On the squash path it goes on to
+step 2, which already removes the tree by hand. No lock of the session's own stands in the way,
+because a launcher-created tree carries the launcher's lock or none.
+
+A server fan-out worker gets no block at all. Its orchestrator's `fanout_place.py clean`
+retires the tree once the PR lands, and `status` reads `.fanout/report.json` from the tree
+until then. The hook recognises such a tree by the `.fanout/brief.md` its launcher writes.
+
 ## Why the primary checkout gets a pull, and when it must not
 
 The next session and any deploy read the primary checkout, so a merged tree that never reaches

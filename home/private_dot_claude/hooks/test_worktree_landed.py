@@ -162,6 +162,7 @@ def build(root):
         # A second landed tree, so a check that consumes the one-ask stamp on one of
         # them cannot make a later check pass for the wrong reason.
         "landed2": worktree("landed2", commit=True, push=True, land=True),
+        "fanout": worktree("fanout", commit=True, push=True, land=True),
         "unmerged": worktree("unmerged", commit=True, push=True, land=False),
         "dirty": worktree("dirty", commit=True, push=True, land=True),
         "fresh": worktree("fresh", commit=False, push=False, land=False),
@@ -237,6 +238,15 @@ with tempfile.TemporaryDirectory() as tmp:
         "the block asks for a second -d attempt after the pull",
         "BEFORE the pull" in reason and "AFTER the pull" in reason,
     )
+    # A session a script launched into its tree gets ExitWorktree's no-op, and the block
+    # used to stop it there with the tree still registered (dotfiles#683).
+    check(
+        "the block names the worktree remove that follows ExitWorktree's no-op",
+        "no active EnterWorktree session" in reason
+        and f"worktree remove {t['landed'].resolve()}" in reason
+        and reason.index("no active EnterWorktree session")
+        < reason.index("worktree remove"),
+    )
 
     # Asked once, never again for this tree: merging is often not the end of the work
     # (merge, deploy, verify), and a hook that re-blocks every turn would nag a session
@@ -247,6 +257,23 @@ with tempfile.TemporaryDirectory() as tmp:
     check("an unmerged branch is silent", run(t["unmerged"]) is None)
     check("a fresh never-pushed worktree is silent", run(t["fresh"]) is None)
     check("the primary checkout is silent", run(t["repo"]) is None)
+
+    # A server fan-out worker's tree is retired by its orchestrator's `clean`, which
+    # reads `.fanout/` from it until then. The same landed tree blocks once the
+    # launcher's brief is gone, so the silence is the brief, not the stamp.
+    # `.fanout/` is ignored, as the server repo ignores it: an untracked brief would
+    # read as dirty and silence the hook for a reason this check is not about.
+    (t["repo"] / ".git" / "info" / "exclude").write_text(".fanout/\n")
+    brief = t["fanout"] / ".fanout" / "brief.md"
+    brief.parent.mkdir()
+    brief.write_text("brief\n")
+    check("a fan-out worker's tree is silent", run(t["fanout"]) is None)
+    shutil.rmtree(brief.parent)
+    fanout_block = run(t["fanout"])
+    check(
+        "the same tree without the brief blocks",
+        bool(fanout_block) and fanout_block.get("decision") == "block",
+    )
     check("outside a git repo it is silent", run(tmp) is None)
 
     # A worktree outside .claude/worktrees/ is the operator's, not a session's.
@@ -320,6 +347,11 @@ with tempfile.TemporaryDirectory() as tmp:
     check(
         "the squash block says to stop at the first failing step",
         "Stop at the first step that fails" in squash_reason,
+    )
+    check(
+        "the squash block reads ExitWorktree's no-op as a step to go past",
+        "no active EnterWorktree session" in squash_reason
+        and "go on to step 2" in squash_reason,
     )
     # The ancestry path must not learn -D from its neighbour: a refusal there is a
     # signal, not an obstacle.

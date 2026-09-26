@@ -102,6 +102,11 @@ case "$TOPLEVEL" in
   *) exit 0 ;;
 esac
 
+# A server fan-out worker's tree belongs to its orchestrator: `fanout_place.py clean`
+# removes it once the PR lands, and `status` reads `.fanout/report.json` from it until then.
+# The launcher writes `.fanout/brief.md` into every worker tree, so its presence is the tell.
+[ -e "$TOPLEVEL/.fanout/brief.md" ] && exit 0
+
 # Uncommitted work means not done, whatever the branch says. A `git status` that fails is
 # usually another session mid-write on the shared index — treat that as work in progress
 # too, never as clean.
@@ -172,15 +177,24 @@ DOC="${DOC_DIR:+$DOC_DIR/}worktree-landed.md"
 
 # The removal step, which differs by merge shape — see the two-cases note in the header and
 # the "two merge shapes" section of the doc.
+#
+# A session a script launched into its tree (a Remote Control bridge session, say) gets
+# ExitWorktree's "no active EnterWorktree session" no-op instead. That reply is a skipped
+# step, not a failure, so each half names the `git worktree remove` that retires the tree
+# without the tool.
+NO_OP="If ExitWorktree answers that there is no active EnterWorktree session, that is not a \
+failure:"
 if [ "$REWRITTEN" = "0" ]; then
   PULL_STEP=3
-  REMOVAL="  1. ExitWorktree with action \"remove\". Never discard_changes.
+  REMOVAL="  1. ExitWorktree with action \"remove\". Never discard_changes. $NO_OP run \
+git -C $PRIMARY worktree remove $TOPLEVEL instead — unlock it first if it reports the tree is \
+locked. Never --force.
   2. git -C $PRIMARY branch -d $BRANCH — BEFORE the pull below, and again AFTER the pull if \
 it refuses. Never -D on this path."
 else
   PULL_STEP=4
   REMOVAL="  1. ExitWorktree with action \"keep\". Action \"remove\" WILL refuse here \
-(\"N commits on $BRANCH\"). Never discard_changes.
+(\"N commits on $BRANCH\"). Never discard_changes. $NO_OP go on to step 2.
   2. git -C $PRIMARY worktree remove $TOPLEVEL — unlock it first if it reports the tree is \
 locked. Never --force.
   3. git -C $PRIMARY branch -d $BRANCH, and only if that refuses, the capital-D form."
