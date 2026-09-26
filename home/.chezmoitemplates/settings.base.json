@@ -436,12 +436,12 @@
       "Key internal services: k3s cluster hosts daniel-box (control plane) and daniel-server (agent); daniel-pi (Docker, LAN-only). Traefik, Authelia/OIDC, Pi-hole DNS, Longhorn storage, CrowdSec, Uptime-Kuma, Prometheus/Grafana/Loki, Home Assistant — all internal, non-production personal infra",
       "Org-specific CLIs: kubectl (authenticates as a read-only ServiceAccount by default), uv, prek, sops, k3s, chezmoi (dotfiles, separate repo), scripts/deploy.sh (takes a file lock), scripts/diagnostics/probe.py (read-only diagnostics)",
       "Network posture: home LAN with WireGuard remote access (wg-easy on daniel-box, public 51820/udp; a second LAN-only instance on daniel-pi). Cloudflare-fronted public ingress via Traefik on daniel-box. daniel-pi is LAN-only and never internet-exposed",
-      "CI/CD deploy targets: GitHub Actions (.github/workflows/ci.yml) on PR and push to master, plus a pull-based GitOps deploy — a 30-minute systemd timer on daniel-box pulls origin/master and applies it with Ansible",
+      "CI/CD deploy targets: GitHub Actions (.github/workflows/ci.yml) on PR and push to master, plus a pull-based GitOps deploy — a 10-minute systemd timer on daniel-box pulls origin/master and applies it with Ansible",
       {{/* The single most consequential fact for this environment, and the built-in rules cannot
            infer it: the classifier's Git Push Destination exception explicitly blesses pushes to
            the default branch whatever it is named, and its production carve-out only fires on
            names like production/release/gh-pages. Here `master` IS the deploy trigger. */}}
-      "Sensitive remote targets: pushing or merging to `master` in DanielH2018/server is a PRODUCTION DEPLOY — a systemd timer pulls origin/master every 30 minutes and applies it to the live homelab with Ansible. Also any namespace, host or container carrying `prod`/`production` as a whole word, and Longhorn PVCs plus their B2 backups, which are destructive-risk targets despite not being prod-named",
+      "Sensitive remote targets: pushing or merging to `master` in DanielH2018/server is a PRODUCTION DEPLOY — a systemd timer pulls origin/master every 10 minutes and applies it to the live homelab with Ansible. Also any namespace, host or container carrying `prod`/`production` as a whole word, and Longhorn PVCs plus their B2 backups, which are destructive-risk targets despite not being prod-named",
       "Protected deployment namespaces / environments: the `homelab` and `longhorn-system` k8s namespaces",
       "Protected IaC scopes: IAM/RBAC, networking, quota and node-pool resources; anything named or tagged prod/production; the k3s read-only ServiceAccount RBAC boundary (ansible/roles/setup/k3s); and CrowdSec/Traefik/Authelia auth-plane config",
       {{/* Without this, a PUBLIC repo plus a sensitive-path entry makes every routine commit that
@@ -510,7 +510,7 @@
          defence in depth, and the place the agent is told why. */}}
     "hard_deny": [
       "$defaults",
-      "Never `git push` directly to `master` on DanielH2018/server. That branch is a production deploy trigger: a 30-minute systemd timer pulls origin/master and applies it to the live homelab with Ansible, so a direct push ships to running infrastructure without review. Changes reach master through a pull request whose CI has passed. Pushing to any other branch, and opening or merging a PR, are unaffected"
+      "Never `git push` directly to `master` on DanielH2018/server. That branch is a production deploy trigger: a 10-minute systemd timer pulls origin/master and applies it to the live homelab with Ansible, so a direct push ships to running infrastructure without review. Changes reach master through a pull request whose CI has passed. Pushing to any other branch, and opening or merging a PR, are unaffected"
     ]
   },
   {{/* Git Bash runs these on Windows too; notify.sh just no-ops there.
