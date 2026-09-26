@@ -56,8 +56,8 @@ invocations, and pipes or command substitution. Keep remote calls to one plain v
 piping locally.
 
 For `daniel-server` and `daniel-pi` specifically, a second hook picks up where that one
-stops. claude_guard's `readonly.py` (`_ssh`, gated on `TRUSTED_SSH_HOSTS`) re-runs the
-read-only classifier on the remote command, which parses the whole line — so a local pipeline and connection flags come
+stops. claude_guard's read-only classifier (its `_ssh` handler, gated on
+`TRUSTED_SSH_HOSTS`) re-classifies the remote command, and it parses the whole line — so a local pipeline and connection flags come
 along too: `ssh daniel-server docker logs kopia --since 24h 2>&1 | tail -20` and
 `ssh -o BatchMode=yes daniel-pi uptime` both go through, and the remote command is held to
 the same read-only standard as a local one. Still prompts: forwarding or proxying flags
