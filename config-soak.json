@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "840ea5e0c6f75b7588be1dcf38086c8e34a441d30824f01c29c8eb85a4a7d57c",
-      "landed": "2026-09-25T13:33:08.320Z"
+      "hash": "ab88cb6aa691396899d5708cb27ecd65eb111dab86140baf0dedfb11dcee129f",
+      "landed": "2026-09-26T18:08:34.434Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -498,8 +498,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/homelab/SKILL.md",
-      "hash": "2a80663710e81375fb7547f5a919d800db9cdae99321afe3d1a787ed0161b541",
-      "landed": "2026-09-17T00:47:57.053Z"
+      "hash": "43dd17e334324e6247f564c864b2ed3fcbea49a2d77fd7e38990401c3393e436",
+      "landed": "2026-09-26T18:08:34.434Z"
     },
     {
       "path": "home/private_dot_claude/skills/learning-digest/SKILL.md",
