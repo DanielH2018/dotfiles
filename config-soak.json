@@ -293,8 +293,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_worktree-landed.sh",
-      "hash": "1559d6cb78f8388c6e65dcf15ece68e470034acd507bacb9dab9bc62f44d8379",
-      "landed": "2026-09-26T18:42:28.602Z"
+      "hash": "f0c519275c4f14d5849ddc6f2161a3a3dfea623842b97c5ca8cc796ee28e6fc9",
+      "landed": "2026-09-26T18:48:23.464Z"
     },
     {
       "path": "home/private_dot_claude/hooks/hook-input.sh",
@@ -363,8 +363,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_worktree_landed.py",
-      "hash": "debe91b5db09f5ffe89417e46800042b443efcd804960d4facf8915136be2780",
-      "landed": "2026-09-26T18:42:28.602Z"
+      "hash": "900911eb4585e7132da5b21ff80bf40d02562fe4cace7a4d53436265fbfeafc6",
+      "landed": "2026-09-26T18:48:23.464Z"
     },
     {
       "path": "home/private_dot_claude/hooks/worktree-landed.md",
