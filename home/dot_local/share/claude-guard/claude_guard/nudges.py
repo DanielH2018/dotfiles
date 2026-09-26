@@ -1,7 +1,8 @@
 """Bash commands that work but flood the context: a one-line nudge, never a decision.
 
-Four CLAUDE.md "Tool use & context discipline" rules are questions about command text,
-so they ride on the PreToolUse pass this package already makes for every Bash call
+Four context-discipline rules are questions about command text. CLAUDE.md stated them
+until the 2026-09-26 scaffolding pass cut the prose and left this module as their only
+home. They ride on the PreToolUse pass this package already makes for every Bash call
 rather than on a process of their own (reprime-nudge.sh, the per-event shape dotfiles
 #586 pointed at, was retired in #652 for costing a process per event):
 

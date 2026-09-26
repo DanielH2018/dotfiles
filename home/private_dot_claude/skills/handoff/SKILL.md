@@ -14,8 +14,7 @@ original moves. That single rule decides what goes in the doc and what stays out
 ## When to reach for this
 
 Work is in flight and this session is ending: before `/clear`, before the context
-window fills, or when splitting a large task onto a fresh session (`/prep`'s large
-gear ends here). Skip it when the work is landed — a PR body and commit message
+window fills, or when splitting a large task onto a fresh session. Skip it when the work is landed — a PR body and commit message
 already carry it.
 
 Not the neighbouring tools: `remember` writes *durable* facts to history/vault;

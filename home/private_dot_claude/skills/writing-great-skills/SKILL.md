@@ -67,6 +67,24 @@ own author hits its exact failure and doesn't get it loaded.
 **dead trigger** (a model-invoked description keyed on an action only someone who already
 knows the skill would take).
 
+## Measure it with an eval
+
+An eval is the regression test for a skill or prompt: a set of cases, each an `input` plus a
+`golden` answer or rubric, and a grader. Write the set **before** you tune, or you tune to
+memory rather than to a fixed target.
+
+The cheapest reliable grader wins, because grading reruns on every iteration:
+
+1. **Code grading** — exact match, regex, set membership, a threshold. Reformat the task until
+   this works (multiple choice, a required `ANSWER: X` line) before reaching for a model.
+2. **Model grading** — an LLM judges against a rubric, reasoning inside `<thinking>` before a
+   single `<correctness>correct|incorrect</correctness>` tag. Use only when correctness cannot
+   be pattern-matched.
+3. **Human grading** — reserve for the few cases used to calibrate the model grader.
+
+A case the skill always passes measures nothing. Report the pass rate with the set size and
+what it leaves untested. The dotfiles repo's `evals/` runner is the worked harness.
+
 ## Where it fits
 
 The meta-skill you consult while building the rest of the set — not a step in a chain. Its

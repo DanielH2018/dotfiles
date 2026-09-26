@@ -103,9 +103,8 @@ read whole by seven separate agents (61–87 KB each, ~485 KB / ~230k tokens for
 `Read`. Either read it once yourself and pass the extracted finding, or give each brief the specific
 question plus a grep/offset to reach for — never the bare path and a hope they'll bound it.
 
-**Verify, don't trust.** When integrating subagent/tool output, apply the **Source quality & epistemic
-honesty** rules from CLAUDE.md (fact vs. speculation; prefer primary sources; on conflicts favor
-recency + consistency and flag it).
+**Verify, don't trust.** When integrating subagent/tool output, separate fact from speculation,
+prefer primary sources, and on conflicts favor recency + consistency and flag the discrepancy.
 
 **Multi-agent vetting is opt-in, not the default finish.** The judge-panel and adversarial-verify patterns
 below earn their cost on high-stakes artifacts — a security sweep, a migration, a spec I'm about to build

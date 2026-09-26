@@ -933,7 +933,7 @@ add_chezmoi_mount
 add_work_config_mount
 
 # --- User skills — mounted read-only in EVERY session so general-purpose skills
-# (prep, artifact-design, gh-stack, config-lint, …) work in any sandbox, not just
+# (artifact-design, gh-stack, pr-authoring, …) work in any sandbox, not just
 # vault ones. Skills that need the vault (vault-lookup/service-context) simply
 # no-op where it isn't mounted.
 if [[ -d "$HOME/.claude/skills" ]]; then

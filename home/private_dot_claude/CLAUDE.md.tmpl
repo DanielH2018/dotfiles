@@ -87,7 +87,7 @@ answering questions happen in place as usual, and a session already inside
 
 ## GitHub
 
-Use the authenticated `gh` CLI for anything on `github.com` — PRs, issues, diffs, Actions logs, repo files, releases. `WebFetch(domain:github.com)` is denied (settings.permissions.json); `raw.githubusercontent.com` stays fetchable for raw files `gh` doesn't cover cleanly.
+`WebFetch(domain:github.com)` is denied; use `gh`. `raw.githubusercontent.com` stays fetchable for raw files `gh` doesn't cover cleanly.
 
 ## Testing
 
@@ -109,34 +109,19 @@ Before you write a stub or a textual assertion, read that skill's *Anti-patterns
 
 ## Verification & self-checking
 
-You already sanity-check your work as you go, so don't bolt a second pass on top of it — no "final verification step" appended to routine tasks, no re-reading a file you just wrote to confirm the edit landed, no subagent dispatched to double-check something you finished yourself.
+Don't invoke `superpowers:requesting-code-review` on your own initiative: it dispatches a subagent to double-check work you already finished. User instructions take precedence over skills, and this is the instruction. Asked for a review, run one. `superpowers:verification-before-completion` is not in conflict — what it asks for is the evidence rule below.
 
-That sentence governs `superpowers:requesting-code-review`, which fires on task completion and dispatches exactly that subagent. Don't invoke it on your own initiative; user instructions take precedence over skills, and this is the instruction. Asked for a review, run one. `superpowers:verification-before-completion` is not in conflict — what it asks for is the evidence rule below.
-
-What doesn't relax is **evidence before claims**. If you tell me tests pass, the linter is clean, the build succeeds, or a bug is fixed, you ran that command in this session and read its output. Don't extrapolate from an earlier run or from "the code looks right" — when you haven't run it, say the status is unverified. `stop-checks.py` blocks once when a reply says the tests pass or the linter is clean and no Bash command in the session looks like that run.
-
-Scope the proof to the change while you work: the tests covering what you touched, plus targeted lint and typecheck. The full suite runs before a change is merged or landed — where a pre-push or CI gate already runs it, that gate is the one that runs it, not a hand-rolled repeat.
+**Evidence before claims.** Say tests pass, the linter is clean or a bug is fixed only when you ran that command in this session and read its output; otherwise say the status is unverified. `stop-checks.py` enforces the common case.
 
 ## Code review
 
-Ask review agents for **everything** they find, each finding carrying a confidence or severity score. "Only report high-confidence issues", "only high-severity", or "be conservative" get followed literally and real bugs go unreported; filtering is a separate pass, by an arbiter or by me, after seeing the full list. This overrides the `confidence ≥ 80` reporting gate baked into the bundled `feature-dev:code-reviewer` agent — state the override in the dispatch prompt when you spawn it. `reviewer-override.sh` denies a dispatch whose prompt does not, and its reason carries a sentence that passes.
+Ask review agents for **everything** they find, each finding carrying a confidence or severity score; filtering is a separate pass. `reviewer-override.sh` denies a dispatch whose prompt does not say so, and its reason carries a sentence that passes.
 
 **When a reviewer says they don't understand something, fix the code — don't explain in the thread.** Clarify the code itself, or leave a comment at the line that confused them; a reply in the review thread helps one person once, while the code helps everyone who reads it later. This is the homelab repo's `# DECIDED:` marker generalized: it applies in every repo, and to any confusion a reviewer surfaces rather than only to a settled trade-off. Adapted from <https://google.github.io/eng-practices/review/developer/handling-comments.html>.
 
 ## Scope discipline
 
-Deliver what was asked, at the scope intended, and finish the whole thing. Make routine judgment calls yourself; check in only when different readings of the request would lead to materially different work. If the request seems mistaken or a better approach exists, say so in a sentence and continue with the task as asked.
-
-Spotting an unrelated improvement is not a reason to make it — note it in your summary and leave the code alone. Two habits worth naming, because they read as thoroughness rather than scope creep: adding error handling for failure modes that aren't reachable from the real call sites, and creating a new file where editing an existing one would do.
-
 Finishing the whole thing has two failure modes that look finished. **Reverse states:** if you added a way in, add the way out and the way to see it — snooze needs unsnooze, close needs reopen, enable needs disable. A one-way door is a bug. **Entry points:** a behavior reachable from one place is usually also reachable from a command, a keybinding, and a settings toggle, so fixing the path you tested is not fixing the feature. When a change adds a state, a mode, or a new path through a feature, say which of the two applied; on anything smaller, just do them.
-
-## Source quality & epistemic honesty
-
-Applies to every session — answers, summaries, research, and anything written to a durable store:
-- Separate established fact from speculation, prediction, or opinion; don't present hedged or future-tense claims as settled.
-- Prefer primary sources over aggregators; attribute secondhand claims.
-- On conflicting sources, favor recency + consistency and flag the discrepancy rather than silently picking one.
 
 ## Specs, plans & written deliverables
 
@@ -152,20 +137,11 @@ Applies to every session — answers, summaries, research, and anything written 
 
 Long sessions die of a thousand medium tool calls, never one big one. Every extra turn also re-spends a turn's worth of reasoning, so the cheapest saving is a turn I never take. Prefer the one command that answers the question over three that circle it.
 
-- Never read a whole file to find one symbol — grep for it, then read the hit with an offset.
-- Edit a file surgically rather than rewriting the whole thing, whenever the end result is the same. A whole-file rewrite of a long file costs output tokens and time for an identical result; reserve it for a short file or one where most of the content changes.
-- Bound noisy output at the source: `git log`, `ls -R`, test runs, and build logs all need a `head`/`tail`/`wc` limit.
-- `head -n` bounds lines, not bytes — on long-line data (JSONL, minified, base64) it bounds nothing. Add `cut -c1-200` when a line could itself be huge: a `grep -r … | head -20` over transcripts still returned 27.8 KB.
-- When a result offloads (`<persisted-output>`, above ~30 KB, 0.18% of calls), grep the persisted path rather than re-running the command with a tighter limit.
-- Same principle for JSON whose shape you don't already know (a `gh api` response, an MCP tool result, a large config): `gron file.json | rg keyword` finds the exact dotted path in one shot, which you then feed to a targeted `jq` query — instead of dumping the whole blob into context or spending several turns on exploratory `jq keys` calls. Reach for `jq` directly when you already know the schema; reach for `gron` first when you don't.
-- When shell tools run out and the reflex is `python3 -c`, reach for `jsonq` instead — it is allowlisted, where `python3 -c` is ask-listed and costs a prompt every time. It is a closed subset of Python syntax over JSON with **no attribute access**, which is the one thing priors get wrong; `jsonq --functions` prints every callable name, and reading it beats guessing at the syntax. A `python3 -` heredoc is worse than a prompt: the secrets hook blocks it outright. Genuine computation that `jsonq` can't express is still a fair reason to pay the prompt.
-- claude-guard adds a one-line nudge, once per session per rule, for an unpiped `git log` with no count or range, an unpiped `ls -R`, a transcript grep with no `cut` stage, and a `python3 -c` over JSON (`claude_guard/nudges.py`).
+- `jsonq` is installed and allowlisted for JSON work that shell tools can't express, where `python3 -c` costs a prompt. It has no attribute access; `jsonq --functions` lists what it can call.
 
 ## Delegating to subagents
 
-If answering a question would take 3+ exploratory calls — searching for something whose location you don't already know — dispatch a subagent and keep only its findings. The targeted read is the exception: when you already know the file and the symbol, just read it, however many calls that takes. `explore-nudge.sh` adds a reminder when a Grep or Glob is the third exploratory call in a row.
-
-Before fanning out subagents or building a Workflow, load the `orchestrating-subagents` skill for agent counts, brief structure, cost levers, and the vetting patterns.
+Delegate a search that would take 3+ exploratory calls, and keep only the findings; `explore-nudge.sh` reminds you on the third. Load the `orchestrating-subagents` skill before fanning out subagents or building a Workflow.
 
 ## Compaction policy
 

@@ -999,14 +999,11 @@
        these are ~824 est. resident tokens per session. Delete an entry to restore the skill.
        #622 deleted six of the ten (codebase-design, domain-modeling, grilling, pr-feedback,
        pr-review-prep, skill-router) and folded pr-review-prep's checks into pr-authoring.
-       `reprime` is "user-invocable-only" rather than "off": it stays out of the model's
-       listing but in the `/` menu, because it is the manual replacement for the reprime-nudge
-       hook retired in #621, and "off" hides a skill from the menu too. */}}
+       The 2026-09-26 scaffolding pass deleted config-lint (its script stays, run from the
+       homelab repo's scaffolding-delete-pass skill) and reprime. */}}
   "skillOverrides": {
-    "config-lint": "off",
     "handoff": "off",
-    "learning-quiz": "off",
-    "reprime": "user-invocable-only"
+    "learning-quiz": "off"
   },
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true,

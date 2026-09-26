@@ -9,14 +9,14 @@
 # in place of the library block above, run bin/gen-hooks, and export
 # CLAUDE_LEARN_GATE=1 into the claude process's environment. This file
 # reads only its inherited environment; it never sources local.env.
-# Defers to /prep and to prep's own `go` / `just do it` / `no intake`
-# bypasses, and fires at most once per session.
+# Defers to the `go` / `just do it` / `no intake` bypass words, and fires
+# at most once per session.
 # UserPromptSubmit hook: the pre-delegation explain gate. Mechanism B of
 # ~/.claude/specs/learning-loop_2026-08-19.md — on a prompt that asks for a
 # change and looks non-trivial, inject one instruction: state the approach in
 # five lines or fewer, then ask exactly one comprehension question before
-# editing. It covers the middle ground `prep` skips: work trivial enough to
-# delegate directly but still worth understanding.
+# editing. It covers work trivial enough to delegate directly but still worth
+# understanding.
 #
 # This is the most invasive mechanism in the learning loop, so every ambiguous
 # case exits silently. Default OFF: it does nothing until CLAUDE_LEARN_GATE=1.
@@ -28,15 +28,13 @@
 # Deferrals, in the order they are checked:
 #   - not armed
 #   - no prompt, or a prompt that is only a slash command
-#   - `/prep` anywhere in the prompt: prep runs its own intake, and two intakes
-#     for one task is the failure this spec is most likely to hit
-#   - the bypass words prep already honours: bare `go`, `just do it`, `no intake`
+#   - the bypass words: bare `go`, `just do it`, `no intake`
 #   - a question rather than a request for a change
 #   - below the word floor, or naming no change verb
 #   - already fired once this session
 #
-# Known overlap, deliberately not solved here: an output style can mandate a prep
-# intake on every non-trivial prompt without the user typing `/prep`. Under such a
+# Known overlap, deliberately not solved here: an output style can mandate an
+# intake on every non-trivial prompt. Under such a
 # style the gate is redundant and double-asks. Reading settings.json from a hook to
 # detect that would be clever and fragile, so the answer is to leave the gate off
 # (`CLAUDE_LEARN_GATE` unset) on a machine whose style already does the intake.
@@ -68,11 +66,10 @@ FLAT=$(printf '%s' "$PROMPT" | tr '\n\t' '  ' | tr -s ' ' | sed 's/^ *//; s/ *$/
 [ -n "$FLAT" ] || exit 0
 
 # A prompt that is only a slash command is the user driving a skill, not
-# delegating work. /prep in particular runs its own intake.
+# delegating work.
 case "$FLAT" in /*) exit 0 ;; esac
-printf '%s' "$FLAT" | grep -Eq '(^| )/prep( |$)' && exit 0
 
-# The bypasses prep already honours. `go` is exact-match on the whole prompt:
+# The bypass words. `go` is exact-match on the whole prompt:
 # substring matching would fire on "google", "going", and "ago".
 [ "$FLAT" = "go" ] && exit 0
 printf '%s' "$FLAT" | grep -Eq 'just do it|no intake' && exit 0

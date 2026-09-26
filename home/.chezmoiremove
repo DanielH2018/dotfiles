@@ -73,3 +73,13 @@
 .claude/commands/review-setup.md
 .claude/commands/review-setup-loop.md
 .claude/command-references
+
+# 2026-09-26 scaffolding delete pass at the Opus 5.5 upgrade: zero skill_activated events in
+# 30 days on the cluster's OTEL (typed slash commands included) and no caller left.
+# building-evals folded into writing-great-skills. config-lint loses only its SKILL.md; its
+# scripts/ directory stays deployed.
+.claude/skills/deep-understanding
+.claude/skills/reprime
+.claude/skills/prep
+.claude/skills/building-evals
+.claude/skills/config-lint/SKILL.md

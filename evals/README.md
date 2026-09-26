@@ -160,18 +160,13 @@ original pass sat untriaged for a week, which reads the same as "deliberately sk
 
 | Skill | Verdict |
 |---|---|
-| `prep` | cases — gear routing: trivial skips intake, medium produces the block and stops |
 | `artifact-design` | cases — self-contained HTML: no external assets, inline CSS |
 | `pr-authoring` | cases — verbalized safety gates in *Measure the diff* (force-with-lease, stop on guard failure) |
 | `gh-stack` | cases — non-interactive flag contract (`view --json`, `submit --auto`) |
 | `handoff` | cases — corrections and error strings must survive verbatim, dead ends kept |
 | `orchestrating-subagents` | cases — agent count lands in the stated band; brief carries objective/format/budget |
-| `building-evals` | skip — methodology reference; no falsifiable single-turn output |
 | `homelab` | skip — connection details and an ssh verb allowlist; nothing to exhibit without the server |
-| `config-lint` | skip — pass 1 is script-bound; placement review too open-ended to anchor |
-| `deep-understanding` | skip — the comprehension loop is inherently multi-turn |
 | `distill-scan` | skip — the regex validation loop needs node execution |
-| `reprime` | skip — its core act is re-reading external rule files |
 | `writing-great-skills` | skip — open-ended authoring judgment, low regression value |
 
 ## Rules cases
