@@ -1,9 +1,38 @@
 # Retiring a landed worktree
 
 `worktree-landed.sh` blocks a session's Stop once, when the worktree it is standing in holds
-nothing but work that has already landed. The block text carries the commands; this file
-carries why each one is shaped the way it is. Read it when a step refuses, or before you
-reach for a flag the block told you not to pass.
+nothing but work that has already landed. The block is one line: it names the procedure below
+that fits the merge shape, and the values for `<primary>`, `<tree>` and `<branch>`. This file
+carries the steps and why each one is shaped the way it is. The block text is printed to the
+user verbatim, which is why the steps live here rather than in it.
+
+## The procedure
+
+Run the steps in order and stop at the first one that fails. If work remains in the tree (a
+deploy, a verification), keep the worktree and say so in one line instead. Either way, reply in
+one line: retired, or the step that failed.
+
+### Ancestor procedure
+
+1. ExitWorktree with action "remove". Never discard_changes. If ExitWorktree answers that there
+   is no active EnterWorktree session, that is not a failure: run
+   `git -C <primary> worktree remove <tree>` instead. Unlock the tree first if git reports it is
+   locked. Never --force.
+2. `git -C <primary> branch -d <branch>`, BEFORE the pull below, and again AFTER the pull if it
+   refuses. Never -D on this path.
+3. `git -C <primary> pull --ff-only`. In a repo with a pull-based deployer, trigger a deploy
+   tick instead.
+
+### Squash procedure
+
+1. ExitWorktree with action "keep". Action "remove" WILL refuse here ("N commits on
+   <branch>"). Never discard_changes. If ExitWorktree answers that there is
+   no active EnterWorktree session, that is not a failure: go on to step 2.
+2. `git -C <primary> worktree remove <tree>`. Unlock the tree first if git reports it is
+   locked. Never --force.
+3. `git -C <primary> branch -d <branch>`, and only if that refuses, the capital-D form.
+4. `git -C <primary> pull --ff-only`. In a repo with a pull-based deployer, trigger a deploy
+   tick instead.
 
 ## Why the session has to do this, not a sweeper
 

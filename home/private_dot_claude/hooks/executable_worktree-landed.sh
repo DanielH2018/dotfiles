@@ -48,11 +48,11 @@
 #
 # Cleanup is three things, not one: leave the worktree, delete the branch it left behind,
 # fast-forward the primary checkout. THE TWO MERGE SHAPES NEED DIFFERENT ORDERS, which is why
-# the block text below is built in two halves rather than written once. Why each half is
+# the block names one of two procedures rather than one. Both procedures, why each is
 # ordered the way it is — why `-d` is tried on both sides of the pull, why `-D` is correct in
 # the squash half and nowhere else, why ExitWorktree refuses a squash-merged tree, why
 # `--force` is never the answer, and what prune-worktrees.py does and does not sweep — is in
-# worktree-landed.md beside this script. That file is the block text's own reference, so it is
+# worktree-landed.md beside this script. That file holds the steps the block points at, so it is
 # the one place to change when any of it is re-measured; do not restate it here.
 
 set -u
@@ -167,52 +167,25 @@ if ! git merge-base --is-ancestor HEAD "$DEFAULT" 2>/dev/null; then
   REWRITTEN=1
 fi
 
-# Where the reasoning for every step below lives. The block text carries the commands and
-# the caveats that change what you type — nothing else. It is rendered verbatim into the
-# session log, where a paragraph of rationale is a paragraph of noise on every landed
-# worktree. Resolved next to this script so a worktree copy points at its own doc rather
-# than the deployed one.
+# The block text is rendered verbatim to the user under "Stop hook error", so it is one line:
+# which procedure to run and the values it needs. The steps themselves, and why each is shaped
+# the way it is, live in worktree-landed.md beside this script. Resolved next to this script so
+# a worktree copy points at its own doc rather than the deployed one.
 DOC_DIR=$(cd "${BASH_SOURCE[0]%/*}" 2>/dev/null && pwd -P) || DOC_DIR=""
 DOC="${DOC_DIR:+$DOC_DIR/}worktree-landed.md"
 
-# The removal step, which differs by merge shape — see the two-cases note in the header and
+# The two merge shapes need different procedures — see the two-cases note in the header and
 # the "two merge shapes" section of the doc.
-#
-# A session a script launched into its tree (a Remote Control bridge session, say) gets
-# ExitWorktree's "no active EnterWorktree session" no-op instead. That reply is a skipped
-# step, not a failure, so each half names the `git worktree remove` that retires the tree
-# without the tool.
-NO_OP="If ExitWorktree answers that there is no active EnterWorktree session, that is not a \
-failure:"
-if [ "$REWRITTEN" = "0" ]; then
-  PULL_STEP=3
-  REMOVAL="  1. ExitWorktree with action \"remove\". Never discard_changes. $NO_OP run \
-git -C $PRIMARY worktree remove $TOPLEVEL instead — unlock it first if it reports the tree is \
-locked. Never --force.
-  2. git -C $PRIMARY branch -d $BRANCH — BEFORE the pull below, and again AFTER the pull if \
-it refuses. Never -D on this path."
-else
-  PULL_STEP=4
-  REMOVAL="  1. ExitWorktree with action \"keep\". Action \"remove\" WILL refuse here \
-(\"N commits on $BRANCH\"). Never discard_changes. $NO_OP go on to step 2.
-  2. git -C $PRIMARY worktree remove $TOPLEVEL — unlock it first if it reports the tree is \
-locked. Never --force.
-  3. git -C $PRIMARY branch -d $BRANCH, and only if that refuses, the capital-D form."
-fi
+if [ "$REWRITTEN" = "0" ]; then SHAPE=ancestor; else SHAPE=squash; fi
 
 : >"$STAMP" 2>/dev/null
 
 jq -n --arg branch "$BRANCH" --arg landed "$LANDED_AS" --arg primary "$PRIMARY" \
-      --arg removal "$REMOVAL" --arg doc "$DOC" --arg step "$PULL_STEP" '{
+      --arg tree "$TOPLEVEL" --arg doc "$DOC" --arg shape "$SHAPE" '{
   decision: "block",
   reason: (
-    "Worktree landed: \($branch) is clean and \($landed). Retire it now without asking " +
-    "or narrating, then reply in one line: retired, or the step that failed. Why each step " +
-    "is shaped this way, and what prune-worktrees.py does with a kept tree: \($doc)\n" +
-    $removal + "\n" +
-    "  " + $step + ". git -C \($primary) pull --ff-only — in a repo with a pull-based " +
-    "deployer, trigger a deploy tick instead.\n" +
-    "Stop at the first step that fails. If work remains here (a deploy, a verification), " +
-    "keep the worktree and say so in one line."
+    "Worktree landed: \($branch) is clean and \($landed). Retire it now without asking or " +
+    "narrating: run the \($shape) procedure in \($doc) with <primary> \($primary) and " +
+    "<tree> \($tree). Never discard_changes, never --force; reply in one line."
   )
 }'

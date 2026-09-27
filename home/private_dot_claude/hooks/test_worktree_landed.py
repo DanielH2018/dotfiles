@@ -195,58 +195,26 @@ with tempfile.TemporaryDirectory() as tmp:
 
     landed = run(t["landed"])
     check("landed + clean blocks", bool(landed) and landed.get("decision") == "block")
-    check(
-        "the block names the branch and the tool to call",
-        bool(landed)
-        and "wt-landed" in landed.get("reason", "")
-        and "ExitWorktree" in landed.get("reason", ""),
-    )
-    check(
-        "the block warns off discard_changes",
-        bool(landed) and "discard_changes" in landed.get("reason", ""),
-    )
-    check(
-        "the block covers the case where ExitWorktree cannot act",
-        bool(landed) and "prune-worktrees.py" in landed.get("reason", ""),
-    )
-    # Leaving the tree is half the job: the primary checkout still holds the pre-merge
-    # commit, and every later session and deploy reads its templates from there.
-    check(
-        "the block tells the session to fast-forward the primary checkout",
-        bool(landed)
-        and "pull --ff-only" in landed.get("reason", "")
-        and str(t["repo"]) in landed.get("reason", ""),
-    )
-    # Removing a worktree leaves its branch behind; nothing else deletes it in-session.
-    check(
-        "the block tells the session to delete the branch with -d, never -D",
-        bool(landed)
-        and "branch -d wt-landed" in landed.get("reason", "")
-        and "Never -D" in landed.get("reason", ""),
-    )
-    # Both orders are needed, one per merge shape: the pull prunes the tracking ref a
-    # squash-merged branch needs, and is the only thing that brings a ff land's
-    # tip into the primary's HEAD.
     reason = landed.get("reason", "") if landed else ""
+    doc = HOOK.parent / "worktree-landed.md"
+    # The reason is printed to the user verbatim, so it names the procedure and its
+    # values and nothing else; the steps live in the doc it points at.
     check(
-        "the branch deletion is ordered before the pull",
-        "branch -d" in reason
-        and "pull --ff-only" in reason
-        and reason.index("branch -d") < reason.index("pull --ff-only"),
+        "the block names the branch, the ancestor procedure and the doc",
+        "wt-landed" in reason
+        and "ancestor procedure" in reason
+        and str(doc) in reason,
     )
     check(
-        "the block asks for a second -d attempt after the pull",
-        "BEFORE the pull" in reason and "AFTER the pull" in reason,
+        "the block gives the values the procedure's placeholders need",
+        f"<primary> {t['repo'].resolve()}" in reason
+        and f"<tree> {t['landed'].resolve()}" in reason,
     )
-    # A session a script launched into its tree gets ExitWorktree's no-op, and the block
-    # used to stop it there with the tree still registered (dotfiles#683).
     check(
-        "the block names the worktree remove that follows ExitWorktree's no-op",
-        "no active EnterWorktree session" in reason
-        and f"worktree remove {t['landed'].resolve()}" in reason
-        and reason.index("no active EnterWorktree session")
-        < reason.index("worktree remove"),
+        "the block warns off discard_changes and --force",
+        "discard_changes" in reason and "--force" in reason,
     )
+    check("the block is a single line", bool(reason) and "\n" not in reason)
 
     # Asked once, never again for this tree: merging is often not the end of the work
     # (merge, deploy, verify), and a hook that re-blocks every turn would nag a session
@@ -306,75 +274,100 @@ with tempfile.TemporaryDirectory() as tmp:
         "the squash block says the pull request landed, not that the commits did",
         bool(squashed) and "pull request is merged" in squashed.get("reason", ""),
     )
-    # The squash case gets a DIFFERENT cleanup. ExitWorktree tests reachability, so it
-    # refuses every rewritten branch. Until 2026-08-22 the block told the session to
-    # accept that refusal and stop, stranding the tree the hook had just proven landed.
     squash_reason = squashed.get("reason", "") if squashed else ""
     check(
-        "the squash block warns that ExitWorktree will refuse",
-        "WILL refuse" in squash_reason,
+        "the squash block names the squash procedure",
+        "squash procedure" in squash_reason and "ancestor" not in squash_reason,
     )
-    check(
-        "the squash block still warns off discard_changes",
-        "discard_changes" in squash_reason,
-    )
-    # Order is load-bearing: "keep" releases the lock and lifts the isolation guard,
-    # and git holds the branch until the worktree is gone.
-    check(
-        "the squash block asks for ExitWorktree keep before the git steps",
-        'action "keep"' in squash_reason
-        and "worktree remove" in squash_reason
-        and squash_reason.index('action "keep"')
-        < squash_reason.index("worktree remove"),
-    )
-    check(
-        "the squash block removes the worktree before deleting the branch",
-        "worktree remove" in squash_reason
-        and "branch -d" in squash_reason
-        and squash_reason.index("worktree remove") < squash_reason.index("branch -d"),
-    )
-    # -D is the point of this path. It supplies the fact -d cannot reach once the
-    # tracking ref is pruned — but only after -d has been tried, and only here.
-    check(
-        "the squash block offers -D only as a fallback to -d",
-        "branch -d" in squash_reason and "capital-D" in squash_reason,
-    )
-    check(
-        "the squash block never forces the worktree removal",
-        "Never --force" in squash_reason,
-    )
-    # A four-step sequence that half-fails must not leave the session improvising.
-    check(
-        "the squash block says to stop at the first failing step",
-        "Stop at the first step that fails" in squash_reason,
-    )
-    check(
-        "the squash block reads ExitWorktree's no-op as a step to go past",
-        "no active EnterWorktree session" in squash_reason
-        and "go on to step 2" in squash_reason,
-    )
-    # The cleanup turn is output the user scrolls past; the block keeps it to one line.
     check(
         "both blocks ask for a one-line, un-narrated cleanup",
         all(
-            "without asking or narrating" in r and "reply in one line" in r
+            "without asking or" in r and "narrating" in r and "reply in one line" in r
             for r in (reason, squash_reason)
         ),
+    )
+
+    # ── the procedures the blocks point at ──────────────────────────────────────
+    doc_text = doc.read_text() if doc.is_file() else ""
+    check("the reasoning doc ships beside the hook", doc.is_file())
+
+    def section(heading: str) -> str:
+        if heading not in doc_text:
+            return ""
+        rest = doc_text.split(heading, 1)[1]
+        return rest.split("\n#", 1)[0]
+
+    anc = section("### Ancestor procedure")
+    sq = section("### Squash procedure")
+    check("the doc carries both procedures", bool(anc) and bool(sq))
+    check(
+        "the ancestor procedure removes the tree, deletes the branch, then pulls",
+        'action "remove"' in anc
+        and "branch -d <branch>" in anc
+        and "pull --ff-only" in anc
+        and anc.index('action "remove"')
+        < anc.index("branch -d")
+        < anc.index("pull --ff-only"),
+    )
+    # Both orders are needed, one per merge shape: the pull prunes the tracking ref a
+    # squash-merged branch needs, and is the only thing that brings a ff land's
+    # tip into the primary's HEAD.
+    check(
+        "the ancestor procedure asks for -d on both sides of the pull",
+        "BEFORE the pull" in anc and "AFTER the pull" in anc,
+    )
+    # A session a script launched into its tree gets ExitWorktree's no-op, and the block
+    # used to stop it there with the tree still registered (dotfiles#683).
+    check(
+        "the ancestor procedure names the worktree remove that follows the no-op",
+        "no active EnterWorktree session" in anc
+        and "worktree remove <tree>" in anc
+        and anc.index("no active EnterWorktree session") < anc.index("worktree remove"),
     )
     # The ancestry path must not learn -D from its neighbour: a refusal there is a
     # signal, not an obstacle.
     check(
-        "the ancestry block still forbids -D",
-        "Never -D on this path" in reason and "capital-D" not in reason,
+        "the ancestor procedure forbids -D",
+        "Never -D on this path" in anc and "capital-D" not in anc,
     )
-    # The block carries commands only; the reasoning it points at has to be a file that
-    # exists next to the hook, or the pointer is a dead end in every session it fires.
-    doc = HOOK.parent / "worktree-landed.md"
-    doc_text = doc.read_text() if doc.is_file() else ""
-    check("the reasoning doc ships beside the hook", doc.is_file())
+    # The squash case gets a DIFFERENT cleanup. ExitWorktree tests reachability, so it
+    # refuses every rewritten branch. Until 2026-08-22 the block told the session to
+    # accept that refusal and stop, stranding the tree the hook had just proven landed.
     check(
-        "both blocks name the reasoning doc by its real path",
-        str(doc) in reason and str(doc) in squash_reason,
+        "the squash procedure warns that ExitWorktree will refuse", "WILL refuse" in sq
+    )
+    check(
+        "both procedures warn off discard_changes",
+        "discard_changes" in anc and "discard_changes" in sq,
+    )
+    # Order is load-bearing: "keep" releases the lock and lifts the isolation guard,
+    # and git holds the branch until the worktree is gone.
+    check(
+        "the squash procedure keeps, removes the tree, deletes the branch, then pulls",
+        'action "keep"' in sq
+        and "worktree remove" in sq
+        and "branch -d" in sq
+        and "pull --ff-only" in sq
+        and sq.index('action "keep"')
+        < sq.index("worktree remove")
+        < sq.index("branch -d")
+        < sq.index("pull --ff-only"),
+    )
+    # -D is the point of this path. It supplies the fact -d cannot reach once the
+    # tracking ref is pruned — but only after -d has been tried, and only here.
+    check("the squash procedure offers -D only as a fallback to -d", "capital-D" in sq)
+    check(
+        "neither procedure forces the worktree removal",
+        "Never --force" in anc and "Never --force" in sq,
+    )
+    check(
+        "the squash procedure reads ExitWorktree's no-op as a step to go past",
+        "no active EnterWorktree session" in sq and "go on to step 2" in sq,
+    )
+    # A multi-step sequence that half-fails must not leave the session improvising.
+    check(
+        "the doc says to stop at the first failing step",
+        "stop at the first one that fails" in doc_text,
     )
     check(
         "the reasoning doc explains the fallback the blocks do not",
