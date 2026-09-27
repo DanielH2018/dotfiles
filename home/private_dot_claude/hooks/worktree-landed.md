@@ -2,7 +2,8 @@
 
 `worktree-landed.sh` blocks a session's Stop once, when the worktree it is standing in holds
 nothing but work that has already landed. The block is one line: it names the procedure below
-that fits the merge shape, and the values for `<primary>`, `<tree>` and `<branch>`. This file
+that fits the merge shape, and the values for `<primary>`, `<tree>` and `<branch>`. `<tree>` is
+relative to `<primary>`, which is how `git -C <primary>` resolves it. This file
 carries the steps and why each one is shaped the way it is. The block text is printed to the
 user verbatim, which is why the steps live here rather than in it.
 

@@ -133,7 +133,6 @@ fi
 
 # Landed: every commit here is already in the default branch, so nothing is recoverable
 # only from this directory.
-LANDED_AS="every commit is already in $DEFAULT"
 REWRITTEN=0
 if ! git merge-base --is-ancestor HEAD "$DEFAULT" 2>/dev/null; then
   # The tip may have been rewritten by a squash or rebase merge. Before trusting GitHub's
@@ -163,7 +162,6 @@ if ! git merge-base --is-ancestor HEAD "$DEFAULT" 2>/dev/null; then
   run_bounded 5 65536 -- python3 "$CW_HOME/claude_worktree.py" forge-merged \
     "$BRANCH" "$HEAD_SHA"
   if [ "$RB_STATUS" != ok ] || [ "$RB_EXIT" -ne 0 ]; then exit 0; fi
-  LANDED_AS="its pull request is merged into $DEFAULT"
   REWRITTEN=1
 fi
 
@@ -175,17 +173,26 @@ DOC_DIR=$(cd "${BASH_SOURCE[0]%/*}" 2>/dev/null && pwd -P) || DOC_DIR=""
 DOC="${DOC_DIR:+$DOC_DIR/}worktree-landed.md"
 
 # The two merge shapes need different procedures — see the two-cases note in the header and
-# the "two merge shapes" section of the doc.
+# the "two merge shapes" section of the doc. The procedure name is also the evidence: ancestor
+# means local reachability proved the landing, squash means GitHub matched this exact tip.
 if [ "$REWRITTEN" = "0" ]; then SHAPE=ancestor; else SHAPE=squash; fi
+
+# <tree> is given relative to <primary>. The case test above guarantees it sits under
+# <primary>/.claude/worktrees/, so the absolute form only repeated <primary>, and the one step
+# that takes <tree> is `git -C <primary> worktree remove <tree>`, which resolves it from there.
+TREE_REL=${TOPLEVEL#"$PRIMARY"/}
 
 : >"$STAMP" 2>/dev/null
 
-jq -n --arg branch "$BRANCH" --arg landed "$LANDED_AS" --arg primary "$PRIMARY" \
-      --arg tree "$TOPLEVEL" --arg doc "$DOC" --arg shape "$SHAPE" '{
+# "Reply in one line" is not repeated here: the doc's procedure intro says it, and the session
+# reads the doc before it can act. The two prohibitions stay although the doc repeats them at
+# every step, because they are the two ways the procedure can destroy unlanded work.
+jq -n --arg branch "$BRANCH" --arg default "$DEFAULT" --arg primary "$PRIMARY" \
+      --arg tree "$TREE_REL" --arg doc "$DOC" --arg shape "$SHAPE" '{
   decision: "block",
   reason: (
-    "Worktree landed: \($branch) is clean and \($landed). Retire it now without asking or " +
-    "narrating: run the \($shape) procedure in \($doc) with <primary> \($primary) and " +
-    "<tree> \($tree). Never discard_changes, never --force; reply in one line."
+    "Worktree landed: \($branch) is clean and merged into \($default). Retire it without " +
+    "asking or narrating: \($shape) procedure in \($doc), <primary> \($primary), " +
+    "<tree> \($tree). Never discard_changes or --force."
   )
 }'

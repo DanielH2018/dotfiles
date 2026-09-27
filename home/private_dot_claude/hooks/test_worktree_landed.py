@@ -208,7 +208,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check(
         "the block gives the values the procedure's placeholders need",
         f"<primary> {t['repo'].resolve()}" in reason
-        and f"<tree> {t['landed'].resolve()}" in reason,
+        and f"<tree> {t['landed'].resolve().relative_to(t['repo'].resolve())}." in reason,
     )
     check(
         "the block warns off discard_changes and --force",
@@ -270,21 +270,14 @@ with tempfile.TemporaryDirectory() as tmp:
         "a squash-merged branch blocks once gh reports the PR merged",
         bool(squashed) and squashed.get("decision") == "block",
     )
-    check(
-        "the squash block says the pull request landed, not that the commits did",
-        bool(squashed) and "pull request is merged" in squashed.get("reason", ""),
-    )
     squash_reason = squashed.get("reason", "") if squashed else ""
     check(
         "the squash block names the squash procedure",
         "squash procedure" in squash_reason and "ancestor" not in squash_reason,
     )
     check(
-        "both blocks ask for a one-line, un-narrated cleanup",
-        all(
-            "without asking or" in r and "narrating" in r and "reply in one line" in r
-            for r in (reason, squash_reason)
-        ),
+        "both blocks ask for an un-narrated cleanup",
+        all("without" in r and "asking or narrating" in r for r in (reason, squash_reason)),
     )
 
     # ── the procedures the blocks point at ──────────────────────────────────────
@@ -297,6 +290,10 @@ with tempfile.TemporaryDirectory() as tmp:
         rest = doc_text.split(heading, 1)[1]
         return rest.split("\n#", 1)[0]
 
+    check(
+        "the doc asks for a one-line reply, which the block no longer repeats",
+        "reply in one line" in " ".join(section("## The procedure").split()),
+    )
     anc = section("### Ancestor procedure")
     sq = section("### Squash procedure")
     check("the doc carries both procedures", bool(anc) and bool(sq))
