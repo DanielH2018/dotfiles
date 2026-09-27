@@ -201,14 +201,13 @@ with tempfile.TemporaryDirectory() as tmp:
     # values and nothing else; the steps live in the doc it points at.
     check(
         "the block names the branch, the ancestor procedure and the doc",
-        "wt-landed" in reason
-        and "ancestor procedure" in reason
-        and str(doc) in reason,
+        "wt-landed" in reason and "ancestor procedure" in reason and str(doc) in reason,
     )
     check(
         "the block gives the values the procedure's placeholders need",
         f"<primary> {t['repo'].resolve()}" in reason
-        and f"<tree> {t['landed'].resolve().relative_to(t['repo'].resolve())}." in reason,
+        and f"<tree> {t['landed'].resolve().relative_to(t['repo'].resolve())}."
+        in reason,
     )
     check(
         "the block warns off discard_changes and --force",
@@ -277,7 +276,10 @@ with tempfile.TemporaryDirectory() as tmp:
     )
     check(
         "both blocks ask for an un-narrated cleanup",
-        all("without" in r and "asking or narrating" in r for r in (reason, squash_reason)),
+        all(
+            "without" in r and "asking or narrating" in r
+            for r in (reason, squash_reason)
+        ),
     )
 
     # ── the procedures the blocks point at ──────────────────────────────────────
