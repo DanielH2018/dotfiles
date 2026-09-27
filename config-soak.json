@@ -363,8 +363,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_worktree_landed.py",
-      "hash": "0f15c07d7dd0f36382a436e814a03b0b0421b72f7e5872493f6370545c1d4ae1",
-      "landed": "2026-09-27T14:44:56.262Z"
+      "hash": "a18d331129ae20dc3a2c66504842619e18a1001cd7326b8a16c73e2217fdf74c",
+      "landed": "2026-09-27T14:46:32.380Z"
     },
     {
       "path": "home/private_dot_claude/hooks/worktree-landed.md",
