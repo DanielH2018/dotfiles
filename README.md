@@ -74,31 +74,6 @@ so the ownership map never drifts.
 Manifest fragments live in `~/.config/dotsync/manifest.d/*.json` (merged in lexical order).
 See `docs/RESTORE.md` for the bare-metal bootstrap.
 
-## config-soak — soak report for behavior-affecting config
-
-`bin/config-soak` (repo tooling, not deployed) reports how long each piece of behavior-affecting
-Claude Code config — the settings templates, hooks, agents, skills, rules, output styles and
-`CLAUDE.md` — has been live. A file's landed date is the committer date of the last `origin/main`
-commit that touched it, read from git on every run; there is no ledger to maintain. It is
-advisory and gates nothing.
-
-- `config-soak status [--json]` — each tracked file as `unlanded` (the working tree differs
-  from `origin/main`), `soaking` (landed inside the 7-day window) or `stable`. Always exits 0.
-- `config-soak outcomes [--since PATH]` — for every landed hook or `settings.*.json` file, ask
-  this machine's local Loki (`http://127.0.0.1:3100`, read-only, no other host) whether it
-  actually fired since it landed, and print the answer. Attribution is only as fine as Claude
-  Code's OTEL schema allows: a `settings.*.json` change is attributed to the merged permission
-  ruleset's `tool_decision{source="config"}` events; a hook script is attributed only when it is
-  the *sole* hook registered for a PreToolUse/PermissionRequest matcher. Anything else reports
-  `source:"none"` with a note rather than a false zero. A stable file with zero hits prints
-  under "NEVER FIRED" — feed those to the `scaffolding-delete-pass` skill as removal candidates.
-- `config-soak list` — print the tracked paths.
-
-`status` and `list` are allow-listed in `settings.permissions.json`; `outcomes` is not, because
-it makes a network call. Run `git fetch` first if `origin/main` may be stale. Until #694 (2026-09-28)
-this was a push gate over a committed `config-soak.json` ledger with a `land` verb;
-`docs/specs/2026-07-08-config-soak-gate-design.md` records that design and why it was dropped.
-
 ## pre-push gate — one-time install per clone
 
 `.githooks/pre-push` runs the commit-signature check and the pre-commit lint hooks (`prek run

@@ -4,7 +4,7 @@
 //   1. oxlint reports the default correctness rules at WARNING severity and exits 0 on
 //      warnings, so without --deny-warnings the hook prints findings and passes.
 //   2. oxlint selects files by extension and refuses anything else, so the
-//      `#!/usr/bin/env node` scripts with no extension — including bin/config-soak, itself a
+//      `#!/usr/bin/env node` scripts with no extension — including bin/gen-hooks, itself a
 //      push gate — are only reached through the temp-copy path in bin/lint-js.
 //   3. prek reaches one of those scripts only if the hook's `files:` names it. That list is
 //      rendered by bin/gen-lint-files from the tree's shebangs, and the last test asserts
@@ -119,8 +119,8 @@ test('the oxlint files: pattern admits every extensionless node script in the tr
     .filter(([, kind]) => kind === 'node')
     .map(([, , file]) => file);
   // Non-vacuity: an empty census, or a renamed dialect tag, would make the loop below pass
-  // over nothing. config-soak is itself a push gate; gen-lint-files renders this very line.
-  for (const f of ['bin/config-soak', 'bin/gen-lint-files']) {
+  // over nothing. gen-hooks is itself a push gate; gen-lint-files renders this very line.
+  for (const f of ['bin/gen-hooks', 'bin/gen-lint-files']) {
     assert.ok(nodeScripts.includes(f), `the census no longer reports ${f} as a node script`);
   }
 

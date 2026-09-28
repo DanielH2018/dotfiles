@@ -342,17 +342,6 @@
       "Bash(chezmoi data:*)",
       "Bash(chezmoi verify:*)",
       "Bash(chezmoi status:*)",
-      {{/* this repo's soak report — the two read-only verbs only, never a bare
-           `node bin/config-soak:*` wildcard, so a future subcommand is not pre-approved.
-           Relative path because the script reads the repo it sits in (REPO_ROOT =
-           __dirname/..), so a worktree must run ITS copy: the invocation is always
-           `cd <root> && node bin/config-soak <verb>`, and that compound form is what
-           claude_guard.judge matches (prefix only, no mid-path globs, so an absolute rule
-           spanning every worktree under .claude cannot be written). Same relative-executable risk shape
-           as the already-allowed ./gradlew and make. `land` was a third verb until #694
-           removed the ledger it wrote. */}}
-      "Bash(node bin/config-soak status:*)",
-      "Bash(node bin/config-soak list)",
       "Bash(claude --help)",
       {{/* exact match only — `claude agents` takes no subcommands, but it does accept --dangerously-skip-permissions, --permission-mode, --settings and --plugin-dir, so any trailing wildcard (even after --json) would auto-approve a permission escalation */}}
       "Bash(claude agents)",

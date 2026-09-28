@@ -1,18 +1,18 @@
-// settings.json is generated from a set of templates, and three separate gates have to
-// know that set. None of them discovers it — each carries its own copy:
+// settings.json is generated from a set of templates, and two separate gates have to
+// know that set. Neither discovers it — each carries its own copy:
 //
 //   1. modify_settings.json.sh.tmpl refuses to generate from an uncommitted tree, so an
 //      unreviewable edit cannot become live policy;
-//   2. bin/config-soak reports each template's soak state (advisory since #694);
-//   3. tests/settings/settings-permissions-no-spawners.test.js and tests/secret-registry.test.js
+//   2. tests/settings/settings-permissions-no-spawners.test.js and tests/secret-registry.test.js
 //      parse the permission rules out of the template text.
 //
 // Splitting the permission model out of settings.base.json turned that set from one file
 // into three, and every one of those gates fails SILENTLY when it stops seeing a file:
-// a dirty tree deploys, a change ships unreviewed, an assertion runs against text that no
-// longer holds rules. The enumeration in gate 1 was already wrong before the split — it
-// named settings.base.json only, and settings.safe-floor.json has been spliced into the
-// output unguarded the whole time.
+// a dirty tree deploys, an assertion runs against text that no longer holds rules. The
+// enumeration in gate 1 was already wrong before the split — it named settings.base.json
+// only, and settings.safe-floor.json has been spliced into the output unguarded the whole
+// time. (A third gate, bin/config-soak's advisory soak report, existed here too; it was
+// deleted as unused tooling.)
 //
 // So: the set is defined here, once, by what is on disk, and the gates are checked against
 // it. Adding a fourth settings template fails this file until it is wired into both.
@@ -20,11 +20,10 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { srcPath, repoPath } = require('../lib/paths');
+const { srcPath } = require('../lib/paths');
 
 const TMPL_DIR = srcPath('.chezmoitemplates');
 const GUARD = srcPath('private_dot_claude', 'modify_settings.json.sh.tmpl');
-const SOAK = repoPath('bin', 'config-soak');
 
 // Every settings template on disk, repo-relative. Not "every template referenced by an
 // includeTemplate": a file that is present but referenced by nothing is the more dangerous
@@ -67,19 +66,6 @@ test('the dirty-tree guard covers every settings template', () => {
     'these templates are spliced into settings.json but are not in the guard\'s pathspec, '
     + 'so an uncommitted edit to one silently becomes live policy. Keep the pathspec a '
     + `wildcard (.chezmoitemplates/settings.*.json) rather than a list. Guard has: ${specs}`);
-});
-
-test('config-soak tracks every settings template', () => {
-  const src = fs.readFileSync(SOAK, 'utf8');
-  const start = src.indexOf('const TRACKED = [');
-  assert.ok(start > -1, 'located the TRACKED list');
-  const block = src.slice(start, src.indexOf('];', start));
-  const uncovered = templates.filter(
-    (f) => !block.includes(`home/.chezmoitemplates/${f}`));
-  assert.deepStrictEqual(uncovered, [],
-    'these templates decide the generated settings.json but are outside the config-soak '
-    + 'review surface, so a change to one ships without ever being acknowledged. Add a '
-    + "{ type: 'file', path: ... } entry for each.");
 });
 
 // The permission rules moved out of settings.base.json, and the two tests that parse them

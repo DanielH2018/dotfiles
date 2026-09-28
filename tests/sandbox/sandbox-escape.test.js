@@ -22,9 +22,9 @@ const { findEscapes, blankLiterals } = require('../lib/sandbox-escape');
 const REPO = path.join(__dirname, '..', '..');
 
 // The suite is not only tests/. .githooks/pre-push step 5 runs `node --test` from the repo
-// root, and the evals and config-soak libraries are exercised by tests here while living
-// elsewhere. Scanning tests/ alone would report "clean" for files nobody walked, which is
-// the same silent hole the lex-failure path below refuses to leave.
+// root, and the evals libraries are exercised by tests here while living elsewhere.
+// Scanning tests/ alone would report "clean" for files nobody walked, which is the same
+// silent hole the lex-failure path below refuses to leave.
 // tests/ is walked recursively because the suite is filed into subdirectories
 // (hooks/, sandbox/, settings/, ...). A flat readdir here covered only the files
 // still loose at tests/ root, so filing one into a subdirectory silently dropped it

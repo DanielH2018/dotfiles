@@ -24,7 +24,7 @@ from pathlib import Path
 from _testkit import check, finish, git
 
 # Importing the hook below would otherwise write a __pycache__ into the chezmoi source
-# tree, which config-soak walks by filesystem and would then track as config.
+# tree, which `git status --porcelain` would then see as an untracked file.
 sys.dont_write_bytecode = True
 
 HERE = Path(__file__).resolve().parent

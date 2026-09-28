@@ -3,10 +3,10 @@
 # lint-js — run oxlint over the repo's JavaScript, including the files it cannot open itself.
 #
 # oxlint selects files by EXTENSION and refuses anything else outright ("No files found to
-# lint", exit 1). That would leave the five `#!/usr/bin/env node` scripts with no extension
-# unchecked — bin/config-soak, which reports on the policy files, plus claude-settings-merge, which
-# generates ~/.claude/settings.json. Skipping exactly the load-bearing files is the shape of
-# gap this gate was added to close, so they are linted through a temp copy named *.js and the
+# lint", exit 1). That would leave the `#!/usr/bin/env node` scripts with no extension
+# unchecked — claude-settings-merge, which generates ~/.claude/settings.json, among them.
+# Skipping exactly the load-bearing files is the shape of gap this gate was added to close,
+# so they are linted through a temp copy named *.js and the
 # findings are reported against their real paths.
 #
 # Copy rather than symlink: oxlint resolves a symlink and reports the target path, which puts
