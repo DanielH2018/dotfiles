@@ -23,6 +23,7 @@ import json
 from collections.abc import Mapping
 
 from claude_guard.checks import git_conventions
+from claude_guard.checks.awk import awk_risk
 from claude_guard.deny import Verdict, deny
 from claude_guard.footguns import footgun
 from claude_guard.judge import Decision, judge
@@ -102,8 +103,8 @@ ASK_REASON = (
 
 def pre_tool_use_json(v: Verdict, nudge_text: str | None = None) -> str | None:
     """The PreToolUse stdout the bash prints: deny (:601-611), ask (hook-input.sh:83, :69),
-    allow with updatedInput and additionalContext (:1133-1140). None for no decision. An ask
-    carries updatedInput too when it stands in for the --force upgrade (_combine).
+    or allow (the read-only classifier). None for no decision. Nothing here rewrites the
+    command: the bash's `updatedInput` --force upgrade was retired for a deny (dotfiles #701).
 
     `nudge_text` (claude_guard.nudges) rides along as additionalContext on any verdict but
     a deny, and on its own when there is no decision."""
@@ -118,13 +119,8 @@ def pre_tool_use_json(v: Verdict, nudge_text: str | None = None) -> str | None:
     out: dict = {"hookEventName": "PreToolUse", "permissionDecision": v.kind}
     if v.kind != "allow":
         out["permissionDecisionReason"] = v.reason
-    context = [v.context] if v.updated_command is not None else []
-    if v.updated_command is not None:
-        out["updatedInput"] = {"command": v.updated_command}
     if nudge_text:
-        context.append(nudge_text)
-    if context:
-        out["additionalContext"] = "\n\n".join(c for c in context if c)
+        out["additionalContext"] = nudge_text
     return json.dumps({"hookSpecificOutput": out})
 
 
@@ -165,6 +161,16 @@ def context_transcript(data: dict) -> str:
 ASK_JSON = pre_tool_use_json(Verdict("ask", "exception", ASK_REASON))
 
 
+def awk_verdict(command: str) -> Verdict | None:
+    """claude_guard.checks.awk as a Verdict, or None (dotfiles #702). It runs here because
+    the native `Bash(awk:*)` allow approves a bare awk before any PermissionRequest hook."""
+    risk = awk_risk(command)
+    if risk is None:
+        return None
+    lead = "Blocked" if risk[0] == "deny" else "Review this awk"
+    return Verdict(risk[0], "awk-exec", f"{lead}: {risk[1]}")
+
+
 def conventions(command: str, cwd: str) -> Verdict | None:
     """claude_guard.checks.git_conventions as a Verdict, or None. Never raises: a failure in
     a convention check is no decision (that module's DECIDED), not the deny side's ask."""
@@ -177,16 +183,11 @@ def conventions(command: str, cwd: str) -> Verdict | None:
 
 def _combine(rules: Verdict, conv: Verdict | None) -> Verdict:
     """The deny rules' verdict and the conventions', merged the way the harness merged them
-    while they were two hooks (#619): a deny from either wins, then an ask from either.
-
-    A convention ask over the --force upgrade keeps the upgraded command, so approving the
-    prompt runs --force-with-lease rather than the --force the allow would have replaced."""
+    while they were two hooks (#619): a deny from either wins, then an ask from either."""
     if conv is None or rules.kind == "deny":
         return rules
     if conv.kind == "deny" or rules.kind == "none":
         return conv
-    if rules.kind == "allow":
-        return Verdict(conv.kind, conv.rule, conv.reason, rules.updated_command, rules.context)
     return rules
 
 
@@ -197,7 +198,7 @@ def pre_tool_use(stdin_text: str, env: Mapping[str, str]) -> str | None:
     to ask (spec, Failure contracts), the posture the bash took on a missing jq. Unparseable
     stdin is no decision (:22-23). The git conventions run beside the deny rules and fail
     open (conventions()). The read-only classifier runs last and only when nothing else
-    decided, so it can never outrank a deny, an ask or the --force upgrade (#628)."""
+    decided, so it can never outrank a deny or an ask (#628)."""
     try:
         command = read_command(stdin_text)
     except Exception:
@@ -205,7 +206,7 @@ def pre_tool_use(stdin_text: str, env: Mapping[str, str]) -> str | None:
     if command is None:
         return None
     try:
-        rules = merge(deny(command, "", env), footgun(command))
+        rules = merge(merge(deny(command, "", env), footgun(command)), awk_verdict(command))
     except Exception:
         return ASK_JSON
     cwd = read_cwd(stdin_text)
@@ -222,9 +223,7 @@ def merge(danger: Verdict, slip: Verdict | None) -> Verdict:
     """One PreToolUse verdict from the deny rules and the footgun rules.
 
     deny beats ask beats allow, as two separate hooks' verdicts would merge in the harness.
-    On a tie the deny rules win, because they ran first and carry the older message. A
-    footgun deny therefore overrides the --force-with-lease upgrade's allow: the upgrade
-    rewrites one push, and the other stage it would have waved through is the mistake.
+    On a tie the deny rules win, because they ran first and carry the older message.
     """
     if slip is None or _RANK[slip.kind] <= _RANK[danger.kind]:
         return danger

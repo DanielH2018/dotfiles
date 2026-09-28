@@ -29,6 +29,7 @@ import re
 from dataclasses import dataclass
 
 from claude_guard.checks.ansible import ansible_readonly_safe
+from claude_guard.checks.awk import segment_risk
 from claude_guard.checks.curl import curl_safe
 from claude_guard.checks.git_reset import clean_reset_safe
 from claude_guard.checks.remote import readonly_remote_safe, trusted_host_safe
@@ -522,6 +523,14 @@ def judge_segment(
     # not being newly closed, only left where it already was.
     if rules.denies(part):
         return False, "deny"
+
+    # dotfiles #702. The allow list grants `awk:*`, and an awk program can run a command
+    # (`| getline`, `print | "sh"`, `system()`). The PreToolUse hook denies or asks on
+    # those, and an ask reaches this judge as a dialog, so refusing only on its deny would
+    # auto-approve the ask. Either kind refuses here. segment_risk finds awk behind a
+    # wrapper word too, so the unwrapped target below needs no second call.
+    if segment_risk(part):
+        return False, "awk-exec"
 
     # PR #477 (:432-436). A quoted-delimiter heredoc write vetted by heredoc_write_target:
     # allow it here rather than letting it fall into the blanket redirect refusal just

@@ -616,7 +616,10 @@
            placed directly after `find` has no path before it, so it gets its own rule. awk's
            rule needs the `(` of a call, so that `/filesystem/` does not match. The rule also
            closes that paren, because the rule parser drops a rule with an unbalanced paren.
-           awk accepts a space before a built-in's paren, so that spelling has its own rule. */}}
+           awk accepts a space before a built-in's paren, so that spelling has its own rule.
+           awk's other ways to run a command (`"cmd" | getline`, `print | "cmd"`, `|&`)
+           have no glob that leaves `awk '/a|b/'` alone, so claude_guard.checks.awk judges
+           them on both hook paths instead (dotfiles #702). */}}
       "Bash(find *-exec*)",
       "Bash(find *-execdir*)",
       "Bash(find -ok *)",

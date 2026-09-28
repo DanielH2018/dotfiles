@@ -256,7 +256,7 @@ def test_replay_deny_prints_rule_lines_and_the_command_head(tmp_path):
     assert rc == 0
     lines = out.splitlines()
     assert lines[0] == "DENY rm-root: rm -rf /"
-    assert lines[1] == "ALLOW force-push-upgrade: git push --force origin feat"
+    assert lines[1] == "DENY force-push-flag: git push --force origin feat"
     assert "ls -la" not in out
 
 

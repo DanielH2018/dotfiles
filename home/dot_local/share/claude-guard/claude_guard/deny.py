@@ -24,14 +24,17 @@ Three subjects, as the bash has them (:238-317):
 
 Rules that read the raw command (`sc.command`) rather than SCAN do so because the bash does
 (`bdb_re "$COMMAND"`): the substitution-download, fork-bomb, kill-by-substitution, disk-wipe
-and protected-file-write arms, and the --force upgrade.
+and protected-file-write arms.
 
 The regexes are the bash's EREs with two textual substitutions (`_ere`): `[:space:]` → `\\s`
 and `[:alnum:]` → `a-zA-Z0-9`, both inside bracket expressions where Python has no POSIX
 classes. `\\b` and `\\s` are the same GNU extensions in both engines. ERE's leftmost-longest
 rule and Python's leftmost-first differ only in WHICH match is chosen, never in whether one
-exists, and every use here is a boolean search except the upgrade's `re.sub`, which is
-anchored on literals.
+exists, and every use here is a boolean search.
+
+One rule is not the bash's. The bash upgraded a `--force`/`-f` push to a feature branch into
+`--force-with-lease` and allowed it; `force_push_flag` denies it instead (dotfiles #701), so
+this hook and the settings deny rules state one intent.
 """
 
 import re
@@ -46,8 +49,6 @@ class Verdict:
     kind: str  # "deny" | "ask" | "allow" | "none"
     rule: str  # a fixed literal, never text from the command
     reason: str  # the message the bash prints; "" for allow and none
-    updated_command: str | None = None  # the --force upgrade (:1132)
-    context: str | None = None  # its additionalContext (:1138)
 
 
 NONE = Verdict("none", "", "")
@@ -760,37 +761,34 @@ def terraform(sc: Scan, target: str) -> Verdict | None:
     return None
 
 
-# --- the --force upgrade (:1120-1142) ---------------------------------------------------------
-
-UPGRADE_NOTE = (
-    "NOTE: --force was upgraded to --force-with-lease for safety. This prevents overwriting "
-    "commits pushed by others. The push will still succeed if no one else has pushed to this "
-    "branch."
-)
+# --- the --force / -f flag on any branch (dotfiles #701) --------------------------------------
 
 
-def force_push_upgrade(sc: Scan, target: str) -> Verdict | None:
-    """:1147-1159. MUST stay the last rule: its allow covers the whole command, so every deny
-    gets its say first. Raw command, as the bash; `sed -E … g` per line, so MULTILINE.
+def force_push_flag(sc: Scan, target: str) -> Verdict | None:
+    """A `--force` or `-f` push to any branch. main/master was denied above with its own
+    message; this covers the feature branch.
 
-    The bash builds this via `UPGRADED=$(echo "$COMMAND" | sed -E …)`, and command
-    substitution strips ALL trailing newlines from its output — `re.sub` keeps them, so a
-    command ending in one or more newlines disagreed on `updatedInput` with nothing else
-    different. `.rstrip("\\n")` matches the bash's `$(...)` behaviour exactly."""
-    if not bdb_re(sc.command, _FORCE_FLAG) or bdb_re(sc.command, _LEASE):
-        return None
-    upgraded = re.sub(r"--force([ ]|$)", r"--force-with-lease\1", sc.command, flags=re.MULTILINE)
-    upgraded = re.sub(r"([ ])-f([ ]|$)", r"\1--force-with-lease\2", upgraded, flags=re.MULTILINE)
-    upgraded = upgraded.rstrip("\n")
-    return Verdict(
-        "allow", "force-push-upgrade", "", updated_command=upgraded, context=UPGRADE_NOTE
-    )
+    DECIDED (dotfiles #701): deny, not the bash's upgrade (:1147-1159), which rewrote the flag
+    to `--force-with-lease` through `updatedInput` and ALLOWED the result. The settings deny
+    `-f`/`--force` in any position on any branch, so the upgrade stated the opposite intent,
+    and it rewrote a command the model had not written. A deny with the lease spelling in its
+    reason costs the model one retry. Unlike `force_push`, a `--force-with-lease` elsewhere
+    in the command exempts nothing: `git push --force-with-lease origin feat -f` still
+    forces. Read per segment, so a `-f` in a later stage (`ls -f`) is not a push flag."""
+    if bdb_re(sc.segset, _FORCE_FLAG):
+        return Verdict(
+            "deny",
+            "force-push-flag",
+            "Blocked: `--force`/`-f` push. Use `git push --force-with-lease <remote> <branch>`, "
+            "which refuses to overwrite commits you have not fetched. main/master stays "
+            "denied either way.",
+        )
+    return None
 
 
 # --- the decision ------------------------------------------------------------------------------
 
 # Bash order (:625-1142). The first match wins and carries its message; later tasks append.
-# force_push_upgrade MUST be last (:1123-1129). Enforced by test_force_push_upgrade_runs_last…
 RULES: tuple[Rule, ...] = (
     remote,
     rm_root,
@@ -813,7 +811,7 @@ RULES: tuple[Rule, ...] = (
     write_targets,
     inplace_edit,
     terraform,
-    force_push_upgrade,
+    force_push_flag,
 )
 
 

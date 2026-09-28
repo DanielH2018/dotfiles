@@ -24,7 +24,8 @@
 # there.
 #
 # Live, always (spec "Rollout" rows 4 and 6): the Python side's verdict decides -- ask, deny,
-# the `--force`→`--force-with-lease` upgrade, or silence, per the failure contract above.
+# a read-only allow, or silence, per the failure contract above. It never rewrites the
+# command: the `--force`→`--force-with-lease` upgrade became a deny in dotfiles #701.
 # Slice 4 shipped this shim with a CLAUDE_GUARD_DENY_SHADOW switch that computed the verdict,
 # logged it against the deployed block-dangerous-bash.sh and decided nothing; slice 6 deleted
 # that bash hook (the sandbox port, #508, had moved its last runner onto this shim) and the

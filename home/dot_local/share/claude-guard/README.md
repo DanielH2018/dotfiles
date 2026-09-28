@@ -87,8 +87,10 @@ still prints that ALLOW tally and remains the load-bearing gate going forward.
 rule for rule with the bash line ranges cited in each function and the messages verbatim (the
 bash is deleted; the line ranges read against `git show 8bbe82d:home/private_dot_claude/hooks/executable_block-dangerous-bash.sh`,
 the last commit that carried it). It
-returns a `Verdict` whose `kind` is `deny`, `allow` (the `--force` → `--force-with-lease`
-upgrade, with `updated_command`), or `none`; `deny()` never returns `ask` itself. The rules
+returns a `Verdict` whose `kind` is `deny` or `none`; `deny()` never returns `ask` or
+`allow` itself. One rule is not the bash's: the bash rewrote a `--force`/`-f` push to a
+feature branch into `--force-with-lease` and allowed it, and `force_push_flag` denies it
+with the lease spelling in its reason, matching the settings deny rules (dotfiles #701). The rules
 read three subjects the bash builds: the normalised whole command, that plus one line per
 segment and substitution, and the segment lines alone for the pair rules. A parse refusal
 degrades to the whole-string subject, as the bash does — this is the one place the
@@ -100,7 +102,11 @@ because this is a port.
 
 `~/.claude/hooks/guard-pre-tool-use.sh` runs `claude-guard pre-tool-use` on PreToolUse for
 every Bash call and is the sole decision for Bash PreToolUse on THIS HOST: it computes
-`deny()`'s verdict and denies, upgrades, or stays silent. Its failure contract is the OPPOSITE
+`deny()`'s verdict, merged with the footgun rules and `checks/awk.py`, and denies, asks, or
+stays silent. `checks/awk.py` (dotfiles #702) denies an awk program that runs a command
+(`system()`, `cmd | getline`, `print | "cmd"`, `|&`) and asks on one it cannot read or
+that pipes into a variable; the judge refuses both, so the `awk:*` allow rule cannot
+approve them from either hook. Its failure contract is the OPPOSITE
 of the PermissionRequest shim's: cannot run → it prints `ask` itself, without Python, the
 posture the bash took on a missing `jq`. An exception inside Python prints the same `ask` from
 `hook.py`. A `uv python find` or a judge that hangs is cut off by `run_bounded` (2s and 6s,

@@ -8,8 +8,8 @@
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
-      "hash": "b896a440c7bad5b43bfaeb3a085df635f9f0be3ab677cee213e542859b3fe0ae",
-      "landed": "2026-09-28T12:40:21.090Z"
+      "hash": "8a4a31cd9519927fafd9ad138e7d9b54d0e3c6b49e08274a6559ff49b74191cf",
+      "landed": "2026-09-28T13:48:17.464Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.safe-floor.json",
@@ -118,8 +118,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_guard-pre-tool-use.sh",
-      "hash": "5c6c4974571f6fc6f133e4d5ea29a2f074dce356b69fec735f921567ec4e0b25",
-      "landed": "2026-09-24T21:15:51.276Z"
+      "hash": "76c11c5dd5b50528cd8850c8479f8465f327a01314a77ca04359c71c8f95d803",
+      "landed": "2026-09-28T13:48:17.464Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_isolation-guard.sh",

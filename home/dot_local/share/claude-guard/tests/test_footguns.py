@@ -151,10 +151,10 @@ def test_a_footgun_deny_reaches_the_pre_tool_use_json():
 
 
 def test_merge_keeps_the_stronger_verdict():
-    upgrade = Verdict("allow", "force-push-upgrade", "", updated_command="x")
+    readonly = Verdict("allow", "readonly", "")
     slip = Verdict("deny", "bare-stash", "pop by ref")
     danger = Verdict("deny", "rm-root", "no")
     assert merge(NONE, None) is NONE
     assert merge(NONE, slip) is slip
-    assert merge(upgrade, slip) is slip
+    assert merge(readonly, slip) is slip
     assert merge(danger, slip) is danger

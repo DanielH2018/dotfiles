@@ -276,14 +276,10 @@ def test_a_deny_rule_wins_over_a_convention_ask(config):
     assert not d["permissionDecisionReason"].startswith("git-conventions")
 
 
-def test_a_convention_ask_over_the_force_upgrade_keeps_the_upgraded_command(config):
+def test_a_force_push_deny_wins_over_a_convention_ask(config):
     d = run_hook("git push --force origin topic && git merge topic")
-    assert d["permissionDecision"] == "ask"
-    assert "--force-with-lease origin topic" in d["updatedInput"]["command"]
-
-
-def test_the_force_upgrade_alone_is_still_an_allow(config):
-    assert kind("git push --force origin topic") == "allow"
+    assert d["permissionDecision"] == "deny"
+    assert "updatedInput" not in d
 
 
 def test_an_unreadable_command_is_no_decision(config):

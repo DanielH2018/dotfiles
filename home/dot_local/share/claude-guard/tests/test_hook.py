@@ -275,21 +275,6 @@ def test_pre_tool_use_json_prints_the_deny_shape_the_bash_prints():
     }
 
 
-def test_pre_tool_use_json_prints_the_allow_shape_with_updated_input():
-    v = Verdict(
-        "allow",
-        "force-push-upgrade",
-        "",
-        updated_command="git push --force-with-lease o b",
-        context="NOTE",
-    )
-    out = json.loads(pre_tool_use_json(v))["hookSpecificOutput"]
-    assert out["permissionDecision"] == "allow"
-    assert out["updatedInput"] == {"command": "git push --force-with-lease o b"}
-    assert out["additionalContext"] == "NOTE"
-    assert "permissionDecisionReason" not in out
-
-
 def test_pre_tool_use_json_prints_nothing_for_none():
     assert pre_tool_use_json(NONE) is None
 
@@ -314,13 +299,12 @@ def test_live_mode_prints_nothing_for_a_benign_command(tmp_path):
     assert pre_tool_use(payload("ls -la"), denv(home)) is None
 
 
-def test_live_mode_prints_the_upgrade_for_a_feature_branch_force_push(tmp_path):
+def test_live_mode_denies_a_feature_branch_force_push_without_rewriting_it(tmp_path):
+    # #701: the hook used to answer allow with updatedInput --force-with-lease here.
     home = home_with(tmp_path)
-    env = denv(home)
-    out = pre_tool_use(payload("git push --force origin feat"), env)
-    assert json.loads(out)["hookSpecificOutput"]["updatedInput"]["command"].endswith(
-        "--force-with-lease origin feat"
-    )
+    out = json.loads(pre_tool_use(payload("git push origin feat -f"), denv(home)))
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "updatedInput" not in out["hookSpecificOutput"]
 
 
 def test_live_mode_prints_nothing_for_unparseable_stdin(tmp_path):
