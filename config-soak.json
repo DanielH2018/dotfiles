@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "5fb85904546ad00086e82f53d5b62312bd9fd3eb609d8f1de8ff97ecd2d0b76b",
-      "landed": "2026-09-26T19:28:18.266Z"
+      "hash": "126317aa59c831fc3bd88cb110252c9a19b5fd31f7556dca0b4f69ce92337bfe",
+      "landed": "2026-09-28T12:29:15.418Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -18,8 +18,8 @@
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "188d17f5d02a4beba4e4d16da2e973ee21550194c2aed823273da8b389d2550c",
-      "landed": "2026-09-26T19:28:18.266Z"
+      "hash": "35ac505a6dbc185cb1b9c21164642dcdc77a7a36558a2173b2055419e7d69ba0",
+      "landed": "2026-09-28T12:29:15.418Z"
     },
     {
       "path": "home/private_dot_claude/agents/chore.md",
@@ -33,13 +33,13 @@
     },
     {
       "path": "home/private_dot_claude/agents/implementer.md",
-      "hash": "573dfe0d45116e202890d9dcd676821a6d277aa7959d8d58f869e94ecdd0ca83",
-      "landed": "2026-09-25T13:33:08.320Z"
+      "hash": "7f93142bb69f26f22e502d74d750f71dc06b65a951bd47cb18b065a703ded2b7",
+      "landed": "2026-09-28T12:29:15.418Z"
     },
     {
       "path": "home/private_dot_claude/agents/migration-reviewer.md",
-      "hash": "9562f16b0a6d8e249259112b6e1eafe7a2c2ef49975bab13c15655d862be4e98",
-      "landed": "2026-07-26T00:05:12.535Z"
+      "hash": "fea0b8232b9309b562a4d5ed09502ecc91a853fdfe00b55faa109a1fd685e54e",
+      "landed": "2026-09-28T12:29:15.418Z"
     },
     {
       "path": "home/private_dot_claude/agents/root-cause.md",
@@ -112,11 +112,6 @@
       "landed": "2026-09-24T20:58:09.064Z"
     },
     {
-      "path": "home/private_dot_claude/hooks/executable_explore-nudge.sh",
-      "hash": "85d575a48cd55f7fe37cafc9b15f8fc19a706a5056beea53e231a77f6098fccd",
-      "landed": "2026-09-24T20:40:06.087Z"
-    },
-    {
       "path": "home/private_dot_claude/hooks/executable_guard-permission-request.sh",
       "hash": "a33707e02bb8f1bdf5b56723f4a24de914d4632ca3466077792e7a0170b706e1",
       "landed": "2026-09-24T20:58:09.064Z"
@@ -125,11 +120,6 @@
       "path": "home/private_dot_claude/hooks/executable_guard-pre-tool-use.sh",
       "hash": "5c6c4974571f6fc6f133e4d5ea29a2f074dce356b69fec735f921567ec4e0b25",
       "landed": "2026-09-24T21:15:51.276Z"
-    },
-    {
-      "path": "home/private_dot_claude/hooks/executable_instructions-loaded.sh",
-      "hash": "6c18f90bc3db470f43a6f6daec97c4e9581753b3827fc960bfea867e72a04a74",
-      "landed": "2026-09-18T22:57:37.560Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_isolation-guard.sh",
@@ -182,11 +172,6 @@
       "landed": "2026-09-18T22:57:37.560Z"
     },
     {
-      "path": "home/private_dot_claude/hooks/executable_post-compact.sh",
-      "hash": "a97bed13f072938ee3decd96491903706fb0f6803d22382dd17daadd23a0b539",
-      "landed": "2026-09-23T14:33:16.333Z"
-    },
-    {
       "path": "home/private_dot_claude/hooks/executable_pre-compact.sh",
       "hash": "91653cda6ab681d575590a6a0b3e1fa4b1af4c7701f8b9294dcc7ef19dc37e27",
       "landed": "2026-09-24T13:50:38.459Z"
@@ -217,11 +202,6 @@
       "landed": "2026-09-18T22:57:37.560Z"
     },
     {
-      "path": "home/private_dot_claude/hooks/executable_reviewer-override.sh",
-      "hash": "9fdc5dfabbae8db78adfa4147ca64c567258f67810b04f91d416cbd87895f0ee",
-      "landed": "2026-09-24T20:30:37.475Z"
-    },
-    {
       "path": "home/private_dot_claude/hooks/executable_screen-injection.sh",
       "hash": "fc7623b11e20abc0ffa98f6142f988a610ee0db83b5c91823c7f24c4a9c778e1",
       "landed": "2026-09-23T21:05:47.255Z"
@@ -243,8 +223,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_skill-usage-log.sh",
-      "hash": "586fb2975e01371653afb99ce8353e562c35dda95906557703c7d8a2b3d43b16",
-      "landed": "2026-09-23T21:05:47.255Z"
+      "hash": "390f8db6854d046a8e258d452444f603a8d3d58a8d4f3c4b780ec4eef238ec51",
+      "landed": "2026-09-28T12:29:15.418Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_stop-checks.py",
@@ -254,11 +234,6 @@
     {
       "path": "home/private_dot_claude/hooks/executable_stop-failure.sh",
       "hash": "898fc37a11fd6d6432d23c2496f76adf0b23962c2b7d638a668aef2bc578a02c",
-      "landed": "2026-09-18T22:57:37.560Z"
-    },
-    {
-      "path": "home/private_dot_claude/hooks/executable_subagent-stop.sh",
-      "hash": "96d2ea1bbbb52570f9fbb562333ffa1a3f33cd4fff5711595198ddd8da0dd8b3",
       "landed": "2026-09-18T22:57:37.560Z"
     },
     {
@@ -280,11 +255,6 @@
       "path": "home/private_dot_claude/hooks/executable_warp-session-title.sh",
       "hash": "c679a72557fd613ff17be5259c516222a195d8e4c6af8b97f2cb36f6256a0141",
       "landed": "2026-09-19T01:08:20.039Z"
-    },
-    {
-      "path": "home/private_dot_claude/hooks/executable_watch-paths.sh",
-      "hash": "695aa182b1e5b3c87b4c8f7625717386414acecaae7b210edbb2069b5110cc2d",
-      "landed": "2026-09-18T22:57:37.560Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_worktree-context.sh",
@@ -348,8 +318,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_skill_usage_log.py",
-      "hash": "2ac95400df98cc460ae92cfaf36f6c8a513369f4d184df9c76e163ce644332c5",
-      "landed": "2026-09-24T17:06:06.813Z"
+      "hash": "2d43f5a698471e7ea6ded25bec2e497b1f1e9a23ec8eac2653125b359823c37b",
+      "landed": "2026-09-28T12:29:15.418Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_skill_usage_table.py",

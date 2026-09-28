@@ -12,9 +12,8 @@ practically every tool call in every session.
 Also pins the two things a fire count is actually built out of: which field carries
 the name for each kind (tool_input.skill for Skill, tool_input.subagent_type for
 Agent/Task), and that "Task" is accepted as an alias for "Agent" -- the harness has
-used both spellings for the subagent-dispatch tool across versions (see
-log-permission.js in vault-tooling/claude-audit-portable), so a hook that only
-matched one would silently stop logging agent dispatches the next time it changes
+used both spellings for the subagent-dispatch tool across versions, so a hook that
+only matched one would silently stop logging agent dispatches the next time it changes
 back.
 """
 

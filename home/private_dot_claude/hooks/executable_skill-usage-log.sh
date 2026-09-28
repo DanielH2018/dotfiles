@@ -20,13 +20,11 @@
 # usage (repo root) reads the file back into a table.
 #
 # tool_name is handled as both "Agent" and "Task" because the harness has used both
-# spellings for the subagent-dispatch tool across versions (see log-permission.js in
-# vault-tooling/claude-audit-portable, which carries the same fallback for the same
-# reason) -- matching only one would silently stop logging agent dispatches the next
+# spellings for the subagent-dispatch tool across versions -- matching only one would silently stop logging agent dispatches the next
 # time the harness's own name for the tool changes back.
 #
 # Never fails the tool call: every failure path below falls through to a silent
-# `exit 0` with nothing written, same convention as subagent-stop.sh -- except a
+# `exit 0` with nothing written -- except a
 # missing run-bounded.sh, a broken install rather than a bad payload, which exits 1.
 # This hook has no verdict to give, so it does not use outcome-lib.sh -- there is
 # nothing here that is ever could-not-evaluate as opposed to just not written.

@@ -228,10 +228,9 @@ if [ "$tree_cached" -eq 0 ]; then
   #    The file list comes from git, NOT from `node --test`'s own discovery. Node's default
   #    discovery skips every directory whose name starts with a dot, at any depth — verified
   #    on node 24.18.1 with a fixture: a *.test.js under sub/.hidden/deep/ is not collected.
-  #    Two real suites live under vault-tooling/claude-audit-portable/pkg/.claude/ and were
-  #    therefore never run by this gate, and nothing said so: the run just reported a smaller
-  #    total, and a total nobody has a baseline for looks exactly like a passing one. (Both
-  #    pass — this had hidden no failure, only the fact that it was hiding.)
+  #    Two real suites once lived under a .claude/ directory and were therefore never run
+  #    by this gate, and nothing said so: the run just reported a smaller total, and a
+  #    total nobody has a baseline for looks exactly like a passing one.
   #
   #    Deriving the list from `git ls-files` also makes the covered set the TRACKED set, so a
   #    suite added under any future dot-directory — home/.chezmoiscripts/, .chezmoitemplates/,

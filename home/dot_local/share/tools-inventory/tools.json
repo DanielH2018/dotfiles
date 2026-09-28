@@ -1189,18 +1189,6 @@
       "desc": "<code>pre-commit</code>, <code>pre-push</code>, and <code>secrets-check.js</code>."
     },
     {
-      "id": "claude-audit-portable",
-      "name": "claude-audit-portable",
-      "group": "libs",
-      "source": "private_dot_claude/vault-tooling/claude-audit-portable/gen-install.js",
-      "deployed": ".claude/vault-tooling/claude-audit-portable",
-      "lang": "node",
-      "plat": ["mac", "linux", "wsl", "win"],
-      "platLabel": "all platforms",
-      "role": ["library"],
-      "desc": "<code>gen-install.js</code> + <code>install.sh</code> + package, for carrying the audit tooling to another machine."
-    },
-    {
       "id": "tq-libs",
       "name": "tq libs",
       "group": "libs",

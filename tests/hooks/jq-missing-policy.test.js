@@ -1,8 +1,8 @@
-// The jq-missing policy for the three hooks that build their output with `jq -n`.
+// The jq-missing policy for the two hooks that build their output with `jq -n`.
 //
 // hook-input.sh's hook_require_jq is the one place that policy is expressed: `ask` for a
 // PreToolUse gate that must not fail open silently, `noop` for a reminder or a banner. These
-// three carried no policy at all -- post-compact.sh and worktree-context.sh ran `jq -n` with
+// two carried no policy at all -- worktree-context.sh ran `jq -n` with
 // nothing in front of it, and voice-reminder.sh hand-rolled `command -v jq`.
 //
 // Without the guard, bash exits 127 and writes `jq: command not found` to the harness's
@@ -55,16 +55,6 @@ function assertSilent(r, name) {
   assert.strictEqual(r.stdout.trim(), '', `${name}: expected no stdout, got ${r.stdout}`);
   assert.strictEqual(r.stderr.trim(), '', `${name}: expected no stderr, got ${r.stderr}`);
 }
-
-test('post-compact prints its reminder when jq is present', { skip }, () => {
-  const r = run('executable_post-compact.sh', { cwd: os.tmpdir(), withJq: true });
-  assert.strictEqual(r.status, 0);
-  assert.match(JSON.parse(r.stdout).systemMessage, /Post-compact/);
-});
-
-test('post-compact is silent when jq is missing', { skip }, () => {
-  assertSilent(run('executable_post-compact.sh', { cwd: os.tmpdir(), withJq: false }), 'post-compact');
-});
 
 // worktree-context only speaks from inside a LINKED worktree, so the jq-present half needs a
 // real one -- in a plain checkout it is silent whether or not jq exists, and the pair would
@@ -132,9 +122,8 @@ test('voice-reminder is silent under that same style when jq is missing', { skip
 
 // The policy is only shared if the hooks actually reach the shared expression of it. A hook
 // that grew its own `command -v jq` back would pass every pair above.
-test('all three take their jq policy from hook_require_jq', { skip }, () => {
+test('both take their jq policy from hook_require_jq', { skip }, () => {
   for (const hook of [
-    'executable_post-compact.sh',
     'executable_worktree-context.sh',
     'executable_voice-reminder.sh',
   ]) {

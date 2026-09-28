@@ -79,4 +79,4 @@ Report every finding you make — calibrate the **severity**, never the decision
 
 - `rules/sql.md` — the SQL and migration conventions this review checks against; it auto-loads for `**/*.sql` and `**/migrations/**`.
 - `superpowers:systematic-debugging` — use instead of me when a migration has already run and caused an incident.
-- `feature-dev:code-reviewer` — use alongside me for the application-logic changes shipping with the migration, which I deliberately don't cover.
+- **deep-review** agent — use alongside me for the application-logic changes shipping with the migration, which I deliberately don't cover.

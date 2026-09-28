@@ -3,8 +3,8 @@
 # dot_config/ghostty/config.tmpl and dot_config/wezterm/wezterm.lua.tmpl. Change a value
 # here and both terminals update on the next `chezmoi apply`.
 #
-# Only genuinely shared settings live here. Terminal-specific config (Ghostty shaders /
-# macos-* / notifications; WezTerm keybinds / default_prog / bell / kitty-graphics) stays
+# Only genuinely shared settings live here. Terminal-specific config (Ghostty macos-* /
+# notifications; WezTerm keybinds / default_prog / bell / kitty-graphics) stays
 # in each terminal's own file.
 [terminal]
 font_family = "IosevkaTerm Nerd Font Mono"

@@ -1,7 +1,6 @@
 // `node --test`'s default discovery skips any directory whose name begins with a dot, at
-// any depth (verified on node 24.18.1). Two tracked suites live under
-// vault-tooling/claude-audit-portable/pkg/.claude/, so the gate could not find them on its
-// own. That was handled by a wrapper file carrying a hand-written list of the two paths —
+// any depth (verified on node 24.18.1). Two tracked suites once lived under a .claude/
+// directory, so the gate could not find them on its own. That was handled by a wrapper file carrying a hand-written list of the two paths —
 // correct, but the list had to be remembered: a third suite added under any dot-directory
 // would have been skipped in silence, and a skipped suite looks exactly like a passing one
 // because the only evidence is a total nobody has a baseline for.

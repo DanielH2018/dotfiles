@@ -115,7 +115,7 @@ Don't invoke `superpowers:requesting-code-review` on your own initiative: it dis
 
 ## Code review
 
-Ask review agents for **everything** they find, each finding carrying a confidence or severity score; filtering is a separate pass. `reviewer-override.sh` denies a dispatch whose prompt does not say so, and its reason carries a sentence that passes.
+Ask review agents for **everything** they find, each finding carrying a confidence or severity score; filtering is a separate pass.
 
 **When a reviewer says they don't understand something, fix the code — don't explain in the thread.** Clarify the code itself, or leave a comment at the line that confused them; a reply in the review thread helps one person once, while the code helps everyone who reads it later. This is the homelab repo's `# DECIDED:` marker generalized: it applies in every repo, and to any confusion a reviewer surfaces rather than only to a settled trade-off. Adapted from <https://google.github.io/eng-practices/review/developer/handling-comments.html>.
 
@@ -141,7 +141,7 @@ Long sessions die of a thousand medium tool calls, never one big one. Every extr
 
 ## Delegating to subagents
 
-Delegate a search that would take 3+ exploratory calls, and keep only the findings; `explore-nudge.sh` reminds you on the third. Load the `orchestrating-subagents` skill before fanning out subagents or building a Workflow.
+Delegate a search that would take 3+ exploratory calls, and keep only the findings. Load the `orchestrating-subagents` skill before fanning out subagents or building a Workflow.
 
 ## Compaction policy
 

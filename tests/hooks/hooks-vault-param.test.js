@@ -25,7 +25,6 @@ delete process.env.CLAUDE_VAULT_DIR;
 const HOOKS = srcPath('private_dot_claude', 'hooks');
 const AUTO_FORMAT = path.join(HOOKS, 'executable_auto-format.sh');
 const CHECK_STOP = path.join(HOOKS, 'executable_check-before-stop.sh');
-const WATCH = path.join(HOOKS, 'executable_watch-paths.sh');
 
 // Claude passes file paths and CLAUDE_VAULT_DIR to hooks with forward slashes, even on
 // Windows (Git Bash). Feed the hooks forward-slash paths so the tests mirror reality and
@@ -85,26 +84,5 @@ test('check-before-stop.sh: protected-branch block, vault exemption, dead paths 
   const src = fs.readFileSync(CHECK_STOP, 'utf8');
   assert.ok(!src.includes('.dotfiles'), 'retired ~/.dotfiles logic removed');
   assert.ok(!/My_Vault/.test(src), 'hardcoded My_Vault removed');
-});
-
-test('watch-paths.sh: vault raw/ watched only when configured', () => {
-  const home = scratch(os.tmpdir(), 'hookhome-');
-  const vault = path.join(home, 'Vault');
-  fs.mkdirSync(path.join(vault, 'raw'), { recursive: true });
-  fs.mkdirSync(path.join(home, '.claude', 'rules'), { recursive: true });
-  writeLocalEnv(home, vault);
-  const r1 = runHook(WATCH, { input: JSON.stringify({ source: 'startup' }), home });
-  const w1 = JSON.parse(r1.stdout).hookSpecificOutput.watchPaths;
-  assert.ok(w1.includes(fwd(path.join(vault, 'raw'))), 'vault raw/ watched when configured');
-  assert.ok(w1.includes(fwd(path.join(home, '.claude', 'rules'))), 'rules dir always watched');
-
-  const home2 = scratch(os.tmpdir(), 'hookhome-');
-  fs.mkdirSync(path.join(home2, '.claude', 'rules'), { recursive: true });
-  const r2 = runHook(WATCH, { input: JSON.stringify({ source: 'startup' }), home: home2 });
-  const w2 = JSON.parse(r2.stdout).hookSpecificOutput.watchPaths;
-  assert.deepStrictEqual(w2, [fwd(path.join(home2, '.claude', 'rules'))], 'no vault -> only rules dir');
-
-  const r3 = runHook(WATCH, { input: JSON.stringify({ source: 'resume' }), home });
-  assert.strictEqual(r3.stdout.trim(), '', 'non-startup source produces no output');
 });
 

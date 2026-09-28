@@ -83,3 +83,14 @@
 .claude/skills/prep
 .claude/skills/building-evals
 .claude/skills/config-lint/SKILL.md
+
+# #692: six hooks with no fire or no reader, the 44 Ghostty shaders that only a commented-out
+# config line named, and the unregistered claude-audit-portable bundle.
+.claude/hooks/reviewer-override.sh
+.claude/hooks/instructions-loaded.sh
+.claude/hooks/explore-nudge.sh
+.claude/hooks/subagent-stop.sh
+.claude/hooks/post-compact.sh
+.claude/hooks/watch-paths.sh
+.config/ghostty/shaders
+.claude/vault-tooling/claude-audit-portable

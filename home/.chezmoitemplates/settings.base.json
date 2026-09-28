@@ -604,11 +604,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/watch-paths.sh",
-            "timeout": 5
-          },
-          {
-            "type": "command",
             "command": "~/.claude/hooks/check-update.sh",
             "timeout": 5
           }
@@ -704,26 +699,6 @@
             "type": "command",
             "command": "~/.claude/hooks/isolation-guard.sh",
             "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "Agent|Task",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/reviewer-override.sh",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Grep|Glob",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/explore-nudge.sh",
-            "timeout": 5
           }
         ]
       }
@@ -853,17 +828,6 @@
         ]
       }
     ],
-    "PostCompact": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/post-compact.sh",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
     "Stop": [
       {
         "hooks": [
@@ -938,30 +902,6 @@
             "type": "command",
             "command": "~/.claude/hooks/warp-session-title.sh end",
             "timeout": 5
-          }
-        ]
-      }
-    ],
-    "InstructionsLoaded": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/instructions-loaded.sh",
-            "timeout": 5,
-            "async": true
-          }
-        ]
-      }
-    ],
-    "SubagentStop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/subagent-stop.sh",
-            "timeout": 5,
-            "async": true
           }
         ]
       }
