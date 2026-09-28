@@ -8,8 +8,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { renderTemplate, chezmoiAvailable } = require('../lib/render');
 const { srcPath } = require('../lib/paths');
+const { scratch } = require('../lib/tmp');
 
 const LINUX_SRC = srcPath('.chezmoiscripts', 'os-linux', 'run_onchange_after_cleanup-host-gated-files.sh.tmpl');
 const WINDOWS_SRC = srcPath('.chezmoiscripts', 'os-windows', 'run_onchange_after_cleanup-host-gated-files.ps1.tmpl');
@@ -65,15 +69,32 @@ test('the Linux script never names a systemd unit file as a removal target', { s
   assert.doesNotMatch(code, /\.service\b/);
 });
 
-test('a directory removal only ever targets a path the script also gates as a directory', { skip }, () => {
-  // rm_dir must never reach a bare parent chezmoi merely created (e.g. .config, .local/share)
-  // -- only the specific managed directories named in home/.chezmoiignore.
-  const rendered = linuxServer();
-  const dirCalls = [...rendered.matchAll(/^\s*rm_dir "?([^"\n]+)"?\s*$/gm)].map((m) => m[1]);
-  for (const d of dirCalls) {
-    assert.notStrictEqual(d, '.config', 'must never rm -rf the whole .config directory');
-    assert.notStrictEqual(d, '.local/share', 'must never rm -rf the whole .local/share directory');
+test('on a server, the cleanup keeps another program\'s files in the shared XDG directories', { skip }, () => {
+  // The desktop block covers shared directories such as .local/share/applications, where
+  // daniel-box also keeps Claude Code's URL handler. Run the rendered script against a fake
+  // HOME holding one of our files and one foreign file per shared directory: ours must go,
+  // the foreign one must stay, and so must the directory that still holds it.
+  const home = scratch(os.tmpdir(), 'cleanup-gated-');
+  const ours = [
+    '.local/share/applications/discord.desktop',
+    '.local/share/sounds/ocean/stereo/bell.oga',
+    '.config/wireplumber/wireplumber.conf.d/51-discord-no-restore-props.conf',
+    '.claude/sandbox/Dockerfile.base',
+  ];
+  const foreign = [
+    '.local/share/applications/claude-code-url-handler.desktop',
+    '.local/share/sounds/ocean/stereo/other.oga',
+    '.config/wireplumber/wireplumber.conf.d/99-local.conf',
+  ];
+  for (const rel of [...ours, ...foreign]) {
+    fs.mkdirSync(path.dirname(path.join(home, rel)), { recursive: true });
+    fs.writeFileSync(path.join(home, rel), 'x');
   }
+  const script = path.join(home, 'cleanup.sh');
+  fs.writeFileSync(script, linuxServer());
+  execFileSync('sh', [script], { env: { ...process.env, HOME: home } });
+  for (const rel of ours) assert.ok(!fs.existsSync(path.join(home, rel)), `${rel} is ours and must be removed`);
+  for (const rel of foreign) assert.ok(fs.existsSync(path.join(home, rel)), `${rel} is not ours and must survive`);
 });
 
 test('Windows cleans up the darwin helpers and the hooks tests, and nothing else', { skip }, () => {

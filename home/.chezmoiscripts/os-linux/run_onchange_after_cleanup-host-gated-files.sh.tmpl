@@ -24,10 +24,8 @@ rm_file() { # $1=path relative to $HOME
   fi
 }
 
-# Only ever called on a directory chezmoi itself deployed as a managed target below —
-# never on a path this script does not also gate, and never on a bare parent chezmoi merely
-# created to hold one (see home/.chezmoiignore's own note on .config/systemd for that
-# distinction).
+# Only for a directory that chezmoi deployed whole and that nothing else writes into: the
+# sandbox tool's own tree. A shared XDG directory gets rm_file on each deployed file instead.
 rm_dir() { # $1=path relative to $HOME
   d="$HOME/$1"
   if [ -d "$d" ]; then
@@ -63,15 +61,43 @@ for f in \
 ; do
   rm_file "$f"
 done
+# These directories are shared XDG locations: another program's .desktop entry or sound
+# theme can sit beside ours (daniel-box's .local/share/applications holds Claude Code's URL
+# handler). So remove the exact files chezmoi deployed, never a directory's whole contents.
+for f in \
+  .config/solaar/rules.yaml \
+  .config/wallpaperengine/config \
+  .config/wireplumber/wireplumber.conf.d/51-discord-no-restore-props.conf \
+  .local/share/applications/clip2server.desktop \
+  .local/share/applications/discord.desktop \
+  .local/share/applications/steam.desktop \
+  .local/share/applications/wpe-pick.desktop \
+  .local/share/kwin/scripts/windows-screen-move/contents/code/main.js \
+  .local/share/kwin/scripts/windows-screen-move/metadata.json \
+  .local/share/sounds/ocean/index.theme \
+  .local/share/sounds/ocean/stereo/bell.oga \
+  .local/share/sounds/ocean/stereo/desktop-login.oga \
+  .local/share/sounds/ocean/stereo/desktop-logout.oga \
+; do
+  rm_file "$f"
+done
+# Then the directories those files leave behind, deepest first. rmdir takes a directory only
+# when it is empty, so one that still holds another program's file stays.
 for d in \
   .config/solaar \
-  .config/wireplumber \
   .config/wallpaperengine \
-  .local/share/applications \
+  .config/wireplumber/wireplumber.conf.d \
+  .config/wireplumber \
+  .local/share/kwin/scripts/windows-screen-move/contents/code \
+  .local/share/kwin/scripts/windows-screen-move/contents \
+  .local/share/kwin/scripts/windows-screen-move \
+  .local/share/kwin/scripts \
   .local/share/kwin \
+  .local/share/sounds/ocean/stereo \
+  .local/share/sounds/ocean \
   .local/share/sounds \
 ; do
-  rm_dir "$d"
+  rmdir "$HOME/$d" 2>/dev/null || true
 done
 # The directory itself, only once it holds nothing else — Warp's own theme/tab-config
 # symlinks under here are macOS-only, so on Linux this is empty as soon as the two files
