@@ -64,3 +64,24 @@ test('a missing run-bounded.sh runs no formatter and exits 1', { skip }, () => {
   assert.match(r.stderr, /cannot load .*x\.sh left unformatted/);
   assert.doesNotMatch(r.body, /# formatted/);
 });
+
+// A1: ruff's own --fix used to delete an unused import on whichever edit introduced it,
+// one edit before the edit that adds its first use -- 9 repair turns across two PRs in
+// the server repo. Drives the ACTUAL ruff (not a stub): the property under test is that
+// ruff still ran (F541's needless f-string prefix is fixed) while F401 specifically
+// survives, so this cannot pass against a stub that just claims to have been called.
+const ruffSkip = skipUnless('bash', 'jq', 'timeout', 'ruff');
+
+test('an unused import survives auto-format; other autofixes still apply', { skip: ruffSkip }, () => {
+  const file = path.join(DIR, 'unused_import.py');
+  fs.writeFileSync(file, 'import os\n\nx = f"hello"\n');
+  const r = spawnSync('bash', [HOOK], {
+    input: JSON.stringify({ tool_input: { file_path: file } }),
+    encoding: 'utf8',
+    env: { ...process.env, HOME: DIR, XDG_STATE_HOME: path.join(DIR, 'state-ruff') },
+  });
+  assert.strictEqual(r.status, 0);
+  const body = fs.readFileSync(file, 'utf8');
+  assert.match(body, /^import os$/m, 'the unused import (F401) was stripped by --fix, and should have survived');
+  assert.doesNotMatch(body, /f"hello"/, 'a needless f-string prefix (F541) was left unfixed');
+});

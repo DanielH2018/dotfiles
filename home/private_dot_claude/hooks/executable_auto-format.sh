@@ -73,7 +73,13 @@ run_if_installed() {
 case "$FILE_PATH" in
   *.py)
     run_if_installed ruff format "$FILE_PATH" >/dev/null
-    run_if_installed ruff check --fix --quiet "$FILE_PATH" >/dev/null
+    # --unfixable F401: ruff's autofix deletes an unused import on whichever edit
+    # introduces it, one edit before the edit that adds its first use -- this hook
+    # runs after every Edit, so it can strip an import that the very next edit was
+    # about to use (#581's sibling: 9 repair turns across two PRs in the server repo).
+    # Every other autofix still applies; F401 is left for Claude, or a deliberate
+    # `# noqa: F401` re-export, to resolve with the file's next edit in view.
+    run_if_installed ruff check --fix --unfixable F401 --quiet "$FILE_PATH" >/dev/null
     ;;
   *.js|*.jsx|*.ts|*.tsx|*.mjs|*.cjs|*.json|*.jsonc|*.css|*.scss|*.html|*.yml|*.yaml)
     run_if_installed prettier --write --log-level=silent "$FILE_PATH" >/dev/null
