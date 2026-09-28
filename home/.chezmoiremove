@@ -124,3 +124,8 @@
 .claude/hooks/test_premature_done.py
 .claude/hooks/worktree-context.sh
 .claude/hooks/voice-reminder.sh
+
+# #694: tools-inventory, retired. No timer, hook, skill or chezmoiscript ran it, and its
+# curated tools.json was 2,465 lines kept in lockstep by a push gate.
+.local/bin/tools-inventory
+.local/share/tools-inventory

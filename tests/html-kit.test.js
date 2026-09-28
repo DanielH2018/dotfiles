@@ -1,5 +1,5 @@
 'use strict';
-// html-kit holds the Catppuccin palette and the HTML escape that tools-inventory,
+// html-kit holds the Catppuccin palette and the HTML escape that
 // terminal-cheatsheet and config-map share (#564). Moving the palette out of each page.css
 // is safe only while every custom property a page reads is still declared somewhere the
 // page inlines, so that is the invariant pinned here, with a rejecting case to show the
@@ -36,7 +36,7 @@ function pageText(dir) {
   return files.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
 }
 
-for (const page of ['tools-inventory', 'terminal-cheatsheet']) {
+for (const page of ['terminal-cheatsheet']) {
   test(`${page} reads only custom properties the theme or the page itself declares`, () => {
     const text = pageText(path.join(SHARE, page));
     const used = read(text);

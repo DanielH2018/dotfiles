@@ -140,12 +140,6 @@ Scripts
 **/.venv
 **/.pytest_cache
 
-# The tools-inventory suite resolves the generator by a source-tree relative path
-# (../../bin/executable_tools-inventory), so a deployed copy could not run even if it
-# were there. It stays in the checkout rather than joining tests/chezmoi/managed-test-paths.txt,
-# which is for tests that genuinely travel with ~/.claude.
-.local/share/tools-inventory/tools-inventory.test.js
-
 # pr-dash's runtime state: ~/.local/state/pr-dash holds last-payload.json and agent.log,
 # and both carry private repository names, branch names and PR titles. Blocks `chezmoi add`
 # on them, so a recursive add — by hand, by an autocommit sweep, or by chezmoi-guard's own

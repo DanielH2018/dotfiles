@@ -1,7 +1,7 @@
 'use strict';
 // html-kit — what the generated HTML pages under ~/.local/share share: the Catppuccin
-// palette and the HTML escape. tools-inventory and terminal-cheatsheet each typed out both
-// until #564, and config-map (~/.claude/vault-tooling) reads the same theme.css.
+// palette and the HTML escape. terminal-cheatsheet and the retired tools-inventory each typed
+// out both until #564, and config-map (~/.claude/vault-tooling) reads the same theme.css.
 //
 // theme.css is Catppuccin Mocha under the flavour's own variable names. A page that sets
 // data-flavor="auto" on <html> gets Latte instead when the browser prefers a light scheme;
