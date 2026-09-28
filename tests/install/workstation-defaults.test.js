@@ -1,11 +1,13 @@
 // Covers home/.chezmoiscripts/os-linux/run_onchange_after_setup-workstation-defaults.sh.tmpl.
 //
-// The hostname is the part with teeth. This repo templates on `.chezmoi.hostname` in four
-// places — `.chezmoiignore` decides whether ~/.ssh/config deploys at all, and settings.base.json
-// picks CLAUDE_ARTIFACTS_PORT — and every one of those tests membership of
-// (daniel-box, daniel-server, daniel-pi). Naming this box one of those three would silently move
-// its artifacts port and stop deploying its ssh config, so that is asserted directly rather than
-// left to review.
+// The hostname is the part with teeth. This repo templates on `.chezmoi.hostname` in several
+// places, and they don't all test the same thing. `.chezmoiignore`'s ~/.ssh/config gate and
+// settings.base.json's CLAUDE_ARTIFACTS_PORT test membership of (daniel-box, daniel-server,
+// daniel-pi) — naming this box one of those three would silently move its artifacts port and
+// stop deploying its ssh config, so that is asserted directly rather than left to review.
+// Other conditionals (kwinrulesrc, fix-games-mount) test THIS box's own name, which the script
+// sets below — those are covered separately, by rendering .chezmoiignore for both names this
+// box has answered to.
 //
 // The other assertion that matters is the guard: this must only ever fire on a machine with no
 // static hostname, because keying a hostname change on the hostname is circular and because the
@@ -16,11 +18,12 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { renderFile, chezmoiAvailable } = require('../lib/render');
+const { renderFile, renderTemplate, chezmoiAvailable } = require('../lib/render');
 const { scratch } = require('../lib/tmp');
 const { srcPath } = require('../lib/paths');
 
 const SRC = srcPath('.chezmoiscripts', 'os-linux', 'run_onchange_after_setup-workstation-defaults.sh.tmpl');
+const IGNORE = srcPath('.chezmoiignore');
 
 const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
 
@@ -155,5 +158,27 @@ test('a converged apply changes nothing and never probes sudo', { skip }, () => 
   const second = run({ state: first.stateDir, hostnameContent: 'already-named\n', waitEnabled: false, rpmsave: false });
   assert.strictEqual(second.exitCode, 0, second.out);
   assert.strictEqual(second.sudoLog, first.sudoLog, 'a converged apply must not touch sudo');
+});
+
+// f5cc46d8 (2026-08-15) moved this box's static hostname from "fedora" to "daniel-desktop",
+// after kwinrulesrc's and fix-games-mount's gates in .chezmoiignore were already written
+// against "fedora" alone. Render .chezmoiignore for both names this box has actually answered
+// to and assert neither is ignored — the operator cannot confirm which one `hostnamectl` reports
+// today, so both must deploy the files this one machine needs, and a third, unrelated hostname
+// (daniel-box, one of the three servers) must not.
+test('kwinrulesrc and fix-games-mount deploy under either hostname this box has held', { skip }, () => {
+  if (!linux) return;
+  const asHost = (hostname) => renderTemplate(
+    `{{ $_ := set .chezmoi "hostname" ${JSON.stringify(hostname)} }}${fs.readFileSync(IGNORE, 'utf8')}`,
+    { source: srcPath(), profile: 'workstation' },
+  );
+  for (const hostname of ['fedora', 'daniel-desktop']) {
+    const rendered = asHost(hostname);
+    assert.doesNotMatch(rendered, /^\.config\/kwinrulesrc$/m, `kwinrulesrc must deploy as ${hostname}`);
+    assert.doesNotMatch(rendered, /^\.local\/bin\/fix-games-mount$/m, `fix-games-mount must deploy as ${hostname}`);
+  }
+  const asServer = asHost('daniel-box');
+  assert.match(asServer, /^\.config\/kwinrulesrc$/m, 'kwinrulesrc must stay ignored on a server');
+  assert.match(asServer, /^\.local\/bin\/fix-games-mount$/m, 'fix-games-mount must stay ignored on a server');
 });
 
