@@ -3,9 +3,9 @@
 # a desktop entry plus a [services][<id>.desktop] group in kglobalshortcutsrc keyed `_launch` —
 # there is no config surface that takes a bare command line.
 #
-# A [services] entry takes the chord *bare*, and that is the whole trap here. The sibling script
-# run_onchange_kde-free-ghostty-chords.sh writes the three-field `chord,default,display` form,
-# because that is what a component shortcut (kwin, plasmashell) takes — write that form under
+# A [services] entry takes the chord *bare*, and that is the whole trap here. A component
+# shortcut (kwin, plasmashell) instead takes the three-field `chord,default,display` form —
+# write that form under
 # [services] and KDE parses the three comma-separated tokens as a three-key sequence. The chord
 # still displays correctly in System Settings and `shortcutKeys` still reports it, so it looks
 # bound; but the stored sequence is [chord, Key_unknown, Key_unknown, 0], KWin won't install a

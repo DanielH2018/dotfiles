@@ -1,4 +1,4 @@
-# Match the Ghostty Catppuccin Mocha theme. Flavor vendored via `ya pkg`.
+# Match the terminal's Catppuccin Mocha theme. Flavor vendored via `ya pkg`.
 [flavor]
 dark = "catppuccin-mocha"
 light = "catppuccin-mocha"

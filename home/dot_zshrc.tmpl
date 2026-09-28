@@ -163,11 +163,7 @@ fi
 # QUALITY OF LIFE (zsh-specific config aliases; generic ones live in common.sh)
 # =============================================================================
 alias zshconfig="$EDITOR ~/.zshrc"
-{{- if eq .chezmoi.os "darwin" }}
-alias configterminal="$EDITOR ~/.zshrc ~/.config/ghostty/config ~/.config/starship.toml"
-{{- else }}
 alias configterminal="$EDITOR ~/.zshrc ~/.config/starship.toml"
-{{- end }}
 {{- if eq .chezmoi.os "linux" }}
 
 # marketplace.visualstudio.com returns 403 to some Mullvad exit IPs, so VS Code cannot
@@ -195,10 +191,10 @@ bindkey '^[[1;5C' forward-word
 bindkey '^[[1;5D' backward-word
 {{- if eq .chezmoi.os "linux" }}
 
-# Ghostty on Linux takes ctrl+t for new_tab (super+t is the primary bind; ctrl+t is the alias
-# that matches Mac muscle memory), so the keystroke is swallowed before zsh sees it. Give fzf's
-# file widget alt+t as well. ctrl+t is deliberately left bound too, so it still works in a TTY
-# or any other terminal on this box. Costs Esc-t / transpose-word, which nothing here uses.
+# Some Linux terminals take ctrl+t for their own new_tab bind (Ghostty did, as the alias that
+# matched Mac muscle memory), swallowing the keystroke before zsh sees it. Give fzf's file
+# widget alt+t as well. ctrl+t is deliberately left bound too, so it still works in a TTY or
+# any other terminal on this box. Costs Esc-t / transpose-word, which nothing here uses.
 (( $+widgets[fzf-file-widget] )) && bindkey '^[t' fzf-file-widget
 {{- end }}
 

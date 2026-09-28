@@ -36,8 +36,8 @@ $line_break$character"""
 
 palette = 'catppuccin_mocha'
 
-# Matches the terminal (chezmoi `.chezmoidata/terminal.toml` -> Ghostty "Catppuccin
-# Mocha"). Two foregrounds, where gruvbox needed one: gruvbox's accents are dark enough to
+# Matches the terminal's Catppuccin Mocha theme. Two foregrounds, where gruvbox needed
+# one: gruvbox's accents are dark enough to
 # carry light text, but Mocha's are pastel, so text on an accent segment has to go dark or it
 # vanishes. color_fg0 is that dark text; color_fg1 is for the dark bg1/bg3 segments.
 [palettes.catppuccin_mocha]

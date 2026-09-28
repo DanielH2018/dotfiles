@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Ghostty's Linux keybinds use super as the stand-in for macOS's cmd — see the header of
-# dot_config/ghostty/config.tmpl for why ctrl cannot take that job. KWin claims four of the
-# chords that leaves us wanting, and a global shortcut is swallowed before the focused window
-# ever sees the key, so super+t/w/d/v would just silently do nothing inside Ghostty. Move
-# KWin's four onto meta+ctrl+* and leave the plain chords to the terminal.
+# .chezmoitemplates/warp-keybindings.yaml spells cmd as Meta on Linux, because ctrl belongs
+# to the shell (SIGINT, EOF, kill-word, fzf) and a terminal must not claim it. KWin claims
+# four of the chords that leaves us wanting, and a global shortcut is swallowed before the
+# focused window ever sees the key, so cmd-t/w/d and cmd+v (paste) would just silently do
+# nothing inside Warp. Move KWin's four onto meta+ctrl+* and leave the plain chords to the
+# terminal.
 #
 # Both writes are needed, and neither alone is sufficient:
 #   - kwriteconfig6 makes the change survive a fresh login, and reproduces it on a new machine.
@@ -13,7 +14,7 @@
 #     reverted at logout by the running session.
 #
 # Idempotent, and a no-op wherever KDE isn't the desktop.
-#   ghostty keybinds: {{ include "dot_config/ghostty/config.tmpl" | sha256sum }}
+#   warp keybinds: {{ include ".chezmoitemplates/warp-keybindings.yaml" | sha256sum }}
 set -eu
 
 command -v kwriteconfig6 >/dev/null 2>&1 || exit 0
@@ -41,5 +42,5 @@ for row in "${ROWS[@]}"; do
   # case the config write above is the whole job and the session picks it up at first login.
   busctl --user call org.kde.kglobalaccel /kglobalaccel org.kde.KGlobalAccel \
     setForeignShortcut asai 4 "$component" "$key" "$friendly" "$display" 1 "$keycode" \
-    >/dev/null 2>&1 || echo "kde-free-ghostty-chords: no live session for ${key}; applies at next login" >&2
+    >/dev/null 2>&1 || echo "kde-free-warp-chords: no live session for ${key}; applies at next login" >&2
 done

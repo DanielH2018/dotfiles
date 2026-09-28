@@ -98,10 +98,9 @@ test('every app either installs on Linux or explains why not', () => {
   for (const b of blocks) {
     const name = (b.match(/^name = "([^"]+)"/m) || [])[1];
     assert.ok(name, 'every app block declares a name');
-    // bw_cli and ghostty_deb are routes too — real Linux installs that just don't fit the
-    // table, because Bitwarden's cli-v* tags and the ghostty-ubuntu .deb both need bespoke
-    // handling in the script rather than a package name.
-    const hasLinux = /^(apt|dnf|flatpak|tarball) = "/m.test(b) || /^(bw_cli|ghostty_deb) = true/m.test(b);
+    // bw_cli is a route too — a real Linux install that just doesn't fit the table, because
+    // Bitwarden's cli-v* tags need bespoke handling in the script rather than a package name.
+    const hasLinux = /^(apt|dnf|flatpak|tarball) = "/m.test(b) || /^bw_cli = true/m.test(b);
     const hasManual = /^manual = "/m.test(b);
     assert.ok(hasLinux || hasManual,
       `${name} has no Linux route and no manual note explaining the absence`);
@@ -116,7 +115,7 @@ test('the requested Linux apps really do resolve to a route', { skip }, (t) => {
   const want = [
     '7-Zip', 'Firefox', 'Google Chrome', 'Obsidian', 'Spotify', 'Bitwarden', 'WireGuard',
     'Mullvad VPN', 'OBS Studio', 'VLC', 'Elgato Stream Deck', 'f.lux', 'OpenRGB', 'Solaar',
-    'Piper', 'Git', 'Visual Studio Code', 'age', 'scrcpy', 'Ghostty', 'Steam', 'Discord',
+    'Piper', 'Git', 'Visual Studio Code', 'age', 'scrcpy', 'Steam', 'Discord',
     'Prism Launcher', 'Temurin JDK', 'Epic Games Launcher',
   ];
   for (const name of want) {
@@ -151,14 +150,6 @@ test('every tarball entry declares the tag to install', { skip }, (t) => {
   }
   assert.match(body, /\[ -n "\$tb_tag" \]/,
     'the installer must refuse a tarball entry with no pinned tag rather than resolving one');
-});
-
-test('Ghostty comes from the COPR that ghostty.org documents', { skip }, (t) => {
-  if (!rendersHere()) return t.skip('renders empty on this host');
-  const ghostty = records().find((r) => r.name === 'Ghostty');
-  assert.strictEqual(ghostty.copr, 'scottames/ghostty');
-  assert.strictEqual(ghostty.dnf, 'ghostty');
-  assert.match(body, /ghostty-ubuntu/, 'Debian/Ubuntu need the .deb route, which has no TOML column');
 });
 
 test('the shared packages.toml still feeds the Windows installer', { skip }, () => {

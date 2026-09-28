@@ -28,9 +28,6 @@ Brewfile
 .local/bin/ctw
 .local/bin/claude-sandbox
 .claude/sandbox
-# Ghostty runs on macOS and Linux only, so its config is dead weight on Windows (which uses
-# WezTerm). It deploys everywhere else — the template renders per-platform keybinds.
-.config/ghostty
 {{ end }}
 
 {{ if eq .profile "server" }}

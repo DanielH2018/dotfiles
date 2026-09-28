@@ -155,15 +155,6 @@ $APPS
 EOF
 
 # --- Apps whose Linux route doesn't fit the table ------------------------------------------
-# Ghostty on Debian/Ubuntu: no distro package and not on Flathub. ghostty.org points at the
-# ghostty-ubuntu .deb builder, which is what this runs. Fedora took the COPR in the loop above.
-if [ "$PM" = apt ] && [ "$CAN_PKG" = 1 ] && ! command -v ghostty >/dev/null 2>&1; then
-  echo "$TAG: [install] Ghostty (ghostty-ubuntu .deb) ..."
-  if ! /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mkasberg/ghostty-ubuntu/HEAD/install.sh)"; then
-    echo "$TAG: Ghostty .deb install failed" >&2
-    failed="$failed Ghostty"
-  fi
-fi
 
 # Bitwarden CLI: Bitwarden tags its CLI releases `cli-vYYYY.M.P`, so the releases/latest redirect
 # that latest_tag() follows resolves the desktop app instead. Resolve the newest cli- tag through

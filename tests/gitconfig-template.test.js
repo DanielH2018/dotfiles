@@ -39,8 +39,8 @@ function render(home) {
 // non-darwin branch: macOS short-circuits at the top to a hardcoded block that names the
 // 1Password signer and an inline public key, so a render on this OS never reaches them and
 // a fake HOME cannot change that (chezmoi resolves .chezmoi.os from the running machine,
-// with no override). Skipped off Linux for the same reason ghostty-config.test.js skips
-// its Linux keybind assertions on a Mac, and in the same shape.
+// with no override). Skipped off Linux for the same reason: a per-OS template branch can
+// only be exercised by rendering on that actual OS, never by faking HOME.
 test('signing policy is emitted even when no signing key is present', { skip }, (t) => {
   if (process.platform !== 'linux') return t.skip('renders the darwin branch off Linux');
   const out = render(fakeHome([]));

@@ -154,3 +154,4 @@
 .config/dotsync/manifest.d/00-general.json
 .config/wezterm/wezterm.lua
 .local/bin/wezterm-pane-ssh
+.config/ghostty/config

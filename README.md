@@ -53,7 +53,7 @@ VS Code after the first apply.
 
 ## Per-machine differences
 
-- `.chezmoi.os` (auto) gates macOS-only config (Homebrew, ghostty, 1Password signing) and the
+- `.chezmoi.os` (auto) gates macOS-only config (Homebrew, 1Password signing) and the
   Windows-only Nerd Font installer.
 - `work` (prompted) gates work-only config (AWS/SSO, Snowflake, Lithic Grafana, 1Password keys).
 

@@ -125,9 +125,9 @@ name = "OneDrive"
 #     nothing outside KDE can see it.
 #   - rclone / Insync: rclone needs the Dolphin side assembled by hand; Insync is proprietary and
 #     paid per account.
-# This is a COPR rather than a distro package, which cuts against the dnf-first rule at the top of
-# this file — Ghostty above sets the same precedent. jstaf's COPR builds for f44; Debian/Ubuntu
-# need his OpenSUSE Build Service repo, which has no column here, hence the empty apt field.
+# This is a COPR rather than a distro package, which cuts against the dnf-first rule at the top
+# of this file. jstaf's COPR builds for f44; Debian/Ubuntu need his OpenSUSE Build Service repo,
+# which has no column here, hence the empty apt field.
 # Mounting needs an escaped systemd *user* unit, so the setup step lives in LINUX-SETUP.md.
 copr = "jstaf/onedriver"
 dnf = "onedriver"
@@ -334,7 +334,7 @@ apt = "code"
 [[apps.coding]]
 name = "Windows Terminal"
 winget = "Microsoft.WindowsTerminal"
-manual = "Windows-only by definition. Ghostty (below) is the Linux terminal."
+manual = "Windows-only by definition. macOS/Linux run Warp instead, installed by hand."
 
 [[apps.coding]]
 name = "age"
@@ -361,15 +361,6 @@ tarball = "Genymobile/scrcpy"
 tarball_tag = "v4.1"
 tarball_bin = "scrcpy"
 tarball_url = "https://github.com/Genymobile/scrcpy/releases/download/{tag}/scrcpy-linux-{arch}-{tag}.tar.gz"
-
-[[apps.coding]]
-name = "Ghostty"
-# The terminal this config targets on macOS and Linux (dot_config/ghostty). Neither distro
-# packages it: Fedora uses the COPR that ghostty.org's own install docs point at; Debian/Ubuntu
-# use the .deb from mkasberg/ghostty-ubuntu, which the same docs recommend.
-copr = "scottames/ghostty"
-dnf = "ghostty"
-ghostty_deb = true
 
 # ---------------------------------------------------------------------------------------------
 # Game launchers only (never individual games).

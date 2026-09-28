@@ -4,11 +4,12 @@
 // The bug this pins: tmux defaults set-clipboard to `external`, which sets the outer
 // terminal's clipboard when TMUX copies but silently discards the escape when an APPLICATION
 // emits it. Every TUI copy over ssh goes the application route, so with the default nothing
-// ever reached Ghostty and the failure was invisible -- no error, no buffer, no clipboard.
+// ever reached the outer terminal and the failure was invisible -- no error, no buffer, no
+// clipboard.
 //
 // No pty here: `show-buffer` observes whether tmux accepted the sequence, which is the half
 // of the behaviour that differs between the two settings. Whether the outer terminal then
-// honours it is Ghostty's `clipboard-write`, not tmux's business.
+// honours it is its own OSC-52 write permission, not tmux's business.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');

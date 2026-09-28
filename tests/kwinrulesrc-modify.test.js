@@ -35,11 +35,10 @@ const { srcPath } = require('./lib/paths');
 
 const SCRIPT = srcPath('dot_config', 'modify_private_kwinrulesrc.sh');
 
-const GHOSTTY = 'd31e37ca-991b-4265-b5a5-770bbdb42c82';
 const DISCORD = 'd68fa888-6425-4f4c-bd4a-a106d577356a';
 const SPOTIFY = '2e9c7a55-8d13-4f26-b0c4-5a7e91d2f308';
 const OBSIDIAN = '923685de-9867-49f5-bed2-8a1da53e8b52';
-const OWNED = [SPOTIFY, OBSIDIAN, GHOSTTY, DISCORD];
+const OWNED = [SPOTIFY, OBSIDIAN, DISCORD];
 
 // Retired: this rule maximized every Firefox toplevel, extension popup windows included,
 // and Firefox answered with a 95x123 sliver. Placement moved to login-window-layout. The
@@ -55,6 +54,23 @@ const FIREFOX_SECTION = [
   'position=1576,40',
   'positionrule=3',
   'wmclass=org.mozilla.firefox',
+  'wmclasscomplete=false',
+  'wmclassmatch=1',
+];
+
+// Retired: login-window-layout starts warp-terminal now, not ghostty, and no rule replaced
+// this one. The UUID stays here for the same reason FIREFOX's does above.
+const GHOSTTY = 'd31e37ca-991b-4265-b5a5-770bbdb42c82';
+const GHOSTTY_SECTION = [
+  `[${GHOSTTY}]`,
+  'Description=Ghostty - login placement (right)',
+  'maximizehoriz=true',
+  'maximizehorizrule=3',
+  'maximizevert=true',
+  'maximizevertrule=3',
+  'position=3283,40',
+  'positionrule=3',
+  'wmclass=com.mitchellh.ghostty',
   'wmclasscomplete=false',
   'wmclassmatch=1',
 ];
@@ -78,7 +94,7 @@ const BITWARDEN_SECTION = [
 // sections appear in. Preserving it is the point. Still carries the retired Firefox UUID,
 // because that is what an existing deployed file looks like on the way into this script.
 const LIVE_RULES = [GHOSTTY, BITWARDEN, OBSIDIAN, DISCORD, FIREFOX, SPOTIFY];
-const LIVE_RULES_AFTER = LIVE_RULES.filter((u) => u !== FIREFOX);
+const LIVE_RULES_AFTER = LIVE_RULES.filter((u) => u !== FIREFOX && u !== GHOSTTY);
 
 const skip = skipUnless('bash');
 
@@ -128,27 +144,31 @@ test('an unowned rule keeps its place in the index, and is never de-listed', { s
   assert.strictEqual(countOf(out), LIVE_RULES_AFTER.length);
 });
 
-test('deletes the retired Firefox rule, section and index entry alike', { skip }, () => {
-  const out = run(ini(BITWARDEN_SECTION, [''], FIREFOX_SECTION, [''], general(LIVE_RULES)));
+test('deletes both retired rules, sections and index entries alike', { skip }, () => {
+  const out = run(ini(BITWARDEN_SECTION, [''], FIREFOX_SECTION, [''], GHOSTTY_SECTION, [''], general(LIVE_RULES)));
   assert.ok(!out.includes(`[${FIREFOX}]`),
-    'the retired section survived; a passed-through rule keeps maximizing extension popups');
+    'the retired Firefox section survived; a passed-through rule keeps maximizing extension popups');
   assert.ok(!out.includes('org.mozilla.firefox'),
     'a Firefox wmclass is still matched somewhere in the file');
-  assert.ok(!rulesOf(out).includes(FIREFOX),
-    'the retired UUID is still indexed in rules=, so KWin would still load it');
+  assert.ok(!out.includes(`[${GHOSTTY}]`),
+    'the retired Ghostty section survived as an unmanaged passthrough');
+  assert.ok(!out.includes('com.mitchellh.ghostty'),
+    'a Ghostty wmclass is still matched somewhere in the file');
+  assert.ok(!rulesOf(out).includes(FIREFOX) && !rulesOf(out).includes(GHOSTTY),
+    'a retired UUID is still indexed in rules=, so KWin would still load it');
   assert.strictEqual(countOf(out), rulesOf(out).length);
   assert.deepStrictEqual(section(out, BITWARDEN), BITWARDEN_SECTION.slice(1),
-    'removing the retired rule disturbed an unowned neighbour');
+    'removing the retired rules disturbed an unowned neighbour');
 });
 
 test('asserts an owned section whole -- a key KDE added to it is removed', { skip }, () => {
   const out = run(ini(
-    [`[${GHOSTTY}]`, 'Description=Ghostty - login placement (right)', 'position=0,0',
-      'positionrule=3', 'size=1200,720', 'sizerule=3', 'wmclass=com.mitchellh.ghostty'],
-    [''], general([GHOSTTY]),
+    [`[${DISCORD}]`, 'Description=Discord - login placement (left)', 'position=0,0',
+      'positionrule=3', 'size=1200,720', 'sizerule=3', 'wmclass=discord'],
+    [''], general([DISCORD]),
   ));
-  const body = section(out, GHOSTTY);
-  assert.ok(body.includes('position=3283,40'), 'the owned position was not re-asserted');
+  const body = section(out, DISCORD);
+  assert.ok(body.includes('position=40,40'), 'the owned position was not re-asserted');
   assert.ok(!body.some((l) => l.startsWith('size=')),
     'a stale size rule survived; a size rule wins over maximize and the window opens small');
   assert.ok(body.includes('maximizevert=true') && body.includes('maximizehoriz=true'),
@@ -164,7 +184,7 @@ test('adds a missing owned rule to both the section list and the index', { skip 
   }
   assert.deepStrictEqual(rulesOf(out), [BITWARDEN, ...OWNED],
     'a pre-existing entry must keep its position and new ones append after it');
-  assert.strictEqual(countOf(out), 5);
+  assert.strictEqual(countOf(out), 4);
 });
 
 test('count always matches the length of rules=', { skip }, () => {

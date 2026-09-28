@@ -1,26 +1,25 @@
-# Ported from Ghostty (home/dot_config/ghostty/config.tmpl).
-# The Ghostty config uses super where macOS uses cmd, for the reason spelled out there:
-# ctrl belongs to the shell (SIGINT, EOF, kill-word, fzf) and a terminal must not claim it.
-# Warp spells that same physical key `cmd` on every platform, so these read as cmd-*
-# and land on Meta here.
+# Ghostty (this repo shipped one until it was retired for Warp) used super where macOS
+# uses cmd, because ctrl belongs to the shell (SIGINT, EOF, kill-word, fzf) and a terminal
+# must not claim it. Warp spells that same physical key `cmd` on every platform, so these
+# read as cmd-* and land on Meta here.
 #
-# KWin takes Meta+T / Meta+W / Meta+D before Warp ever sees them; the same chezmoi script
-# that frees them for Ghostty (run_onchange_kde-free-ghostty-chords.sh.tmpl) covers Warp.
+# KWin takes Meta+T / Meta+W / Meta+D before Warp ever sees them;
+# run_onchange_kde-free-warp-chords.sh.tmpl frees them.
 
 # Tabs and windows
 workspace:new_terminal_tab: cmd-t
 workspace:new_window: cmd-shift-t
 root_view:close_window: cmd-shift-w
 
-# Splits — Ghostty's super+d / super+shift+d
+# Splits
 pane_group:add_right: cmd-d
 pane_group:add_down: cmd-shift-d
 
-# Split navigation — Ghostty's super+[ / super+]
+# Split navigation
 pane_group:navigate_prev: cmd-[
 pane_group:navigate_next: cmd-]
 
-# Split resize — Ghostty's super+shift+[ / super+shift+]
+# Split resize
 pane_group:resize_left: cmd-shift-[
 pane_group:resize_right: cmd-shift-]
 

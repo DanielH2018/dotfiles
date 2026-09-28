@@ -1,5 +1,5 @@
 #!/bin/sh
-# chezmoi modify_ script: assert the five "login placement" window rules in
+# chezmoi modify_ script: assert the four "login placement" window rules in
 # ~/.config/kwinrulesrc and leave every other rule in the file to KWin.
 #
 # This has to be a modify_ script rather than a plain source file for the same reason
@@ -9,13 +9,17 @@
 # plain managed file would delete all of it on every apply and KDE would write it back, so the
 # two would fight forever with `chezmoi status` permanently dirty.
 #
-# WHAT IS OWNED: the four UUID-keyed sections below, plus the one UUID in DISOWNED, and
-# nothing else. They pin Discord, Ghostty, Spotify and Obsidian to a coordinate inside their
+# WHAT IS OWNED: the three UUID-keyed sections below, plus the two UUIDs in DISOWNED, and
+# nothing else. They pin Discord, Spotify and Obsidian to a coordinate inside their
 # assigned monitor, and maximize them there, at login. ~/.local/bin/login-window-layout starts
 # those apps and relies on these rules for placement -- for them it decides only *what* runs,
 # never where, because KWin's own screen=N rule is inert on Wayland here (it matches the window
 # and then never moves it). Losing these rules does not break the launcher loudly; it just
 # opens the windows into default placement.
+#
+# GHOSTTY'S OLD UUID IS ALSO IN DISOWNED: login-window-layout starts warp-terminal now, not
+# ghostty, and nothing replaced the placement rule, so the stale Ghostty rule is removed
+# rather than left as an unmanaged passthrough. Warp gets no rule here yet.
 #
 # FIREFOX IS DELIBERATELY NOT HERE, and its old UUID is in DISOWNED so an existing deployed
 # copy is removed rather than passed through. A window rule matches on wmclass, and every
@@ -88,17 +92,6 @@ positionrule=3
 wmclass=md.obsidian.Obsidian
 wmclasscomplete=false
 wmclassmatch=1
-[d31e37ca-991b-4265-b5a5-770bbdb42c82]
-Description=Ghostty - login placement (right)
-maximizehoriz=true
-maximizehorizrule=3
-maximizevert=true
-maximizevertrule=3
-position=3283,40
-positionrule=3
-wmclass=com.mitchellh.ghostty
-wmclasscomplete=false
-wmclassmatch=1
 [d68fa888-6425-4f4c-bd4a-a106d577356a]
 Description=Discord - login placement (left)
 maximizehoriz=true
@@ -118,6 +111,7 @@ awk '
 	# rule would sit in the deployed file forever, still indexed in [General].
 	BEGIN {
 		disowned["[7f3a1c20-4b5e-4d61-9a02-1c8e6f0b3d47]"] = 1
+		disowned["[d31e37ca-991b-4265-b5a5-770bbdb42c82]"] = 1
 	}
 
 	# First file: the owned sections. Section headers are matched as whole lines rather

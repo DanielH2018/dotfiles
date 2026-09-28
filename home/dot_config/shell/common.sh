@@ -401,9 +401,9 @@ if command -v wl-paste >/dev/null 2>&1; then
 fi
 
 # --- OSC 7: report cwd so the terminal reopens new tabs/splits in the current dir ---
-# Ghostty reads OSC 7 to clone the active pane's cwd into a new tab or split. A new *window*
-# is pinned back to the WSL home by the terminal config instead, so the rule is: tab & split
-# follow the cwd, a new window resets home. Emitted before each prompt (so it tracks cd) via
+# A terminal that reads OSC 7 clones the active pane's cwd into a new tab or split. A new
+# *window* is pinned back to the WSL home by the terminal config instead, so the rule is: tab
+# & split follow the cwd, a new window resets home. Emitted before each prompt (so it tracks cd) via
 # each shell's hook.
 __osc7_cwd() { printf '\033]7;file://%s%s\033\\' "${HOSTNAME:-$HOST}" "$PWD"; }
 if [ -n "$ZSH_VERSION" ]; then
