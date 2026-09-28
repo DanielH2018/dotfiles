@@ -147,3 +147,4 @@
 .claude/docs/orchestration.md
 .claude/scripts/check-runner.mjs
 .local/bin/stash-mine
+.local/bin/prompt-friction

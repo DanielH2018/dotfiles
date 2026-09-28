@@ -76,6 +76,20 @@ computing a verdict it could compare to nothing.
 
     claude-guard replay commands.jsonl --judge               # allow count and the allowed commands
 
+`commands.jsonl` is one `{"command": ..., "cwd": ...}` object per line
+(`cli.py`'s `_replay_judge`/`_replay_deny`). To ask "how many of the prompts I
+actually answered this week would this rule set now answer itself" (dotfiles
+issue that used to be `prompt-friction`'s job), pull the corpus straight from
+Loki and bridge it with one `jq` line — `otelq`'s `tool_decision` rows carry no
+`cwd` label, so this fills the field with `$HOME` the same way `prompt-friction`
+filled it with its own analysis process's cwd, not the historical session's:
+
+    otelq logs '{service_name="claude-code"} | event_name="tool_decision" | source=~"user.*" | tool_name="Bash"' --stream --since 7d \
+      | jq -c '.data.result[] | . as $s | ($s.stream.tool_parameters | fromjson) as $p | range($s.values|length) | {command: $p.full_command, cwd: $ENV.HOME}' \
+      > commands.jsonl
+    claude-guard replay commands.jsonl --deny
+    claude-guard replay commands.jsonl --judge
+
 The slice 3 cutover gate (spec row 3) was `replay --judge --compare-hooks` allowing at least
 84 of the prompted corpus — the floor set by what the #477 prototype allowed — checked
 against the pre-cutover bash chain before the six hooks were deleted. `replay --judge` alone
