@@ -144,3 +144,4 @@
 # explicit removal or it survives `chezmoi apply` as an unmanaged leftover.
 .claude/hooks/tq-wrap-tests.sh
 .claude/skills/handoff
+.claude/docs/orchestration.md
