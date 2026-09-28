@@ -131,7 +131,6 @@
          resolves 1e6 for the session model — see "model" below. */}}
     "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "726000",
     "CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE": "true",
-    "CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT": "1",
     {{/* The model a subagent runs on when neither the Agent call nor the agent's own
          frontmatter names one. Without it an unpinned agent inherits the session model, so
          under Fable the built-ins (Explore, general-purpose, Plan) and every reviewer without
