@@ -11,7 +11,6 @@ extend-include = [
   "home/dot_local/bin/executable_otelq",
   "home/dot_local/bin/executable_planka",
   "home/dot_local/bin/executable_prompt-friction",
-  "home/dot_local/bin/executable_stash-mine",
   "home/dot_local/bin/executable_stdio-blocking",
   "home/dot_local/bin/executable_streamdeck-usb-reset",
   "home/dot_local/bin/executable_tq",
