@@ -2,7 +2,7 @@
 # shellcheck disable=SC2154  # all data vars (cwd, model_id, …) are assigned by the eval'd jq block below
 shopt -s extglob  # needed before parse for the SGR-stripping pattern in put(), below
 # Claude Code status line — mirrors the Starship catppuccin_mocha theme, which is the
-# terminal's own (chezmoi `.chezmoidata/terminal.toml`). 24-bit, not 256-color: the old
+# terminal's own theme too. 24-bit, not 256-color: the old
 # codes were documented as "approximate", and the terminal renders truecolor, so the
 # statusline can hit the exact palette every other surface uses.
 #   peach    #fab387 → 250;179;135   session name, dirty count
