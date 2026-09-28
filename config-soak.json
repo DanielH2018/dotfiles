@@ -8,13 +8,13 @@
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
-      "hash": "d0494e12fefdcfc765af81f6caf761b76d78187636769ac6e2308d2ff42a889d",
-      "landed": "2026-09-18T12:43:59.479Z"
+      "hash": "6951b0b7d7341067522d0d8fca69a4769cbadbacfdd1eb78982f74048bb9d638",
+      "landed": "2026-09-28T12:36:20.274Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.safe-floor.json",
-      "hash": "32f01762626639289fec1698c4af813a6522a1aea692595f20c8be300b9b7e3d",
-      "landed": "2026-08-02T20:12:08.922Z"
+      "hash": "0db3a731488b3beafd8f46e831644dffbf942afe75bc99f7cacdc7b5f2ea5d76",
+      "landed": "2026-09-28T12:36:20.274Z"
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",

@@ -33,11 +33,17 @@ const NOT_A_SPAWNER = ['fnm env', 'gh run watch'];
 // Allow-listed spawners that are guarded by deny globs instead of being removed. xargs is
 // deliberately absent: its command word floats after any number of options, so no glob can
 // pin it down, and it was removed from allow instead. find and awk stay because their
-// execution forms are named flags.
-// awk's form is `system` rather than `system(`: a deny glob spelled `Bash(awk *system(*)`
-// has unbalanced parens, which the rule parser drops outright — leaving `Bash(awk:*)`
-// allow-listed with nothing guarding it. The trailing `(` cannot appear here.
-const GUARDED = { find: ['-exec', '-execdir', '-ok', '-delete', '-fprintf'], awk: ['system'] };
+// execution forms are named flags. Each entry is the exact deny rule text. -ok and -delete
+// are anchored on the space before the flag so an argument such as `-name '*-delete*'` does
+// not match, which is why they carry a separate rule for a flag placed directly after `find`.
+// awk's rules close the paren they open: a rule spelled `Bash(awk *system(*)` has an
+// unbalanced paren, which the rule parser drops outright — leaving `Bash(awk:*)`
+// allow-listed with nothing guarding it.
+const GUARDED = {
+  find: ['find *-exec*', 'find *-execdir*', 'find -ok *', 'find * -ok *', 'find * -okdir *',
+    'find -delete', 'find -delete *', 'find * -delete', 'find * -delete *', 'find *-fprintf*'],
+  awk: ['awk *system(*)*', 'awk *system (*)*'],
+};
 
 function bashPrefixes(block) {
   // Mirror extract_bash_prefixes: drop the Bash(...) wrapper, then a trailing :*, ` *` or *.
@@ -89,9 +95,9 @@ test('each allow-listed spawner that is kept carries its deny globs', () => {
   const allowPrefixes = bashPrefixes(src.slice(src.indexOf('"allow": ['), denyStart));
   for (const [cmd, forms] of Object.entries(GUARDED)) {
     if (!allowPrefixes.includes(cmd)) continue;   // removed from allow entirely: nothing to guard
-    for (const form of forms) {
-      assert.ok(denyBlock.includes(`"Bash(${cmd} *${form}*)"`),
-        `${cmd} is allow-listed, so deny must cover ${form}`);
+    for (const rule of forms) {
+      assert.ok(denyBlock.includes(`"Bash(${rule})"`),
+        `${cmd} is allow-listed, so deny must carry Bash(${rule})`);
     }
   }
 });

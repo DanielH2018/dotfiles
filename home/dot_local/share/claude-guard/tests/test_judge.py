@@ -7,6 +7,7 @@ in node.
 """
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -71,10 +72,16 @@ ESC = {
     "deny": [
         "Bash(find *-exec*)",
         "Bash(find *-execdir*)",
-        "Bash(find *-ok*)",
-        "Bash(find *-delete*)",
+        "Bash(find -ok *)",
+        "Bash(find * -ok *)",
+        "Bash(find * -okdir *)",
+        "Bash(find -delete)",
+        "Bash(find -delete *)",
+        "Bash(find * -delete)",
+        "Bash(find * -delete *)",
         "Bash(find *-fprintf*)",
-        "Bash(awk *system(*)",
+        "Bash(awk *system(*)*)",
+        "Bash(awk *system (*)*)",
         "Bash(curl:*)",
     ],
     "ask": [],
@@ -341,6 +348,91 @@ def test_deny_globs_leave_the_everyday_form_of_each_spawner_allowed(esc):
     assert allowed("echo hi && find . -name '*.ts'", esc)
     assert allowed("echo hi && find . -type f -maxdepth 2", esc)
     assert allowed("echo hi && awk '{print $1}' f.txt", esc)
+    # An ordinary argument that merely contains a flag's text (dotfiles #680).
+    assert allowed("echo hi && find /tmp/d -maxdepth 1 -name '*-delete*'", esc)
+    assert allowed("echo hi && find ./k8s-ok/ -type f", esc)
+    assert allowed("echo hi && awk '/filesystem/' /dev/null", esc)
+
+
+# --- the real template ------------------------------------------------------------------------
+
+TEMPLATE = Path(__file__).resolve().parents[4] / ".chezmoitemplates" / "settings.permissions.json"
+
+
+@pytest.fixture
+def real(tmp_path):
+    """settings.permissions.json as written, with its `{{/* */}}` comments removed. The
+    fixtures above are hand copies, and one had already drifted from the file."""
+    text = re.sub(r"\{\{/\*.*?\*/\}\}", "", TEMPLATE.read_text(), flags=re.DOTALL)
+    rules = rules_for(tmp_path, json.loads(text))
+    # Named members, so a template that parses to nothing fails here by name.
+    assert "find" in rules.allow and "git push" in rules.allow
+    assert "find * -delete" in rules.deny_glob and "git push * -f" in rules.deny_glob
+    return rules
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "find . -delete",
+        "find -delete",
+        "find . -name x -delete -print",
+        "find . -ok rm {} \\;",
+        "find -ok rm {} \\;",
+        "find . -okdir rm {} \\;",
+        "find . -exec id \\;",
+        "awk 'BEGIN{system(\"id\")}'",
+        "awk 'BEGIN{system (\"id\")}'",
+    ],
+)
+def test_the_real_template_refuses_each_execution_form(real, command):
+    assert not allowed(command, real)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "find /tmp/d -maxdepth 1 -name '*-delete*'",
+        "find ./k8s-ok/ -type f",
+        "awk '/filesystem/' /dev/null",
+        "find . -name '*.ts'",
+    ],
+)
+def test_the_real_template_allows_an_argument_that_only_contains_a_flags_text(real, command):
+    assert allowed(command, real)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git push --force origin feat",
+        "git push -f origin feat",
+        "git push origin feat --force",
+        "git push origin feat -f",
+        "git push origin -f feat",
+        "git push --force-with-lease origin main",
+        "git push --force-with-lease origin master",
+        "git push origin main --force-with-lease",
+        # The judge appends `*` to every glob, so `git push * --force` reaches the lease
+        # flag in this one position. It defers to the prompt rather than auto-approving.
+        "git push origin feat --force-with-lease",
+    ],
+)
+def test_the_real_template_refuses_each_force_push_form(real, command):
+    assert not allowed(command, real)
+
+
+def test_the_real_template_allows_a_lease_push_to_a_feature_branch(real):
+    assert allowed("git push --force-with-lease origin feat", real)
+    assert allowed("git push origin feat", real)
+
+
+def test_the_real_template_leaves_an_rm_below_root_or_home_to_the_rm_rules(real):
+    # `rm -rf /*` extracted to the plain prefix `rm -rf /`, which never matched a deeper
+    # path here; the over-match was Claude Code's own matcher. This pins that the narrowed
+    # rules still refuse root and home themselves.
+    assert not allowed("rm -rf /", real)
+    assert not allowed("rm -rf ~", real)
 
 
 def test_a_wrapper_is_judged_on_the_command_it_will_actually_run(esc):

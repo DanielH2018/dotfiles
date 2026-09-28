@@ -27,7 +27,7 @@ const runFail = (...args) => {
 // in the generator; the test below asserts the two never drift apart.
 const FLOOR = [
   'Bash(sudo:*)', 'Bash(su:*)', 'Bash(mkfs:*)', 'Bash(dd:*)',
-  'Bash(rm -rf /*)', 'Bash(rm -rf ~*)',
+  'Bash(rm -rf /)', 'Bash(rm -rf ~)',
   'Bash(* | sh*)', 'Bash(* | bash*)', 'Bash(* | zsh*)',
   'Read(**/.ssh/**)', 'Read(**/.aws/credentials)', 'Read(**/.env)',
   'Read(**/id_rsa)', 'Read(**/id_ed25519)', 'Edit(**/.ssh/**)',

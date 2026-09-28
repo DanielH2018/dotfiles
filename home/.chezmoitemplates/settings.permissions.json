@@ -439,6 +439,10 @@
       "mcp__homelab__claude_code_events",
       "mcp__homelab__list_files",
       "mcp__homelab__read_file",
+      "mcp__homelab__list_pods",
+      "mcp__homelab__workload_status",
+      "mcp__homelab__list_nodes",
+      "mcp__homelab__pod_logs",
       "Bash(~/.claude/plugins/cache/claude-plugins-official/ralph-loop/*)",
       "Bash(bash ~/.claude/hooks/session-context.sh)",
       {{/* claude-guard slice 4 cutover (Rollout row 4) unregistered block-dangerous-bash.sh
@@ -518,17 +522,46 @@
       "Bash(chmod 777:*)",
       "Bash(mkfs:*)",
       "Bash(dd:*)",
-      "Bash(rm -rf /*)",
-      "Bash(rm -rf ~*)",
+      {{/* Root and the whole home directory only. `rm -rf /*` and `rm -rf ~*` also matched
+           every absolute path and every path under home in Claude Code's matcher, so a
+           cleanup of a job's own tmp directory was a hard deny. claude_guard's rm_root
+           (deny.py) is the backstop for the spellings a rule here cannot name without that
+           over-match: the shell glob `/*`, `$HOME`, `$HOME/*` and split flags. */}}
+      "Bash(rm -rf /)",
+      "Bash(rm -rf / *)",
+      "Bash(rm -rf ~)",
+      "Bash(rm -rf ~/)",
+      "Bash(rm -rf ~ *)",
+      "Bash(rm -rf ~/ *)",
       "Bash(git config --global:*)",
       "Bash(git config user.*:*)",
-      "Bash(git push --force:*)",
-      "Bash(git push -f:*)",
-      "Bash(git push --force-with-lease:*)",
+      {{/* Force-push. `--force` and `-f` are denied in any position, on any branch.
+           `--force-with-lease` is allowed on a feature branch and denied for main/master.
+           The flag rules spell out the bare command and ` *` rather than `:*`, so that no
+           rule here can be read as a prefix of `--force-with-lease`.
+
+           claude_guard's judge appends `*` to every glob, so there `git push * --force` also
+           matches `git push origin feat --force-with-lease`. The judge then does not
+           auto-approve that one spelling, and the prompt decides it. The lease-first
+           spelling `git push --force-with-lease origin feat` has no such overlap and stays
+           allowed. claude_guard's push_main (deny.py) hard-denies every push whose
+           destination is main/master, which covers lease spellings the rules below omit. */}}
+      "Bash(git push --force)",
+      "Bash(git push --force *)",
+      "Bash(git push -f)",
+      "Bash(git push -f *)",
+      "Bash(git push * --force)",
+      "Bash(git push * --force *)",
+      "Bash(git push * -f)",
+      "Bash(git push * -f *)",
       "Bash(git push origin main --force*)",
       "Bash(git push origin master --force*)",
       "Bash(git push origin main -f*)",
       "Bash(git push origin master -f*)",
+      "Bash(git push --force-with-lease * main)",
+      "Bash(git push --force-with-lease * master)",
+      "Bash(git push --force-with-lease * main *)",
+      "Bash(git push --force-with-lease * master *)",
       {{/* DECIDED: every rule from here down that carries an INTERIOR `*` -- the --no-verify
            pair, the three pipe-to-shell rules, the find/awk execution forms below, and the
            `gh api -X`/`npx -p` families in the ask tier -- is enforced by claude_guard's
@@ -540,9 +573,10 @@
            home/dot_local/share/claude-guard/tests/test_judge.py:
            test_deny_and_ask_rules_with_an_interior_wildcard_are_globs fires them, and
            test_deny_globs_leave_the_everyday_form_of_each_spawner_allowed proves they do not
-           over-match -- both ported case-for-case from the deleted JS file's tests of the
-           same two names before this cutover, so this marker is rewritten to name the
-           surviving enforcer rather than relocating a proof that already has a home.
+           over-match. Both run against a hand-copied fixture. The test_the_real_template_*
+           tests in the same file load THIS file instead: each execution form and each
+           force-push form is refused, and each ordinary argument that merely contains a
+           flag's text (`-name '*-delete*'`, `./k8s-ok/`, `/filesystem/`) is allowed.
 
            This matters because docs/claude-shell-permissions.md in the server repo measures
            the NATIVE matcher and concludes a flag-level guard "cannot be written at all".
@@ -566,13 +600,26 @@
            xargs is no longer covered here: its allow entry is gone (see above), so there is
            no grant left for a deny glob to claw back. find and awk keep theirs because they
            stay allow-listed — their execution forms are a named flag, which a glob CAN pin
-           down, where xargs' command word floats after any number of options. */}}
+           down, where xargs' command word floats after any number of options.
+
+           -ok and -delete are anchored on the space before the flag, because the unanchored
+           `*-delete*` and `*-ok*` also matched `-name '*-delete*'` and `./k8s-ok/`. A flag
+           placed directly after `find` has no path before it, so it gets its own rule. awk's
+           rule needs the `(` of a call, so that `/filesystem/` does not match. The rule also
+           closes that paren, because the rule parser drops a rule with an unbalanced paren.
+           awk accepts a space before a built-in's paren, so that spelling has its own rule. */}}
       "Bash(find *-exec*)",
       "Bash(find *-execdir*)",
-      "Bash(find *-ok*)",
-      "Bash(find *-delete*)",
+      "Bash(find -ok *)",
+      "Bash(find * -ok *)",
+      "Bash(find * -okdir *)",
+      "Bash(find -delete)",
+      "Bash(find -delete *)",
+      "Bash(find * -delete)",
+      "Bash(find * -delete *)",
       "Bash(find *-fprintf*)",
-      "Bash(awk *system*)",
+      "Bash(awk *system(*)*)",
+      "Bash(awk *system (*)*)",
       "Edit(.git/**)",
       "Read(~/.config/gcloud/**)",
       "Edit(~/.config/gcloud/**)",
