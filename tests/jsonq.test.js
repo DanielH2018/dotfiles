@@ -29,7 +29,7 @@ const { run } = require('./lib/run');
 const JSONQ = srcPath('dot_local', 'bin', 'executable_jsonq');
 // claude-guard slice 4 cutover unregistered block-dangerous-bash.sh from the host (it stays
 // deployed for the sandbox -- see its own header comment); deny.py (claude_guard's port,
-// ported rule for rule -- see docs/plans/2026-09-17-claude-guard-slice-4-cutover.md) is now
+// ported rule for rule -- see git show 7a85ffec:docs/plans/2026-09-17-claude-guard-slice-4-cutover.md) is now
 // the host's live decision-maker and the oracle SECRET_PATHS mirrors.
 const DENY_PY = srcPath('dot_local', 'share', 'claude-guard', 'claude_guard', 'deny.py');
 

@@ -3,7 +3,6 @@
 .claude/
 *.swp
 *.swo
-.superpowers/
 
 # This repo's own build artifacts. They were ignored only by ~/.gitignore_global, which is
 # home/dot_gitignore_global — a file THIS repo deploys. That made the repo's cleanliness

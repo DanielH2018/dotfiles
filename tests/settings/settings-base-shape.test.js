@@ -295,8 +295,8 @@ test('every Notification matcher names a real notification type', { skip }, () =
 // gone from disk in slice 3. This is the red-proof for both cutovers: it must fail if any of
 // the six bash hooks is still registered, and it must fail if CLAUDE_GUARD_SHADOW is
 // re-added -- a shadow switch with no chain behind it to compare against is the regression
-// slice 6 closed (see docs/plans/2026-09-11-claude-guard-slice-3-cutover.md, Task 8, and
-// docs/specs/2026-09-06-claude-guard-design.md row 6).
+// slice 6 closed (see git show 197ac5a9:docs/plans/2026-09-11-claude-guard-slice-3-cutover.md,
+// Task 8, and docs/specs/2026-09-06-claude-guard-design.md row 6).
 test('claude-guard is the sole Bash PermissionRequest decision, live', { skip }, () => {
   const s = JSON.parse(render());
   const entry = s.hooks.PermissionRequest.find((e) => e.matcher === 'Bash');
@@ -312,7 +312,8 @@ test('claude-guard is the sole Bash PermissionRequest decision, live', { skip },
 
 // claude-guard slice 4 cutover: guard-pre-tool-use.sh is the sole decision for Bash
 // PreToolUse. This is the red-proof for the cutover: it must fail if block-dangerous-bash.sh
-// is registered again (see docs/plans/2026-09-17-claude-guard-slice-4-cutover.md). Slice 6
+// is registered again (see git show 7a85ffec:docs/plans/2026-09-17-claude-guard-slice-4-cutover.md).
+// Slice 6
 // deleted the bash hook and the CLAUDE_GUARD_DENY_SHADOW switch that shadowed it, so the
 // env key is asserted absent the way CLAUDE_GUARD_SHADOW is above.
 test('claude-guard is the sole Bash PreToolUse deny decision, live', { skip }, () => {

@@ -215,9 +215,10 @@ def remote_argv_readonly(remote: list[str]) -> bool:
     return guard(remote) if guard else False
 
 
-# D1 (docs/plans/2026-09-11-claude-guard-slice-3-cutover.md): trusted_host_safe is a SEPARATE
-# function, not a tier of readonly_remote_safe above. That function decides on the VERB and
-# has no host filter; this one decides on the HOST and has no verb table — once host and shape
+# D1 (git show 197ac5a9:docs/plans/2026-09-11-claude-guard-slice-3-cutover.md):
+# trusted_host_safe is a SEPARATE function, not a tier of readonly_remote_safe above.
+# That function decides on the VERB and has no host filter; this one decides on the
+# HOST and has no verb table — once host and shape
 # pass, it allows the entire remote payload, read-only or not (allow-daniel-server.sh:4-6,112).
 # It also runs its own quote-state machine rather than claude_guard.segment.parse: the bash
 # never used cmd_parse, and reusing readonly_remote_safe's `-O check` / `-o BatchMode=yes`
