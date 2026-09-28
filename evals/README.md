@@ -5,7 +5,8 @@ one agent, grades the output with a deterministic assertion gate plus an LLM jud
 the case `k` times to measure consistency.
 
 Design spec: `docs/specs/2026-07-08-subagent-evals-design.md`.
-Plan: `docs/plans/2026-07-08-subagent-evals.md`.
+The implementation plan was deleted once it landed (#694); read it with
+`git show 18183493:docs/plans/2026-07-08-subagent-evals.md`.
 
 ## Running
 
