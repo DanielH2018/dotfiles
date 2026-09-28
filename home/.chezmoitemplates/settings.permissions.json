@@ -534,7 +534,7 @@
       "Bash(rm -rf ~ *)",
       "Bash(rm -rf ~/ *)",
       "Bash(git config --global:*)",
-      "Bash(git config user.*:*)",
+      "Bash(git config user.*)",
       {{/* Force-push. `--force` and `-f` are denied in any position, on any branch.
            `--force-with-lease` is allowed on a feature branch and denied for main/master.
            The flag rules spell out the bare command and ` *` rather than `:*`, so that no

@@ -77,6 +77,23 @@ test('the rendered base template is valid JSON', { skip }, () => {
   assert.doesNotThrow(() => JSON.parse(render()));
 });
 
+// Claude Code reads a trailing `:*` as the legacy prefix syntax, and in that form it does not
+// expand a `*` earlier in the rule: the rule matches only a command holding a literal
+// asterisk there, and every startup prints a warning. `Bash(git config user.*:*)` shipped
+// that way and denied no identity rewrite at all.
+test('no Bash() permission rule mixes a * wildcard with the trailing :* prefix', { skip }, () => {
+  const { permissions } = JSON.parse(render());
+  const mixed = [];
+  for (const bucket of ['allow', 'deny', 'ask']) {
+    for (const rule of permissions[bucket] ?? []) {
+      const m = /^Bash\((.*):\*\)$/.exec(rule);
+      if (m && m[1].includes('*')) mixed.push(`${bucket}: ${rule}`);
+    }
+  }
+  assert.deepStrictEqual(mixed, [],
+    'these rules match only a literal *; drop the trailing :* to make the * a wildcard');
+});
+
 // The load-bearing one. Not "does a fixture pass" — does the file we actually ship pass.
 test('the rendered base template survives claude-settings-merge unchanged', { skip }, () => {
   // A temp dir, not REPO: the merge script takes its input by argv and resolves its prior

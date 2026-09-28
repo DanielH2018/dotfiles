@@ -50,6 +50,22 @@ test('every Bash() permission rule has balanced parentheses', () => {
     'these rules are silently skipped at startup and enforce nothing');
 });
 
+// Claude Code reads a trailing `:*` as the legacy prefix syntax, and in that form it does not
+// expand a `*` earlier in the rule: the rule matches only a command holding a literal
+// asterisk there, and startup prints a warning. `Bash(git push *+*:*)` shipped that way and
+// denied no +refspec push at all.
+test('no Bash() permission rule mixes a * wildcard with the trailing :* prefix', () => {
+  const mixed = [];
+  for (const bucket of ['allow', 'deny', 'ask']) {
+    for (const rule of parsed.permissions[bucket] ?? []) {
+      const m = /^Bash\((.*):\*\)$/.exec(rule);
+      if (m && m[1].includes('*')) mixed.push(`${bucket}: ${rule}`);
+    }
+  }
+  assert.deepStrictEqual(mixed, [],
+    'these rules match only a literal *; drop the trailing :* to make the * a wildcard');
+});
+
 test('guard-pre-tool-use.sh is registered as the sandbox PreToolUse deny hook', () => {
   // The sandbox port replaced block-dangerous-bash.sh with the claude-guard shim here, which
   // was the last thing that ran the bash hook anywhere (slice 4 unregistered it on the host,
