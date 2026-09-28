@@ -1,0 +1,37 @@
+{{ if eq .chezmoi.os "windows" -}}
+#!/usr/bin/env bash
+# Derives ~/.config/fastfetch/logos-trimmed/ (the Windows fastfetch logo, drawn through the
+# iTerm image protocol) from the shared logo set, so the repo commits one set of 21 PNGs
+# instead of two. dot_config/fastfetch/trim-logos.js does the work and says how; it runs from
+# the source tree and is never deployed.
+#
+# run_onchange re-runs this when its rendered text changes, so the hashes below make it
+# re-run whenever the generator or any source logo changes, and at no other time.
+# generator: {{ include "dot_config/fastfetch/trim-logos.js" | sha256sum }}
+{{ range glob (joinPath .chezmoi.sourceDir "dot_config/fastfetch/logos/*.png") -}}
+# {{ base . }}: {{ include . | sha256sum }}
+{{ end -}}
+set -u
+
+# Node comes from fnm on Windows and a headless apply's PATH may not carry it. These are the
+# same places modify_settings.json.sh.tmpl looks, which explains each one.
+NODE="$(command -v node 2>/dev/null || true)"
+if [ -z "$NODE" ]; then
+  for c in \
+    "${FNM_DIR:-$HOME/AppData/Roaming/fnm}/aliases/default/node.exe" \
+    "${FNM_DIR:-$HOME/AppData/Roaming/fnm}"/node-versions/*/installation/node.exe; do
+    [ -x "$c" ] && NODE="$c" && break
+  done
+fi
+if [ -z "$NODE" ]; then
+  # Fail rather than skip: chezmoi records a run_onchange script as done only when it exits
+  # 0, so a skip would never retry. modify_settings.json.sh.tmpl already fails the apply
+  # without node, earlier than this, so this adds no new way for an apply to stop.
+  echo "fastfetch-trim-logos: node not found; ~/.config/fastfetch/logos-trimmed not generated" >&2
+  exit 1
+fi
+
+"$NODE" "{{ .chezmoi.sourceDir }}/dot_config/fastfetch/trim-logos.js" \
+  "{{ .chezmoi.sourceDir }}/dot_config/fastfetch/logos" \
+  "$HOME/.config/fastfetch/logos-trimmed"
+{{ end -}}

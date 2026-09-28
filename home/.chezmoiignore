@@ -17,6 +17,11 @@ Brewfile
 .local/share/pr-dash/package-lock.json
 .local/share/pr-dash/tsconfig.json
 
+# The Windows fastfetch logo generator. A run_onchange script runs it from the source tree
+# at apply time (.chezmoiscripts/os-windows/run_onchange_after_fastfetch-trim-logos.sh.tmpl),
+# so no machine needs a deployed copy.
+.config/fastfetch/trim-logos.js
+
 {{ if eq .chezmoi.os "windows" }}
 .local/bin/ct
 .local/bin/cts
@@ -30,7 +35,6 @@ Brewfile
 
 {{ if ne .chezmoi.os "windows" }}
 .config/wezterm
-.config/fastfetch/logos-trimmed
 .config/windows-provisioning
 .wslconfig
 bin
