@@ -21,7 +21,7 @@ def test_scan_plugins_note_reports_hidden_count(fake_env):
 def test_needs_auth_mcp_connectors_hidden_local_shown(fake_env):
     mcp = scan_mcp()
     names = {item.name for item in mcp.items}
-    assert "grafana" in names
+    assert "demo-server" in names
     assert "claude.ai Demo Connector" not in names
     assert "hidden" in mcp.note
 
