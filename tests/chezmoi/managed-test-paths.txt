@@ -51,6 +51,7 @@
 .claude/vault-tooling/vault-index/tests/test_query.py
 .local/share/claude-guard/tests
 .local/share/claude-guard/tests/test_ansible.py
+.local/share/claude-guard/tests/test_awk.py
 .local/share/claude-guard/tests/test_cli.py
 .local/share/claude-guard/tests/test_curl.py
 .local/share/claude-guard/tests/test_deny.py
