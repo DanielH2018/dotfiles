@@ -148,3 +148,4 @@
 .claude/scripts/check-runner.mjs
 .local/bin/stash-mine
 .local/bin/prompt-friction
+.claude/scripts/repair-advisor-transcript.py
