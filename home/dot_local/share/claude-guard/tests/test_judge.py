@@ -449,6 +449,26 @@ def test_the_real_template_allows_a_lease_push_to_a_feature_branch(real):
     assert allowed("git push origin feat", real)
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "date -u +%s",
+        "date -u -d 2026-09-28",
+        "git stash list --format='%gd %s'",
+        "git worktree list --porcelain",
+    ],
+)
+def test_the_real_template_allows_read_only_forms_with_arguments(real, command):
+    # #718: these three rules are prefixes, so their arguments no longer cost a prompt.
+    assert allowed(command, real)
+
+
+@pytest.mark.parametrize("command", ["git branch -a -D feat", "git branch -r -D feat"])
+def test_the_real_template_keeps_git_branch_listing_rules_exact(real, command):
+    # #718: `git branch -a` and `-r` stay exact, because a prefix would also match `-D`.
+    assert not allowed(command, real)
+
+
 def test_the_real_template_leaves_an_rm_below_root_or_home_to_the_rm_rules(real):
     # `rm -rf /*` extracted to the plain prefix `rm -rf /`, which never matched a deeper
     # path here; the over-match was Claude Code's own matcher. So the cleanup below pins
