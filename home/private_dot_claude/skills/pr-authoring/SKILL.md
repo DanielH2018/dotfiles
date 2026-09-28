@@ -182,6 +182,14 @@ Both flags are advisory, and the user confirms before any rewrite.
 Once the draft PR is open, run a `pr-curator` agent if one is installed. It posts
 numbered reading-order review comments. Without one, skip the step.
 
+## Handing the body to `gh`
+
+To pass the body, write it with the Write tool to a file under `$CLAUDE_JOB_DIR/tmp` or
+the scratch directory, then run `gh pr create --body-file <path>` (or `gh pr edit`).
+Never use `--body "$(cat <<'EOF' ...)"`. `claude_guard` declines to auto-approve any
+command substitution, so that form costs a prompt or a classifier round. The same file
+works for `gh issue create --body-file` and for a multi-line `git commit -F <path>`.
+
 ## Before you open it
 
 - [ ] The title reads as a commit subject and names the outcome.
