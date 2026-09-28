@@ -85,9 +85,9 @@ test('modify script is idempotent', { skip }, () => {
 
 // 4. fnm fallback (Unix-only: hardcoded ~/.local/share/fnm alias path, a /bin/sh node shim,
 //    and a POSIX ':'-joined restricted PATH). Skipped on Windows.
-test('fnm fallback', { skip }, () => {
+test('fnm fallback', { skip }, (t) => {
   if (process.platform !== 'win32') {
-    const fnmHome = fs.mkdtempSync(path.join(os.tmpdir(), 'fnmhome-'));
+    const fnmHome = scratch(os.tmpdir(), 'fnmhome-', t);
     const fnmDefaultBin = path.join(fnmHome, '.local', 'share', 'fnm', 'aliases', 'default', 'bin');
     fs.mkdirSync(fnmDefaultBin, { recursive: true });
     fs.writeFileSync(
@@ -96,7 +96,7 @@ test('fnm fallback', { skip }, () => {
       { mode: 0o755 },
     );
     // Minimal PATH: the coreutils the script needs, but deliberately no `node`.
-    const toolbin = fs.mkdtempSync(path.join(os.tmpdir(), 'toolbin-'));
+    const toolbin = scratch(os.tmpdir(), 'toolbin-', t);
     for (const tool of ['cat', 'mktemp', 'rm']) {
       const p = execFileSync('sh', ['-c', `command -v ${tool}`], { encoding: 'utf8' }).trim();
       if (p) fs.symlinkSync(p, path.join(toolbin, tool));
@@ -107,8 +107,6 @@ test('fnm fallback', { skip }, () => {
       env: { HOME: fnmHome, PATH: toolbin },
     });
     assert.ok(JSON.parse(outFnm).permissions, 'fnm-fallback output carries the base permissions');
-    fs.rmSync(fnmHome, { recursive: true, force: true });
-    fs.rmSync(toolbin, { recursive: true, force: true });
   }
 });
 

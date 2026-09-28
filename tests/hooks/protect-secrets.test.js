@@ -6,9 +6,9 @@ const assert = require('node:assert');
 const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
-const path = require('node:path');
 const { skipUnless } = require('../lib/probe');
 const { srcPath } = require('../lib/paths');
+const { scratch } = require('../lib/tmp');
 
 const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_protect-secrets.sh');
 
@@ -239,7 +239,7 @@ test('every SECRET_PATHS entry in the deny gate is covered by this one', { skip 
 // resulting EPIPE would surface as a throw.
 const noJqSkip = skip || (fs.existsSync('/bin/bash') ? false : '/bin/bash unavailable');
 function runHookWithoutJq(file_path) {
-  const emptyPath = fs.mkdtempSync(path.join(os.tmpdir(), 'nojq-'));
+  const emptyPath = scratch(os.tmpdir(), 'nojq-');
   try {
     return spawnSync('/bin/bash', [HOOK], {
       input: JSON.stringify({ tool_input: { file_path } }),

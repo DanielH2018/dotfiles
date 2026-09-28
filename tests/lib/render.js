@@ -28,6 +28,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { have } = require('./probe');
 const { REPO, SOURCE } = require('./paths');
+const { scratch } = require('./tmp');
 
 // False when chezmoi is not installed. Use as `const skip = chezmoiAvailable ? false : '...'`.
 const chezmoiAvailable = have('chezmoi');
@@ -68,7 +69,7 @@ function dataConfig(overrides) {
   const key = JSON.stringify(overrides);
   if (!dataConfigs.has(key)) {
     const base = JSON.parse(execFileSync('chezmoi', ['dump-config', '--format=json'], { encoding: 'utf8' }));
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chezmoi-data-'));
+    const dir = scratch(os.tmpdir(), 'chezmoi-data-');
     const file = path.join(dir, 'chezmoi.json');
     fs.writeFileSync(file, JSON.stringify({ data: { ...base.data, ...overrides } }));
     dataConfigs.set(key, file);

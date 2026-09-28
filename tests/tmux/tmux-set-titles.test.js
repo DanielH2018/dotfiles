@@ -18,6 +18,7 @@ const { execFileSync } = require('node:child_process');
 const { setTimeout: sleep } = require('node:timers/promises');
 const { have } = require('../lib/probe');
 const { srcPath } = require('../lib/paths');
+const { scratch } = require('../lib/tmp');
 
 const CONF = srcPath('dot_tmux.conf');
 const skip = !have('tmux') ? 'tmux unavailable' : false;
@@ -48,7 +49,7 @@ const tmux = (sock, ...args) =>
   });
 
 function newSession() {
-  const sock = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tmux-titles-')), 's');
+  const sock = path.join(scratch(os.tmpdir(), 'tmux-titles-'), 's');
   socks.push(sock);
   tmux(sock, '-f', CONF, 'new-session', '-d', '-x', '80', '-y', '24');
   return sock;

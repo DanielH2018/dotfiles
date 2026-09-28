@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { parseAgent, buildAgentsFlag, agentSearchDirs, loadAgentFromRepo, loadAgentFlagOrError, loadSkillFromRepo, loadSkillFlagOrError } from '../../evals/lib/load-agent.mjs';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join as pjoin } from 'node:path';
+import { scratch } from '../lib/tmp.js';
 
 const MD = `---
 name: migration-reviewer
@@ -71,123 +72,89 @@ test('loadAgentFromRepo throws a helpful error naming the dirs searched', () => 
   );
 });
 
-test('loadAgentFromRepo resolves a skill via <name>/SKILL.md and tolerates allowed-tools frontmatter', () => {
-  const extra = mkdtempSync(pjoin(tmpdir(), 'skilldir-'));
+test('loadAgentFromRepo resolves a skill via <name>/SKILL.md and tolerates allowed-tools frontmatter', (t) => {
+  const extra = scratch(tmpdir(), 'skilldir-', t);
   const sdir = pjoin(extra, 'homelab-review');
   mkdirSync(sdir, { recursive: true });
   writeFileSync(pjoin(sdir, 'SKILL.md'),
     '---\nname: homelab-review\ndescription: Multi-agent review.\nallowed-tools: Read, Grep, Glob, Bash, Agent\n---\n\nRun a review and STOP.');
-  const fakeRepo = mkdtempSync(pjoin(tmpdir(), 'repo-'));  // no chezmoi agent shadows the name
-  try {
-    const a = loadAgentFromRepo('homelab-review', fakeRepo, [extra]);
-    assert.strictEqual(a.name, 'homelab-review');
-    assert.strictEqual(a.description, 'Multi-agent review.');
-    assert.match(a.systemPrompt, /Run a review and STOP\./);
-  } finally {
-    rmSync(extra, { recursive: true, force: true });
-    rmSync(fakeRepo, { recursive: true, force: true });
-  }
+  const fakeRepo = scratch(tmpdir(), 'repo-', t);  // no chezmoi agent shadows the name
+  const a = loadAgentFromRepo('homelab-review', fakeRepo, [extra]);
+  assert.strictEqual(a.name, 'homelab-review');
+  assert.strictEqual(a.description, 'Multi-agent review.');
+  assert.match(a.systemPrompt, /Run a review and STOP\./);
 });
 
-test('loadAgentFlagOrError returns an error (no flag) for a bogus agent name', () => {
-  const fakeRepo = mkdtempSync(pjoin(tmpdir(), 'repo-'));  // no agents dir contents
-  try {
-    const r = loadAgentFlagOrError('nonexistent-agent', fakeRepo, []);
-    assert.ok(r.error);
-    assert.ok(!('flag' in r));
-  } finally {
-    rmSync(fakeRepo, { recursive: true, force: true });
-  }
+test('loadAgentFlagOrError returns an error (no flag) for a bogus agent name', (t) => {
+  const fakeRepo = scratch(tmpdir(), 'repo-', t);  // no agents dir contents
+  const r = loadAgentFlagOrError('nonexistent-agent', fakeRepo, []);
+  assert.ok(r.error);
+  assert.ok(!('flag' in r));
 });
 
-test('loadSkillFlagOrError resolves a repo skill as synthetic agent skill-<name> with a pinned model', () => {
-  const fakeRepo = mkdtempSync(pjoin(tmpdir(), 'repo-'));
+test('loadSkillFlagOrError resolves a repo skill as synthetic agent skill-<name> with a pinned model', (t) => {
+  const fakeRepo = scratch(tmpdir(), 'repo-', t);
   const sdir = pjoin(fakeRepo, 'home', 'private_dot_claude', 'skills', 'grilling');
   mkdirSync(sdir, { recursive: true });
   writeFileSync(pjoin(sdir, 'SKILL.md'),
     '---\nname: grilling\ndescription: One-question-at-a-time interview.\nmetadata:\n    author: daniel\n    version: 0.1.0\n---\n\nAsk exactly one question per turn.');
-  try {
-    const r = loadSkillFlagOrError('grilling', fakeRepo);
-    assert.ok(!r.error, r.error);
-    const flag = JSON.parse(r.flag);
-    assert.deepStrictEqual(Object.keys(flag), ['skill-grilling']);
-    assert.strictEqual(flag['skill-grilling'].model, 'opus');     // pinned: skills carry no model frontmatter
-    assert.match(flag['skill-grilling'].prompt, /^The skill below has just been invoked/); // execution framing
-    assert.match(flag['skill-grilling'].prompt, /exactly one question per turn/);
-    assert.ok(!flag['skill-grilling'].prompt.includes('author:')); // frontmatter stripped, incl. indented metadata
-  } finally {
-    rmSync(fakeRepo, { recursive: true, force: true });
-  }
+  const r = loadSkillFlagOrError('grilling', fakeRepo);
+  assert.ok(!r.error, r.error);
+  const flag = JSON.parse(r.flag);
+  assert.deepStrictEqual(Object.keys(flag), ['skill-grilling']);
+  assert.strictEqual(flag['skill-grilling'].model, 'opus');     // pinned: skills carry no model frontmatter
+  assert.match(flag['skill-grilling'].prompt, /^The skill below has just been invoked/); // execution framing
+  assert.match(flag['skill-grilling'].prompt, /exactly one question per turn/);
+  assert.ok(!flag['skill-grilling'].prompt.includes('author:')); // frontmatter stripped, incl. indented metadata
 });
 
-test('loadSkillFlagOrError reports an error naming the missing path for an unknown skill', () => {
-  const fakeRepo = mkdtempSync(pjoin(tmpdir(), 'repo-'));
-  try {
-    const r = loadSkillFlagOrError('nonexistent-skill', fakeRepo);
-    assert.ok(r.error);
-    assert.match(r.error, /nonexistent-skill/);
-    assert.ok(!('flag' in r));
-  } finally {
-    rmSync(fakeRepo, { recursive: true, force: true });
-  }
+test('loadSkillFlagOrError reports an error naming the missing path for an unknown skill', (t) => {
+  const fakeRepo = scratch(tmpdir(), 'repo-', t);
+  const r = loadSkillFlagOrError('nonexistent-skill', fakeRepo);
+  assert.ok(r.error);
+  assert.match(r.error, /nonexistent-skill/);
+  assert.ok(!('flag' in r));
 });
 
-test('loadSkillFromRepo renders a templated SKILL.md.tmpl source', () => {
-  const fakeRepo = mkdtempSync(pjoin(tmpdir(), 'repo-'));
+test('loadSkillFromRepo renders a templated SKILL.md.tmpl source', (t) => {
+  const fakeRepo = scratch(tmpdir(), 'repo-', t);
   const sdir = pjoin(fakeRepo, 'home', 'private_dot_claude', 'skills', 'skill-router');
   mkdirSync(sdir, { recursive: true });
   writeFileSync(pjoin(sdir, 'SKILL.md.tmpl'),
     '---\nname: skill-router\ndescription: Route to a skill.\n---\n\nUse {{ if .work }}to-spec{{ end }}writing-plans.');
-  try {
-    const rendered = [];
-    const a = loadSkillFromRepo('skill-router', fakeRepo, (p) => {
-      rendered.push(p);
-      return readFileSync(p, 'utf8').replace(/\{\{ if \.work \}\}.*?\{\{ end \}\}/g, '');
-    });
-    assert.deepStrictEqual(rendered, [pjoin(sdir, 'SKILL.md.tmpl')]);
-    assert.strictEqual(a.name, 'skill-router');
-    assert.strictEqual(a.systemPrompt, 'Use writing-plans.');
-  } finally {
-    rmSync(fakeRepo, { recursive: true, force: true });
-  }
+  const rendered = [];
+  const a = loadSkillFromRepo('skill-router', fakeRepo, (p) => {
+    rendered.push(p);
+    return readFileSync(p, 'utf8').replace(/\{\{ if \.work \}\}.*?\{\{ end \}\}/g, '');
+  });
+  assert.deepStrictEqual(rendered, [pjoin(sdir, 'SKILL.md.tmpl')]);
+  assert.strictEqual(a.name, 'skill-router');
+  assert.strictEqual(a.systemPrompt, 'Use writing-plans.');
 });
 
-test('loadSkillFromRepo prefers a plain SKILL.md over a templated sibling', () => {
-  const fakeRepo = mkdtempSync(pjoin(tmpdir(), 'repo-'));
+test('loadSkillFromRepo prefers a plain SKILL.md over a templated sibling', (t) => {
+  const fakeRepo = scratch(tmpdir(), 'repo-', t);
   const sdir = pjoin(fakeRepo, 'home', 'private_dot_claude', 'skills', 'grilling');
   mkdirSync(sdir, { recursive: true });
   writeFileSync(pjoin(sdir, 'SKILL.md'), '---\nname: grilling\ndescription: d\n---\n\nplain body');
   writeFileSync(pjoin(sdir, 'SKILL.md.tmpl'), '---\nname: grilling\ndescription: d\n---\n\ntemplated body');
-  try {
-    const a = loadSkillFromRepo('grilling', fakeRepo, () => { throw new Error('should not render'); });
-    assert.strictEqual(a.systemPrompt, 'plain body');
-  } finally {
-    rmSync(fakeRepo, { recursive: true, force: true });
-  }
+  const a = loadSkillFromRepo('grilling', fakeRepo, () => { throw new Error('should not render'); });
+  assert.strictEqual(a.systemPrompt, 'plain body');
 });
 
-test('loadSkillFromRepo error names both the plain and templated paths it looked for', () => {
-  const fakeRepo = mkdtempSync(pjoin(tmpdir(), 'repo-'));
-  try {
-    assert.throws(() => loadSkillFromRepo('nonexistent-skill', fakeRepo), /SKILL\.md or .*SKILL\.md\.tmpl/s);
-  } finally {
-    rmSync(fakeRepo, { recursive: true, force: true });
-  }
+test('loadSkillFromRepo error names both the plain and templated paths it looked for', (t) => {
+  const fakeRepo = scratch(tmpdir(), 'repo-', t);
+  assert.throws(() => loadSkillFromRepo('nonexistent-skill', fakeRepo), /SKILL\.md or .*SKILL\.md\.tmpl/s);
 });
 
-test('loadAgentFlagOrError returns a flag (no error) for a resolvable agent', () => {
-  const extra = mkdtempSync(pjoin(tmpdir(), 'agentdir-'));
+test('loadAgentFlagOrError returns a flag (no error) for a resolvable agent', (t) => {
+  const extra = scratch(tmpdir(), 'agentdir-', t);
   writeFileSync(pjoin(extra, 'greeter.md'),
     '---\nname: greeter\ndescription: Says hello.\n---\n\nSay hello.');
-  const fakeRepo = mkdtempSync(pjoin(tmpdir(), 'repo-'));
-  try {
-    const r = loadAgentFlagOrError('greeter', fakeRepo, [extra]);
-    assert.ok(!r.error);
-    assert.strictEqual(typeof r.flag, 'string');
-    const parsed = JSON.parse(r.flag);
-    assert.deepStrictEqual(Object.keys(parsed), ['greeter']);
-  } finally {
-    rmSync(extra, { recursive: true, force: true });
-    rmSync(fakeRepo, { recursive: true, force: true });
-  }
+  const fakeRepo = scratch(tmpdir(), 'repo-', t);
+  const r = loadAgentFlagOrError('greeter', fakeRepo, [extra]);
+  assert.ok(!r.error);
+  assert.strictEqual(typeof r.flag, 'string');
+  const parsed = JSON.parse(r.flag);
+  assert.deepStrictEqual(Object.keys(parsed), ['greeter']);
 });

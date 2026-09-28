@@ -15,6 +15,7 @@ const path = require('node:path');
 
 const lib = require('../bin/gen-hooks-lib.js');
 const { srcPath, repoPath } = require('./lib/paths');
+const { scratch } = require('./lib/tmp');
 
 const BIN = repoPath('bin', 'gen-hooks');
 const HOOKS_DIR = srcPath('private_dot_claude', 'hooks');
@@ -160,7 +161,7 @@ test('gen-hooks --check passes against the committed tree right now', () => {
 // A copy of the generator, the hooks directory and the template in a temp dir, so the two
 // red cases below can break things without touching this tree.
 function stage() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gen-hooks-'));
+  const dir = scratch(os.tmpdir(), 'gen-hooks-');
   fs.mkdirSync(path.join(dir, 'bin'));
   for (const f of ['gen-hooks', 'gen-hooks-lib.js', 'gen-lib.js']) {
     fs.copyFileSync(repoPath('bin', f), path.join(dir, 'bin', f));

@@ -2,9 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import { extractSection, buildRulesPrompt, loadRulesFlagOrError, RULES_SECTIONS } from '../../evals/lib/load-rules.mjs';
 import { loadCases } from '../../evals/lib/load-cases.mjs';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join as pjoin } from 'node:path';
+import { scratch } from '../lib/tmp.js';
 
 const DOC = `# Top
 
@@ -83,28 +84,28 @@ test('every slug in RULES_SECTIONS names a heading that exists in the real CLAUD
 
 // --- case wiring -----------------------------------------------------------
 
-function withCase(body, fn) {
-  const root = mkdtempSync(pjoin(tmpdir(), 'rules-cases-'));
+function withCase(body, fn, t) {
+  const root = scratch(tmpdir(), 'rules-cases-', t);
   mkdirSync(pjoin(root, 'rules-sentence-clarity'));
   writeFileSync(pjoin(root, 'rules-sentence-clarity', '001-x.json'), JSON.stringify(body));
-  try { return fn(root); } finally { rmSync(root, { recursive: true, force: true }); }
+  return fn(root);
 }
 
 const CASE = { id: 'rules-sentence-clarity/001-x', rules: 'sentence-clarity', input: 'x', rubric: 'y' };
 
-test('a rules case gets the synthetic agent name', () => {
+test('a rules case gets the synthetic agent name', (t) => {
   withCase(CASE, (root) => {
     const [c] = loadCases({}, [root]);
     assert.strictEqual(c.agent, 'rules-sentence-clarity');
-  });
+  }, t);
 });
 
-test('--control swaps the arm after filtering, so --agent still names the treatment', () => {
+test('--control swaps the arm after filtering, so --agent still names the treatment', (t) => {
   withCase(CASE, (root) => {
     const [c] = loadCases({ control: true, agent: 'rules-sentence-clarity' }, [root]);
     assert.strictEqual(c.rules, 'control');
     assert.strictEqual(c.agent, 'rules-control');
-  });
+  }, t);
 });
 
 // --- gate falsifiability ---------------------------------------------------

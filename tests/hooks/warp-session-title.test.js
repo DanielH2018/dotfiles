@@ -17,6 +17,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { skipUnless } = require('../lib/probe');
 const { srcPath } = require('../lib/paths');
+const { scratch } = require('../lib/tmp');
 
 const HOOKS = srcPath('private_dot_claude', 'hooks');
 const HOOK = path.join(HOOKS, 'executable_warp-session-title.sh');
@@ -27,7 +28,7 @@ const skip = skipUnless('bash', 'jq');
 // Runs the hook with the terminal redirected to a temp file, and returns what it wrote.
 // Returns stdout separately so a test can assert it stayed empty.
 function run(state, input, { transcript } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'warp-title-'));
+  const dir = scratch(os.tmpdir(), 'warp-title-');
   const tty = path.join(dir, 'tty');
   fs.writeFileSync(tty, '');
   const payload = { ...input };

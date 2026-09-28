@@ -10,6 +10,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { srcPath } = require('./lib/paths');
 const { renderTemplate, chezmoiAvailable } = require('./lib/render');
+const { scratch } = require('./lib/tmp');
 
 const { decodePng, encodePng, trimToSquare } = require(srcPath('dot_config', 'fastfetch', 'trim-logos.js'));
 const LOGOS = srcPath('dot_config', 'fastfetch', 'logos');
@@ -81,7 +82,7 @@ test('the Windows run script writes one trimmed logo per source logo', { skip },
   const rendered = renderTemplate(body);
   assert.match(rendered, /^# generator: [0-9a-f]{64}$/m, 'the generator hash drives re-runs');
   assert.match(rendered, /^# Shape 1-white\.png: [0-9a-f]{64}$/m, 'each source logo hash drives re-runs');
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'fastfetch-trim-'));
+  const home = scratch(os.tmpdir(), 'fastfetch-trim-');
   try {
     const res = spawnSync('bash', ['-c', rendered], { encoding: 'utf8', env: { ...process.env, HOME: home } });
     assert.strictEqual(res.status, 0, res.stdout + res.stderr);

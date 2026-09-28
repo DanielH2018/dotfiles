@@ -13,6 +13,7 @@ const path = require('node:path');
 
 const lib = require('../bin/gen-lint-files-lib.js');
 const { repoPath } = require('./lib/paths');
+const { scratch } = require('./lib/tmp');
 
 const BIN = repoPath('bin', 'gen-lint-files');
 
@@ -120,7 +121,7 @@ test('gen-lint-files --check passes against the committed tree right now', () =>
 });
 
 test('gen-lint-files --check fails when the tree gains a script the lists do not name', () => {
-  const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'gen-lint-files-'));
+  const stage = scratch(os.tmpdir(), 'gen-lint-files-');
   // Strip git's hook environment: under the pre-push hook GIT_DIR/GIT_INDEX_FILE point at
   // THIS repo, and a `git add` in the stage would otherwise land in the real index.
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
