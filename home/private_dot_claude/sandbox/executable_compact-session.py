@@ -225,7 +225,7 @@ def cmd_summarize(json_file, api_key):
 
     request_body = json.dumps(
         {
-            "model": "claude-sonnet-4-6-20250514",
+            "model": "claude-sonnet-5",
             "max_tokens": 1024,
             "messages": [
                 {
