@@ -42,9 +42,9 @@ Host daniel-server homelab
     # 5/2, which are tuned to fail a background picker fast and would drop a live shell on a
     # brief blip.
     #
-    # Agent View and otel-sweep pass their own -o Control* with private sockets, by design
-    # (docs/specs/2026-08-05-agentview-remote-freshness-design.md §3.1) — behaviour travels
-    # with the tool. These lines are for interactive sessions only and do not reach them.
+    # otel-sweep passes its own -o Control* with private sockets, by design — behaviour
+    # travels with the tool. These lines are for interactive sessions only and do not
+    # reach it.
     # Gated off Windows: Win32-OpenSSH does not support control-socket multiplexing.
     ControlMaster auto
     ControlPath ~/.ssh/cm-%C
