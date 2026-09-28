@@ -100,5 +100,5 @@ function renderFile(file, opts) {
 }
 
 module.exports = {
-  renderTemplate, renderFile, chezmoiAvailable, REPO, SOURCE,
+  renderTemplate, renderFile, chezmoiAvailable, REPO, SOURCE, dataConfig,
 };

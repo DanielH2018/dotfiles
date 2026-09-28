@@ -1,10 +1,14 @@
 // A13-16: nothing stops a new test file or fixture from deploying into ~/.claude.
 //
 // `home/.chezmoiignore` excludes .venv and .pytest_cache, but has no rule for
-// `**/test_*`, `**/*.test.js` or `**/fixtures`. Thirty-eight such paths are managed
-// today and every one of them is deliberate — self-contained tool packages that run
-// their own tests from the deployed location. The risk is not those thirty-eight. It is
-// the thirty-ninth: add a test file anywhere under `home/` and it silently ships.
+// `**/test_*`, `**/*.test.js` or `**/fixtures`. Sixty such paths are managed today and
+// every one of them is deliberate — self-contained tool packages that run their own tests
+// from the deployed location. (Nine hooks/test_*.py files and _testkit.py were on this list
+// too, until #<PR> found they deploy to ~/.claude/hooks where none of them can run — each
+// finds its subject by the source tree's executable_-prefixed name, which chezmoi strips
+// before deploying. Removing them from the allowlist is what keeps this claim true.) The
+// risk is not those sixty. It is the sixty-first: add a test file anywhere under `home/`
+// and it silently ships.
 //
 // The audit's remedy was an ignore block plus `!`-re-includes plus this assertion. The
 // assertion comes first on purpose, because it is the half with no downside. An
@@ -24,6 +28,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { skipUnless } = require('../lib/probe');
 const { srcPath } = require('../lib/paths');
+const { dataConfig } = require('../lib/render');
 
 const ALLOWLIST = path.join(__dirname, 'managed-test-paths.txt');
 const PATTERN = /test|fixture|conftest/i;
@@ -39,8 +44,18 @@ const readAllowlist = () => fs.readFileSync(ALLOWLIST, 'utf8')
 // `--exclude remove`: a .chezmoiremove entry deploys nothing, and chezmoi lists one as
 // managed only while its target still exists in $HOME. Counting it made this test depend on
 // whether the host had applied the removal yet (#620's retired test files failed it here).
+//
+// `--config` pins `.profile` to "workstation", the same value CI's own "Pin the chezmoi
+// profile" step in .github/workflows/ci.yml uses and for the same reason: every path on this
+// allowlist was host-invariant until the desktop/server split landed a profile-conditional
+// sandbox directory (`.claude/sandbox/**`, ignored under `.profile == "server"`). Left
+// unpinned, this test passes on CI (always "workstation") but fails on a real server host's
+// own config — daniel-box and daniel-server both set `profile = "server"` in
+// ~/.config/chezmoi/chezmoi.toml, which would otherwise make every sandbox test path on the
+// allowlist read as "removed (listed but no longer deploying)" whenever someone runs
+// `node --test` directly on one of them.
 function managedMatches(source = srcPath()) {
-  const r = spawnSync('chezmoi', ['managed', '--source', source, '--exclude', 'remove'], { encoding: 'utf8' });
+  const r = spawnSync('chezmoi', ['--config', dataConfig({ profile: 'workstation' }), 'managed', '--source', source, '--exclude', 'remove'], { encoding: 'utf8' });
   assert.strictEqual(r.status, 0, `chezmoi managed failed: ${r.stderr}`);
   return r.stdout.split('\n').map((l) => l.trim()).filter((l) => l && PATTERN.test(l)).sort();
 }
