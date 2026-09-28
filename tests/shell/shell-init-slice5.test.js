@@ -16,9 +16,8 @@
 //   of its own. Fixed by making zsh's HISTFILE a plain var and giving bash an
 //   explicit HISTFILE of its own.
 //
-// Style follows tests/terminal/wezterm-shell-integration.test.js: gated blocks are sliced
-// out of the real source files and executed directly (fake PATH entries stand in
-// for fzf/mkdir where call-counting matters), rather than sourcing the whole rc —
+// Gated blocks are sliced out of the real source files and executed directly (fake PATH
+// entries stand in for fzf/mkdir where call-counting matters), rather than sourcing the whole rc —
 // full interactive sourcing pulls in starship/fnm/zoxide state that isn't
 // available or deterministic in a sandbox. `env` is passed explicitly (not
 // spread from process.env) so an ambient PROMPT_COMMAND/precmd_functions picked
@@ -56,28 +55,12 @@ test('bash: sourcing common.sh twice registers __osc7_cwd in PROMPT_COMMAND exac
   assert.strictEqual(hits.length, 1, `expected __osc7_cwd once in PROMPT_COMMAND, got: ${out}`);
 });
 
-test('bash: sourcing common.sh twice with WEZTERM_PANE set registers __wz_precmd exactly once', { skip: skipBash }, () => {
-  const out = execFileSync('bash', ['-c', `source '${COMMON}'; source '${COMMON}'; echo "$PROMPT_COMMAND"`], {
-    encoding: 'utf8', env: minimalEnv({ WEZTERM_PANE: '1' }),
-  });
-  const hits = out.match(/__wz_precmd/g) || [];
-  assert.strictEqual(hits.length, 1, `expected __wz_precmd once in PROMPT_COMMAND, got: ${out}`);
-});
-
 test('zsh: sourcing common.sh twice registers __osc7_cwd in precmd_functions exactly once', { skip: skipZsh }, () => {
   const out = execFileSync('zsh', ['-c', `source '${COMMON}'; source '${COMMON}'; print -r -- \${precmd_functions}`], {
     encoding: 'utf8', env: minimalEnv(),
   });
   const hits = out.match(/__osc7_cwd/g) || [];
   assert.strictEqual(hits.length, 1, `expected __osc7_cwd once in precmd_functions, got: ${out}`);
-});
-
-test('zsh: sourcing common.sh twice with WEZTERM_PANE set registers __wz_preexec/__wz_precmd exactly once each', { skip: skipZsh }, () => {
-  const out = execFileSync('zsh', ['-c', `source '${COMMON}'; source '${COMMON}'; print -r -- \${preexec_functions}; print -r -- \${precmd_functions}`], {
-    encoding: 'utf8', env: minimalEnv({ WEZTERM_PANE: '1' }),
-  });
-  assert.strictEqual((out.match(/__wz_preexec/g) || []).length, 1, `expected __wz_preexec once, got: ${out}`);
-  assert.strictEqual((out.match(/__wz_precmd/g) || []).length, 1, `expected __wz_precmd once, got: ${out}`);
 });
 
 // --- A14-19: fzf capture-once ------------------------------------------------

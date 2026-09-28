@@ -26,8 +26,7 @@ umask = 0o022
     # $HOME/AppData/... path this repo's scripts use at an entirely different filesystem, so
     # it looks exactly like the files being intermittently missing -- which is what actually
     # produced the node-detection flakiness modify_settings.json.sh.tmpl works around; that
-    # was a symptom of this, not a separate bug. Absolute path only, same candidate list (and
-    # same final fallback) as wezterm.lua.tmpl's git_bash lookup, so the two stay consistent.
+    # was a symptom of this, not a separate bug. Absolute path only, for the same reason.
     {{- if stat "C:/Program Files/Git/bin/bash.exe" }}
     command = 'C:\Program Files\Git\bin\bash.exe'
     {{- else if stat "C:/Program Files (x86)/Git/bin/bash.exe" }}

@@ -3,7 +3,7 @@
 # Make zsh the default login shell on every non-Windows machine (macOS, Linux, WSL).
 # The zsh config is chezmoi-managed (~/.zshrc, ~/.zshenv) and shares ~/.config/shell/common.sh
 # with bash, so the interactive experience is identical either way — this just flips the login
-# shell so new sessions (terminal tabs, ssh, the WezTerm WSL domain) start in zsh without any
+# shell so new sessions (terminal tabs, ssh, a WSL launch) start in zsh without any
 # per-emulator override. macOS already defaults to zsh, so this no-ops there.
 #
 # chsh authenticates via PAM and needs a tty, so it only completes during an INTERACTIVE

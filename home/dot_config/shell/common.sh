@@ -19,7 +19,7 @@ else _CUR_SHELL="sh"
 fi
 
 # --- Guard against accidental Ctrl+D exit (EOF) ---
-# A stray Ctrl+D at an empty prompt otherwise closes the shell (and the WezTerm pane).
+# A stray Ctrl+D at an empty prompt otherwise closes the shell (and the terminal pane).
 # bash: require this many consecutive EOFs before exit; zsh: ignore bare EOF entirely.
 export IGNOREEOF=2
 [ -n "$ZSH_VERSION" ] && setopt ignore_eof 2>/dev/null
@@ -73,7 +73,7 @@ unset _vault
 
 # --- ssh-agent: one shared agent across all shells/panes ---
 # When nothing else already provides an agent (macOS launchd / 1Password set SSH_AUTH_SOCK, so
-# we skip there), bind one to a fixed socket so every new shell and WezTerm pane reuses the same
+# we skip there), bind one to a fixed socket so every new shell and terminal pane reuses the same
 # unlocked keys — unlock a key once, not once per pane. Keys aren't auto-added; the first
 # ssh/git that needs one loads it on demand.
 #
@@ -111,10 +111,11 @@ command -v starship >/dev/null 2>&1 && eval "$(starship init "$_CUR_SHELL")"
 # --- Zoxide (smart cd) ---
 if command -v zoxide >/dev/null 2>&1; then
   eval "$(zoxide init "$_CUR_SHELL" --cmd cd)"
-  # zoxide's hook rides in PROMPT_COMMAND, which is not a safe place to leave it. WezTerm's
-  # /etc/profile.d/wezterm.sh vendors bash-preexec on every Linux host here, and its
-  # __bp_install rebuilds PROMPT_COMMAND at the first prompt from `${PROMPT_COMMAND:-}` — a
-  # scalar read, so it sees only element 0 when the variable is an array. Whether the hook
+  # zoxide's hook rides in PROMPT_COMMAND, which is not a safe place to leave it. A vendored
+  # bash-preexec framework (ble.sh here; WezTerm's /etc/profile.d/wezterm.sh did the same on
+  # a host that had it installed) rebuilds PROMPT_COMMAND at the first prompt from
+  # `${PROMPT_COMMAND:-}` — a scalar read, so it sees only element 0 when the variable is an
+  # array. Whether the hook
   # survives depends on where that read lands: it does on daniel-box/daniel-server (inside
   # element 0) and under WSL (systemd makes it an array first, hook at element 2), and it did
   # not in the shell that reported `zoxide: detected a possible configuration issue` — there
@@ -391,18 +392,19 @@ if command -v wl-paste >/dev/null 2>&1; then
     fi
     local ref="@$out"
     # Put the path on the clipboard so it pastes straight into Claude with one keystroke
-    # (paste is Ctrl+Shift+V in WezTerm; Ctrl+C is SIGINT, not copy). This overwrites the
-    # image on the clipboard, which is fine — it's already saved to the PNG.
+    # (Ctrl+C is SIGINT, not copy, so paste needs its own binding — Ctrl+Shift+V here).
+    # This overwrites the image on the clipboard, which is fine — it's already saved to
+    # the PNG.
     printf '%s' "$ref" | wl-copy 2>/dev/null
     printf '%s  (copied to clipboard — paste with Ctrl+Shift+V)\n' "$ref"
   }
 fi
 
 # --- OSC 7: report cwd so the terminal reopens new tabs/splits in the current dir ---
-# WezTerm/Ghostty read OSC 7 to clone the active pane's cwd into a new tab or split. A new
-# *window* is pinned back to the WSL home by the terminal config (WezTerm's new-window
-# binding falls through to default_cwd), so the rule is: tab & split follow the cwd, a new
-# window resets home. Emitted before each prompt (so it tracks cd) via each shell's hook.
+# Ghostty reads OSC 7 to clone the active pane's cwd into a new tab or split. A new *window*
+# is pinned back to the WSL home by the terminal config instead, so the rule is: tab & split
+# follow the cwd, a new window resets home. Emitted before each prompt (so it tracks cd) via
+# each shell's hook.
 __osc7_cwd() { printf '\033]7;file://%s%s\033\\' "${HOSTNAME:-$HOST}" "$PWD"; }
 if [ -n "$ZSH_VERSION" ]; then
   # Membership check first: common.sh can be re-sourced (e.g. by non-rc callers),
@@ -414,42 +416,6 @@ elif [ -n "$BASH_VERSION" ]; then
     *__osc7_cwd*) ;;
     *) PROMPT_COMMAND="__osc7_cwd${PROMPT_COMMAND:+; $PROMPT_COMMAND}" ;;
   esac
-fi
-
-# --- WezTerm-only: OSC 133 prompt marks + command-finish notify (Ghostty is native) ---
-# 133;A marks each prompt so ScrollToPrompt (CTRL+SHIFT+Up/Down in the WezTerm config)
-# can jump between commands — the piece Ghostty gets from `shell-integration = zsh`.
-# OSC 777 raises a desktop toast when a command ran >= 10s; the WezTerm config shows it
-# only for unfocused panes (notification_handling = "SuppressFromFocusedPane"), which
-# reproduces Ghostty's notify-on-command-finish = unfocused. Gated on $WEZTERM_PANE:
-# inert under Ghostty, and inside tmux the sequences are swallowed harmlessly.
-if [ -n "${WEZTERM_PANE:-}" ]; then
-  __wz_preexec() { __wz_t0=$SECONDS; __wz_cmd=$1; }
-  __wz_precmd() {
-    printf '\033]133;A\033\\'
-    if [ -n "${__wz_t0:-}" ]; then
-      local dur=$((SECONDS - __wz_t0))
-      unset __wz_t0
-      if [ "$dur" -ge 10 ]; then
-        printf '\033]777;notify;Done in %ss;%s\033\\' "$dur" "${__wz_cmd%%$'\n'*}"
-      fi
-    fi
-  }
-  if [ -n "$ZSH_VERSION" ]; then
-    # Same re-source guard as __osc7_cwd above (A14-16).
-    # shellcheck disable=SC2004  # zsh array-index expansion, not arithmetic; $ is required
-    (( ${preexec_functions[(Ie)__wz_preexec]} )) || preexec_functions+=(__wz_preexec)
-    # shellcheck disable=SC2004  # zsh array-index expansion, not arithmetic; $ is required
-    (( ${precmd_functions[(Ie)__wz_precmd]} )) || precmd_functions+=(__wz_precmd)
-  elif [ -n "$BASH_VERSION" ]; then
-    case "$PROMPT_COMMAND" in
-      *__wz_precmd*) ;;
-      *) PROMPT_COMMAND="__wz_precmd${PROMPT_COMMAND:+; $PROMPT_COMMAND}" ;;
-    esac
-    # Timing needs a preexec; ble.sh provides one (sourced before this file in ~/.bashrc)
-    # and passes the command as $1. Plain bash keeps the marks and skips the notify.
-    type blehook >/dev/null 2>&1 && blehook PREEXEC+=__wz_preexec
-  fi
 fi
 
 unset _CUR_SHELL

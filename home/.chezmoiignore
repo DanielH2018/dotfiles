@@ -44,7 +44,6 @@ Brewfile
 {{ end }}
 
 {{ if ne .chezmoi.os "windows" }}
-.config/wezterm
 .config/windows-provisioning
 .wslconfig
 bin

@@ -136,7 +136,7 @@ test('scoped applies only care about conflicts under the named target', { skip }
   denies('chezmoi apply ~/.local/bin/agentview');
   denies('chezmoi apply /home/daniel/.local/bin');
   allows('chezmoi apply /home/daniel/.zshrc');
-  allows('chezmoi apply ~/.config/wezterm');
+  allows('chezmoi apply ~/.config/starship.toml');
 });
 
 test('a flag value that looks like a path is not treated as a target', { skip }, () => {

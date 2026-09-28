@@ -22,8 +22,8 @@ without them):
 
     zsh starship eza fzf zoxide fastfetch        # then: chsh -s "$(which zsh)"
 
-Two Fedora-specific divergences, both because Fedora packages neither tool: WezTerm comes from
-upstream's `wezfurlong/wezterm-nightly` COPR, and `gron` falls back to its GitHub release binary.
+One Fedora-specific divergence, because Fedora doesn't package it: `gron` falls back to its
+GitHub release binary.
 
 ## Layout
 

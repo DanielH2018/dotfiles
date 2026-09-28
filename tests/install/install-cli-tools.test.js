@@ -151,30 +151,28 @@ test('dnf host with everything present converges', { skip }, () => {
   assert.doesNotMatch(out, /re-run 'chezmoi apply'/, 'converged run must not ask for a re-run');
 });
 
-// 5. The gh + WezTerm branches are where the apt path hides its Debian-only machinery (keyrings,
-//    sources.list, dpkg --print-architecture). Force both to look absent on a dnf host so those
-//    branches actually execute, and assert the Fedora route is taken instead.
-test('dnf host installs gh and WezTerm without Debian machinery', { skip }, () => {
+// 5. The gh branch is where the apt path hides its Debian-only machinery (keyrings,
+//    sources.list, dpkg --print-architecture). Force it to look absent on a dnf host so that
+//    branch actually executes, and assert the Fedora route is taken instead.
+test('dnf host installs gh without Debian machinery', { skip }, () => {
   if (!rendersHere()) return;
   const { out, home } = runWithStubs({
     dnf: `echo "dnf $*" >> "$HOME/dnf.log"; exit 0`,
-    rpm: 'case "$2" in gh|wezterm) exit 1 ;; *) exit 0 ;; esac',
+    rpm: 'case "$2" in gh) exit 1 ;; *) exit 0 ;; esac',
     sudo: SUDO_OK,
     dpkg: DPKG_TRIPWIRE,
     curl: 'echo "CURL WAS CALLED" >&2; exit 1',
     uname: NO_ARCH,
     unzip: 'exit 0',
   });
-  // Read defensively: a bare ENOENT here says nothing about WHY the dnf branches never ran.
+  // Read defensively: a bare ENOENT here says nothing about WHY the dnf branch never ran.
   // Surface the script's own output instead, which is what actually diagnoses it.
   const logPath = path.join(home, 'dnf.log');
   const dnfLog = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '';
-  assert.ok(dnfLog, `the dnf branches never invoked dnf; script output was:\n${out}`);
-  assert.doesNotMatch(out, /DPKG WAS CALLED/, 'the gh/wezterm branches must not reach dpkg');
-  assert.doesNotMatch(out, /apt-get/, 'the gh/wezterm branches must not reach apt-get');
+  assert.ok(dnfLog, `the dnf branch never invoked dnf; script output was:\n${out}`);
+  assert.doesNotMatch(out, /DPKG WAS CALLED/, 'the gh branch must not reach dpkg');
+  assert.doesNotMatch(out, /apt-get/, 'the gh branch must not reach apt-get');
   assert.doesNotMatch(out, /CURL WAS CALLED/, 'no keyring fetch belongs on the dnf path');
-  assert.match(dnfLog, /copr enable wezfurlong\/wezterm-nightly/, 'WezTerm comes from the COPR on Fedora');
-  assert.match(dnfLog, /install -y wezterm/, 'WezTerm must actually be installed after the COPR');
   assert.match(dnfLog, /install -y gh/, 'gh comes straight from the Fedora repo');
 });
 

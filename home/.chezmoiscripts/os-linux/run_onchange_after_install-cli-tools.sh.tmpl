@@ -117,41 +117,8 @@ if ! gh_ready; then
   fi
 fi
 
-# 2c. WezTerm — the mux-server + `wezterm cli` back this machine's leg of the cross-machine
-#     Claude Code session switcher (agentview) on Daniel's PC. Only the headless mux-server/CLI
-#     are used (no DISPLAY). Neither distro packages it:
-#       Debian/Ubuntu — upstream's fury.io apt repo.
-#       Fedora        — upstream's own COPR (wezfurlong/wezterm-nightly), the install route
-#                       wezterm documents for Fedora. It is the only maintained RPM source: the
-#                       GitHub release RPMs are pinned to long-dead Fedora releases and the last
-#                       tagged stable is from 2024. The COPR carries an fc44 chroot.
-#     Repo added once, then the normal upgrade path keeps it current.
-WEZ_LIST="/etc/apt/sources.list.d/wezterm.list"
-wez_ready() {
-  case "$PM" in
-    apt) [ -f "$WEZ_LIST" ] ;;
-    dnf) rpm -q wezterm >/dev/null 2>&1 ;;
-    *)   return 0 ;;
-  esac
-}
-if ! wez_ready; then
-  if have_sudo; then
-    if [ "$PM" = apt ]; then
-      apt_repo_add wezterm https://apt.fury.io/wez/gpg.key \
-        "deb [signed-by=__KEYRING__] https://apt.fury.io/wez/ * *" \
-        && pkg_install wezterm && echo "install-cli-tools: WezTerm repo added + installed"
-    elif copr_enable wezfurlong/wezterm-nightly; then
-      pkg_install wezterm && echo "install-cli-tools: WezTerm COPR enabled + installed"
-    else
-      echo "install-cli-tools: failed to enable the WezTerm COPR" >&2
-    fi
-  else
-    echo "install-cli-tools: sudo unavailable; deferring WezTerm setup" >&2
-  fi
-fi
-
 {{ if includeTemplate "is-desktop-linux" . -}}
-# 2d. Docker CLI shim for Podman. Fedora ships podman but no `docker`, so anything that shells
+# 2c. Docker CLI shim for Podman. Fedora ships podman but no `docker`, so anything that shells
 #     out to `docker` (most container tutorials, plenty of build scripts) fails on a stock
 #     workstation. podman-docker supplies /usr/bin/docker -> podman. Podman itself arrives as a
 #     package dependency where it is absent.
@@ -196,11 +163,11 @@ if [ -n "$PM" ] && pkg_installed podman-docker; then
   fi
 fi
 {{ end }}
-# 3. Real-name symlinks for Debian's renamed binaries (so the shell uses bat/fd). luac is what
-#    tests/terminal/wezterm-config.test.js shells out to (luac -p); Debian's lua5.4 package ships it as
-#    luac5.4, so without this alias that test silently skips there. Fedora installs all four
+# 3. Real-name symlinks for Debian's renamed binaries (so the shell uses bat/fd). lua is what
+#    tests/nvim-config.test.js shells out to for a syntax check; Debian's package ships it as
+#    lua5.4, so without this alias that test silently skips there. Fedora installs all three
 #    under their real names already, so every pair below no-ops on it.
-for pair in "bat:batcat" "fd:fdfind" "lua:lua5.4" "luac:luac5.4"; do
+for pair in "bat:batcat" "fd:fdfind" "lua:lua5.4"; do
   name="${pair%%:*}"; real="${pair##*:}"
   rp="$(command -v "$real" 2>/dev/null || true)"
   [ -n "$rp" ] && ln -sf "$rp" "$BIN_DIR/$name"
@@ -271,10 +238,9 @@ still=""
 for p in $PKGS; do
   pkg_installed "$p" || still="$still $p"
 done
-if [ -n "$still" ] || ! gh_ready || ! wez_ready; then
+if [ -n "$still" ] || ! gh_ready; then
   [ -n "$still" ] && echo "install-cli-tools: packages still missing:$still" >&2
   gh_ready  || echo "install-cli-tools: GitHub CLI not configured yet" >&2
-  wez_ready || echo "install-cli-tools: WezTerm not configured yet" >&2
   echo "install-cli-tools: re-run 'chezmoi apply' in a terminal where sudo can prompt." >&2
   exit 1
 fi

@@ -22,7 +22,7 @@
 #
 # Scope rules:
 #   - The dev CLI toolchain (starship, zoxide, fzf, eza, fd, ripgrep, bat, fastfetch, fnm, uv,
-#     neovim, yazi, zig, wezterm) belongs to tools.toml + the cli-tools installers. Not here.
+#     neovim, yazi, zig) belongs to tools.toml + the cli-tools installers. Not here.
 #   - Games themselves are NOT listed — only launchers; libraries re-download after sign-in.
 #   - An entry with no winget field is Linux-only; one with no Linux field is Windows-only.
 #   - Some apps winget genuinely cannot provide (Office licence, GPU/chipset drivers, Ryzen
@@ -334,7 +334,7 @@ apt = "code"
 [[apps.coding]]
 name = "Windows Terminal"
 winget = "Microsoft.WindowsTerminal"
-manual = "Windows-only by definition. Ghostty (below) is the Linux terminal; WezTerm is installed by the CLI-tools script for its headless mux-server."
+manual = "Windows-only by definition. Ghostty (below) is the Linux terminal."
 
 [[apps.coding]]
 name = "age"

@@ -34,10 +34,10 @@ Write-Host "[manual] Winaero Tweaker has no CLI import. Open Winaero -> Tools ->
 Write-Host "         select $dir\winaero-tweaker.ini"
 
 # Put ~/.local/bin and ~/bin on the *User* PATH so name-resolution works in ANY
-# Windows-spawned process, not just login shells that source the profile. This matters
-# because the WezTerm CTRL+SHIFT+S keybind launches `bash --noprofile --norc -c agentview`
-# (no profile, for speed): it only finds `agentview` + the `jq` LF-shim (both in
-# ~/.local/bin) and TaskbarAutoHideFix.exe (~/bin) if these dirs are on the Windows PATH.
+# Windows-spawned process, not just login shells that source the profile — a keybind-
+# launched `bash --noprofile --norc` (no profile, for speed) or any other non-interactive
+# launcher only finds the `jq` LF-shim (~/.local/bin) and TaskbarAutoHideFix.exe (~/bin) if
+# these dirs are on the Windows PATH.
 #
 # Prepended, not appended: Windows auto-adds %LOCALAPPDATA%\Microsoft\WindowsApps to the
 # User PATH ahead of anything this script appends, and that directory ships fake

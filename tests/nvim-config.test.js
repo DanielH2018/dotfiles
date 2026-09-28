@@ -16,7 +16,8 @@ const { srcPath, repoPath } = require('./lib/paths');
 
 const NVIM = srcPath('dot_config', 'nvim');
 
-// Same probe order as the wezterm tests: DEVCOM.Lua's lua.exe sits outside PATH on Windows.
+// DEVCOM.Lua (the winget installer's Lua) drops lua.exe outside PATH on Windows, so probe
+// its known install location before falling back to a bare name on PATH.
 function findLua() {
   const win = path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Lua', 'bin', 'lua.exe');
   if (fs.existsSync(win)) return win;

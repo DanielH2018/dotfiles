@@ -88,7 +88,7 @@ bind '"\e[1;5D": backward-word' 2>/dev/null
 # reverse-video (\e[7m) renders pasted text bg-on-bg (invisible) until the next keypress.
 bind 'set enable-active-region off' 2>/dev/null
 # No bell at the source: readline otherwise emits \a on boundaries (e.g. arrow past
-# end-of-line), which WezTerm/Windows render as a full-window flash.
+# end-of-line), which Windows renders as a full-window flash.
 bind 'set bell-style none' 2>/dev/null
 
 # The homelab's SOPS age key. Owned here rather than by the server repo's sops_setup role,

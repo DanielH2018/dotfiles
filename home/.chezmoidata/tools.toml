@@ -17,7 +17,7 @@
 # The dnf field therefore differs from apt only in package NAMING, never in coverage — except
 # gron, which Fedora does not package at all (see below).
 #
-# OS-UNIQUE tools stay in their own installer, NOT here: winget's nvim/yazi/zig/wezterm/uv,
+# OS-UNIQUE tools stay in their own installer, NOT here: winget's nvim/yazi/zig/uv,
 # and the Brewfile's casks / mas / vscode / brew-only (bash, chezmoi, gh, tmux, wget, ...).
 
 [[tools]]
@@ -128,16 +128,16 @@ dnf = ""
 [[tools]]
 name = "lua"
 cmd = "lua"
-# Here for tests/terminal/wezterm-config.test.js, which syntax-checks the rendered WezTerm config
-# with `luac -p`. Ubuntu's package installs /usr/bin/{lua5.4,luac5.4} and no bare names, so
-# the installer symlinks both lua -> lua5.4 and luac -> luac5.4 into ~/.local/bin. No winget
-# id: Windows gets Lua from the hardcoded DEVCOM.Lua entry in the ps1 installer instead,
-# because that package hides luac.exe outside PATH and needs the bespoke skip handling.
+# Here for tests/nvim-config.test.js, which syntax-checks the Neovim Lua config with
+# `loadfile`. Ubuntu's package installs /usr/bin/lua5.4 and no bare name, so the installer
+# symlinks lua -> lua5.4 into ~/.local/bin. No winget id: Windows gets Lua from the
+# hardcoded DEVCOM.Lua entry in the ps1 installer instead, because that package hides
+# lua.exe outside PATH and needs the bespoke skip handling.
 winget = ""
 brew = "lua"
 apt = "lua5.4"
-# Fedora's `lua` is 5.4 under unversioned names (/usr/bin/lua, /usr/bin/luac), so `luac -p`
-# resolves without the symlink shim Debian needs.
+# Fedora's `lua` is 5.4 under an unversioned name (/usr/bin/lua), so it resolves without
+# the symlink shim Debian needs.
 dnf = "lua"
 
 [[tools]]
