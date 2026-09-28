@@ -4,7 +4,7 @@
     "path": "~/.claude/projects/**/*.jsonl",
     "kind": "file-glob",
     "rule": "native",
-    "cap": "cleanupPeriodDays=30 (settings.json)",
+    "cap": "cleanupPeriodDays=14 (settings.json)",
     "grace": null,
     "owner": "Claude Code binary",
     "finding": "A19-02",
