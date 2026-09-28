@@ -102,12 +102,13 @@
          shim takes no env switch and hook.py has no shadow branch. The M02 cmdparse census
          (CMDPARSE_SHADOW_SAMPLE) went with the hook that wrote it. */}}
     {{/* Compact at 85% rather than the previous 60%. At 60% we discarded 40% of the
-         window unconditionally, and long sessions were compacting 3-6 times each —
-         every compaction also truncates history before the remember pipeline can
-         save it, so the aggressive setting was degrading tomorrow's memory too.
-         85 keeps a safety margin without paying full-window cache-read latency. */}}
+         window unconditionally, and long sessions were compacting 3-6 times each.
+         85 keeps a safety margin without paying full-window cache-read latency.
+         Applied to the pinned 726000-token window below (not the full 1M), 85%
+         lands compaction at about 600k tokens — see the derivation under
+         CLAUDE_CODE_AUTO_COMPACT_WINDOW. */}}
     "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "85",
-    {{/* Without this, auto-compaction does not run at all on claude-opus-5. The client
+    {{/* Without this, auto-compaction does not run at all on claude-opus-5-5. The client
          resolves a compaction window via PY(); when every source misses it returns
          source:"auto", and the auto-compact check bails on exactly that case
          (`if (Gbe() && !s8e(t,r)) return !1`) rather than falling back to a default.
