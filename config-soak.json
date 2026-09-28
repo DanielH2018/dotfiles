@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "25911f588fc64cac596773786c1941612b36fef8c215fac75892147f29384664",
-      "landed": "2026-09-28T15:07:17.497Z"
+      "hash": "63e20de4a01ea5bca36185daffe4098ee40be2efd27b3715f4cfebd32f6a8522",
+      "landed": "2026-09-28T15:57:37.423Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -87,11 +87,6 @@
       "landed": "2026-09-24T20:58:09.064Z"
     },
     {
-      "path": "home/private_dot_claude/hooks/executable_check-before-stop.sh",
-      "hash": "6974acc301a6877501cb9e0b48b6792f3c30ff817459b1b16de70739890f7e07",
-      "landed": "2026-09-24T21:15:51.276Z"
-    },
-    {
       "path": "home/private_dot_claude/hooks/executable_check-update.sh",
       "hash": "cdfe1f5ba30480d5a8fa6e409a2ec96fea7e9bddbfd50a645c67835eacd2b177",
       "landed": "2026-09-24T20:58:09.064Z"
@@ -172,11 +167,6 @@
       "landed": "2026-09-24T13:50:38.459Z"
     },
     {
-      "path": "home/private_dot_claude/hooks/executable_premature-done.py",
-      "hash": "879a0f4aef81cf6d8a4566f5fda7b0868e5b2bcba6af7d6bdc6c60735bd49d26",
-      "landed": "2026-09-18T22:57:37.560Z"
-    },
-    {
       "path": "home/private_dot_claude/hooks/executable_protect-secrets.sh",
       "hash": "0cbb8e32083982c24b576ce6fb6144db9d70bcf0fa6bfa46f3cf53fa4b969201",
       "landed": "2026-09-28T15:26:21.679Z"
@@ -218,13 +208,13 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_skill-usage-log.sh",
-      "hash": "390f8db6854d046a8e258d452444f603a8d3d58a8d4f3c4b780ec4eef238ec51",
-      "landed": "2026-09-28T12:29:15.418Z"
+      "hash": "8938686c8d085081138e91bc59a30275d132eb56b6a3c7c325e5ff28e23e4643",
+      "landed": "2026-09-28T15:57:37.423Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_stop-checks.py",
-      "hash": "8527b3e4c15f434bfa140b16aa4e41cc72f1b0bf8cdc5e940b902e50b9cc75df",
-      "landed": "2026-09-28T15:54:18.180Z"
+      "hash": "c0f88cde5d9688af7ff73cbd1ab684fb94826e773f280020fb6cbf4e304dbe14",
+      "landed": "2026-09-28T15:57:37.423Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_stop-failure.sh",
@@ -242,19 +232,9 @@
       "landed": "2026-09-23T23:52:45.409Z"
     },
     {
-      "path": "home/private_dot_claude/hooks/executable_voice-reminder.sh",
-      "hash": "90d9b114419bc91ad630c8c743e61d8050c1ab36118498f54ddee17650074e09",
-      "landed": "2026-09-23T14:33:16.333Z"
-    },
-    {
       "path": "home/private_dot_claude/hooks/executable_warp-session-title.sh",
       "hash": "c679a72557fd613ff17be5259c516222a195d8e4c6af8b97f2cb36f6256a0141",
       "landed": "2026-09-19T01:08:20.039Z"
-    },
-    {
-      "path": "home/private_dot_claude/hooks/executable_worktree-context.sh",
-      "hash": "8f08ca2468040c829557263382970530c922a562b9c3c6b0468768ca8e9c9608",
-      "landed": "2026-09-23T14:33:16.333Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_worktree-landed.sh",
@@ -300,11 +280,6 @@
       "path": "home/private_dot_claude/hooks/test_memory_upkeep.py",
       "hash": "59cbc10fe8f9eec40a21b68af820c6b1e2a9d6514dba26bb3e15eeb890da8848",
       "landed": "2026-09-24T18:01:52.383Z"
-    },
-    {
-      "path": "home/private_dot_claude/hooks/test_premature_done.py",
-      "hash": "8413cf3c9793b8a63b541c33f05d8f5e1ea899bb3d7989ef46d236cf2c76e6b9",
-      "landed": "2026-09-19T00:46:35.705Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_prune_worktrees.py",

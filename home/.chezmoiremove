@@ -115,3 +115,12 @@
 # this repo deployed goes; the rest of ~/.remember/ is the plugin's own notes, left for the
 # operator to delete.
 .remember/config.json
+
+# #693: hooks retired on the operator's decision (2026-09-28). check-before-stop.sh moved
+# into stop-checks.py's git-state check; premature-done.py never fired; worktree-context.sh
+# and voice-reminder.sh only injected per-prompt text the session already had.
+.claude/hooks/check-before-stop.sh
+.claude/hooks/premature-done.py
+.claude/hooks/test_premature_done.py
+.claude/hooks/worktree-context.sh
+.claude/hooks/voice-reminder.sh

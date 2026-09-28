@@ -639,16 +639,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/voice-reminder.sh",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/worktree-context.sh",
-            "timeout": 5
-          },
-          {
-            "type": "command",
             "command": "~/.claude/hooks/warp-session-title.sh working",
             "timeout": 5
           }
@@ -837,7 +827,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/check-before-stop.sh",
+            "command": "~/.claude/hooks/stop-checks.py",
             "timeout": 10
           }
         ]
@@ -853,16 +843,6 @@
       }{{ end }},
       {
         "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/premature-done.py",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/stop-checks.py",
-            "timeout": 10
-          },
           {
             "type": "command",
             "command": "~/.claude/hooks/worktree-landed.sh",

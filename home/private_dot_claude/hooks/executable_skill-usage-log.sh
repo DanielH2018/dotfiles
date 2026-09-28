@@ -79,7 +79,7 @@ OK=true
 
 # cwd_repo: the repo a worktree belongs to, not its own per-worktree path, so fire
 # counts for the same repo accumulate across every worktree/session working it. Same
-# --git-common-dir normalization worktree-context.sh uses, generalized to the two
+# normalization via `git rev-parse --git-common-dir`, which covers the two
 # shapes `rev-parse --git-common-dir` can return (absolute, or relative to cwd).
 CWD_REPO=""
 if [ -n "$CWD" ]; then
