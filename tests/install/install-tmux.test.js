@@ -26,7 +26,7 @@ const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
 //    runs it there); on Linux + non-minimal it renders the builder. A minimal profile also
 //    renders empty, so on Linux only assert the shape when something rendered.
 test('script is gated to Linux', { skip }, () => {
-  const rendered = renderTemplate(body, { source: null });
+  const rendered = renderTemplate(body);
   if (process.platform !== 'linux') {
     assert.strictEqual(rendered.trim(), '', 'script must render empty off Linux');
   } else if (rendered.trim() !== '') {
@@ -55,7 +55,7 @@ test('Linux branch carries the gate, source-build, and sudo-less defer', { skip 
 //    so `chezmoi apply` on an up-to-date host is a no-op. Drive the rendered script with a
 //    HOME whose .local/bin/tmux reports the target version and assert it skips at exit 0.
 test('idempotence: current local tmux skips the rebuild', { skip }, () => {
-  const rendered = renderTemplate(body, { source: null });
+  const rendered = renderTemplate(body);
   if (process.platform === 'linux' && rendered.trim() !== '') {
     const home = scratch(os.tmpdir(), 'tmux-inst-');
     const bin = path.join(home, '.local', 'bin');
