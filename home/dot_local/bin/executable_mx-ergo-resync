@@ -23,27 +23,13 @@ set -uo pipefail
 
 SERIAL=${MX_ERGO_SERIAL:-BD092C51}
 
-# Control -> intended action. Only the two this setup actually moves; the rest
-# keep whatever they have. `solaar config reprogrammable-keys` is the call that
-# can die with "TypeError: 'str' object does not support item assignment" and
-# corrupt config.yaml on the way out, so it gets the smallest surface that still
-# restores the setup. Middle Button's action is unused while it is diverted, but
-# asserting it means the button degrades to a plain middle click if Solaar stops.
-ACTIONS=(
-    "Middle Button:Mouse Middle Button"
-    "DPI Switch:Mouse Middle Button"      # the clicks the middle button gave up
-)
-
-# Only the middle button is diverted -- it is the precision hold. Everything
-# else must be Regular or the device stops sending those events at all.
-DIVERSIONS=(
-    "Middle Button:Diverted"
-    "Back Button:Regular"
-    "Forward Button:Regular"
-    "Left Tilt:Regular"
-    "Right Tilt:Regular"
-    "DPI Switch:Regular"
-)
+# The target state (MX_ERGO_ACTIONS, MX_ERGO_DIVERSIONS) is shared with mx-ergo-solaar, which
+# writes the same values on every connect -- see that file's header for why this is one list
+# instead of two. `solaar config reprogrammable-keys` is the call that can die with "TypeError:
+# 'str' object does not support item assignment" and corrupt config.yaml on the way out, so
+# MX_ERGO_ACTIONS stays the smallest surface that still restores the setup.
+# shellcheck source=../share/mx-ergo/controls.sh
+. "${HOME}/.local/share/mx-ergo/controls.sh"
 
 solaar_q() { timeout 25 solaar config "$SERIAL" "$@" 2>&1 | grep -v '^rules cannot'; }
 
@@ -77,10 +63,10 @@ echo "before:"; { echo "$before"; echo "$dpi_before"; } | indent
 # Scroll wheel back to plain HID reports. This is the one that kills scrolling.
 solaar_q lowres-scroll-mode false >/dev/null
 
-for pair in "${ACTIONS[@]}"; do
+for pair in "${MX_ERGO_ACTIONS[@]}"; do
     solaar_q reprogrammable-keys "${pair%%:*}" "${pair#*:}" >/dev/null
 done
-for pair in "${DIVERSIONS[@]}"; do
+for pair in "${MX_ERGO_DIVERSIONS[@]}"; do
     solaar_q divert-keys "${pair%%:*}" "${pair#*:}" >/dev/null
 done
 
@@ -93,11 +79,11 @@ echo "after:"; { echo "$after"; solaar_q dpi | grep -E '^dpi'; } | indent
 # after-state and exit 0. As a keybinding nobody reads stdout, hence the notify.
 failed=()
 grep -q '^lowres-scroll-mode = False$' <<<"$after" || failed+=("scroll wheel still diverted")
-for pair in "${DIVERSIONS[@]}"; do
+for pair in "${MX_ERGO_DIVERSIONS[@]}"; do
     grep -q "${pair%%:*}:${pair#*:}" <<<"$(grep '^divert-keys' <<<"$after")" \
         || failed+=("divert-keys ${pair%%:*} != ${pair#*:}")
 done
-for pair in "${ACTIONS[@]}"; do
+for pair in "${MX_ERGO_ACTIONS[@]}"; do
     grep -q "${pair%%:*}:${pair#*:}" <<<"$(grep '^reprogrammable-keys' <<<"$after")" \
         || failed+=("reprogrammable-keys ${pair%%:*} != ${pair#*:}")
 done

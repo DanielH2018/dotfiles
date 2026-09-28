@@ -24,6 +24,11 @@ set -uo pipefail
 
 SERIAL=${MX_ERGO_SERIAL:-BD092C51}
 
+# The target state itself (which controls are diverted, and which action the two reprogrammed
+# keys carry) is shared with mx-ergo-resync's verify step -- see that file's header for why.
+# shellcheck source=../share/mx-ergo/controls.sh
+. "${HOME}/.local/share/mx-ergo/controls.sh"
+
 # Quiet on success. On failure, print what solaar said minus its unconditional
 # Wayland banner, which would otherwise put nine lines in the journal every time
 # any input device appears -- then stop, because if one call cannot reach the
@@ -42,12 +47,12 @@ cfg lowres-scroll-mode false
 # Only the middle button is diverted; rules.yaml turns its press and release
 # into the precision hold. Everything else has to keep sending its normal HID
 # event -- the tilts in particular are horizontal scroll.
-cfg divert-keys "Middle Button" Diverted
-for k in "Back Button" "Forward Button" "Left Tilt" "Right Tilt" "DPI Switch"; do
-    cfg divert-keys "$k" Regular
+for pair in "${MX_ERGO_DIVERSIONS[@]}"; do
+    cfg divert-keys "${pair%%:*}" "${pair#*:}"
 done
 
 # Middle keeps its own action so it degrades to a plain middle click when Solaar
 # is not running; the clicks it gives up reappear on the precision button.
-cfg reprogrammable-keys "Middle Button" "Mouse Middle Button"
-cfg reprogrammable-keys "DPI Switch"    "Mouse Middle Button"
+for pair in "${MX_ERGO_ACTIONS[@]}"; do
+    cfg reprogrammable-keys "${pair%%:*}" "${pair#*:}"
+done

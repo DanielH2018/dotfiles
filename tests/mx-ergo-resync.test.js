@@ -110,12 +110,24 @@ fi
 printf 'notify %s\\n' "$*" >> "${log}"
 `, { mode: 0o755 });
 
+  // The target-state arrays live in a file shared with mx-ergo-solaar (home/dot_local/share/
+  // mx-ergo/controls.sh), sourced from $HOME/.local/share/mx-ergo/controls.sh at run time.
+  // Seed the real one into the sandboxed HOME rather than restating the arrays here, so a
+  // drift between the shared file and this test would show up as a read failure, not silence.
+  const home = mkdtemp('mer-home-');
+  const shareDir = path.join(home, '.local', 'share', 'mx-ergo');
+  fs.mkdirSync(shareDir, { recursive: true });
+  fs.copyFileSync(
+    srcPath('dot_local', 'share', 'mx-ergo', 'controls.sh'),
+    path.join(shareDir, 'controls.sh'),
+  );
+
   const res = { status: 0, out: '' };
   try {
     res.out = execFileSync(BASH, [SCRIPT], {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { PATH: `${bin}:${process.env.PATH}`, HOME: mkdtemp('mer-home-') },
+      env: { PATH: `${bin}:${process.env.PATH}`, HOME: home },
     });
   } catch (e) {
     res.status = e.status;
@@ -209,5 +221,21 @@ test('reports no drift when already correct', { skip }, () => {
 test('is idempotent -- a second run leaves the healthy state untouched', { skip }, () => {
   const { state } = run({ state: HEALTHY });
   assert.strictEqual(state.trim(), HEALTHY);
+});
+
+// mx-ergo-resync and mx-ergo-solaar used to each carry their own copy of the diversion/action
+// arrays; this pins that there is now exactly one copy, sourced by both, so the two scripts
+// cannot drift out of sync with each other the way they did before.
+test('resync sources the target state shared with mx-ergo-solaar, not a private copy', () => {
+  const resyncBody = fs.readFileSync(SCRIPT, 'utf8');
+  const solaarBody = fs.readFileSync(
+    srcPath('dot_local', 'bin', 'executable_mx-ergo-solaar'),
+    'utf8',
+  );
+  const sourceLine = '. "${HOME}/.local/share/mx-ergo/controls.sh"';
+  assert.ok(resyncBody.includes(sourceLine), 'resync must source the shared controls file');
+  assert.ok(solaarBody.includes(sourceLine), 'solaar must source the shared controls file');
+  assert.doesNotMatch(resyncBody, /^DIVERSIONS=\(/m, 'resync must not redeclare its own DIVERSIONS array');
+  assert.doesNotMatch(resyncBody, /^ACTIONS=\(/m, 'resync must not redeclare its own ACTIONS array');
 });
 
