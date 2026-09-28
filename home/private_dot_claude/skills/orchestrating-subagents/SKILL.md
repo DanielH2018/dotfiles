@@ -8,10 +8,6 @@ description: Use when about to spawn subagents or fan out parallel work — how 
 Conventions for spawning subagents (Agent tool) and orchestrating fan-out (Workflow tool).
 Distilled from Anthropic's *Building Effective Agents* and the multi-agent research-system prompts.
 
-**Orchestrator role.** Do the quick scoping, planning, and final synthesis yourself; delegate the
-heavy reading/searching to subagents. Never delegate the synthesis or the final write-up — coordinate,
-integrate, and write the answer yourself.
-
 **When to delegate at all.** The trigger is countable, because the judgment-call version of this rule
 measurably did not fire — across five real sessions it ran 710 inline Bash calls to 19 delegations.
 **If answering a question would take 3+ exploratory calls — searching for something whose location you
@@ -32,19 +28,6 @@ evaluations. Set `xhigh` only on a stage where a measured gain over `high` exist
 has no effort knob, so there tier is the only lever: `model: 'sonnet'` for bulk context-reading with no
 judgment in it, top tier (Opus/Fable) reserved for your own synthesis. Bump a single subagent up only when
 its subtask genuinely needs the stronger reasoning.
-
-**How many subagents** — scale to complexity, don't reflex-fan-out:
-- Simple / single-fact → 1 (always ≥1, so sourcing is delegated rather than skipped)
-- Standard → 2–3 (default 3)
-- Medium — distinct sub-topics or lenses → 3–5
-- High — large gather across many segments → 5–10, hard cap 20
-
-Prefer fewer capable agents over many narrow ones — more agents = more overhead. Add one only for
-distinct value, and give each a non-overlapping scope.
-
-**Ordering.** Deploy any blocking/prerequisite subagent first (others depend on its result), then fan
-out the rest in parallel (batch the spawn calls in a single turn). Depth-first questions: sequence
-agents to attack the same core from different angles. Breadth-first: one agent per sub-topic.
 
 **Every subagent brief carries:** one core objective; background on how it fits the whole; which tools
 to use (for internal questions, prefer internal MCP sources over the web); the expected output format;
@@ -104,30 +87,11 @@ read whole by seven separate agents (61–87 KB each, ~485 KB / ~230k tokens for
 `Read`. Either read it once yourself and pass the extracted finding, or give each brief the specific
 question plus a grep/offset to reach for — never the bare path and a hope they'll bound it.
 
-**Verify, don't trust.** When integrating subagent/tool output, separate fact from speculation,
-prefer primary sources, and on conflicts favor recency + consistency and flag the discrepancy.
-
 **Multi-agent vetting is opt-in, not the default finish.** The judge-panel and adversarial-verify patterns
 below earn their cost on high-stakes artifacts — a security sweep, a migration, a spec I'm about to build
 from, or anything I've explicitly asked you to audit or be thorough about. They are not how ordinary work
 ends. On a routine change you catch your own mistakes already, and a verification fan-out just multiplies
 spend for the same answer. Reach for them when I ask, or when being wrong is expensive.
-
-**Disagreement is signal.** When you fan out several reviewers or verifiers over the same artifact and
-they *disagree*, don't average the verdicts or take a majority vote — the disagreement pinpoints the
-exact spot nobody has actually pinned down. Resolve it by testing the contested claim against ground
-truth (run the code, read the primary source, reproduce the case), then fold in only the settled
-result. Treat a conflict as a prompt to gather one more piece of evidence, not to pick a side.
-
-**Depth vs. breadth — pick the right loop.** Fanning out N judges over one artifact is a *breadth*
-move: it surveys many failure modes at once, best for *vetting* something you won't change. To *improve*
-a single artifact, use the *depth* move instead — an evaluator-optimizer loop: one agent generates, a
-second evaluates against explicit criteria and returns PASS / NEEDS_IMPROVEMENT / FAIL plus concrete
-feedback, and the generator regenerates with the full history of prior attempts + the latest critique
-appended, until PASS or a hard iteration cap. Keep the evaluator strictly critiquing, never solving, and
-give it a rubric — a vague evaluator loops forever. Reach for this when the criteria are objective and
-the first pass is fixable (code correctness/style, a spec's completeness); skip it when "good" is
-subjective or the output is already good enough.
 
 **Stop at diminishing returns.** Once the answer is good enough, stop spawning and write it — don't
 chase marginal coverage.
