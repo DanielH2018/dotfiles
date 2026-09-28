@@ -87,8 +87,8 @@ read whole by seven separate agents (61–87 KB each, ~485 KB / ~230k tokens for
 `Read`. Either read it once yourself and pass the extracted finding, or give each brief the specific
 question plus a grep/offset to reach for — never the bare path and a hope they'll bound it.
 
-**Multi-agent vetting is opt-in, not the default finish.** The judge-panel and adversarial-verify patterns
-below earn their cost on high-stakes artifacts — a security sweep, a migration, a spec I'm about to build
+**Multi-agent vetting is opt-in, not the default finish.** Judge-panel and adversarial-verify patterns
+earn their cost on high-stakes artifacts — a security sweep, a migration, a spec I'm about to build
 from, or anything I've explicitly asked you to audit or be thorough about. They are not how ordinary work
 ends. On a routine change you catch your own mistakes already, and a verification fan-out just multiplies
 spend for the same answer. Reach for them when I ask, or when being wrong is expensive.
