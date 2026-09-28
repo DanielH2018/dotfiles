@@ -763,6 +763,10 @@ def terraform(sc: Scan, target: str) -> Verdict | None:
 
 # --- the --force / -f flag on any branch (dotfiles #701) --------------------------------------
 
+# `git push -h` lists v q d n f u o 4 6 as short options; only -o takes a value.
+_FORCE_CLUSTER = r"git\s+push\b.*\s-[vqdnu46]*f"
+_PLUS_REFSPEC = r"git\s+push\b.*\s\+[^\s]"
+
 
 def force_push_flag(sc: Scan, target: str) -> Verdict | None:
     """A `--force` or `-f` push to any branch. main/master was denied above with its own
@@ -774,14 +778,22 @@ def force_push_flag(sc: Scan, target: str) -> Verdict | None:
     and it rewrote a command the model had not written. A deny with the lease spelling in its
     reason costs the model one retry. Unlike `force_push`, a `--force-with-lease` elsewhere
     in the command exempts nothing: `git push --force-with-lease origin feat -f` still
-    forces. Read per segment, so a `-f` in a later stage (`ls -f`) is not a push flag."""
-    if bdb_re(sc.segset, _FORCE_FLAG):
+    forces. Read per segment, so a `-f` in a later stage (`ls -f`) is not a push flag.
+
+    Two more spellings force without a `-f` word (dotfiles #706). `_FORCE_CLUSTER` is an `f`
+    in a short-option cluster (`-uf`, `-fu`): only git push's no-value letters may precede
+    it, because `-o` takes the rest of the cluster as its value (`-ofix` is `-o fix`), and
+    `--` never starts a match, so `--force-with-lease` and `--follow-tags` stay clear.
+    `_PLUS_REFSPEC` is a word that starts with `+` (`+feat`, `+HEAD:feat`); a `+` inside a
+    value (`-o ci.variable=a+b`) is not at a word start. `_FORCE_FLAG` itself is left as
+    the bash has it, because `force_push` shares it."""
+    if any(bdb_re(sc.segset, p) for p in (_FORCE_FLAG, _FORCE_CLUSTER, _PLUS_REFSPEC)):
         return Verdict(
             "deny",
             "force-push-flag",
-            "Blocked: `--force`/`-f` push. Use `git push --force-with-lease <remote> <branch>`, "
-            "which refuses to overwrite commits you have not fetched. main/master stays "
-            "denied either way.",
+            "Blocked: `--force`/`-f`/`+<refspec>` push. Use "
+            "`git push --force-with-lease <remote> <branch>`, which refuses to overwrite "
+            "commits you have not fetched. main/master stays denied either way.",
         )
     return None
 

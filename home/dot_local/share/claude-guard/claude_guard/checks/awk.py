@@ -1,4 +1,4 @@
-"""awk programs that run a command, for the local `Bash(awk:*)` allow rule (dotfiles #702).
+"""awk programs that run a command or write a file, for the local `Bash(awk:*)` allow rule (dotfiles #702).
 
 The settings allow awk everywhere and deny only `system(`. awk runs a command three more
 ways, none of which contains `system`:
@@ -7,7 +7,15 @@ ways, none of which contains `system`:
     "cmd" | getline x      input from a command
     print "x" | var        either of the above with the command held in a variable
 
-`print > "|cmd"` is not one of them: awk opens a file literally named `|cmd`.
+`print > "|cmd"` is not one of them: awk opens a file literally named `|cmd`. It is a file
+write, which asks like any other (dotfiles #707): `print > "f"` and `print >> "f"`.
+
+DECIDED (dotfiles #707): a write asks rather than denies. Writing a file is ordinary awk,
+and the judge treats a shell `>` redirect the same way: it refuses to auto-approve one
+unless it targets /dev/null or duplicates a descriptor. So a target of /dev/stdout,
+/dev/stderr, /dev/null or /dev/fd/N writes nothing here either. `_writes` reads a `>` as
+a redirect only inside a `print`/`printf` statement at bracket depth 0, which is where
+awk's grammar reads it so; `$3 > 100`, `if ($3 > 100) print` and `print ($1 > $2)` compare.
 
 `awk_risk` reads one command and returns ("deny" | "ask", reason) or None. The PreToolUse
 hook turns it into a Verdict, because the native allow rule approves a bare awk before any
@@ -18,10 +26,12 @@ DECIDED: the definite forms deny, like the settings' `system(` rule, and only wh
 in the program's CODE. `_code` blanks string literals to `"S"`, regex literals to `/R/` and
 drops comments, so `print $1 " | " $2` and `/(;|&&)/` deny nothing. Any other lone `|` in
 the code (not `||`) asks: it is a pipe to a command held in a variable. A program `_code`
-cannot lex (an unterminated string or regex) asks when its raw text holds a `|`, `system`
-or `getline`. Measured 2026-09-28 over the 821 distinct awk commands in this host's
+cannot lex (an unterminated string or regex) asks when its raw text holds a `|`, `system`,
+`getline` or `>`. Measured 2026-09-28 over the 821 distinct awk commands in this host's
 transcripts: 813 get no decision, 5 ask (each reads its program with `-f`) and 3 deny (each
-runs `date` through `cmd | getline`).
+runs `date` through `cmd | getline`). Re-measured for #707 over 834: 823 get no decision,
+and the 3 new asks are two programs that write files and one `grep -c awk $C`, where a
+stray `awk` operand reads as an awk whose program is a shell variable.
 
 The lexer decides regex versus division the way awk's grammar does, by position: `/` opens
 a regex only after `(`, `,`, `{`, `}`, `;`, `!`, `~`, `&`, `|`, `=`, `<`, `>`, `?`, `:`, a
@@ -34,8 +44,11 @@ of reading more text as code.
 The program is the `-e`/`--source` text when there is any, else the first operand. `-F` and
 `-v` values and the operands after the program are data, so `awk -F'|'` stays allowed. A
 program the guard cannot read (`-f`, `--exec`, `@include`) asks, and so does a program that
-carries a shell command substitution. A `$VAR` expanded into a double-quoted program is not
-seen: the guard reads the text before the shell expands it.
+carries a shell command substitution. So does a program that holds a shell parameter
+expansion (`$VAR`, `${VAR}`, `$1`) outside single quotes (dotfiles #707): the guard reads
+the text before the shell expands it, so the program awk runs is not the one it read.
+`_mark_expansions` marks each one before shlex drops the quoting; `\$` is escaped and
+stays awk's own `$`.
 """
 
 import re
@@ -62,6 +75,16 @@ _HIDDEN_LONG = ("--file", "--exec", "--include", "--load")
 _NAMES_AWK = re.compile(r"\b[gmn]?awk\b")
 # Stands in for a command substitution's body, which awk_risk judges on its own.
 _SUBSTITUTED = "\x00substitution\x00"
+# Marks a shell parameter expansion (`$VAR`, `${VAR}`, `$1`) outside single quotes (#707).
+_EXPANDED = "\x00expansion\x00"
+_PARAM_START = re.compile(r"[A-Za-z0-9_{@*]")
+
+# A `print`/`printf` statement, whose `>`/`>>` at bracket depth 0 is an output redirect.
+_PRINT = re.compile(r"\bprintf?\b")
+# Targets that write no file: awk's special names, and the paths the judge's redirect check
+# treats as write-free for a shell redirect. `_code` turns such a literal into `"D"`.
+_STREAM = re.compile(r"/dev/(stdout|stderr|null|fd/[0-9]+)")
+_STREAM_CODE = '"D"'
 
 UNREADABLE = "this awk command could not be read."
 HIDDEN = "the awk program comes from a file, which the guard cannot read."
@@ -102,13 +125,71 @@ def _code(text: str) -> str | None:
             end = _end_of(text, i, c)
             if end is None:
                 return None
-            out.append('"S"' if c == '"' else "/R/")
+            if c == "/":
+                out.append("/R/")
+            else:
+                out.append(_STREAM_CODE if _STREAM.fullmatch(text[i + 1 : end - 1]) else '"S"')
             prev = c
             i = end
             continue
         out.append(c)
         if c not in " \t":
             prev = c
+        i += 1
+    return "".join(out)
+
+
+def _writes(code: str) -> bool:
+    """`code` (from `_code`) redirects a `print`/`printf` into a file.
+
+    Inside a print statement awk reads a `>` at bracket depth 0 as a redirect, so a
+    comparison there needs parentheses (`print ($1 > $2)`); a `>` outside one (`$3 > 100`,
+    `if ($3 > 100) print`) compares. The statement ends at `;`, `}` or a newline, which
+    `_code` has already removed from strings and regexes. `>=` compares. A target of
+    `"D"` (a standard stream or /dev/null) writes no file."""
+    for m in _PRINT.finditer(code):
+        depth = 0
+        i, n = m.end(), len(code)
+        while i < n:
+            c = code[i]
+            if c in "([":
+                depth += 1
+            elif c in ")]":
+                depth -= 1
+            elif c in ";}\n" and depth <= 0:
+                break
+            elif c == ">" and depth == 0:
+                j = i + 1
+                if code[j : j + 1] == "=":
+                    i = j + 1
+                    continue
+                j += code[j : j + 1] == ">"
+                if not code[j:].lstrip(" \t").startswith(_STREAM_CODE):
+                    return True
+                i = j
+                continue
+            i += 1
+    return False
+
+
+def _mark_expansions(text: str) -> str:
+    """`text` with `_EXPANDED` before each `$` the shell would expand as a parameter:
+    outside single quotes and not escaped by a backslash. `$(` is a substitution, which
+    awk_risk handles on its own, and `$'...'` is a quoting form."""
+    out: list[str] = []
+    quote = ""
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "\\" and quote != "'":
+            out.append(text[i : i + 2])
+            i += 2
+            continue
+        if c in "'\"" and quote in ("", c):
+            quote = "" if quote == c else c
+        elif c == "$" and quote != "'" and _PARAM_START.match(text, i + 1):
+            out.append(_EXPANDED)
+        out.append(c)
         i += 1
     return "".join(out)
 
@@ -178,11 +259,13 @@ def argv_risk(argv: list[str]) -> tuple[str, str] | None:
 def _program_risk(text: str) -> tuple[str, str] | None:
     if _SUBSTITUTED in text:
         return "ask", "this awk program is built by a command substitution."
+    if _EXPANDED in text:
+        return "ask", "the shell expands a variable into this awk program before awk reads it."
     if _INCLUDE.search(text):
         return "ask", "`@include`/`@load` pulls in code the guard cannot read."
     code = _code(text)
     if code is None:
-        if "|" in text or "system" in text or "getline" in text:
+        if any(s in text for s in ("|", "system", "getline", ">")):
             return "ask", "this awk program could not be lexed, and it may run a command."
         return None
     if _SYSTEM.search(code):
@@ -195,13 +278,15 @@ def _program_risk(text: str) -> tuple[str, str] | None:
         return "deny", 'awk\'s `print | "cmd"` pipes into a shell command.'
     if _LONE_PIPE.search(code):
         return "ask", "this awk program pipes into a command held in a variable."
+    if _writes(code):
+        return "ask", 'this awk program writes a file (`print > "file"`).'
     return None
 
 
 def segment_risk(text: str) -> tuple[str, str] | None:
     """The risk of one segment's text. A segment naming awk that shlex cannot read asks."""
     try:
-        words = shlex.split(text)
+        words = shlex.split(_mark_expansions(text))
     except ValueError:
         return ("ask", UNREADABLE) if _NAMES_AWK.search(text) else None
     argv = _awk_argv(words)

@@ -307,6 +307,13 @@ def test_live_mode_denies_a_feature_branch_force_push_without_rewriting_it(tmp_p
     assert "updatedInput" not in out["hookSpecificOutput"]
 
 
+@pytest.mark.parametrize("command", ["git push -uf origin feat", "git push origin +HEAD:feat"])
+def test_live_mode_denies_a_clustered_or_refspec_force_push(tmp_path, command):
+    # #706: neither spelling carries `-f` as a word of its own.
+    out = json.loads(pre_tool_use(payload(command), denv(home_with(tmp_path))))
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
 def test_live_mode_prints_nothing_for_unparseable_stdin(tmp_path):
     # :22-23: jq yields an empty command and the bash exits 0 with no decision.
     home = home_with(tmp_path)

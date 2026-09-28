@@ -741,6 +741,14 @@ def test_terraform_read_only_and_text_about_terraform_are_allowed():
         "git push origin feature-x --force",
         # The old whole-string lease exemption let this through as no decision.
         "git push --force-with-lease origin feature-x -f",
+        # #706: `f` in a short-option cluster, and a `+` refspec, force just the same.
+        "git push -uf origin feature-x",
+        "git push -fu origin feature-x",
+        "git push -vqf origin feature-x",
+        "git push origin +feature-x",
+        "git push origin +HEAD:feature-x",
+        "git push origin '+feature-x'",
+        "git push --force-with-lease origin +feature-x",
     ],
 )
 def test_a_force_flag_push_to_a_feature_branch_is_denied_naming_the_lease(command):
@@ -759,8 +767,24 @@ def test_a_force_push_chained_with_a_dangerous_command_is_still_denied():
     assert kinds(chained) == ["deny", "deny"]
 
 
-def test_force_with_lease_to_a_feature_branch_is_no_decision():
-    assert d.deny("git push --force-with-lease origin feature-x", "", ENV) == d.NONE
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git push --force-with-lease origin feature-x",
+        "git push --force-if-includes --force-with-lease origin feature-x",
+        # #706: text that merely contains `f` or `+` is not a force.
+        "git push origin fix-f",
+        "git push -u origin feat-f",
+        "git push --follow-tags origin feature-x",
+        "git push -o ci.variable=a+b origin feature-x",
+        # -o takes a value, so the rest of the cluster is that value: -o fix.
+        "git push -ofix origin feature-x",
+        "git push origin feature-x && ls -uf",
+        "git push origin feature-x; echo +1",
+    ],
+)
+def test_a_push_without_a_force_is_no_decision(command):
+    assert d.deny(command, "", ENV) == d.NONE
 
 
 # --- the corpus (tests/fixtures/block-dangerous-bash-vectors.json) ---------------------------

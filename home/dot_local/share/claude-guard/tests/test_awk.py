@@ -46,6 +46,17 @@ ASKED = [
     # A program the shell builds from a command substitution.
     'awk "$(cat prog.awk)" f',
     'awk "`cat prog.awk`" f',
+    # #707: a program that writes a file, as a shell `>` redirect does, which the judge
+    # refuses to auto-approve.
+    """awk 'BEGIN{print "x" > "notes.md"}'""",
+    """awk '{print >> "f"}'""",
+    "awk '{print $1 > $2}' f",
+    """awk '{printf("%s", $1) > "out"}' f""",
+    """awk '$3 > 100 {print $1 > "big"}' f""",
+    # #707: the shell expands a variable into the program, so the guard reads other text.
+    'awk "$PROG" f',
+    'awk "{print ${FIELD}}" f',
+    "awk $PROG f",
 ]
 # Ordinary awk, each still approved by the allow rule.
 ALLOWED = [
@@ -67,6 +78,19 @@ ALLOWED = [
     """D=$(grep -m1 d f | awk '{print $2}' | tr -d '"'); echo $D""",
     # A backtick inside the single-quoted program is text, not a substitution.
     "awk '/^```/{f=!f} f' README.md",
+    # #707: a comparison is not a write, and the standard streams are not files.
+    "awk '$3 >= 100' f",
+    "awk '{if ($3 > 100) print $1}' f",
+    "awk '{print ($1 > $2)}' f",
+    "awk '{print a[$1 > 0]}' f",
+    """awk '{print "warn" > "/dev/stderr"}' f""",
+    """awk '{print "x" > "/dev/null"}' f""",
+    # #707: a shell variable in a data word, or an escaped `$` in the program, is not a
+    # program the shell builds.
+    """awk -v h="$HOME" '{print h}' f""",
+    """awk '{print}' "$FILE" """,
+    """awk -F"$SEP" '{print $1}' f""",
+    r"""awk "{print \$2}" f""",
 ]
 
 
@@ -81,7 +105,7 @@ def test_an_awk_that_runs_a_command_is_denied(command):
 
 
 @pytest.mark.parametrize("command", ASKED)
-def test_an_awk_that_may_run_a_command_prompts(command):
+def test_an_awk_that_may_run_a_command_or_write_a_file_prompts(command):
     assert decision(command) == "ask"
 
 
@@ -101,6 +125,13 @@ AWK_ALLOW = {"allow": ["Bash(awk:*)", "Bash(ls:*)", "Bash(df:*)", "Bash(sort:*)"
 def test_the_judge_does_not_auto_approve_an_awk_that_runs_a_command(tmp_path, command):
     rules = rules_for(tmp_path, AWK_ALLOW)
     assert not judge(command, rules, (), "/tmp").allow
+
+
+def test_the_judge_does_not_auto_approve_an_expanded_awk_program(tmp_path):
+    # #707: the PreToolUse ask raises a dialog, which the judge must not approve. (An awk
+    # write needs no such test: the judge's own redirect check already refuses any `>`.)
+    rules = rules_for(tmp_path, AWK_ALLOW)
+    assert not judge('awk "$PROG" f', rules, (), "/tmp").allow
 
 
 @pytest.mark.parametrize("command", ["awk '{print $1}'", "df -h | awk '/filesystem/'"])
