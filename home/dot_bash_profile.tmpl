@@ -1,9 +1,15 @@
 export SDKMAN_DIR="$HOME/.sdkman"
 [[ -s "$HOME/.sdkman/bin/sdkman-init.sh" ]] && source "$HOME/.sdkman/bin/sdkman-init.sh"
 
-# FNM (Fast Node Manager) — node version manager, used on all machines
+# FNM (Fast Node Manager) — node version manager, used on all machines. This must run
+# HERE because a non-interactive login shell (`bash -lc`, `ssh host cmd`) reads only
+# .bash_profile, never .bashrc/common.sh (interactive-only, see .bashrc:18-20). An
+# INTERACTIVE bash login shell also reaches common.sh below (via .bashrc), which has
+# its own fnm call for zsh's sake; _FNM_ENV_LOADED tells that call it already ran here,
+# so an interactive bash login shell never prepends a second fnm multishell dir to PATH.
 if command -v fnm >/dev/null 2>&1; then
   eval "$(fnm env --use-on-cd --shell bash)"
+  _FNM_ENV_LOADED=1
 fi
 
 # Non-interactive layer (PATH, chezmoi umask wrapper, cargo env) shared with zsh/sh — see

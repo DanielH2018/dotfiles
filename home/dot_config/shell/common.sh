@@ -149,7 +149,11 @@ if command -v zoxide >/dev/null 2>&1; then
 fi
 
 # --- fnm (Fast Node Manager): auto-switch Node per directory ---
-command -v fnm >/dev/null 2>&1 && eval "$(fnm env --use-on-cd --shell "$_CUR_SHELL")"
+# Skipped when _FNM_ENV_LOADED is already set: an interactive bash LOGIN shell reaches
+# this file via .bashrc after dot_bash_profile.tmpl already ran fnm once; running it
+# again would prepend a second fnm multishell dir to PATH. zsh has no earlier call (its
+# .zshenv only sources env.sh), so this stays zsh's only one.
+[ -z "${_FNM_ENV_LOADED:-}" ] && command -v fnm >/dev/null 2>&1 && eval "$(fnm env --use-on-cd --shell "$_CUR_SHELL")"
 
 # bat ships a vendored Catppuccin Mocha theme (dot_config/bat/themes) and a post-install
 # script builds its cache, but nothing ever SELECTED it — only yazi passed --theme
