@@ -206,8 +206,8 @@ This reverses rejected alternative 2 above, for reasons that section could not h
 - **Rebases and squashes no longer rewrite the date that matters.** main is linear: `bin/land`
   fast-forwards it, and the `Default` ruleset forbids non-fast-forward pushes. A commit's `%cI`
   on `origin/main` is fixed once it lands.
-- **The single reviewable file** was a merge-conflict magnet shared by every concurrent PR, which
-  is why `bin/land` carried a `config-soak land` re-run after each rebase.
+- **The single reviewable file** was a merge-conflict magnet shared by every concurrent PR, so
+  each rebase meant re-running `config-soak land` rather than merging the ledger by hand.
 
 What is lost is per-file partial acknowledgement: "acknowledge file A but keep watching file B".
 The operator accepted that loss on 2026-09-28. `outcomes` survives and prints its result instead
