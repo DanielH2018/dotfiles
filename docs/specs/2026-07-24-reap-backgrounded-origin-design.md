@@ -1,7 +1,7 @@
 # Reap backgrounded-origin sessions — design
 
 **Date:** 2026-07-24
-**Status:** approved (design), pending implementation plan
+**Status:** Implemented, as `hooks/executable_reap-backgrounded-origin.sh`
 **Scope:** chezmoi dotfiles repo (`~/.local/share/chezmoi`) — new hook + `settings.base.json` wiring + tests
 
 ## Problem

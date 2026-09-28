@@ -1,7 +1,7 @@
 # Subagent Evals — Design Spec
 
 **Date:** 2026-07-08
-**Status:** Approved design, pre-implementation
+**Status:** Implemented, as `evals/` (`run-evals.mjs`, `run-live.mjs`, `evals/cases/`)
 **Repo:** `dotfiles` / chezmoi (`~/.local/share/chezmoi`)
 **Backlog item:** Claude_Code_Setup "Open backlog" #1 — subagent evals (biggest untapped reliability lever)
 

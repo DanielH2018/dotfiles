@@ -1,7 +1,7 @@
 # tmux-based remote attach for Agent View — spec
 
 **Date:** 2026-07-22
-**Status:** Spec / ready to implement (verify homelab prerequisites first)
+**Status:** Implemented, as `ct`/`cts`/`ctw` (`home/dot_local/bin/executable_ct{,s,w}`)
 **Goal:** Pressing `<enter>` on a **remote** (homelab) session in the `agentview` picker
 attaches to it — not just lists it. Achieved by moving the homelab (and any Unix
 remote) **off WezTerm-mux onto tmux** as the multiplexer, so attach is a portable
