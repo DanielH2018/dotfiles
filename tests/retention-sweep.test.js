@@ -97,7 +97,7 @@ test('removal is exactly two rm forms plus rmdir', () => {
 // This slice implements them, so the guarantee narrows rather than disappears: the
 // primitives may exist, but only inside the functions that implement
 // rename-then-create-fresh, never reachable from the removal path or anywhere else.
-// write_measurements (slice 4's manifest write-back) joins rotate_by_size and
+// write_measurements (slice 4's measurement write-back) joins rotate_by_size and
 // truncate_lines_file here for the same reason it joined them in the source: it is a
 // third legitimate mv, not a leak.
 test('rotate/truncate/measure primitives (mv, tail -n) exist only inside their own functions', () => {
@@ -125,7 +125,7 @@ test('rotate/truncate/measure primitives (mv, tail -n) exist only inside their o
   assert.doesNotMatch(rotateFn.body, /\btail\s+-n\b/, 'rotate_by_size has no business reading lines');
   assert.match(truncateFn.body, /\btail\s+-n\b/, 'truncate_lines_file must use tail -n to select the kept lines');
   assert.match(truncateFn.body, /\bmv\b/, 'truncate_lines_file must rename the temp file atomically over the original');
-  assert.match(measureFn.body, /\bmv\b/, 'write_measurements must rename the temp file atomically over the manifest');
+  assert.match(measureFn.body, /\bmv\b/, 'write_measurements must rename the temp file atomically over the measurements file');
   assert.doesNotMatch(measureFn.body, /\btail\s+-n\b/, 'write_measurements has no business reading lines');
 
   // Outside these three functions, none of the primitives that would let a rule rewrite a
@@ -749,16 +749,19 @@ test('running the suite never touches the real home or the real lock', { skip },
     'the marker should have landed inside the scratch home instead');
 });
 
-// --- Slice 4: measurements written back into the manifest ---------------------------
+// --- Slice 4: measurements written to the sweep's own state file ----------------------
 //
 // The manifest's notes fields ("1180 dirs, 4.7M dirents", "measured 2026-07-30") were
 // hand-typed once and never updated. Every row the sweep scans already produces a live
-// match count and byte total (`count`/`bytes` in the loop above); this writes that back
-// as a `measured: {at, count, bytes}` object rather than leaving the manifest to go
-// stale the moment reality moves on. A red-proof pair: one test proves the write lands,
-// the other proves it touches nothing else.
+// match count and byte total (`count`/`bytes` in the loop above); the sweep records them
+// in $RETENTION_STATE_DIR/.retention-sweep-measured.json, keyed by row id. It used to
+// write them into the manifest, but chezmoi deploys the manifest, so once the hourly
+// timer ran the deployed copy never matched the source again and every `chezmoi apply`
+// stopped to ask about it. The second test is the regression guard for that.
 
-test('a sweep run adds a `measured` object with at/count/bytes to a processed row', { skip }, () => {
+const measuredOf = (root) => JSON.parse(fs.readFileSync(path.join(root, '.retention-sweep-measured.json'), 'utf8'));
+
+test('a sweep run records at/count/bytes for a processed row in the state file', { skip }, () => {
   const root = scratch(os.tmpdir(), 'retention-measure-');
   fs.mkdirSync(path.join(root, 'env', 'a'), { recursive: true });
   fs.mkdirSync(path.join(root, 'env', 'b'), { recursive: true });
@@ -770,31 +773,30 @@ test('a sweep run adds a `measured` object with at/count/bytes to a processed ro
 
   runSweep(m);
 
-  const row = JSON.parse(fs.readFileSync(m, 'utf8'))[0];
-  assert.ok(row.measured, 'expected a measured object after the run');
-  assert.strictEqual(row.measured.count, 2, 'both directories should have been counted');
-  assert.strictEqual(row.measured.bytes, 0, 'empty directories contribute no bytes');
-  assert.match(row.measured.at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/, 'at must be an ISO-8601 UTC timestamp');
+  const measured = measuredOf(root).G1;
+  assert.ok(measured, 'expected a G1 entry in the measurements file after the run');
+  assert.strictEqual(measured.count, 2, 'both directories should have been counted');
+  assert.strictEqual(measured.bytes, 0, 'empty directories contribute no bytes');
+  assert.match(measured.at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/, 'at must be an ISO-8601 UTC timestamp');
 });
 
-test('the write-back changes only `measured` — every other field is untouched', { skip }, () => {
+test('a sweep run leaves the manifest byte-identical', { skip }, () => {
   const root = scratch(os.tmpdir(), 'retention-measure-preserve-');
   fs.mkdirSync(path.join(root, 'env', 'a'), { recursive: true });
-  const before = {
+  const m = manifestFile(root, [{
     id: 'G1', path: path.join(root, 'env', '*'), kind: 'dir-glob', rule: 'prune-empty-dir',
     cap: 'unconditional once eligible', grace: '1h', owner: 'retention-sweep', finding: 'A19-09, A19-05',
     notes: '1180 dirs, 4.7M dirents, 0 files in any',
-  };
-  const m = manifestFile(root, [before]);
+  }]);
+  const before = fs.readFileSync(m, 'utf8');
 
   runSweep(m);
+  runSweep(m, ['--apply']);
 
-  const after = JSON.parse(fs.readFileSync(m, 'utf8'))[0];
-  const { measured: _measured, ...rest } = after;
-  assert.deepStrictEqual(rest, before, 'every field but measured must round-trip unchanged');
+  assert.strictEqual(fs.readFileSync(m, 'utf8'), before, 'chezmoi deploys the manifest, so the sweep must never edit it');
 });
 
-test('a native/self-managed row is never given a measured object', { skip }, () => {
+test('a native/self-managed row is never measured', { skip }, () => {
   const root = scratch(os.tmpdir(), 'retention-measure-native-');
   const m = manifestFile(root, [
     { id: 'N1', path: '~/.claude/projects/**/*.jsonl', kind: 'file-glob', rule: 'native', cap: 'x', grace: null, owner: 'Claude Code binary', finding: 'test' },
@@ -802,8 +804,8 @@ test('a native/self-managed row is never given a measured object', { skip }, () 
 
   runSweep(m);
 
-  const row = JSON.parse(fs.readFileSync(m, 'utf8'))[0];
-  assert.strictEqual(row.measured, undefined, 'native rows are out of scope for this sweeper and must stay untouched');
+  const file = path.join(root, '.retention-sweep-measured.json');
+  assert.ok(!fs.existsSync(file) || measuredOf(root).N1 === undefined, 'native rows are out of scope for this sweeper');
 });
 
 test('running the suite never rewrites the real retention-manifest.json', { skip }, () => {

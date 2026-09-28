@@ -48,12 +48,13 @@
 # reaper's problem, which sends SIGTERM and does need identity.sh's (pid, procStart).
 #
 # Test seams: RETENTION_MANIFEST, RETENTION_SIBLING_CANDIDATES (G12's live-sibling
-# search list), RETENTION_STATE_DIR (run marker location), RETENTION_LOCK.
+# search list), RETENTION_STATE_DIR (run marker and measurements), RETENTION_LOCK.
 set -u
 
 MANIFEST="${RETENTION_MANIFEST:-$HOME/.claude/retention-manifest.json}"
 STATE_DIR="${RETENTION_STATE_DIR:-$HOME/.claude}"
 MARKER="$STATE_DIR/.retention-sweep-last-run"
+MEASURED="$STATE_DIR/.retention-sweep-measured.json"
 LOCK="${RETENTION_LOCK:-${XDG_RUNTIME_DIR:-/tmp}/retention-sweep.lock}"
 
 # Every row the sweeper may act on: the removal rules only. N1/N2 are native or
@@ -250,26 +251,27 @@ truncate_lines_file() {
   mv -f -- "$tmp" "$f"
 }
 
-# Folds this run's per-row measurements back into the manifest as a `measured: {at,
-# count, bytes}` object -- replacing the stale, hand-typed notes prose ("1180 dirs, 4.7M
-# dirents", "measured 2026-07-30") with a number the sweep itself just produced. Runs on
-# every invocation, dry-run included: the measurement reflects what currently matches,
-# independent of whether this run acted on it. `updates` is a JSON array of
-# {id, at, count, bytes} objects, one per row the loop in sweep() processed --
-# native/self-managed rows never reach it, so they keep whatever notes they already
-# have. Every field but `.measured` passes through jq unchanged. Same rename-then-replace
-# shape as truncate_lines_file above: never edits the manifest in place.
+# Records this run's per-row measurements in $MEASURED as {"<id>": {at, count, bytes}},
+# replacing the stale, hand-typed notes prose ("1180 dirs, 4.7M dirents", "measured
+# 2026-07-30") with a number the sweep itself just produced. Runs on every invocation,
+# dry-run included: the measurement reflects what currently matches, independent of
+# whether this run acted on it. `updates` is a JSON array of {id, at, count, bytes}
+# objects, one per row the loop in sweep() processed -- native/self-managed rows never
+# reach it. The manifest itself is never written: chezmoi deploys it, so a sweep that
+# edited it left the deployed copy permanently different from the source, and every later
+# `chezmoi apply` stopped to ask whether to overwrite it. Same rename-then-replace shape as
+# truncate_lines_file above.
 write_measurements() {
-  local manifest=$1 updates=$2 tmp updated
+  local out=$1 updates=$2 tmp updated prior
   [ "$updates" = "[]" ] && return 0
-  updated=$(jq --argjson updates "$updates" '
-      reduce $updates[] as $u (.;
-        map(if .id == $u.id then .measured = {at: $u.at, count: $u.count, bytes: $u.bytes} else . end)
-      )
-    ' "$manifest") || return 1
+  prior=$(jq -c 'if type == "object" then . else {} end' "$out" 2>/dev/null) || prior='{}'
+  [ -n "$prior" ] || prior='{}'
+  updated=$(printf '%s' "$prior" | jq --argjson updates "$updates" '
+      reduce $updates[] as $u (.; .[$u.id] = {at: $u.at, count: $u.count, bytes: $u.bytes})
+    ') || return 1
   [ -n "$updated" ] || return 1
-  tmp="$manifest.tmp.$$"
-  printf '%s\n' "$updated" > "$tmp" && mv -f -- "$tmp" "$manifest"
+  tmp="$out.tmp.$$"
+  printf '%s\n' "$updated" > "$tmp" && mv -f -- "$tmp" "$out"
 }
 
 # --- the sweep ------------------------------------------------------------------------
@@ -439,8 +441,8 @@ sweep() {
       '. + [{id: $id, at: $at, count: $count, bytes: $bytes}]')
   done
 
-  write_measurements "$MANIFEST" "$measure_updates" \
-    || echo "retention-sweep: could not write measurements back to $MANIFEST" >&2
+  write_measurements "$MEASURED" "$measure_updates" \
+    || echo "retention-sweep: could not write measurements to $MEASURED" >&2
 
   echo
   if [ "$APPLY" -eq 1 ]; then
