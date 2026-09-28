@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Enable the hourly retention sweep on daniel-box only; disable it on every other Linux host.
+# retention-sweep and its manifest are deployed everywhere already, but nothing had ever enabled
+# the timer on any host — the operator chose daniel-box as the one machine that runs it
+# unattended. run_onchange re-runs (and reloads systemd) whenever the unit files or this gate
+# change; their hashes are embedded so edits retrigger it, and the gate change itself retriggers
+# it once on every host to clean up.
+# Idempotent; a no-op where user systemd isn't running (macOS, a non-lingering headless box).
+#   service: {{ include "dot_config/systemd/user/retention-sweep.service" | sha256sum }}
+#   timer:   {{ include "dot_config/systemd/user/retention-sweep.timer" | sha256sum }}
+set -eu
+if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+  systemctl --user daemon-reload || true
+{{ if eq .chezmoi.hostname "daniel-box" -}}
+  systemctl --user enable --now retention-sweep.timer || true
+{{ else -}}
+  systemctl --user disable --now retention-sweep.timer 2>/dev/null || true
+{{ end -}}
+fi
