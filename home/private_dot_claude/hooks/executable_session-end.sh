@@ -71,7 +71,7 @@ if [ -f "$TODAY_FILE" ]; then
 fi
 
 # ── Learning loop: enqueue this session for an async debrief ────────────────
-# Mechanism A of ~/.claude/specs/learning-loop_2026-08-19.md. SessionEnd output
+# Mechanism A of the learning loop (design: commits 9916a38, 6b591b1). SessionEnd output
 # is informational and never reaches Claude (see the header above), so the
 # debrief cannot ask the live model anything. This hook only enqueues the
 # transcript and kicks the digest off detached; the writing happens in a

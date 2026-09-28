@@ -1,6 +1,6 @@
 #!/bin/bash
 # cards.sh — the deterministic half of the learning-quiz skill (mechanism C of
-# ~/.claude/specs/learning-loop_2026-08-19.md). Selecting due cards and advancing
+# the learning loop; design in commits 9916a38 and 6b591b1). Selecting due cards and advancing
 # the SM-2-lite ladder are mechanical, so they live in shell where they can be
 # tested; the questioning and the grading judgement stay with the model.
 #

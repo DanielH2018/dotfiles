@@ -6,7 +6,8 @@ disable-model-invocation: true
 
 # learning-digest
 
-Mechanism A of `~/.claude/specs/learning-loop_2026-08-19.md`. The `SessionEnd`
+Mechanism A of the learning loop, whose design reasoning is in the messages of
+commits `9916a38` and `6b591b1`. The `SessionEnd`
 hook cannot ask the live model anything — its output never reaches Claude — so
 it only enqueues the transcript path. This skill is the half that writes.
 
@@ -22,15 +23,30 @@ cannot be completed, log why and move to the next queue entry.
 ## STEP 1 — Claim the queue
 
 Rename the pending file so a session ending mid-drain lands in the next drain
-instead of being lost or double-processed:
+instead of being lost or double-processed. Each Bash call runs in a fresh
+shell, so `$$` differs between calls. Name the claim once, with a timestamp
+suffix, and carry that literal name through to STEP 6:
 
 ```
-cd "$QUEUE" 2>/dev/null && [ -s pending.tsv ] && mv pending.tsv "claim-$$.tsv"
+cd "$QUEUE" 2>/dev/null && [ -s pending.tsv ] && mv pending.tsv claim-digest-<YYYYMMDD-HHMMSS>.tsv
 ```
 
-If there is no `pending.tsv`, also look for a `claim-*.tsv` left behind by an
-earlier run that died; adopt the oldest one. If there is nothing at all, print
-`queue empty` and stop — do not write to the vault.
+Then list every claim file in the queue, including the one you just made:
+
+```
+find "$QUEUE" -maxdepth 1 -name 'claim-*.tsv' -print
+```
+
+Adopt **all** of them, whether or not a `pending.tsv` existed. A `claim-*.tsv`
+you did not create is left behind by an earlier drain that died or could not
+write the vault. Adopting it only when the queue is otherwise empty strands it,
+because sessions end often enough that a `pending.tsv` almost always exists.
+Adopting a claim that another drain is still processing is safe: STEP 3's
+idempotency check skips any queue line whose block is already in the log.
+
+Record the exact list of claim file names you adopted. STEP 6 retires exactly
+those files. If the list is empty, print `queue empty` and stop — do not write
+to the vault.
 
 Each line is TSV: `ended_at`, `session_id`, `cwd`, `transcript_path`.
 
@@ -140,8 +156,10 @@ not grow by one line per card.
 
 ## STEP 6 — Retire the claim
 
-Delete `$QUEUE/claim-$$.tsv` only after the vault writes succeeded. On failure,
-leave it in place so the next drain retries, and print the reason.
+Delete each claim file STEP 1 adopted, by the literal name STEP 1 recorded,
+only after the vault writes for its lines succeeded. On failure, leave that
+file in place so the next drain retries it, and print the reason. Never delete
+a claim file that STEP 1 did not list.
 
 Print a one-line status and nothing else: `learning-digest: N sessions, M cards`.
 

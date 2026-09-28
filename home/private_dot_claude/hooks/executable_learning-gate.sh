@@ -12,7 +12,7 @@
 # Defers to the `go` / `just do it` / `no intake` bypass words, and fires
 # at most once per session.
 # UserPromptSubmit hook: the pre-delegation explain gate. Mechanism B of
-# ~/.claude/specs/learning-loop_2026-08-19.md — on a prompt that asks for a
+# the learning loop (design: commits 9916a38, 6b591b1) — on a prompt that asks for a
 # change and looks non-trivial, inject one instruction: state the approach in
 # five lines or fewer, then ask exactly one comprehension question before
 # editing. It covers work trivial enough to delegate directly but still worth

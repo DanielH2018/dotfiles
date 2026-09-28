@@ -6,7 +6,8 @@ disable-model-invocation: true
 
 # learning-quiz
 
-Mechanism C of `~/.claude/specs/learning-loop_2026-08-19.md`. Cards are written by
+Mechanism C of the learning loop, whose design reasoning is in the messages of
+commits `9916a38` and `6b591b1`. Cards are written by
 `learning-digest`; this skill is what makes them stick.
 
 Spaced repetition needs a person, and a launchd run has none. The two halves are

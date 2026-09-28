@@ -138,8 +138,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_learning-gate.sh",
-      "hash": "846a38336d6550c115610a4a561c8178c8ee410704b2d12b3f1dbe0ef00eb555",
-      "landed": "2026-09-26T19:28:18.266Z"
+      "hash": "b42835a7c065a8153a6f42cfdf24c81b4a8529cccad1127c061091040ac14f4b",
+      "landed": "2026-09-28T12:28:05.456Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_link-artifact.sh",
@@ -238,8 +238,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_session-end.sh",
-      "hash": "339ccc32f12e7b04f61db9a500d0370cfe5bdeb0a64e6d241242d69303753e15",
-      "landed": "2026-09-24T20:01:27.174Z"
+      "hash": "df2c406058e9ccd8049ce7e1add557e7e365f2023b449db4b67066276fbedb39",
+      "landed": "2026-09-28T12:28:05.456Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_skill-usage-log.sh",
@@ -488,18 +488,18 @@
     },
     {
       "path": "home/private_dot_claude/skills/learning-digest/SKILL.md",
-      "hash": "f544ab0e3286282338dea2d72d729aa09f51a958af8900d74a376719c731e782",
-      "landed": "2026-08-19T18:18:52.894Z"
+      "hash": "03e6e7d2abce2b2a3c7a4dad8a31ab5b0e0a7f9adeb5a2cf600a4a254fe868e5",
+      "landed": "2026-09-28T12:28:05.456Z"
     },
     {
       "path": "home/private_dot_claude/skills/learning-quiz/SKILL.md",
-      "hash": "09ea2b69cc4eea2ff351bb57e8804d702b93d9a98ef56170418ec0724faf64ae",
-      "landed": "2026-09-25T13:33:08.320Z"
+      "hash": "9a3b2af5c663bbe04c860fe9c53f5782a2cd8ff3044097375e3287b7cecc8366",
+      "landed": "2026-09-28T12:28:05.456Z"
     },
     {
       "path": "home/private_dot_claude/skills/learning-quiz/scripts/executable_cards.sh",
-      "hash": "063fa569dddf0f9a280adb34602f11d3cb281006094cb0d48ea89ab9208463a1",
-      "landed": "2026-08-19T18:24:31.120Z"
+      "hash": "78714abd0391b10cf6640fa1047346efe4d626a52b32575c62bb290da07e8d54",
+      "landed": "2026-09-28T12:28:05.456Z"
     },
     {
       "path": "home/private_dot_claude/skills/learning-quiz/scripts/executable_render-sheet.sh",
