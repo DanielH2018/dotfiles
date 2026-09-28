@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "126317aa59c831fc3bd88cb110252c9a19b5fd31f7556dca0b4f69ce92337bfe",
-      "landed": "2026-09-28T12:29:15.418Z"
+      "hash": "217b6f60ada1a02d8c6835e161acd961955a982a6bd9f73c30e3501e6bebf59a",
+      "landed": "2026-09-28T13:18:03.157Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -127,11 +127,6 @@
       "landed": "2026-09-24T21:15:51.276Z"
     },
     {
-      "path": "home/private_dot_claude/hooks/executable_learning-gate.sh",
-      "hash": "b42835a7c065a8153a6f42cfdf24c81b4a8529cccad1127c061091040ac14f4b",
-      "landed": "2026-09-28T12:28:05.456Z"
-    },
-    {
       "path": "home/private_dot_claude/hooks/executable_link-artifact.sh",
       "hash": "7ca57aabe93bb83cac979d1f627b8a0710a24266e6914fa140c8fe88cea71ed6",
       "landed": "2026-09-18T22:57:37.560Z"
@@ -218,8 +213,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_session-end.sh",
-      "hash": "df2c406058e9ccd8049ce7e1add557e7e365f2023b449db4b67066276fbedb39",
-      "landed": "2026-09-28T12:28:05.456Z"
+      "hash": "8acbe90823645140edddc8386907272fa953efcd18cddb39d6e207aad08b2921",
+      "landed": "2026-09-28T13:18:03.157Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_skill-usage-log.sh",
@@ -455,31 +450,6 @@
       "path": "home/private_dot_claude/skills/homelab/SKILL.md",
       "hash": "43dd17e334324e6247f564c864b2ed3fcbea49a2d77fd7e38990401c3393e436",
       "landed": "2026-09-26T18:08:34.434Z"
-    },
-    {
-      "path": "home/private_dot_claude/skills/learning-digest/SKILL.md",
-      "hash": "03e6e7d2abce2b2a3c7a4dad8a31ab5b0e0a7f9adeb5a2cf600a4a254fe868e5",
-      "landed": "2026-09-28T12:28:05.456Z"
-    },
-    {
-      "path": "home/private_dot_claude/skills/learning-quiz/SKILL.md",
-      "hash": "9a3b2af5c663bbe04c860fe9c53f5782a2cd8ff3044097375e3287b7cecc8366",
-      "landed": "2026-09-28T12:28:05.456Z"
-    },
-    {
-      "path": "home/private_dot_claude/skills/learning-quiz/scripts/executable_cards.sh",
-      "hash": "78714abd0391b10cf6640fa1047346efe4d626a52b32575c62bb290da07e8d54",
-      "landed": "2026-09-28T12:28:05.456Z"
-    },
-    {
-      "path": "home/private_dot_claude/skills/learning-quiz/scripts/executable_render-sheet.sh",
-      "hash": "772ec2491244a0f01e44075f70db0377a53fd28630527cb50ae83414e75a5776",
-      "landed": "2026-08-19T18:24:31.120Z"
-    },
-    {
-      "path": "home/private_dot_claude/skills/learning-quiz/scripts/executable_test_cards.sh",
-      "hash": "18c9f7e43b4aed49c9d1f337e5bd42c0585443e7f7ca3125fb7c552ac56b6d11",
-      "landed": "2026-08-19T18:24:31.120Z"
     },
     {
       "path": "home/private_dot_claude/skills/orchestrating-subagents/SKILL.md",
