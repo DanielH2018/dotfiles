@@ -119,6 +119,8 @@ Scripts
 .local/bin/mx-ergo-resync
 .local/bin/mx-ergo-solaar
 .local/bin/mx-ergo-watch
+# The trackball's target state, sourced by mx-ergo-solaar and mx-ergo-resync above.
+.local/share/mx-ergo
 .local/bin/steam
 .local/bin/streamcontroller-health
 .local/bin/streamdeck-usb-reset
