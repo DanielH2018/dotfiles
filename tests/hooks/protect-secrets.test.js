@@ -72,6 +72,54 @@ const ALLOW = [
   '/home/u/project/claude.json',
 ];
 
+function runHookAs(tool_name, file_path) {
+  try {
+    return execFileSync('bash', [HOOK], {
+      input: JSON.stringify({ tool_name, tool_input: { file_path } }),
+      encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+    });
+  } catch (e) { return e.stdout || ''; }
+}
+
+// dotfiles #711: a write to one of these makes a later plain `git push` force or skip the
+// pre-push gate. Reading them stays allowed.
+const GIT_CONFIG_FILES = [
+  '.git/config',
+  '/home/u/repo/.git/config',
+  '/home/u/repo/.git/config.worktree',
+  '/home/u/repo/.git/worktrees/feat/config',
+  '/home/u/repo/.git/worktrees/feat/config.worktree',
+  '/home/u/repo/.git/modules/sub/config',
+  '/srv/bare.git/config',
+  '/home/u/repo/.git/hooks/pre-push',
+  '/home/u/repo/.git/hooks-safe/pre-push',
+  '/home/u/repo/.git/modules/sub/hooks/pre-push',
+  '/home/u/.gitconfig',
+  '.gitconfig',
+  '/home/u/.config/git/config',
+  '/home/u/.config/git/local.config',
+  '/etc/gitconfig',
+];
+
+test('a write to a git config or hook file is denied', { skip }, () => {
+  for (const tool of ['Edit', 'Write', 'NotebookEdit']) {
+    for (const p of GIT_CONFIG_FILES) {
+      assert.strictEqual(decision(runHookAs(tool, p)), 'deny', `${tool} should deny: ${p}`);
+    }
+  }
+});
+
+test('reading a git config or hook file, or writing a neighbour, is allowed', { skip }, () => {
+  for (const p of GIT_CONFIG_FILES) {
+    assert.strictEqual(decision(runHookAs('Read', p)), null, `Read should allow: ${p}`);
+  }
+  for (const p of ['/home/u/repo/.gitattributes', '/home/u/repo/.gitmodules',
+    '/home/u/repo/.git/info/exclude', '/home/u/repo/docs/gitconfig.md',
+    '/home/u/repo/.githooks/pre-push', '/home/u/repo/src/config']) {
+    assert.strictEqual(decision(runHookAs('Write', p)), null, `Write should allow: ${p}`);
+  }
+});
+
 test('sensitive file paths are denied', { skip }, () => {
   for (const p of DENY) assert.strictEqual(decision(runHook(p)), 'deny', `should deny: ${p}`);
 });

@@ -986,6 +986,87 @@ def test_an_ordinary_config_write_is_no_decision(command):
     assert d.deny(command, "", ENV) == d.NONE
 
 
+# --- shell writes to the files git reads config and hooks from (dotfiles #711) -----------------
+
+# Each plants what `push-config-write` denies through `git config`: a forcing refspec, a
+# mirror, a force-pushing alias, or a hooks path or hook that skips the pre-push gate.
+GIT_FILE_WRITE_DENY = [
+    (
+        "printf '[remote \"origin\"]\\n\\tpush = +refs/heads/*:refs/heads/*\\n' >> .git/config",
+        "write-target",
+    ),
+    ("echo '[alias] p = push -f' >> ~/.gitconfig", "write-target"),
+    ("tee -a ~/.gitconfig < /tmp/x", "write-target"),
+    ('echo x >> "$HOME/.gitconfig"', "write-target"),
+    (f"echo x >> {HOME}/.gitconfig", "write-target"),
+    ("cat /tmp/x > ~/.config/git/config", "write-target"),
+    ("cat /tmp/x >> ~/.config/git/local.config", "write-target"),
+    ('echo x >> "$XDG_CONFIG_HOME/git/config"', "write-target"),
+    ("echo x | sudo tee -a /etc/gitconfig", "write-target"),
+    ("echo x >> ../.git/config", "write-target"),
+    ("echo x >> /home/u/.local/share/chezmoi/.git/config", "write-target"),
+    ("echo x >> .git/config.worktree", "write-target"),
+    ("echo x >> .git/worktrees/feat/config.worktree", "write-target"),
+    ("echo x >> .git/modules/sub/config", "write-target"),
+    ("echo x >> /srv/repo.git/config", "write-target"),
+    ("cat > .git/config <<EOF\n[core]\n\thooksPath = /dev/null\nEOF", "write-target"),
+    ("printf 'exit 0\\n' > .git/hooks/pre-push", "write-target"),
+    ("echo 'exit 0' > .git/hooks-safe/pre-push", "write-target"),
+    ("echo 'exit 0' > .git/modules/sub/hooks/pre-push", "write-target"),
+    ("cat x | tee /dev/null .git/config", "write-target"),
+    ("cat x | tee -a build.log ~/.gitconfig", "write-target"),
+    ("bash -c 'echo x >> ~/.gitconfig'", "write-target"),
+    ("cp /tmp/evil .git/config", "write-target"),
+    ("mv /tmp/evil ~/.gitconfig", "write-target"),
+    ("sudo cp /tmp/evil /etc/gitconfig", "write-target"),
+    ("install -m 755 /tmp/hook .git/hooks/pre-push", "write-target"),
+    ("ln -sf /tmp/hook .git/hooks/pre-push", "write-target"),
+    ("cp /tmp/pre-push .git/hooks", "write-target"),
+    ("cp -t .git/hooks /tmp/pre-push", "write-target"),
+    ("cp /tmp/x .git/config 2>/dev/null", "write-target"),
+    ("rsync -a /tmp/x ~/.gitconfig", "write-target"),
+    ("sed -i 's/^\\[core\\]/&\\n\\thooksPath = \\/dev\\/null/' .git/config", "inplace-edit"),
+    ("sed -i s/a/b/ ~/.gitconfig", "inplace-edit"),
+    ("perl -pi -e s/a/b/ .git/hooks/pre-push", "inplace-edit"),
+    ("truncate -s 0 .git/hooks/pre-push", "inplace-edit"),
+    ("dd if=/tmp/x of=.git/config", "inplace-edit"),
+]
+GIT_FILE_WRITE_ALLOW = [
+    "cat .git/config",
+    "grep -n hooksPath ~/.gitconfig .git/config",
+    "sed -n 1,5p .git/config",
+    "ls .git/hooks/",
+    "cp .git/config /tmp/config.bak",
+    "cp ~/.gitconfig ~/backup/",
+    "cat .git/hooks/pre-push | tee /tmp/copy",
+    "diff .git/config /tmp/x > /tmp/d",
+    "git log > /tmp/log.txt",
+    "git config user.name x",
+    "git config --file .git/config user.name x",
+    "git remote add origin https://example.com/r.git",
+    "echo x > notes/git-config.md",
+    # Neither file can make a push force or skip a hook: git refuses a `!command` submodule
+    # update from .gitmodules, and an attribute only selects a driver that config defines.
+    "echo '*.sh text' >> .gitattributes",
+    "echo x >> .gitmodules",
+    "echo build/ >> .git/info/exclude",
+    # The copy arm reads git's files only; a project's own hooks directory is ordinary work.
+    "git mv .claude/hooks/test_x.py .claude/hooks/tests/",
+    "cp /tmp/t.py .claude/hooks/tests/test_t.py",
+]
+
+
+@pytest.mark.parametrize(("command", "rule"), GIT_FILE_WRITE_DENY)
+def test_a_shell_write_to_a_git_config_or_hook_file_is_denied(command, rule):
+    v = d.deny(command, "", ENV)
+    assert (v.kind, v.rule) == ("deny", rule)
+
+
+@pytest.mark.parametrize("command", GIT_FILE_WRITE_ALLOW)
+def test_reading_git_config_or_writing_an_unrelated_file_is_no_decision(command):
+    assert d.deny(command, "", ENV) == d.NONE
+
+
 # --- the corpus (tests/fixtures/block-dangerous-bash-vectors.json) ---------------------------
 
 # Members the census must contain, so a fixture that loads as [] fails by NAME rather than

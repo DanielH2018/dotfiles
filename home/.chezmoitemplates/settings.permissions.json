@@ -633,6 +633,13 @@
       "Bash(awk *system(*)*)",
       "Bash(awk *system (*)*)",
       "Edit(.git/**)",
+      {{/* dotfiles #711: git's global config and the XDG directory its include lives in. A
+           write there makes a later plain `git push` force or skip the pre-push gate.
+           `.git/**` above resolves against the working directory, so it covers neither
+           these nor the primary checkout's .git/ from a linked worktree; protect-secrets.sh
+           denies all of them to Edit/Write with a reason, and these stand behind it. */}}
+      "Edit(~/.gitconfig)",
+      "Edit(~/.config/git/**)",
       "Read(~/.config/gcloud/**)",
       "Edit(~/.config/gcloud/**)",
       "Read(~/.config/gh/**)",

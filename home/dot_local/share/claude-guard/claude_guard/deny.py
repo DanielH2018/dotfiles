@@ -704,30 +704,75 @@ def docker_inspect(sc: Scan, target: str) -> Verdict | None:
 
 # --- writes and in-place edits (:1046-1084) --------------------------------------------------
 
+# The files git reads config and hooks from (dotfiles #711). A write to one plants what
+# `push-config-write` denies through `git config`: a `+` or main refspec, a mirror, a
+# force-pushing alias, or a hooks path or hook that skips the pre-push signature gate. Covered:
+# a repo's `.git/config` and `config.worktree`, the same under `.git/worktrees/<name>/` and
+# `.git/modules/<name>/`, a bare `<name>.git/config`, any `.git/hooks*/` directory (this
+# repo's gate runs from `.git/hooks-safe/`), `~/.gitconfig`, everything under
+# `~/.config/git/` (the XDG config and `local.config`, which `~/.gitconfig` includes), a
+# `$XDG_CONFIG_HOME/git/config`, and `/etc/gitconfig`. Out of reach as text: a bare repo
+# whose directory lacks the `.git` suffix, a GIT_DIR/GIT_CONFIG_GLOBAL pointing elsewhere, and
+# an `include.path` target outside `~/.config/git/`. Not listed, because neither can make a
+# push force or skip a hook: `.gitmodules` (git refuses a `!command` update from it) and
+# `.gitattributes`/`.git/info/` (an attribute only selects a driver that config defines).
+_GIT_END = r"([^[:alnum:]_.-]|$)"
+GIT_CONFIG_PATHS = (
+    rf"(\.git/([^[:space:];&|]*/)?(config(\.worktree)?{_GIT_END}"
+    rf"|hooks[^/[:space:];&|]*(/|{_GIT_END}))"
+    rf"|\.gitconfig{_GIT_END}|/etc/gitconfig{_GIT_END}|\.config/git/|/git/config{_GIT_END})"
+)
 # :1064. SOPS basenames on the WRITE side only (:1057-1063).
 WRITE_TARGETS = (
     rf"({SECRET_PATHS}|{SOPS_BASENAMES}|authorized_keys|\.bashrc|\.zshrc|\.bash_profile|"
-    r"\.zprofile|\.profile|\.claude/settings\.json|\.claude/hooks/)"
+    rf"\.zprofile|\.profile|\.claude/settings\.json|\.claude/hooks/|{GIT_CONFIG_PATHS})"
 )
 # :1081. Editors that unambiguously rewrite the file they name; cp/mv deliberately absent.
 BDB_INPLACE = (
     r"((sed|perl)\b[^;&|]*(^|[[:space:]])(-[A-Za-z]*i([[:space:]]|\.)|--in-place)|truncate\b|"
     r"dd\b[^;&|]*(^|[[:space:]])of=)"
 )
+# A redirect, or any file argument of tee (tee writes every file it names, not just the first).
+# `tee` is anchored at a word start, so that "guarantee the .git/config" in a commit message
+# does not read as tee's arguments. The arguments stop at a redirect and at three words,
+# because SCAN collapses a heredoc body onto the tee line: unbounded, the census over this
+# host's transcripts read six `tee f.py >/dev/null <<'EOF'` scripts as writing a path their
+# body mentions.
+_REDIRECT_OR_TEE = (
+    r"(>>?|(^|[^[:alnum:]_-])tee([[:space:]]+[^[:space:];&|<>]+){0,3}[[:space:]]+)"
+    r"[[:space:]]*[^[:space:];&|]*"
+)
+# cp/mv/install/ln/rsync ONTO a git config or hook file (#711): the destination is the last
+# word, before any trailing redirect, or the value of -t/--target-directory. A target earlier
+# in the line is a source, i.e. a read, which is why BDB_INPLACE leaves these out. Scoped to
+# GIT_CONFIG_PATHS: over the full WRITE_TARGETS list the corpus replay gained two false
+# denies, a `git mv` and a `cp` into a project's own `.claude/hooks/tests/`. `git mv` is not a
+# copy here, since git refuses a path inside `.git/`.
+_COPY_AT = (
+    r"(^|[;&|(`/]|[;&|(`][[:space:]]*|(^|[^[:alnum:]_-])(sudo|doas|command|nohup)[[:space:]]+)"
+)
+_COPY_CMD = rf"{_COPY_AT}(cp|mv|install|ln|rsync)[[:space:]]"
+_COPY_ONTO = (
+    rf"{_COPY_CMD}[^;&|]*[[:space:]][^[:space:];&|]*{GIT_CONFIG_PATHS}[^[:space:];&|]*"
+    r"([[:space:]]+[0-9]*[<>][^[:space:];&|]*)*[[:space:]]*$"
+)
+_COPY_INTO_DIR = (
+    rf"{_COPY_CMD}[^;&|]*[[:space:]](-t[[:space:]]*|--target-directory[=[:space:]]+)"
+    rf"[^[:space:];&|]*{GIT_CONFIG_PATHS}"
+)
 
 
 def write_targets(sc: Scan, target: str) -> Verdict | None:
-    """:1082-1084."""
-    if bdb_re(
-        sc.scan,
-        rf"(>>?|tee[[:space:]]+(-[^[:space:]]+[[:space:]]+)*)[[:space:]]*[^[:space:];&|]*"
-        rf"{WRITE_TARGETS}",
+    """:1082-1084, plus every file argument of tee and a copy onto a target (#711)."""
+    if bdb_re(sc.scan, rf"{_REDIRECT_OR_TEE}{WRITE_TARGETS}") or any(
+        bdb_re(sc.segset, p) for p in (_COPY_ONTO, _COPY_INTO_DIR)
     ):
         return Verdict(
             "deny",
             "write-target",
-            "Blocked: writing to a secrets or shell-startup file. Ask the user to do this "
-            "manually.",
+            "Blocked: writing to a secrets, shell-startup, or git config/hook file. Ask the "
+            "user to do this manually; an ordinary git setting goes through "
+            "`git config <key> <value>`.",
         )
     return None
 
@@ -738,8 +783,9 @@ def inplace_edit(sc: Scan, target: str) -> Verdict | None:
         return Verdict(
             "deny",
             "inplace-edit",
-            "Blocked: editing a secrets or shell-startup file in place. A SOPS file must go "
-            "through `sops <file>`; ask the user before changing the others.",
+            "Blocked: editing a secrets, shell-startup, or git config/hook file in place. A "
+            "SOPS file must go through `sops <file>`, an ordinary git setting through "
+            "`git config <key> <value>`; ask the user before changing the others.",
         )
     return None
 

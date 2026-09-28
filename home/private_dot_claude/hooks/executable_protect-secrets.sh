@@ -91,4 +91,20 @@ case "$FILE_PATH" in
     ;;
 esac
 
+# The files git reads config and hooks from (dotfiles #711). A write to one makes a later
+# plain `git push`, which Bash(git push:*) approves, force, mirror, land on main, or skip the
+# pre-push signature gate. Write side only, because reading them is ordinary work. The set
+# matches GIT_CONFIG_PATHS in claude_guard/deny.py, which covers the Bash tool.
+# `Edit(.git/**)` in settings resolves against the working directory, so it never matches
+# the primary checkout's .git/ from a linked worktree, nor ~/.gitconfig.
+if [ "$(hook_field '.tool_name // empty')" != "Read" ]; then
+  case "$FILE_PATH" in
+    *.git/config|*.git/config.worktree|*.git/*/config|*.git/*/config.worktree|\
+    *.git/hooks*/*|*.git/*/hooks*/*|\
+    .gitconfig|*/.gitconfig|.config/git/*|*/.config/git/*|/etc/gitconfig)
+      deny "Blocked: git reads its config or hooks from this file, so a write here can make a later plain \`git push\` force-push or skip the pre-push gate. Ask the user to do this manually; an ordinary git setting goes through \`git config <key> <value>\`."
+      ;;
+  esac
+fi
+
 exit 0
