@@ -1,7 +1,7 @@
 # Restore — bare-metal bootstrap for both dotfiles repos
 
 This is the combined restore flow. Each repo's own README documents its piece;
-this doc chains them and then verifies with `dotsync check`.
+this doc chains them and then lists what needs manual attention afterward.
 
 ## 1. General repo (chezmoi)
 
@@ -10,8 +10,7 @@ this doc chains them and then verifies with `dotsync check`.
 chezmoi init --apply DanielH2018/dotfiles
 ```
 
-This deploys the general config, the `dotsync` CLI (`~/.local/bin/dotsync`), and the
-general manifest fragment (`~/.config/dotsync/manifest.d/00-general.json`).
+This deploys the general config.
 
 ## 2. Work repo (symlink farm) — work laptop only
 
@@ -20,28 +19,24 @@ git clone git@github.com:DanielH2018/work-laptop-config.git ~/work-laptop-config
 ~/work-laptop-config/install.sh
 ```
 
-`install.sh` symlinks the work payload into `$HOME` (including
-`~/.config/dotsync/manifest.d/50-work.json`) and regenerates `~/.claude/settings.json`
-on the next `chezmoi apply` (base + work overlay).
+`install.sh` symlinks the work payload into `$HOME` and regenerates
+`~/.claude/settings.json` on the next `chezmoi apply` (base + work overlay).
 
 ## 3. Verify everything landed
 
 ```bash
-dotsync check       # expect: "check: clean" — no orphans, conflicts, or missing targets
-dotsync inventory   # writes ~/.config/dotsync/INVENTORY.md (path -> owning repo)
+chezmoi diff     # expect empty — nothing pending against the source
+chezmoi status   # expect nothing beyond expected per-machine drift
 ```
 
-If `check` reports **missing**, the corresponding repo did not deploy a declared file —
-re-run that repo's bootstrap. If it reports **orphans**, triage: either add the file to a
-repo or add it to an `ignore.globs` baseline.
+Unexpected output from either means something in step 1 or 2 did not deploy as declared —
+re-run that step and inspect before moving on.
 
-## 4. Manual checklist (what the `ignore.globs` cover)
+## 4. Manual checklist — per-machine content neither repo tracks
 
-The **globs themselves are version-controlled** — they live in
-`home/dot_config/dotsync/manifest.d/00-general.json` and chezmoi deploys them in step 1, so
-there is no ignore baseline to rebuild after a restore. What the globs deliberately exclude is
-per-machine *content*: secrets, caches, and state that no repo should carry. That content is
-what you redo by hand, and it is what this list is for.
+Secrets, caches, and other per-machine state are deliberately never declared as a chezmoi
+target or a work-repo symlink, so nothing above restores them. That content is what you redo
+by hand, and it is what this list is for.
 
 - `~/.ssh/**` — no key survives a restore. Commit signing is enforced (`commit.gpgsign = true`),
   so **git refuses to commit until a signing key exists** — generate one before anything else:

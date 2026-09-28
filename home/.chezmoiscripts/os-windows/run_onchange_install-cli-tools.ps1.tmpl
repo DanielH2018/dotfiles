@@ -39,10 +39,9 @@ foreach ($p in $packages) {
     Install-WingetPackage $p.id
 }
 
-# fnm installs only the version manager, not a Node runtime. dotsync and
-# claude-settings-merge are both '#!/usr/bin/env node' scripts, so install a default LTS
-# Node here (mirrors step 2 of run_once_before_install-fnm.sh.tmpl). Idempotent: fnm skips
-# an already-installed version.
+# fnm installs only the version manager, not a Node runtime. claude-settings-merge is a
+# '#!/usr/bin/env node' script, so install a default LTS Node here (mirrors step 2 of
+# run_once_before_install-fnm.sh.tmpl). Idempotent: fnm skips an already-installed version.
 $fnm = Get-Command fnm -ErrorAction SilentlyContinue
 if ($fnm) {
     Write-Host "[install] default LTS node via fnm ..."

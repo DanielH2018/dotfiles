@@ -150,3 +150,5 @@
 .local/bin/prompt-friction
 .claude/scripts/repair-advisor-transcript.py
 .local/bin/spares
+.local/bin/dotsync
+.config/dotsync/manifest.d/00-general.json

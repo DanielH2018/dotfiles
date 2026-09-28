@@ -1,11 +1,10 @@
 // Which paths count as secret is declared once, in .chezmoidata/secrets.toml, and
-// re-expressed in four dialects that share no source: a regex in claude_guard.deny
+// re-expressed in three dialects that share no source: a regex in claude_guard.deny
 // (block-dangerous-bash.sh's SECRET_PATHS, ported there; that hook is unregistered on
 // the host as of the claude-guard slice 4 cutover, so deny.py is the host's live
-// decision-maker), `case` arms in protect-secrets.sh, Read/Edit globs in the settings
-// template, and (later) dotsync's ignore list. `~/.claude/.credentials.json` — the live
-// OAuth token on Linux and WSL — was missing from every one of them independently
-// (BDB-01, PS-01, A1-01, A1-18).
+// decision-maker), `case` arms in protect-secrets.sh, and Read/Edit globs in the settings
+// template. `~/.claude/.credentials.json` — the live OAuth token on Linux and WSL — was
+// missing from every one of them independently (BDB-01, PS-01, A1-01, A1-18).
 //
 // Until the dialects are generated from the registry, this is what holds them together:
 // an entry that is not carried by every dialect it declares fails the suite.
