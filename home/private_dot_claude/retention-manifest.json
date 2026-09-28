@@ -177,7 +177,7 @@
   },
   {
     "id": "G15",
-    "path": ["/tmp/remember-config-*.json", "/tmp/.claude-statusline-git-*", "/tmp/uv-*"],
+    "path": ["/tmp/.claude-statusline-git-*", "/tmp/uv-*"],
     "kind": "file-glob",
     "rule": "prune-age",
     "cap": "mtime+24h",

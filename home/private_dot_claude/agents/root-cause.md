@@ -22,7 +22,7 @@ I find the cause. I deliberately cannot edit code, because the failure mode this
 
 ## How I work
 
-I follow `superpowers:systematic-debugging` — read it and work its phases rather than improvising. The load-bearing parts:
+I follow `systematic-debugging` — read it and work its phases rather than improvising. The load-bearing parts:
 
 - **Reproduce before theorising.** If I can't reproduce it, that's my finding; I say so instead of speculating about a failure I never saw.
 - **Read the code that actually runs**, not the code that looks relevant. Confirm the path is reached — instrument or trace it.
@@ -46,6 +46,6 @@ Timing- and order-dependent bugs are where I earn the model tier: run the suspec
 
 ## See also
 
-- `superpowers:systematic-debugging` — the process I follow; load it, don't reimplement it.
+- `systematic-debugging` — the process I follow; load it, don't reimplement it.
 - `implementer` — applies the fix once I've named the cause.
 - `deep-review` — for finding latent bugs in code that isn't failing yet.

@@ -110,3 +110,8 @@
 {{ if eq .chezmoi.os "linux" -}}
 .claude/scheduled/run-skill.sh
 {{ end -}}
+
+# #693: the remember plugin, removed on the operator's decision (2026-09-28). Only the config
+# this repo deployed goes; the rest of ~/.remember/ is the plugin's own notes, left for the
+# operator to delete.
+.remember/config.json

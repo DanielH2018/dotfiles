@@ -9,9 +9,11 @@
 # Two isolations make the number mean anything, and each was established by
 # watching the eval report the wrong answer without it:
 #   - a THROWAWAY CLAUDE_CONFIG_DIR holding only this skill and the peers it
-#     must be told apart from. Under the real config, superpowers' "if there is
-#     even a 1% chance a skill might apply you MUST invoke it" makes every
-#     negative case fire something, and the number measures the harness.
+#     must be told apart from. Under the real config as it stood until
+#     2026-09-28, superpowers' "if there is even a 1% chance a skill might apply
+#     you MUST invoke it" made every negative case fire something, and the
+#     number measured the harness. The real config still carries CLAUDE.md,
+#     hooks and every other skill, so the isolation stays.
 #   - an EMPTY working directory. Claude Code loads the cwd's project CLAUDE.md,
 #     and that context changes which skills fire: run from this repo, the
 #     plainest positive case scored 0/3.

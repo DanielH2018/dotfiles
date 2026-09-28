@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "d57039fc1a2eaf8dfc5e5ff74ff53bf3d77ed3438a507cd88010b45a63e7a56b",
-      "landed": "2026-09-28T13:23:29.814Z"
+      "hash": "25911f588fc64cac596773786c1941612b36fef8c215fac75892147f29384664",
+      "landed": "2026-09-28T15:07:17.497Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -18,8 +18,8 @@
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "35ac505a6dbc185cb1b9c21164642dcdc77a7a36558a2173b2055419e7d69ba0",
-      "landed": "2026-09-28T12:29:15.418Z"
+      "hash": "89d5e5f1ca21f77ef6ac25d4d37ed19ff0bf1aaf22cd24483802adc95a0e6a9c",
+      "landed": "2026-09-28T15:07:17.497Z"
     },
     {
       "path": "home/private_dot_claude/agents/chore.md",
@@ -33,18 +33,18 @@
     },
     {
       "path": "home/private_dot_claude/agents/implementer.md",
-      "hash": "7f93142bb69f26f22e502d74d750f71dc06b65a951bd47cb18b065a703ded2b7",
-      "landed": "2026-09-28T12:29:15.418Z"
+      "hash": "1c4998772f1749532c77bef8cbb73d664cd11b6b47d4660a33f2818ea104e583",
+      "landed": "2026-09-28T15:07:17.497Z"
     },
     {
       "path": "home/private_dot_claude/agents/migration-reviewer.md",
-      "hash": "40a6736a3a0f7fb316cf62f264975d5535062b4c035a0d155b734493a07100c1",
-      "landed": "2026-09-28T13:23:29.814Z"
+      "hash": "1ded40a832e35446d2ceb7d7d2b33d38fc9bc597d28348a9033b70c3b2b5d362",
+      "landed": "2026-09-28T15:07:17.497Z"
     },
     {
       "path": "home/private_dot_claude/agents/root-cause.md",
-      "hash": "654cbe3eb4716753ab30d7af4f23f8191147b080d39e8d546c314277e08f5940",
-      "landed": "2026-09-28T13:23:29.814Z"
+      "hash": "8012cfd4a7b0c571d211b237f05d82db2508660fc0d250b4705e295441821541",
+      "landed": "2026-09-28T15:07:17.497Z"
     },
     {
       "path": "home/private_dot_claude/hooks/_testkit.py",
@@ -213,8 +213,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_session-end.sh",
-      "hash": "8acbe90823645140edddc8386907272fa953efcd18cddb39d6e207aad08b2921",
-      "landed": "2026-09-28T13:18:03.157Z"
+      "hash": "6dbbeaaf65c71ea21514bae5509b327f4caf1e53a000cfb97f80c96158e2021d",
+      "landed": "2026-09-28T15:07:17.497Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_skill-usage-log.sh",
@@ -393,8 +393,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/artifact-design/SKILL.md",
-      "hash": "b5e433792b268bcf509178c08d3a5d19eaa7ad8b0849ae5a660706e2b838ff51",
-      "landed": "2026-08-21T15:48:41.427Z"
+      "hash": "c69995336d190ec3c34dfd3b035921be6b974f8c2b4547fc809a989e2b6f91cd",
+      "landed": "2026-09-28T15:07:17.497Z"
     },
     {
       "path": "home/private_dot_claude/skills/chezmoi-repo-ops/SKILL.md",
@@ -473,8 +473,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/pr-authoring/evals/README.md",
-      "hash": "d6f04e51504ae7b7be632888268bbf9aa9d508c12a709432c04fa6e3f5ca4422",
-      "landed": "2026-09-25T13:33:08.320Z"
+      "hash": "011bbb2a862aa202347b84d63095abb0d01a0c35baf3ed0c34bb26962ea42caa",
+      "landed": "2026-09-28T15:07:17.497Z"
     },
     {
       "path": "home/private_dot_claude/skills/pr-authoring/evals/cases.json",
@@ -483,8 +483,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/pr-authoring/evals/executable_run.sh",
-      "hash": "a1ce64dcd40bd024d9db7b8a39a67e5c34f5991cedc6eb2af7b50e0f05a3e0f2",
-      "landed": "2026-08-29T16:29:26.208Z"
+      "hash": "8348dee12e0ae68695b10480cbad73d23ac49689949beb51614400f67923dec9",
+      "landed": "2026-09-28T15:07:17.497Z"
     },
     {
       "path": "home/private_dot_claude/skills/pr-authoring/evals/results.md",
@@ -602,14 +602,49 @@
       "landed": "2026-09-22T12:33:16.543Z"
     },
     {
+      "path": "home/private_dot_claude/skills/systematic-debugging/LICENSE",
+      "hash": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
+      "landed": "2026-09-28T15:07:17.497Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/systematic-debugging/SKILL.md",
+      "hash": "d2dacfe1a09edc051b88c09e2d5353cf4158aee01c64ed13f3404e6d66654ff2",
+      "landed": "2026-09-28T15:07:17.497Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/systematic-debugging/condition-based-waiting-example.ts",
+      "hash": "40ae5ebe497fdf310200e43fe986552546d0a22837c0d39e855db1cfd33eb88e",
+      "landed": "2026-09-28T15:07:17.497Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/systematic-debugging/condition-based-waiting.md",
+      "hash": "e89fec8400d6cd50f43407cec9fab50976ba4d55d0ec2eb51c0bd68036b54c26",
+      "landed": "2026-09-28T15:07:17.497Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/systematic-debugging/defense-in-depth.md",
+      "hash": "1e175fb86fc357e58c6aebf5441e481e1b7868b4380c0456b63a17eefbd18ba7",
+      "landed": "2026-09-28T15:07:17.497Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/systematic-debugging/executable_find-polluter.sh",
+      "hash": "dd7b8f13c4cc2a24b33ff87b18da9248f3e1c80a085c3316224f69ff0fa5c43c",
+      "landed": "2026-09-28T15:07:17.497Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/systematic-debugging/root-cause-tracing.md",
+      "hash": "75b933b6a8c40bdb2031b10f21654395b56ec6ab6bc7b018c18d3fe57aeb7fb8",
+      "landed": "2026-09-28T15:07:17.497Z"
+    },
+    {
       "path": "home/private_dot_claude/skills/test-scenario-hygiene/SKILL.md",
       "hash": "7c33773f4bf870ff3b05839e70fdc7a503d8ebd6d5d9d2529dd3b938c5303ed8",
       "landed": "2026-09-25T13:33:08.320Z"
     },
     {
       "path": "home/private_dot_claude/skills/writing-great-skills/SKILL.md",
-      "hash": "0d7eed95e5ad292017a4fe83a1ce086647d5f2a0c7377023eb041fcde4214f20",
-      "landed": "2026-09-26T19:28:18.266Z"
+      "hash": "8143da26d53def60948619611b516d73fb25b1b1e307e42d51c62df33e02065c",
+      "landed": "2026-09-28T15:07:17.497Z"
     }
   ]
 }

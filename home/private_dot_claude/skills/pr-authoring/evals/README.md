@@ -33,8 +33,8 @@ Every run uses a throwaway `CLAUDE_CONFIG_DIR` holding only `pr-authoring` and t
 skills it must be told apart from — `gh-stack` and `receiving-code-review`.
 No `CLAUDE.md`, no hooks, no plugins.
 
-Without that, the numbers are worthless. The real config loads `superpowers:using-superpowers`,
-which instructs: *"If you think there is even a 1% chance a skill might apply to what you are
+Without that, the numbers are worthless. When these results were measured, the real config
+loaded `superpowers:using-superpowers` (disabled 2026-09-28, dotfiles #693), which instructs: *"If you think there is even a 1% chance a skill might apply to what you are
 doing, you ABSOLUTELY MUST invoke the skill."* Under that instruction every negative case
 fires something, and the eval measures the harness instead of the description.
 

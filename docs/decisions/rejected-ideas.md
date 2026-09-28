@@ -11,4 +11,6 @@ Recorded 2026-07-14 during the adaptation project (see chezmoi ADR 0001).
 - **Inventing triage-role Jira labels** (`ready-for-agent`, etc.) — rejected. Would pollute
   shared team label taxonomy; PROC's native status workflow is used instead (see work-repo ADR 0001).
 - **Replacing superpowers skills** (brainstorming/writing-plans/tdd) — rejected. Kept in
-  parallel.
+  parallel. **Superseded 2026-09-28** by operator decision (dotfiles #693): the plugin is
+  disabled. It ran 27 times in 30 days, 16 of them `systematic-debugging`, which is now a
+  local skill; local skills and agents cover the rest.

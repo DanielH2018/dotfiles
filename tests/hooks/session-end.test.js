@@ -1,9 +1,6 @@
-// Behavioral tests for the SessionEnd hook's remember-buffer roll
-// (executable_session-end.sh). The remember plugin cats today-<DATE>.md whole into
-// every new session and nothing bounds it — both its prompts mandate lossless
-// compression — so past 45 KiB the harness swaps the injection for a 2 KB preview
-// and the memory feature quietly dies. This hook rolls the buffer past a budget so
-// it never gets there. Real bash against the ACTUAL hook; skips without bash/jq.
+// Behavioral test for the SessionEnd hook's session log (executable_session-end.sh).
+// Real bash against the ACTUAL hook; skips without bash/jq. The transcript scan the hook
+// detaches is covered by tests/claude-transcript-scan.test.js.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
@@ -11,137 +8,23 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { shConstInt } = require('../lib/sh-const');
 const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
 const { srcPath } = require('../lib/paths');
 
 const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_session-end.sh');
 
-// A buffer size that has to exceed the hook's roll budget, sized from the budget rather than
-// written out beside it. Raise REMEMBER_TODAY_MAX_BYTES past a hardcoded 20000 and every
-// "rolls the buffer" test below would go on passing while testing the under-budget path.
-const OVER_BUDGET = shConstInt(HOOK, 'REMEMBER_BUDGET') * 3;
-
 const skip = skipUnless('bash', 'jq');
 
-// The hook derives the buffer path from the JSON `cwd`, and logs under $HOME. Both are
-// faked so a test run never touches the real ~/.claude or the real .remember buffer.
-function fakeEnv() {
+test('logs the session end to sessions.log', { skip }, () => {
+  // HOME is faked so a test run never writes the real ~/.claude/logs, and the hook runs from
+  // a scratch cwd so its git-dirty probe cannot see the real repo.
   const home = scratch(os.tmpdir(), 'se-home-');
-  const proj = scratch(os.tmpdir(), 'se-proj-');
   fs.mkdirSync(path.join(home, '.claude', 'logs'), { recursive: true });
-  fs.mkdirSync(path.join(proj, '.remember'), { recursive: true });
-  return { home, proj };
-}
-
-// The buffer's day on the plugin's clock (pluginTimezone, below), host-local when unset.
-const today = () => dayIn(pluginTimezone() || undefined);
-
-function buffer(proj, suffix = '') { return path.join(proj, '.remember', `today-${today()}${suffix}.md`); }
-
-function run({ home, proj }, { cwd = proj, budget, tz } = {}) {
-  const env = { ...process.env, HOME: home };
-  if (budget !== undefined) env.REMEMBER_TODAY_MAX_BYTES = String(budget);
-  if (tz !== undefined) env.TZ = tz;
-  // Run from a scratch cwd so the hook's git-dirty probe can't see the real repo.
-  return execFileSync('bash', [HOOK], {
-    input: JSON.stringify({ session_id: 'test-session', cwd }),
-    env, cwd: home, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+  execFileSync('bash', [HOOK], {
+    input: JSON.stringify({ session_id: 'test-session', cwd: home }),
+    env: { ...process.env, HOME: home }, cwd: home, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
   });
-}
-
-function log(home) {
-  const p = path.join(home, '.claude', 'logs', 'sessions.log');
-  return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';
-}
-
-test('leaves the buffer alone when it is under budget', { skip }, () => {
-  const env = fakeEnv();
-  fs.writeFileSync(buffer(env.proj), 'a'.repeat(4000));
-  run(env);
-  assert.ok(fs.existsSync(buffer(env.proj)), 'under-budget buffer must not be rolled');
-  assert.equal(fs.readdirSync(path.join(env.proj, '.remember')).length, 1);
-  assert.ok(!log(env.home).includes('remember_roll'));
+  const log = fs.readFileSync(path.join(home, '.claude', 'logs', 'sessions.log'), 'utf8');
+  assert.match(log, /session=test-session event=end/);
 });
-
-test('rolls the buffer once it passes budget, freeing the injected name', { skip }, () => {
-  const env = fakeEnv();
-  fs.writeFileSync(buffer(env.proj), 'b'.repeat(OVER_BUDGET));
-  run(env);
-  // The plugin's SessionStart hook cats the exact today-<DATE>.md and nothing else,
-  // so freeing that name is what actually drops the bytes out of the next session.
-  assert.ok(!fs.existsSync(buffer(env.proj)), 'buffer must be renamed out of the injected path');
-  assert.equal(fs.readFileSync(buffer(env.proj, '-1'), 'utf8'), 'b'.repeat(OVER_BUDGET));
-  // 8192 stays written out: it is the value the hook must REPORT, which is what this
-  // assertion exists to catch. Only the input that has to exceed it is derived.
-  assert.match(log(env.home), new RegExp(`event=remember_roll bytes=${OVER_BUDGET} budget=8192 part=1`));
-});
-
-test('rolls to the next free part without clobbering an earlier one', { skip }, () => {
-  const env = fakeEnv();
-  fs.writeFileSync(buffer(env.proj), 'b'.repeat(OVER_BUDGET));
-  run(env);
-  fs.writeFileSync(buffer(env.proj), 'c'.repeat(OVER_BUDGET));
-  run(env);
-  assert.equal(fs.readFileSync(buffer(env.proj, '-1'), 'utf8'), 'b'.repeat(OVER_BUDGET), 'part 1 must survive');
-  assert.equal(fs.readFileSync(buffer(env.proj, '-2'), 'utf8'), 'c'.repeat(OVER_BUDGET));
-});
-
-test('rolled parts keep the today-*.md shape consolidation globs for', { skip }, () => {
-  const env = fakeEnv();
-  fs.writeFileSync(buffer(env.proj), 'b'.repeat(OVER_BUDGET));
-  run(env);
-  const [rolled] = fs.readdirSync(path.join(env.proj, '.remember'));
-  // pipeline/shell.py globs today-*.md, skips names containing the current date and
-  // anything ending .done.md — so a rolled part waits today and folds into recent.md
-  // tomorrow rather than being stranded.
-  assert.match(rolled, /^today-.*\.md$/);
-  assert.ok(!rolled.endsWith('.done.md'), 'must not look already-consolidated');
-  assert.ok(rolled.includes(today()), 'must carry its own date so it is skipped until tomorrow');
-});
-
-test('honours a REMEMBER_TODAY_MAX_BYTES override', { skip }, () => {
-  const env = fakeEnv();
-  fs.writeFileSync(buffer(env.proj), 'd'.repeat(2000));
-  run(env, { budget: 1000 });
-  assert.ok(!fs.existsSync(buffer(env.proj)), 'a lowered budget must roll a smaller buffer');
-  assert.match(log(env.home), /budget=1000/);
-});
-
-test('is a no-op when the project has no remember buffer', { skip }, () => {
-  const env = fakeEnv();
-  run(env, { cwd: path.join(env.proj, 'nope') });
-  assert.ok(!log(env.home).includes('remember_roll'));
-});
-
-test('still logs session end when the roll path is not taken', { skip }, () => {
-  const env = fakeEnv();
-  run(env);
-  assert.match(log(env.home), /event=end/, 'roll logic must not displace the existing summary log');
-});
-
-// The buffer's name belongs to the remember plugin, which dates it with config.json's
-// `.timezone` and falls back to host-local time (#579). The hook has to roll the file the
-// plugin is writing, so the expected day is derived from the managed plugin config rather
-// than restated: setting `.timezone` there without changing the hook goes red here.
-// UTC+14 and UTC-12 are 26 hours apart, so under at least one of them the local day and
-// the UTC day differ at any instant, and a hook on the wrong clock misses the buffer.
-// A function rather than a const: the value is a timezone name read from the checkout, not a
-// path into it, and tests/lib/sandbox-escape.js would otherwise carry the checkout taint
-// through it onto the buffer path below.
-function pluginTimezone() {
-  return JSON.parse(fs.readFileSync(srcPath('private_dot_remember', 'config.json'), 'utf8')).timezone;
-}
-const dayIn = (tz) => new Date().toLocaleDateString('en-CA', { timeZone: tz });
-
-for (const hostTz of ['Etc/GMT-14', 'Etc/GMT+12']) {
-  test(`rolls the buffer dated on the plugin's clock under TZ=${hostTz}`, { skip }, () => {
-    const env = fakeEnv();
-    const day = dayIn(pluginTimezone() || hostTz);
-    const buf = path.join(env.proj, '.remember', `today-${day}.md`);
-    fs.writeFileSync(buf, 'e'.repeat(OVER_BUDGET));
-    run(env, { tz: hostTz });
-    assert.ok(!fs.existsSync(buf), `today-${day}.md is the plugin's buffer and must be rolled`);
-  });
-}

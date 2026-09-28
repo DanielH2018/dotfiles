@@ -9,7 +9,7 @@ Render plans / specs / design docs as a readable, self-contained HTML file **in 
 
 ## When to use
 
-- Use when a plan/spec/design doc is about to go to Daniel for review, in plan mode or normal chat. See also the writing-plans and brainstorming skills, which usually produce the plan this renders.
+- Use when a plan/spec/design doc is about to go to Daniel for review, in plan mode or normal chat.
 - Load it before you write the plan, not after — the artifact and the chat message go out together. (Loading early, emitting the link last: see Output rules.)
 - Only render when the deliverable is a plan or spec for review. A status update, a quick answer, or a single-file diff isn't a plan and doesn't need one.
 - Skip when the plan is trivial (a one-liner or single obvious step), or when Daniel said not to.

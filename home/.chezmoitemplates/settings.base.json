@@ -950,11 +950,17 @@
     "handoff": "off"
   },
   "enabledPlugins": {
-    "superpowers@claude-plugins-official": true,
+    {{/* superpowers and remember disabled 2026-09-28 by operator decision (dotfiles #693).
+         superpowers ran 27 times in 30 days, 16 of them systematic-debugging, which now lives
+         in skills/systematic-debugging; local skills cover the rest, and its SessionStart
+         intro cost 3.5 KB per session. remember's 4.5 KB SessionStart note duplicated git log
+         and the issues, and nothing but that injection read .remember/. Both stay false rather
+         than absent, so a host that still has either installed resolves the same way. */}}
+    "superpowers@claude-plugins-official": false,
     "code-review@claude-plugins-official": false,
     "claude-md-management@claude-plugins-official": true,
     "code-simplifier@claude-plugins-official": false,
-    "remember@claude-plugins-official": true,
+    "remember@claude-plugins-official": false,
 {{- if ne .chezmoi.os "windows" }}
     {{/* Disabled 2026-08-29 by /doctor: zero invocations across 250 session transcripts
          (2026-08-17 → 08-29). It costs ~113 est. resident tokens in the skill listing and

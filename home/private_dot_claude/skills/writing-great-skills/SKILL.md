@@ -11,8 +11,7 @@ metadata:
 A skill exists to wrangle **determinism** out of a stochastic system. The goal is not
 the same *output* every run — it's the same *process*. **Predictability** is the root
 virtue; judge every choice against it, not against how clever or exhaustive the skill
-reads. (This is the principles reference; `superpowers:writing-skills` is the procedural
-how-to for authoring one step by step. Reach for whichever the moment needs.)
+reads.
 
 ## The two loads
 

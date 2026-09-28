@@ -9,9 +9,9 @@
 #   - permissions.deny : union(base, host) — denies are additive; host protections
 #                        also apply in-container and sandbox-specific denies survive.
 #   - outputStyle / model / enabledPlugins / effortLevel : host value wins (behavioral
-#     prefs), except the `remember` plugin, which is dropped: its memory store lives
-#     outside the container's writable mounts, so its SessionStart hook errors on
-#     every sandbox launch, and ephemeral sessions shouldn't accumulate memory.
+#     prefs). Until 2026-09-28 the fold dropped the `remember` plugin, whose store sat
+#     outside the container's writable mounts; that plugin is disabled everywhere now
+#     (dotfiles #693), and re-enabling it would need the drop back.
 #     effortLevel is folded rather than left settable in-container because settings.json
 #     is bind-mounted read-only there — the in-session effort-level writer needs an
 #     atomic rename onto that path, which always fails with EBUSY (can't rename onto
@@ -44,7 +44,7 @@ if [ -n "$HOST" ] && [ -f "$HOST" ] && command -v jq >/dev/null 2>&1; then
         | (if $host.outputStyle    then .outputStyle    = $host.outputStyle    else . end)
         | (if $host.model          then .model          = $host.model          else . end)
         | (if $host.effortLevel    then .effortLevel    = $host.effortLevel    else . end)
-        | (if $host.enabledPlugins then .enabledPlugins = ($host.enabledPlugins | del(.["remember@claude-plugins-official"])) else . end)
+        | (if $host.enabledPlugins then .enabledPlugins = $host.enabledPlugins else . end)
       ' "$BASE" "$HOST" >"$HOUT" 2>/dev/null && [ -s "$HOUT" ]; then
     CUR="$HOUT"
   else

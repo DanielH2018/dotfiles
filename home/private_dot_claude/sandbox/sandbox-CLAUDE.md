@@ -98,9 +98,10 @@ The host's `~/.claude/plugins/` directory is bind-mounted **read-only** into the
 Plugin installation must happen on the host. A second read-only mount at the host's absolute
 macOS path (`/Users/<user>/.claude/plugins/`) resolves absolute paths in `installed_plugins.json`.
 
-Available plugins: superpowers, code-review, feature-dev, commit-commands, pr-review-toolkit,
+Available plugins: code-review, feature-dev, commit-commands, pr-review-toolkit,
 claude-md-management, and ralph-loop, plus any additional plugins enabled by a machine-local
-settings overlay.
+settings overlay. The `systematic-debugging` skill is a local copy; the superpowers plugin it
+came from is disabled.
 
 ## MCP servers
 

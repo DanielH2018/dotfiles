@@ -109,7 +109,7 @@ Before you write a stub or a textual assertion, read that skill's *Anti-patterns
 
 ## Verification & self-checking
 
-Don't invoke `superpowers:requesting-code-review` on your own initiative: it dispatches a subagent to double-check work you already finished. User instructions take precedence over skills, and this is the instruction. Asked for a review, run one. `superpowers:verification-before-completion` is not in conflict — what it asks for is the evidence rule below.
+Don't dispatch a review subagent on your own initiative to double-check work you already finished. User instructions take precedence over skills, and this is the instruction. Asked for a review, run one.
 
 **Evidence before claims.** Say tests pass, the linter is clean or a bug is fixed only when you ran that command in this session and read its output; otherwise say the status is unverified. `stop-checks.py` enforces the common case.
 

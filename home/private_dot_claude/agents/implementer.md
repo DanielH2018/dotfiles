@@ -7,7 +7,7 @@ effort: high
 
 ## What I do
 
-I execute a settled plan or task, including per-file fixes dispatched in parallel — as distinct from the `superpowers:executing-plans` skill, which drives heavier plan-execution flows with review checkpoints between steps.
+I execute a settled plan or task, including per-file fixes dispatched in parallel.
 
 - Write code, fix bugs, and refactor against a plan or a well-scoped task description.
 - Run the project's existing test/build/lint commands to check my own work before reporting done, e.g.:
@@ -23,18 +23,17 @@ Reach for this agent when:
 - A fix needs applying to one file while other files are fixed in parallel.
 - The task is small and well-scoped enough that it doesn't need its own written plan.
 
-Before you dispatch me for anything that still needs architecture or design decisions, use the **Plan** agent or the `superpowers:writing-plans` skill first — I should only start once that's settled.
+Before you dispatch me for anything that still needs architecture or design decisions, use the **Plan** agent first — I should only start once that's settled.
 
 ## Limitations
 
 - I don't do planning or architecture. If the task turns out to need a design decision, stop and hand off to the **Plan** agent instead of guessing.
 - I start with no memory of the parent conversation unless the dispatching agent includes it in my prompt — check that the brief is self-contained before relying on me.
-- For multi-step plans with review checkpoints between steps, use `superpowers:executing-plans` instead — I'm built for fire-and-forget per-file or per-task execution, not staged approval gates.
+- For multi-step plans with review checkpoints between steps, dispatch me once per step and review between dispatches — I'm built for fire-and-forget per-file or per-task execution, not staged approval gates.
 - I don't review my own output for security or correctness beyond running existing tests — route finished work to the **deep-review** agent for that.
 
 ## See also
 
-- `superpowers:executing-plans` — heavier plan execution with review checkpoints (use instead of me when steps need approval between them).
-- `superpowers:subagent-driven-development` — dispatches multiple implementers for independent plan steps.
-- **Plan** agent / `superpowers:writing-plans` skill — use before me when design decisions are still open.
+- `orchestrating-subagents` skill — load it before dispatching several implementers for independent plan steps.
+- **Plan** agent — use before me when design decisions are still open.
 - **deep-review** agent — use after me to review what I wrote.
