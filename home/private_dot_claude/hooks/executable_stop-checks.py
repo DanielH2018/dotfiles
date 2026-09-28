@@ -558,6 +558,22 @@ def _is_scratch(path: str, env: dict) -> bool:
     return bool(home) and path.startswith(home + "/.claude/")
 
 
+def _outside_work_tree(path: str) -> bool:
+    """True only when `path`'s directory positively answers "not a work tree".
+
+    Fired on /home/ubuntu/.cache/doctor/fm_check.py, a scratch script outside any
+    repo -- CLAUDE.md's "write tests" is a repo convention, not a rule for a one-off
+    script nobody will ever `git log` past. A path whose directory does not exist
+    (the fixture paths this check's own tests use, which are never written to disk)
+    is left alone rather than filtered: this excludes what git can affirmatively
+    place outside a work tree, not what it merely cannot answer for.
+    """
+    directory = os.path.dirname(path) or "."
+    if not os.path.isdir(directory):
+        return False
+    return _git(directory, "rev-parse", "--is-inside-work-tree") != "true"
+
+
 def tests_for_source(turn: Turn) -> str | None:
     session = turn.session()
     added = sorted(
@@ -566,6 +582,7 @@ def tests_for_source(turn: Turn) -> str | None:
         if SOURCE_EXT.search(p)
         and not TEST_PATH.search(p)
         and not _is_scratch(p, turn.env)
+        and not _outside_work_tree(p)
     )
     if not added:
         return None

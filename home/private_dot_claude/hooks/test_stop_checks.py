@@ -278,6 +278,22 @@ check(
     ),
 )
 
+# A10: a source file outside any git work tree (fired on
+# /home/ubuntu/.cache/doctor/fm_check.py) must not block -- a real directory this
+# time, not a made-up path, since the check only excludes what git can positively
+# place outside a work tree.
+with tempfile.TemporaryDirectory(
+    prefix="stop-checks-nogit-", dir=str(Path.home())
+) as nogit:
+    not_a_repo_src = str(Path(nogit) / "fm_check.py")
+    check(
+        "a source file outside any git work tree does not block",
+        not tagged(
+            evaluate("Done.", [user("x"), *created(not_a_repo_src)]),
+            "tests-for-source",
+        ),
+    )
+
 # ---------------------------------------------------------------- migration
 
 with tempfile.TemporaryDirectory(prefix="stop-checks-mig-") as mig_tmp:
