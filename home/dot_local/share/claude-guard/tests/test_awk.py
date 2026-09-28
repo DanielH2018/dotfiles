@@ -53,6 +53,8 @@ ASKED = [
     "awk '{print $1 > $2}' f",
     """awk '{printf("%s", $1) > "out"}' f""",
     """awk '$3 > 100 {print $1 > "big"}' f""",
+    # A program the lexer cannot read, whose `>` may be a write.
+    """awk '{print "x > f}'""",
     # #707: the shell expands a variable into the program, so the guard reads other text.
     'awk "$PROG" f',
     'awk "{print ${FIELD}}" f',

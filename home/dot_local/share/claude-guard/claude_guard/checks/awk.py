@@ -204,8 +204,9 @@ def _awk_argv(words: list[str]) -> list[str] | None:
     """The words from the first awk-named word on, or None when the stage runs no awk.
 
     Any position, not only the first: a wrapper (`timeout 5 awk`, `command awk`) runs it
-    just the same, and a stray `awk` operand to another command reads as an awk with no
-    program, which finds nothing."""
+    just the same, and a stray `awk` operand to another command reads as an awk whose
+    program is the next word. That usually finds nothing, but a shell variable there asks
+    (`grep -c awk $C`, the one false positive in #707's census)."""
     for i, word in enumerate(words):
         if word.rsplit("/", 1)[-1] in AWK_NAMES:
             return words[i:]
