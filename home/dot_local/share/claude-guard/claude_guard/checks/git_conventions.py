@@ -6,6 +6,9 @@
     git pull that can merge                 ask   the same rule: a pull without --ff-only or
                                                    --rebase, and without config that makes it
                                                    fast-forward-only or rebasing (#607)
+    git commit --no-verify / -n             deny  the settings deny these; a global option,
+                                                   or an inline core.hooksPath, steps around
+                                                   that glob (#709)
     gh pr create/edit --title <prefixed>    deny  "no `feat:`/`fix:` prefix, no ticket"
     planka card title <prefixed>            deny  the planka-tracking skill's title rule, which
                                                    is the PR-title rule (#608)
@@ -23,6 +26,7 @@ Each rule reads one command's own argv, from claude_guard.segment's top-level se
 substitutions. A substring match would ask on `git commit -m "never git commit --amend"` and
 on `git merge-base --is-ancestor HEAD origin/main` (bin/land-sync's own query), and would
 miss `git -C ~/repo merge topic`, where a global option sits between `git` and the verb.
+claude_guard.gitargv finds the verb, as it does for deny.py's push rules (#709).
 
 DECIDED: a parse refusal, or an argv shlex cannot split, is NO DECISION here. That inverts
 the package's "a refusal is never a skip" contract on purpose: these are conventions, not
@@ -39,13 +43,8 @@ import shlex
 import subprocess
 from collections.abc import Callable
 
+from claude_guard.gitargv import invocation, strip_env
 from claude_guard.segment import parse
-
-# git's own global options that take their value as the NEXT word. The `--opt=value` forms
-# are one token and need no entry.
-_GIT_GLOBAL_WITH_ARG = frozenset(
-    {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--super-prefix"}
-)
 
 # `git commit` options whose value is the next word. Reading past them keeps a message that
 # mentions --amend from reading as the flag. Short clusters are handled in _commit_flags.
@@ -130,6 +129,12 @@ MERGE_REASON = (
     "prefer rebase over merge (`git rebase <upstream>`, or `git merge --ff-only`). "
     "Approve only if a merge commit is what the user wants."
 )
+HOOKS_REASON = (
+    "git-conventions: this commit skips the repo's hooks (`--no-verify`, `-n`, or an inline "
+    "`core.hooksPath`). The settings deny `git commit *--no-verify*` and `git commit -n`; a "
+    "global option or a hooks path does not change that. Commit without it and fix what the "
+    "hook reports."
+)
 PULL_REASON = (
     "git-conventions: this `git pull` can create a merge commit: it passes neither --ff-only "
     "nor --rebase, and git config sets neither pull.ff=only nor pull.rebase. CLAUDE.md: prefer "
@@ -165,25 +170,6 @@ _GIT_FALSE = frozenset({"false", "no", "off", "0", ""})
 ConfigReader = Callable[[str, tuple[str, ...]], dict[str, str]]
 
 
-def _strip_env(argv: list[str]) -> list[str]:
-    i = 0
-    while i < len(argv) and "=" in argv[i] and argv[i].split("=", 1)[0].isidentifier():
-        i += 1
-    return argv[i:]
-
-
-def _git_verb(argv: list[str]) -> tuple[str, list[str], list[str]] | None:
-    """(subcommand, its arguments, git's global options before it) for a git argv."""
-    if not argv or os.path.basename(argv[0]) != "git":
-        return None
-    i = 1
-    while i < len(argv) and argv[i].startswith("-"):
-        i += 2 if argv[i] in _GIT_GLOBAL_WITH_ARG else 1
-    if i >= len(argv):
-        return None
-    return argv[i], argv[i + 1 :], argv[1:i]
-
-
 def _flags(args: list[str], with_arg: frozenset[str], short_with_arg: frozenset[str]) -> set:
     """The option tokens in `args`, skipping every option's value and stopping at `--`."""
     out: set[str] = set()
@@ -213,6 +199,36 @@ def _is_amend(flag: str) -> bool:
     # git accepts any unambiguous prefix of a long option, and --amend is the only
     # `git commit` long option starting `--am`.
     return len(flag) >= 4 and "--amend".startswith(flag)
+
+
+def _skips_hooks(args: list[str], config: tuple[tuple[str, str | None], ...]) -> bool:
+    """A commit that runs no pre-commit or commit-msg hook: `--no-verify` or any prefix
+    git accepts for it (`--no-ver` could also be --no-verbose), `-n` alone or in a short
+    cluster before the letter that takes a value, or an inline `core.hooksPath`."""
+    if any(key == "core.hookspath" for key, _ in config):
+        return True
+    skip = False
+    for tok in args:
+        if skip:
+            skip = False
+            continue
+        if tok == "--":
+            break
+        if tok.startswith("--"):
+            name = tok.split("=", 1)[0]
+            if len(name) >= len("--no-veri") and "--no-verify".startswith(name):
+                return True
+            skip = name in _COMMIT_WITH_ARG and "=" not in tok
+            continue
+        if not tok.startswith("-") or tok == "-":
+            continue
+        for pos, ch in enumerate(tok[1:], start=1):
+            if ch == "n":
+                return True
+            if ch in _COMMIT_SHORT_WITH_ARG:
+                skip = pos == len(tok) - 1
+                break
+    return False
 
 
 def _title_problem(title: str) -> str | None:
@@ -374,7 +390,7 @@ def _title_deny(what: str, title: str, problem: str, why: str) -> tuple[str, str
 
 
 def _one(argv: list[str], cwd: str, read_config: ConfigReader) -> tuple[str, str] | None:
-    argv = _strip_env(argv)
+    argv = strip_env(argv)
     for card_title in _planka_titles(argv):
         problem = _title_problem(card_title)
         if problem:
@@ -396,11 +412,13 @@ def _one(argv: list[str], cwd: str, read_config: ConfigReader) -> tuple[str, str
                 "commit rules",
             )
         return None
-    verb = _git_verb(argv)
-    if verb is None:
+    inv = invocation(argv)
+    if inv is None:
         return None
-    sub, args, global_opts = verb
+    sub, args, global_opts = inv.sub, list(inv.args), list(inv.global_opts)
     if sub == "commit":
+        if _skips_hooks(args, inv.config):
+            return ("deny", HOOKS_REASON)
         flags = _flags(args, _COMMIT_WITH_ARG, _COMMIT_SHORT_WITH_ARG)
         if any(_is_amend(f) for f in flags):
             return ("ask", AMEND_REASON)

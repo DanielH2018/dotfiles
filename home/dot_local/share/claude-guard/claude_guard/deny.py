@@ -41,6 +41,13 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
+from claude_guard.gitargv import (
+    PUSH_SUBCOMMANDS,
+    Invocation,
+    canonical_lines,
+    invocations,
+    subcommand_at,
+)
 from claude_guard.segment import parse
 
 
@@ -161,6 +168,8 @@ class Scan:
     scanset: str
     segset: str
     parsed: bool
+    # Every git invocation the parsed segments run, read by claude_guard.gitargv (#709).
+    gits: tuple[Invocation, ...] = ()
 
 
 def build_scan(command: str) -> Scan:
@@ -168,11 +177,18 @@ def build_scan(command: str) -> Scan:
     p = parse(command)
     if not p.ok:
         return Scan(command, scan, scan, scan, False)
-    members = [normalize(seg.text) for seg in p.segments]
-    members += [normalize(sub) for sub in p.substitutions]
+    texts = [seg.text for seg in p.segments] + list(p.substitutions)
+    members = [normalize(text) for text in texts]
+    # Not the bash's (#709): one more member per git push a segment runs, spelled
+    # `git push <args>` with git's global options dropped and an inline alias expanded, so the
+    # push rules' `git push` anchor matches `git -C "<dir with a space>" push -f` too.
+    members += [
+        normalize(line) for text in texts for line in canonical_lines(text, PUSH_SUBCOMMANDS)
+    ]
+    gits = tuple(inv for text in texts for inv in invocations(text))
     scanset = "\n".join([scan, *members])
     segset = "\n".join(members) if members else scan
-    return Scan(command, scan, scanset, segset, True)
+    return Scan(command, scan, scanset, segset, True, gits)
 
 
 # --- shared anchors (:368, :383-384, :591-599) ------------------------------------------------
@@ -263,20 +279,36 @@ def rm_root(sc: Scan, target: str) -> Verdict | None:
 
 # --- git push (:669-728) ---------------------------------------------------------------------
 
-_FORCE_FLAG = r"git\s+push.*(--force([ ]|$)|[ ]-f([ ]|$))"
+_FORCE_WORD = r"(--force([ ]|$)|[ ]-f([ ]|$))"
+_FORCE_FLAG = rf"git\s+push.*{_FORCE_WORD}"
 _LEASE = r"\-\-force-with-lease"
+_MAIN_DEST_F = r"(^|[[:space:]]|:)(main|master)([[:space:]]|:|\)|`|$)"
+
+# Not the bash's (#709): git, any run of git's global options, then a push, for text the
+# canonical `git push` lines do not cover (a refused parse, `bash -c '...'`). An inline alias
+# whose value pushes counts as the push. Each rule below matches its flag or destination
+# AFTER this anchor in one regex, never as a pair over the whole member, so a global option's
+# value (`git -C main push origin feat`) is not read as a destination.
+GIT_PUSH_AT = (
+    rf"(?:{subcommand_at(PUSH_SUBCOMMANDS)}|"
+    r"git\s[^;&|]*?\s-c\s+alias\.[^\s=]+=!?[^;&|]*?\b(?:push|send-pack|http-push)\b)"
+)
+_FORCE_MAIN_AT = rf"{GIT_PUSH_AT}(?=.*{_FORCE_WORD})(?=.*{_MAIN_DEST_F})"
+_REFSPEC_MAIN = r".*\+\s*(main|master|refs/heads/(main|master))\b"
 
 
 def force_push(sc: Scan, target: str) -> Verdict | None:
     """:687-693. The push and its destination must share a segment (bdb_re_pair); the
     --force-with-lease exemption stays whole-string."""
-    if not bdb_re(sc.scan, _LEASE) and bdb_re_pair(
-        sc.segset, _FORCE_FLAG, r"(^|[[:space:]]|:)(main|master)([[:space:]]|:|\)|`|$)"
+    if not bdb_re(sc.scan, _LEASE) and (
+        bdb_re_pair(sc.segset, _FORCE_FLAG, _MAIN_DEST_F) or bdb_re(sc.segset, _FORCE_MAIN_AT)
     ):
         return Verdict(
             "deny", "force-push-main", "Blocked: force-push to main/master. Use a feature branch."
         )
-    if bdb_re(sc.scan, r"git\s+push.*\+\s*(main|master|refs/heads/(main|master))\b"):
+    if bdb_re(sc.scan, rf"git\s+push{_REFSPEC_MAIN}") or bdb_re(
+        sc.segset, rf"{GIT_PUSH_AT}{_REFSPEC_MAIN}"
+    ):
         return Verdict(
             "deny",
             "force-push-refspec",
@@ -288,10 +320,9 @@ def force_push(sc: Scan, target: str) -> Verdict | None:
 def push_main(sc: Scan, target: str) -> Verdict | None:
     """:725-728. Any push whose DESTINATION is main/master; `:` is deliberately not a
     terminator here so `main:feature` stays a push to feature."""
-    if bdb_re_pair(
-        sc.segset,
-        r"git[[:space:]]+push\b",
-        r"([[:space:]]|:)(refs/heads/)?(main|master)([[:space:]]|\)|`|$)",
+    dest = r"([[:space:]]|:)(refs/heads/)?(main|master)([[:space:]]|\)|`|$)"
+    if bdb_re_pair(sc.segset, r"git[[:space:]]+push\b", dest) or bdb_re(
+        sc.segset, rf"{GIT_PUSH_AT}.*{dest}"
     ):
         return Verdict(
             "deny",
@@ -764,8 +795,10 @@ def terraform(sc: Scan, target: str) -> Verdict | None:
 # --- the --force / -f flag on any branch (dotfiles #701) --------------------------------------
 
 # `git push -h` lists v q d n f u o 4 6 as short options; only -o takes a value.
-_FORCE_CLUSTER = r"git\s+push\b.*\s-[vqdnu46]*f"
-_PLUS_REFSPEC = r"git\s+push\b.*\s\+[^\s]"
+_FORCE_ANY = rf"{GIT_PUSH_AT}.*{_FORCE_WORD}"
+_FORCE_CLUSTER = rf"{GIT_PUSH_AT}.*\s-[vqdnu46]*f"
+_PLUS_REFSPEC = rf"{GIT_PUSH_AT}.*\s\+[^\s]"
+_MIRROR = rf"{GIT_PUSH_AT}.*\s--mirror([ ]|=|$)"
 
 
 def force_push_flag(sc: Scan, target: str) -> Verdict | None:
@@ -786,14 +819,112 @@ def force_push_flag(sc: Scan, target: str) -> Verdict | None:
     `--` never starts a match, so `--force-with-lease` and `--follow-tags` stay clear.
     `_PLUS_REFSPEC` is a word that starts with `+` (`+feat`, `+HEAD:feat`); a `+` inside a
     value (`-o ci.variable=a+b`) is not at a word start. `_FORCE_FLAG` itself is left as
-    the bash has it, because `force_push` shares it."""
-    if any(bdb_re(sc.segset, p) for p in (_FORCE_FLAG, _FORCE_CLUSTER, _PLUS_REFSPEC)):
+    the bash has it, because `force_push` shares it.
+
+    #709 closed the rest of the class. Every pattern anchors on GIT_PUSH_AT, so git's global
+    options, a wrapper, or an inline alias before the push hide nothing. send-pack, the
+    plumbing under push, reads the same. `--mirror` force-updates every remote ref, so it is a
+    force too."""
+    if any(bdb_re(sc.segset, p) for p in (_FORCE_ANY, _FORCE_CLUSTER, _PLUS_REFSPEC, _MIRROR)):
         return Verdict(
             "deny",
             "force-push-flag",
-            "Blocked: `--force`/`-f`/`+<refspec>` push. Use "
+            "Blocked: `--force`/`-f`/`+<refspec>`/`--mirror` push. Use "
             "`git push --force-with-lease <remote> <branch>`, which refuses to overwrite "
             "commits you have not fetched. main/master stays denied either way.",
+        )
+    return None
+
+
+# --- config and hooks that change what a push does (dotfiles #709) --------------------------
+
+_GIT_FALSE = frozenset({"false", "no", "off", "0", ""})
+_MAIN_REFS = frozenset({"main", "master", "refs/heads/main", "refs/heads/master"})
+
+# The same decisions for text the parser cannot read, paired with GIT_PUSH_AT in one member.
+_PUSH_CONFIG_TEXT = (
+    r"remote\.[^\s=]+\.push=\s*\+"
+    r"|remote\.[^\s=]+\.push=[^\s]*:(refs/heads/)?(main|master)(\s|$)"
+    r"|\s-c\s+remote\.[^\s=]+\.mirror(\s|=\s*(true|yes|on|1)(\s|$))"
+    r"|--config-env[\s=]+remote\.[^\s=]+\.(push|mirror)="
+    r"|GIT_CONFIG_VALUE_[0-9]+=\s*\+"
+    r"|GIT_CONFIG_KEY_[0-9]+=remote\.[^\s=]+\.mirror"
+    r"|GIT_CONFIG_PARAMETERS=.*remote\.[^\s=]+\.(push|mirror)"
+)
+_HIDDEN_ALIAS_TEXT = r"git\s[^;&|]*--config-env[\s=]+alias\."
+_NO_VERIFY_TEXT = r"(\s--no-veri(f|fy)?([ ]|=|$)|core\.hookspath)"
+
+
+def _config_forces(key: str, value: str | None) -> bool:
+    """Does one inline config entry make a plain push force, mirror, or land on main?"""
+    if not key.startswith("remote."):
+        return False
+    if key.endswith(".mirror"):
+        return value is None or value.lower() not in _GIT_FALSE
+    if not key.endswith(".push"):
+        return False
+    if value is None:  # --config-env: the refspec is in a variable the command hides
+        return True
+    refspec = value.strip()
+    return refspec.startswith("+") or refspec.rpartition(":")[2] in _MAIN_REFS
+
+
+def push_config(sc: Scan, target: str) -> Verdict | None:
+    """A push whose inline config (`-c`, `--config-env`, GIT_CONFIG_KEY_n/VALUE_n,
+    GIT_CONFIG_PARAMETERS) supplies a `+` refspec, a refspec onto main/master, or
+    `remote.<name>.mirror`: a force push, or a push to main, that no flag in the command
+    shows. An alias whose value `--config-env` hides counts too, since nothing shows what it
+    runs. `push.default` stays no decision: `matching` pushes what `git push --all` does."""
+    hit = any(
+        (inv.sub in PUSH_SUBCOMMANDS and any(_config_forces(k, v) for k, v in inv.config))
+        or (not inv.sub and not inv.shell)
+        for inv in sc.gits
+    )
+    hit = hit or bdb_rei(sc.segset, _HIDDEN_ALIAS_TEXT)
+    hit = hit or any(
+        bdb_re(line, GIT_PUSH_AT) and bdb_rei(line, _PUSH_CONFIG_TEXT)
+        for line in sc.segset.split("\n")
+    )
+    if hit:
+        return Verdict(
+            "deny",
+            "push-config",
+            "Blocked: this push takes a remote refspec, mirror setting or alias from inline "
+            "config (`-c`, `--config-env`, `GIT_CONFIG_*`) that force-pushes, pushes to "
+            "main/master, or hides what runs. Push with explicit arguments: "
+            "`git push --force-with-lease <remote> <branch>`.",
+        )
+    return None
+
+
+def _skips_hooks(inv: Invocation) -> bool:
+    if inv.sub not in PUSH_SUBCOMMANDS:
+        return False
+    if any(key == "core.hookspath" for key, _ in inv.config):
+        return True
+    for arg in inv.args:
+        if arg == "--":
+            break
+        # git accepts an unambiguous prefix of a long option; `--no-ver` could also be
+        # --no-verbose.
+        if len(arg) >= len("--no-veri") and "--no-verify".startswith(arg):
+            return True
+    return False
+
+
+def push_no_verify(sc: Scan, target: str) -> Verdict | None:
+    """A push that skips the pre-push hook, the repo's signature gate: `--no-verify` behind
+    a global option, where the settings glob `git push *--no-verify*` cannot see it, or
+    `core.hooksPath` set inline, which is the same skip by another name."""
+    if any(_skips_hooks(inv) for inv in sc.gits) or any(
+        bdb_re(line, GIT_PUSH_AT) and bdb_rei(line, _NO_VERIFY_TEXT)
+        for line in sc.segset.split("\n")
+    ):
+        return Verdict(
+            "deny",
+            "push-no-verify",
+            "Blocked: `--no-verify` or an inline `core.hooksPath` skips the pre-push hook, "
+            "which is the signature gate. Push without it and fix what the hook reports.",
         )
     return None
 
@@ -824,6 +955,8 @@ RULES: tuple[Rule, ...] = (
     inplace_edit,
     terraform,
     force_push_flag,
+    push_config,
+    push_no_verify,
 )
 
 

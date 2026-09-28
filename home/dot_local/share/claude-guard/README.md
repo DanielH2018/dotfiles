@@ -92,7 +92,19 @@ returns a `Verdict` whose `kind` is `deny` or `none`; `deny()` never returns `as
 feature branch into `--force-with-lease` and allowed it, and `force_push_flag` denies it
 with the lease spelling in its reason, matching the settings deny rules (dotfiles #701).
 It also denies an `f` in a short-option cluster (`-uf`) and a `+<refspec>` push to any
-branch (dotfiles #706). The rules
+branch (dotfiles #706).
+
+Every push rule also reads past git's global options (dotfiles #709). `claude_guard.gitargv`
+is the one reader of git's command line. It finds the subcommand behind `-C`, `-c`,
+`--git-dir` and the rest of `git --help`'s global options, behind an assignment prefix or a
+wrapper, and behind an inline alias. `deny()` adds a canonical `git push <args>` line per push
+to its segment set. For text the parser cannot read, such as `bash -c '…'`, it uses a
+`GIT_PUSH_AT` regex built from the same option table. Two rules are new with it.
+`push_config` denies a push whose inline config (`-c`, `--config-env`, `GIT_CONFIG_*`) sets a
+`+` refspec, a refspec onto main/master, or `remote.<name>.mirror`. `push_no_verify` denies
+`--no-verify` or an inline `core.hooksPath` on a push. `--mirror` and `git send-pack` read as
+force pushes. `checks/git_conventions.py` reads git through the same module and denies a
+commit that skips its hooks. The rules
 read three subjects the bash builds: the normalised whole command, that plus one line per
 segment and substitution, and the segment lines alone for the pair rules. A parse refusal
 degrades to the whole-string subject, as the bash does — this is the one place the

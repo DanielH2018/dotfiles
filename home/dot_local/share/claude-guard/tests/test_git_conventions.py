@@ -91,6 +91,11 @@ def test_amend_is_clean(config, command):
         "git merge --no-ff topic",
         "git -C ~/repo merge origin/main",
         "git -c merge.ff=false merge topic",
+        # dotfiles #709: the shared reader in claude_guard.gitargv finds the verb behind a
+        # wrapper and behind every global option, --attr-source included.
+        "command git -C ~/repo merge topic",
+        "env GIT_DIR=x git merge topic",
+        "git --attr-source HEAD merge topic",
     ],
 )
 def test_merge_is_flagged(config, command):
@@ -260,6 +265,39 @@ def test_planka_title_is_flagged(config, command):
     ],
 )
 def test_planka_title_is_clean(config, command):
+    assert kind(command) is None
+
+
+# --- a commit that skips the hooks (dotfiles #709) ---------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git -C /tmp/repo commit --no-verify -m x",
+        "git commit --no-veri -m x",
+        "git commit -nm x",
+        "git -C /tmp/repo commit -a -n -m x",
+        "git -c core.hooksPath=/dev/null commit -m x",
+        "git --config-env=core.hooksPath=H commit -m x",
+    ],
+)
+def test_a_commit_that_skips_the_hooks_is_denied(config, command):
+    # The settings deny `git commit *--no-verify*` and `git commit -n:*`, globs that a
+    # global option or a hooks path steps around.
+    assert kind(command) == "deny"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git commit -m 'skip -n and --no-verify'",
+        "git commit -am x",
+        "git commit -m x -- -n",
+        "git -c user.name=x commit -m x",
+    ],
+)
+def test_a_commit_that_runs_the_hooks_is_not_denied(config, command):
     assert kind(command) is None
 
 

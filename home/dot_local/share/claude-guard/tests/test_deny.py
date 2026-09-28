@@ -787,6 +787,161 @@ def test_a_push_without_a_force_is_no_decision(command):
     assert d.deny(command, "", ENV) == d.NONE
 
 
+# --- git's global options before the subcommand (dotfiles #709) ------------------------------
+
+# Every global option `git --help` lists that may precede a subcommand, in each spelling git
+# accepts: the value as the next word, the `=` form, and the flags that take no value.
+GLOBAL_OPTION_SPELLINGS = [
+    "-C /tmp/repo",
+    '-C "/tmp/my repo"',
+    "-c k=v",
+    '-c "user.name=A B"',
+    "--git-dir /tmp/r",
+    "--git-dir=/tmp/r",
+    "--work-tree /tmp/w",
+    "--work-tree=/tmp/w",
+    "--namespace x",
+    "--namespace=x",
+    "--exec-path=/usr/lib/git-core",
+    "--config-env core.x=ENVVAR",
+    "--config-env=core.x=ENVVAR",
+    "--super-prefix sub/",
+    "--attr-source HEAD",
+    "--attr-source=HEAD",
+    "-p",
+    "--paginate",
+    "-P",
+    "--no-pager",
+    "--no-replace-objects",
+    "--no-lazy-fetch",
+    "--no-optional-locks",
+    "--no-advice",
+    "--bare",
+    "--literal-pathspecs",
+    "--glob-pathspecs",
+    "--noglob-pathspecs",
+    "--icase-pathspecs",
+    "-C /a -c k=v --no-pager",
+]
+
+# The ways a shell reaches git: an assignment prefix, a wrapper, a path, a chain.
+GIT_SPELLINGS = [
+    "GIT_DIR=/tmp/r/.git git",
+    "command git",
+    "env git",
+    "env GIT_DIR=x git",
+    "nohup git",
+    "timeout 60 git",
+    "/usr/bin/git",
+    "cd /tmp && git",
+]
+
+
+@pytest.mark.parametrize("opts", GLOBAL_OPTION_SPELLINGS)
+@pytest.mark.parametrize(
+    ("tail", "rule"),
+    [
+        ("push -f origin feat", "force-push-flag"),
+        ("push -uf origin feat", "force-push-flag"),
+        ("push origin +feat", "force-push-flag"),
+        ("push --force-with-lease origin feat -f", "force-push-flag"),
+        ("push origin main", "push-main"),
+        ("push -f origin main", "force-push-main"),
+        ("push origin +main", "force-push-refspec"),
+        ("push --no-verify origin feat", "push-no-verify"),
+    ],
+)
+def test_a_global_option_before_push_hides_nothing_from_the_push_rules(opts, tail, rule):
+    v = d.deny(f"git {opts} {tail}", "", ENV)
+    assert (v.kind, v.rule) == ("deny", rule)
+
+
+@pytest.mark.parametrize("git", GIT_SPELLINGS)
+def test_a_wrapped_git_with_a_global_option_still_reads_as_a_push(git):
+    v = d.deny(f"{git} -C /tmp push -f origin feat", "", ENV)
+    assert (v.kind, v.rule) == ("deny", "force-push-flag")
+
+
+@pytest.mark.parametrize(
+    ("command", "rule"),
+    [
+        # The fallback reads the text inside another program's argument.
+        ("bash -c 'git -C /tmp push -f origin feat'", "force-push-flag"),
+        ("bash -c 'git --no-pager push origin main'", "push-main"),
+        ("bash -c 'git -c remote.origin.push=+HEAD:feat push origin'", "push-config"),
+        ("bash -c 'git -C /tmp push --no-verify origin feat'", "push-no-verify"),
+        # --mirror force-updates every remote ref, main included.
+        ("git push --mirror origin", "force-push-flag"),
+        ("git -C /tmp push --mirror origin", "force-push-flag"),
+        # send-pack is the plumbing under push, with the same --force and +refspec.
+        ("git send-pack --force ../remote feat", "force-push-flag"),
+        ("git -C /tmp send-pack ../remote +feat", "force-push-flag"),
+        # An inline alias is the push it expands to.
+        ("git -c alias.x='push -f' x origin feat", "force-push-flag"),
+        ("git -c alias.x=push x -f origin feat", "force-push-flag"),
+        ("git -c alias.x=push x origin main", "push-main"),
+        ("git -c 'alias.x=push --mirror' x origin", "force-push-flag"),
+        ('git -c "alias.p=push origin +feat" p', "force-push-flag"),
+        ("git -c 'alias.x=!git push -f' x origin feat", "force-push-flag"),
+        ("git -c alias.x='-C /tmp push -f' x origin feat", "force-push-flag"),
+        ("git --config-env=alias.x=ENVVAR x origin feat", "push-config"),
+        # Inline config that makes a plain push force, mirror, or land on main.
+        ("git -c remote.origin.push=+refs/heads/feat:refs/heads/feat push origin", "push-config"),
+        ("git -c Remote.Origin.PUSH=+HEAD:feat push", "push-config"),
+        ("git -c remote.origin.push=HEAD:main push origin", "push-config"),
+        ("git -c remote.origin.mirror=true push origin", "push-config"),
+        ("git -c remote.origin.mirror push origin", "push-config"),
+        ("git --config-env=remote.origin.push=REFSPEC push origin", "push-config"),
+        ("git --config-env remote.origin.mirror=M push origin", "push-config"),
+        (
+            "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.push "
+            "GIT_CONFIG_VALUE_0=+HEAD:feat git push origin",
+            "push-config",
+        ),
+        (
+            "GIT_CONFIG_PARAMETERS=\"'remote.origin.push'='+HEAD:feat'\" git push origin",
+            "push-config",
+        ),
+        # A hooks path is --no-verify by another name: the pre-push signature gate never runs.
+        ("git -c core.hooksPath=/dev/null push origin feat", "push-no-verify"),
+        ("git -c core.hookspath=/dev/null push origin feat", "push-no-verify"),
+        ("git push --no-veri origin feat", "push-no-verify"),
+    ],
+)
+def test_a_force_push_by_another_name_is_denied(command, rule):
+    v = d.deny(command, "", ENV)
+    assert (v.kind, v.rule) == ("deny", rule)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git -C /tmp/repo push origin feat",
+        'git -C "/tmp/my repo" push origin feat',
+        "git -C /tmp/repo push --force-with-lease origin feat",
+        "git -C /tmp push -o ci.skip origin feat",
+        # A global option's VALUE is not the push's destination or flag.
+        "git -C main push origin feat",
+        "git --namespace master push origin feat",
+        "git -c k=-f push origin feat",
+        # push.default=matching is `git push --all`, which is no decision either.
+        "git -c push.default=matching push origin",
+        "git -c color.ui=never push origin feat",
+        "git -c remote.origin.push=refs/heads/feat:refs/heads/feat push origin",
+        "git -c remote.origin.mirror=false push origin feat",
+        "git -c alias.st=status st",
+        # The word push after a global option, but not as the subcommand.
+        "git -C /tmp commit -m 'push -f later'",
+        "git -C /tmp log --grep push -f",
+        "git --no-pager log -n 5",
+        "git -C /tmp status",
+        "git -c core.hooksPath=.githooks status",
+    ],
+)
+def test_a_global_option_on_an_ordinary_git_command_is_no_decision(command):
+    assert d.deny(command, "", ENV) == d.NONE
+
+
 # --- the corpus (tests/fixtures/block-dangerous-bash-vectors.json) ---------------------------
 
 # Members the census must contain, so a fixture that loads as [] fails by NAME rather than
