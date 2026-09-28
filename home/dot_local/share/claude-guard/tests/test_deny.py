@@ -1030,6 +1030,29 @@ GIT_FILE_WRITE_DENY = [
     ("perl -pi -e s/a/b/ .git/hooks/pre-push", "inplace-edit"),
     ("truncate -s 0 .git/hooks/pre-push", "inplace-edit"),
     ("dd if=/tmp/x of=.git/config", "inplace-edit"),
+    ("echo x >| .git/config", "write-target"),
+    # A missing or non-executable hook runs nothing, and .git/config moved away takes
+    # core.hooksPath with it.
+    ("rm .git/hooks-safe/pre-push", "git-file-unset"),
+    ("rm -rf .git/hooks", "git-file-unset"),
+    ("unlink .git/hooks/pre-push", "git-file-unset"),
+    ("chmod -x .git/hooks-safe/pre-push", "git-file-unset"),
+    ("mv .git/hooks-safe/pre-push /tmp/", "git-file-unset"),
+    ("mv .git/config /tmp/c", "git-file-unset"),
+]
+# A push that reads a config file no write rule has seen, and an include set for later.
+GIT_CONFIG_SOURCE_DENY = [
+    ("GIT_CONFIG_GLOBAL=/tmp/c git push origin feat", "push-config"),
+    ("GIT_CONFIG_SYSTEM=/tmp/c git push origin feat", "push-config"),
+    ("HOME=/tmp/h git push origin feat", "push-config"),
+    ("XDG_CONFIG_HOME=/tmp/x git push origin feat", "push-config"),
+    ("export GIT_CONFIG_GLOBAL=/tmp/c; git push origin feat", "push-config"),
+    ("git -c include.path=/tmp/c push origin feat", "push-config"),
+    ("git -c includeIf.onbranch:feat.path=/tmp/c push origin feat", "push-config"),
+    ("git --config-env=include.path=P push origin feat", "push-config"),
+    ("git config include.path /tmp/c", "push-config-write"),
+    ("git config --global includeIf.gitdir:~/src/.path /tmp/c", "push-config-write"),
+    ("bash -c 'git config include.path /tmp/c'", "push-config-write"),
 ]
 GIT_FILE_WRITE_ALLOW = [
     "cat .git/config",
@@ -1053,7 +1076,21 @@ GIT_FILE_WRITE_ALLOW = [
     # The copy arm reads git's files only; a project's own hooks directory is ordinary work.
     "git mv .claude/hooks/test_x.py .claude/hooks/tests/",
     "cp /tmp/t.py .claude/hooks/tests/test_t.py",
+    "rm -rf /tmp/fixture",
+    "chmod +x bin/tool",
+    "mv a.txt b.txt",
+    "HOME=/tmp/h git status",
+    "GIT_CONFIG_GLOBAL=/dev/null git log -1",
+    "HOMEBREW_NO_AUTO_UPDATE=1 git push origin feat",
+    "git -c include.path=/tmp/c status",
+    "git config --get include.path",
 ]
+
+
+@pytest.mark.parametrize(("command", "rule"), GIT_CONFIG_SOURCE_DENY)
+def test_a_push_reading_an_unseen_config_file_or_an_include_write_is_denied(command, rule):
+    v = d.deny(command, "", ENV)
+    assert (v.kind, v.rule) == ("deny", rule)
 
 
 @pytest.mark.parametrize(("command", "rule"), GIT_FILE_WRITE_DENY)

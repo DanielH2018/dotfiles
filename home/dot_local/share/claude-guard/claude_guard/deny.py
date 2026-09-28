@@ -711,10 +711,13 @@ def docker_inspect(sc: Scan, target: str) -> Verdict | None:
 # `.git/modules/<name>/`, a bare `<name>.git/config`, any `.git/hooks*/` directory (this
 # repo's gate runs from `.git/hooks-safe/`), `~/.gitconfig`, everything under
 # `~/.config/git/` (the XDG config and `local.config`, which `~/.gitconfig` includes), a
-# `$XDG_CONFIG_HOME/git/config`, and `/etc/gitconfig`. Out of reach as text: a bare repo
-# whose directory lacks the `.git` suffix, a GIT_DIR/GIT_CONFIG_GLOBAL pointing elsewhere, and
-# an `include.path` target outside `~/.config/git/`. Not listed, because neither can make a
-# push force or skip a hook: `.gitmodules` (git refuses a `!command` update from it) and
+# `$XDG_CONFIG_HOME/git/config`, and `/etc/gitconfig`. A push that swaps in another config
+# file (GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, HOME, XDG_CONFIG_HOME) or an include is denied
+# by `push-config`, and a persistent include by `push-config-write`. Out of reach as text: the
+# config of a bare repo whose directory lacks the `.git` suffix, and the contents of an
+# `include.path` target outside `~/.config/git/` set before this rule. Not listed, because
+# neither can make a push force or skip a hook: `.gitmodules` (git refuses a `!command`
+# update from it) and
 # `.gitattributes`/`.git/info/` (an attribute only selects a driver that config defines).
 _GIT_END = r"([^[:alnum:]_.-]|$)"
 GIT_CONFIG_PATHS = (
@@ -739,7 +742,7 @@ BDB_INPLACE = (
 # host's transcripts read six `tee f.py >/dev/null <<'EOF'` scripts as writing a path their
 # body mentions.
 _REDIRECT_OR_TEE = (
-    r"(>>?|(^|[^[:alnum:]_-])tee([[:space:]]+[^[:space:];&|<>]+){0,3}[[:space:]]+)"
+    r"(>[>|]?|(^|[^[:alnum:]_-])tee([[:space:]]+[^[:space:];&|<>]+){0,3}[[:space:]]+)"
     r"[[:space:]]*[^[:space:];&|]*"
 )
 # cp/mv/install/ln/rsync ONTO a git config or hook file (#711): the destination is the last
@@ -756,6 +759,10 @@ _COPY_ONTO = (
     rf"{_COPY_CMD}[^;&|]*[[:space:]][^[:space:];&|]*{GIT_CONFIG_PATHS}[^[:space:];&|]*"
     r"([[:space:]]+[0-9]*[<>][^[:space:];&|]*)*[[:space:]]*$"
 )
+# Removing, moving away or de-executing a hook or config file skips the gate as surely as
+# overwriting it: git, and this repo's hooks-safe shim, run nothing when the hook is missing
+# or not executable, and moving .git/config away drops core.hooksPath (#711).
+_GIT_FILE_UNSET = rf"{_COPY_AT}(rm|unlink|chmod|chattr|mv)[[:space:]][^;&|]*{GIT_CONFIG_PATHS}"
 _COPY_INTO_DIR = (
     rf"{_COPY_CMD}[^;&|]*[[:space:]](-t[[:space:]]*|--target-directory[=[:space:]]+)"
     rf"[^[:space:];&|]*{GIT_CONFIG_PATHS}"
@@ -773,6 +780,14 @@ def write_targets(sc: Scan, target: str) -> Verdict | None:
             "Blocked: writing to a secrets, shell-startup, or git config/hook file. Ask the "
             "user to do this manually; an ordinary git setting goes through "
             "`git config <key> <value>`.",
+        )
+    if bdb_re(sc.segset, _GIT_FILE_UNSET):
+        return Verdict(
+            "deny",
+            "git-file-unset",
+            "Blocked: removing, moving or changing the mode of a git config or hook file can "
+            "make a later push skip the pre-push gate or lose `core.hooksPath`. Ask the user "
+            "to do this manually.",
         )
     return None
 
@@ -899,13 +914,25 @@ _PUSH_CONFIG_TEXT = (
     r"|GIT_CONFIG_VALUE_[0-9]+=\s*\+"
     r"|GIT_CONFIG_KEY_[0-9]+=remote\.[^\s=]+\.mirror"
     r"|GIT_CONFIG_PARAMETERS=.*remote\.[^\s=]+\.(push|mirror)"
+    r"|\s-c\s+include(if\.[^\s=]+)?\.path="
+    r"|--config-env[\s=]+include(if\.[^\s=]+)?\.path="
+    r"|GIT_CONFIG_KEY_[0-9]+=include(if\.[^\s=]+)?\.path"
+    r"|GIT_CONFIG_PARAMETERS=.*include(if\.[^\s=]+)?\.path"
 )
+# A config FILE swapped in for the push (#711): git reads its global config from
+# GIT_CONFIG_GLOBAL, $HOME/.gitconfig or $XDG_CONFIG_HOME/git/config, and its system config
+# from GIT_CONFIG_SYSTEM, so any of these set in the push's command points git at a file no
+# write rule has seen. Read from the whole command, since `export X=…; git push` sets it too.
+_CONFIG_FILE_ENV = r"(^|[\s;&|(`])(GIT_CONFIG_GLOBAL|GIT_CONFIG_SYSTEM|XDG_CONFIG_HOME|HOME)="
 _HIDDEN_ALIAS_TEXT = r"git\s[^;&|]*--config-env[\s=]+alias\."
 _NO_VERIFY_TEXT = r"(\s--no-veri(f|fy)?([ ]|=|$)|core\.hookspath)"
 
 
 def _config_forces(key: str, value: str | None) -> bool:
-    """Does one inline config entry make a plain push force, mirror, or land on main?"""
+    """Does one inline config entry make a plain push force, mirror, or land on main? An
+    include counts (#711): it pulls in a file whose contents no rule has read."""
+    if key == "include.path" or (key.startswith("includeif.") and key.endswith(".path")):
+        return True
     if not key.startswith("remote."):
         return False
     if key.endswith(".mirror"):
@@ -934,13 +961,16 @@ def push_config(sc: Scan, target: str) -> Verdict | None:
         bdb_re(line, GIT_PUSH_AT) and bdb_rei(line, _PUSH_CONFIG_TEXT)
         for line in sc.segset.split("\n")
     )
+    hit = hit or (bdb_re(sc.segset, GIT_PUSH_AT) and bdb_re(sc.scan, _CONFIG_FILE_ENV))
     if hit:
         return Verdict(
             "deny",
             "push-config",
-            "Blocked: this push takes a remote refspec, mirror setting or alias from inline "
-            "config (`-c`, `--config-env`, `GIT_CONFIG_*`) that force-pushes, pushes to "
-            "main/master, or hides what runs. Push with explicit arguments: "
+            "Blocked: this push takes a remote refspec, mirror setting, alias or include "
+            "from inline config (`-c`, `--config-env`, `GIT_CONFIG_*`), or a config file "
+            "swapped in through GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, HOME or "
+            "XDG_CONFIG_HOME, that can force-push, push to main/master, or hide what runs. "
+            "Push with explicit arguments: "
             "`git push --force-with-lease <remote> <branch>`.",
         )
     return None
@@ -996,6 +1026,7 @@ _CONFIG_WRITE_TEXT = (
     r"|remote\.[^\s=]+\.push\s+[^\s]*:(refs/heads/)?(main|master)(\s|$)"
     r"|remote\.[^\s=]+\.mirror\s+(true|yes|on|1)(\s|$)"
     r"|core\.hookspath\s"
+    r"|include(if\.[^\s]+)?\.path\s"
     r"|alias\.[^\s]+\s+!?[^;&|]*\b(push|send-pack|http-push)\b[^;&|]*"
     r"(\s-[vqdnu46]*f|--force(\s|$)|--mirror|\s\+|--no-veri))"
     rf"|git{GLOBALS_RE}\s+remote\s+add\b[^;&|]*\s--mirror(=push)?(\s|$)"
@@ -1030,8 +1061,9 @@ def config_write(sc: Scan, target: str) -> Verdict | None:
             "push-config-write",
             "Blocked: this config write makes a later plain `git push` force, mirror, push to "
             "main/master or skip the pre-push hook (a `+` or main refspec, "
-            "`remote.<name>.mirror`, `remote add --mirror`, `core.hooksPath`, or an alias "
-            "that force-pushes). Pass those choices on the push itself, where they are seen.",
+            "`remote.<name>.mirror`, `remote add --mirror`, `core.hooksPath`, an include, "
+            "or an alias that force-pushes). Pass those choices on the push itself, where "
+            "they are seen.",
         )
     return None
 
