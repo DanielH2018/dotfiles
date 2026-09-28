@@ -44,6 +44,12 @@ test('no flag can redirect where it connects or what it writes', () => {
   }
 });
 
+// Stays a source check: proving --only's choices are DERIVED from HOSTS (rather than a
+// separately hardcoded list that happens to also reject 'somewhere-else', which is all
+// 'an unknown flag is refused' below can show) means reading the wiring. Proving the two
+// live entries actually resolve to daniel-box/daniel-server would need `--only box` and
+// `--only server` to really ssh out, which is exactly what the live-only sweep test below
+// is gated on not doing by default.
 test('destinations are a closed enum of literals', () => {
   const block = SRC.slice(SRC.indexOf('HOSTS = {'), SRC.indexOf('}', SRC.indexOf('HOSTS = {')) + 1);
   assert.match(block, /"local": None/);
@@ -97,15 +103,63 @@ test('a burst of sweeps reuses one connection per machine', () => {
   assert.match(SRC, /"ControlPersist=\d+"/, 'the master must outlive a single run to help across runs');
 });
 
-test('a single transient is retried before a machine is called unreachable', () => {
-  // The ssh path crosses a WireGuard tunnel that rekeys and a UFW rate limiter
-  // that rejects bursts; both recover in seconds. Treating the first refusal as
-  // an outage is what raises a desktop notification about a healthy machine.
-  assert.match(SRC, /def probe_once\(dest, mode, timeout\)/);
-  assert.match(SRC, /time\.sleep\(RETRY_PAUSE\)/);
-  assert.match(SRC, /return probe_once\(dest, mode, timeout\)/);
-  // A local probe cannot fail this way, so it must not pay for the retry.
-  assert.match(SRC, /if dest is None or "error" not in result/);
+// Real behaviour, not a source read: imports the module (same technique as "a machine does
+// not ssh to itself" below), stubs subprocess.run and time.sleep, and drives probe() through
+// both branches. The ssh path crosses a WireGuard tunnel that rekeys and a UFW rate limiter
+// that rejects bursts; both recover in seconds, and treating the first refusal as an outage
+// is what raises a desktop notification about a healthy machine.
+test('a single transient is retried before a machine is called unreachable', { skip }, () => {
+  const out = execFileSync(python, ['-c', `
+import importlib.util
+from importlib.machinery import SourceFileLoader
+loader = SourceFileLoader("sweep", ${JSON.stringify(SWEEP)})
+spec = importlib.util.spec_from_loader("sweep", loader)
+m = importlib.util.module_from_spec(spec)
+loader.exec_module(m)
+
+class FakeResult:
+    def __init__(self, returncode, stdout="", stderr=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+calls = []
+sleeps = []
+m.time.sleep = lambda s: sleeps.append(s)
+
+# 1. An ssh destination whose first attempt is refused must be retried once, and the
+#    retry's success must be what probe() returns.
+def flaky_then_ok(argv, **kw):
+    calls.append(argv)
+    if len(calls) == 1:
+        return FakeResult(255, stderr="ssh: connect refused")
+    return FakeResult(0, stdout="{}")
+m.subprocess.run = flaky_then_ok
+r1 = m.probe("daniel-box", "fast", 5)
+print(len(calls), len(sleeps), "error" in r1)
+
+# 2. The local probe (dest=None) must NOT be retried even when it errors -- it has no
+#    transient ssh hop to recover from, so a retry would only double the cost of a real
+#    local failure.
+calls.clear()
+sleeps.clear()
+def always_fails(argv, **kw):
+    calls.append(argv)
+    return FakeResult(1, stderr="boom")
+m.subprocess.run = always_fails
+r2 = m.probe(None, "fast", 5)
+print(len(calls), len(sleeps), "error" in r2)
+`], { encoding: 'utf8' });
+  const [remote, local] = out.trim().split('\n');
+  const [remoteCalls, remoteSleeps, remoteHadError] = remote.split(' ');
+  assert.strictEqual(remoteCalls, '2', 'a refused ssh connection must be retried exactly once');
+  assert.strictEqual(remoteSleeps, '1', 'the retry must pause between attempts');
+  assert.strictEqual(remoteHadError, 'False', "the retry's success must be what probe() returns");
+
+  const [localCalls, localSleeps, localHadError] = local.split(' ');
+  assert.strictEqual(localCalls, '1', 'the local probe must not be retried');
+  assert.strictEqual(localSleeps, '0', 'the local probe must not pay the retry pause');
+  assert.strictEqual(localHadError, 'True', 'a real local failure must still be reported as an error');
 });
 
 test('silent-session detection is skipped when Loki is unreachable', () => {

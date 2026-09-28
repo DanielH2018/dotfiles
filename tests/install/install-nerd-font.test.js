@@ -23,6 +23,9 @@ test('script is gated to Windows', { skip }, () => {
 });
 
 // 2. The Windows branch still carries the install + VS Code wiring (the guard didn't swallow it).
+//    Stays a source read: there is no PowerShell interpreter here to actually run this branch
+//    against (chezmoi_available/skip above only gates the render, not execution), so unlike the
+//    Linux counterpart below, nothing behavioural can reach it.
 test('Windows branch carries the install + VS Code wiring', { skip }, () => {
   assert.match(body, /if eq \.chezmoi\.os "windows"/);
   assert.match(body, /IosevkaTerm Nerd Font Mono/);
@@ -37,18 +40,24 @@ test('Windows branch carries the install + VS Code wiring', { skip }, () => {
 const LINUX_SRC = srcPath('.chezmoiscripts', 'os-linux', 'run_onchange_install-nerd-font.sh.tmpl');
 const linuxBody = fs.readFileSync(LINUX_SRC, 'utf8');
 
+// Renders the REAL script (not the extracted is-desktop-linux template in isolation), so this
+// proves the wiring the script actually gets, not just that the shared gate template itself
+// would say the right thing in a vacuum. `profile` and `source` are exactly the render.js knobs
+// documented for this: pin the profile a real desktop-only script would otherwise inherit from
+// the host running the test, so the same assertion holds on a workstation, a server and CI alike.
 test('Linux script is gated to a non-WSL workstation', { skip }, () => {
-  // The linux/workstation/non-WSL checks themselves now live in the shared is-desktop-linux
-  // template (home/.chezmoitemplates/is-desktop-linux), reused by every desktop-only script.
-  assert.match(linuxBody, /includeTemplate "is-desktop-linux"/,
-    "WSL's terminal uses the font installed on the Windows host");
-  const gate = fs.readFileSync(srcPath('.chezmoitemplates', 'is-desktop-linux'), 'utf8');
-  assert.match(gate, /eq \.chezmoi\.os "linux"/);
-  assert.match(gate, /eq \.profile "workstation"/, 'a headless server renders no fonts');
-  if (process.platform !== 'linux') {
-    const rendered = renderTemplate(linuxBody, { source: srcPath() });
-    assert.strictEqual(rendered.trim(), '', 'script must render empty off Linux');
+  const workstation = renderTemplate(linuxBody, { source: srcPath(), profile: 'workstation' });
+  assert.notStrictEqual(workstation.trim(), '', 'a workstation profile must render the installer');
+  for (const profile of ['server', 'minimal']) {
+    const rendered = renderTemplate(linuxBody, { source: srcPath(), profile });
+    assert.strictEqual(rendered.trim(), '', `a ${profile} profile must render no fonts`);
   }
+  // The WSL half of the gate is not covered above: is-wsl reads the live kernel release
+  // (os.release()/.chezmoi.kernel.osrelease), which render.js's profile/data overrides do not
+  // reach, so spoofing "this machine is WSL" would need a fake chezmoi config this suite does
+  // not otherwise carry. WSL's terminal uses the font installed on the Windows host, which is
+  // the property this line still pins by name.
+  assert.match(linuxBody, /includeTemplate "is-desktop-linux"/);
 });
 
 test('Linux script installs per-user and rebuilds the font cache', { skip }, () => {
@@ -56,8 +65,12 @@ test('Linux script installs per-user and rebuilds the font cache', { skip }, () 
   assert.match(linuxBody, /fc-cache/, 'fontconfig will not see the font until the cache is rebuilt');
   assert.match(linuxBody, /Mono\*\.ttf/,
     'only the Mono faces — the proportional faces would win font matching and break cell alignment');
-  // Reuses the shared module rather than re-implementing tag tracking, so a re-apply upgrades the
-  // font in place instead of skipping it forever once the directory exists.
+  // The four checks below stay source reads rather than a real run: proving them behaviourally
+  // means actually fetching and unpacking a nerd-fonts release (or standing up a fixture archive
+  // and a stub curl/unzip for it, the way linux-install-lib.test.js does for a single binary),
+  // which is a bigger lift than this cleanup covers. Reuses the shared module rather than
+  // re-implementing tag tracking, so a re-apply upgrades the font in place instead of skipping
+  // it forever once the directory exists.
   assert.match(linuxBody, /includeTemplate "linux-install\.sh"/);
   assert.match(linuxBody, /recorded_tag iosevkaterm-font/);
   // The tag is the pin from tools.toml, taken through pinned_tag. It used to follow the
