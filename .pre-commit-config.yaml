@@ -12,8 +12,11 @@ repos:
   # commit, which is the one moment a secret is not yet a leak. It also works offline, and it
   # covers the direct push that never opens a PR.
   #
-  # GitHub's own push protection would be the third layer and is NOT available: it is a
-  # public-repo / GHAS feature and this repo is private.
+  # GitHub's own push protection is a third layer, and it is available: this repo has been
+  # public since 2026-09-23, and push protection is a public-repo GHAS feature. It is
+  # enabled from the GitHub UI (Settings → Code security and analysis), not from this
+  # file. gitleaks stays as the local, pre-push layer either way — it runs before the
+  # commit exists at all, which push protection, a push-time check, cannot reach.
   #
   # A remote repo hook rather than `language: system` like shellcheck and oxlint below,
   # for the opposite reason to theirs: those two need a host binary because their upstream
