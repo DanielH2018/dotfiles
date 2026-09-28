@@ -145,3 +145,4 @@
 .claude/hooks/tq-wrap-tests.sh
 .claude/skills/handoff
 .claude/docs/orchestration.md
+.claude/scripts/check-runner.mjs
