@@ -1,0 +1,32 @@
+{{- if eq .chezmoi.os "windows" -}}
+# Managed by chezmoi (run_onchange). Clears stale copies of files that home/.chezmoiignore now
+# excludes on Windows but did not exclude before: the darwin-only helpers (mac-askpass,
+# logi-dev-mgr-kick) and the hooks/test_*.py suites, which deploy to ~/.claude/hooks where
+# none of them can run — each finds its subject by the source tree's executable_-prefixed
+# name, which chezmoi strips before deploying. `.chezmoiremove` cannot do this: a target BOTH
+# ignored and listed there is a silent no-op, verified against a scratch --destination before
+# this script was written. See the matching os-linux and os-darwin scripts for the other two
+# platforms' share of the same cleanup.
+#
+# Idempotent: every removal is skip-if-absent, and prints only what it actually took.
+$targets = @(
+    '.local\bin\mac-askpass'
+    '.local\bin\logi-dev-mgr-kick'
+    '.claude\hooks\test_bash_write_fanout.py'
+    '.claude\hooks\test_isolation_guard.py'
+    '.claude\hooks\test_memory_upkeep.py'
+    '.claude\hooks\test_prune_worktrees.py'
+    '.claude\hooks\test_skill_usage_log.py'
+    '.claude\hooks\test_skill_usage_table.py'
+    '.claude\hooks\test_stop_checks.py'
+    '.claude\hooks\test_worktree_landed.py'
+    '.claude\hooks\_testkit.py'
+)
+foreach ($rel in $targets) {
+    $path = Join-Path $HOME $rel
+    if (Test-Path -LiteralPath $path) {
+        Remove-Item -LiteralPath $path -Force
+        Write-Host "cleanup-host-gated-files: removed $rel"
+    }
+}
+{{- end -}}

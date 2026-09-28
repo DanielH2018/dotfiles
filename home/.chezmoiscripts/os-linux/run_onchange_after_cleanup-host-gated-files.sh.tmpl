@@ -1,0 +1,114 @@
+{{ if eq .chezmoi.os "linux" -}}
+#!/bin/sh
+# Managed by chezmoi (run_onchange). Clears stale copies of files that home/.chezmoiignore now
+# excludes on this host but did not exclude before — desktop-only utilities, the Docker sandbox
+# tool, and the Linux Warp config on a server, the darwin-only helpers on Linux, and the
+# hooks/test_*.py suites everywhere. `.chezmoiremove` cannot do this: a target BOTH ignored and
+# listed there is a silent no-op, verified against a scratch --destination before this script
+# was written (see home/.chezmoiremove's note on the same change). This is that removal, done
+# live instead, the same way #688 fixed the dangling-unit hazard with a live `systemctl
+# disable` rather than a `.chezmoiremove` entry — no systemd unit file is named below, per that
+# rule: wallpaperengine.service stays ignore-only.
+#
+# Idempotent: every removal is skip-if-absent, and prints only what it actually took. Re-runs
+# (and re-checks every path) whenever this script's own content changes, which is what makes
+# adding a target here retroactive on every host that already applied an older version.
+set -eu
+TAG=cleanup-host-gated-files
+
+rm_file() { # $1=path relative to $HOME
+  f="$HOME/$1"
+  if [ -e "$f" ] || [ -L "$f" ]; then
+    rm -f "$f"
+    echo "$TAG: removed $1"
+  fi
+}
+
+# Only ever called on a directory chezmoi itself deployed as a managed target below —
+# never on a path this script does not also gate, and never on a bare parent chezmoi merely
+# created to hold one (see home/.chezmoiignore's own note on .config/systemd for that
+# distinction).
+rm_dir() { # $1=path relative to $HOME
+  d="$HOME/$1"
+  if [ -d "$d" ]; then
+    rm -rf "$d"
+    echo "$TAG: removed $1/"
+  fi
+}
+
+{{ if not (includeTemplate "is-desktop-linux" .) -}}
+# Desktop-only utilities and config directories (home/.chezmoiignore's is-desktop-linux
+# block). This host is Linux but not the desktop, so none of them has anything to read from
+# or drive here.
+for f in \
+  .local/bin/audio-sink-toggle \
+  .local/bin/bt-hid-kick \
+  .local/bin/clip2server \
+  .local/bin/desk-away \
+  .local/bin/discord \
+  .local/bin/flatpak-update \
+  .local/bin/login-window-layout \
+  .local/bin/mic-mute-toggle \
+  .local/bin/mullvad-settings-watch \
+  .local/bin/mx-ergo-pointer \
+  .local/bin/mx-ergo-resync \
+  .local/bin/mx-ergo-solaar \
+  .local/bin/mx-ergo-watch \
+  .local/bin/steam \
+  .local/bin/streamcontroller-health \
+  .local/bin/streamdeck-usb-reset \
+  .config/powerdevilrc \
+  .config/warp-terminal/settings.toml \
+  .config/warp-terminal/keybindings.yaml \
+; do
+  rm_file "$f"
+done
+for d in \
+  .config/solaar \
+  .config/wireplumber \
+  .config/wallpaperengine \
+  .local/share/applications \
+  .local/share/kwin \
+  .local/share/sounds \
+; do
+  rm_dir "$d"
+done
+# The directory itself, only once it holds nothing else — Warp's own theme/tab-config
+# symlinks under here are macOS-only, so on Linux this is empty as soon as the two files
+# above are gone, and rmdir refuses (silently, by design) to take anything that is not.
+rmdir "$HOME/.config/warp-terminal" 2>/dev/null || true
+{{ end -}}
+
+{{ if eq .profile "server" -}}
+# The Docker sandbox tool (home/.chezmoiignore's `.profile == "server"` block). Neither
+# daniel-box nor daniel-server has run Docker since the k3s migration completed 2026-08-14.
+rm_file .local/bin/claude-sandbox
+rm_dir .claude/sandbox
+{{ end -}}
+
+# The darwin-only helpers (home/.chezmoiignore's `ne .chezmoi.os "darwin"` block). Always
+# true here, since this script only runs on Linux.
+rm_file .local/bin/mac-askpass
+rm_file .local/bin/logi-dev-mgr-kick
+
+# The hooks/test_*.py suites (home/.chezmoiignore, unconditional): each finds its subject by
+# the source tree's executable_-prefixed name, which chezmoi strips before deploying, so none
+# of them can run from ~/.claude/hooks. tests/python-suites.test.js already runs every one
+# from the repo. Every host needs this section — see the matching os-windows and os-darwin
+# scripts for the other two.
+for f in \
+  .claude/hooks/test_bash_write_fanout.py \
+  .claude/hooks/test_isolation_guard.py \
+  .claude/hooks/test_memory_upkeep.py \
+  .claude/hooks/test_prune_worktrees.py \
+  .claude/hooks/test_skill_usage_log.py \
+  .claude/hooks/test_skill_usage_table.py \
+  .claude/hooks/test_stop_checks.py \
+  .claude/hooks/test_worktree_landed.py \
+  .claude/hooks/_testkit.py \
+; do
+  rm_file "$f"
+done
+
+echo "$TAG: done."
+{{ end -}}

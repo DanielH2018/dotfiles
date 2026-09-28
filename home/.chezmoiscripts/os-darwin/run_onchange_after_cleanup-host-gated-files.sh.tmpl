@@ -1,0 +1,33 @@
+{{ if eq .chezmoi.os "darwin" -}}
+#!/bin/sh
+# Managed by chezmoi (run_onchange). Clears stale copies of the hooks/test_*.py suites, which
+# deploy to ~/.claude/hooks where none of them can run — each finds its subject by the source
+# tree's executable_-prefixed name, which chezmoi strips before deploying. `.chezmoiremove`
+# cannot do this: a target BOTH ignored (home/.chezmoiignore) and listed there is a silent
+# no-op, verified against a scratch --destination before this script was written. See the
+# matching os-linux and os-windows scripts for the other two platforms' share of the same
+# cleanup — the desktop-only, sandbox and Warp cleanups there have no darwin counterpart:
+# darwin was never in their target host set.
+#
+# Idempotent: every removal is skip-if-absent, and prints only what it actually took.
+set -eu
+TAG=cleanup-host-gated-files
+for f in \
+  .claude/hooks/test_bash_write_fanout.py \
+  .claude/hooks/test_isolation_guard.py \
+  .claude/hooks/test_memory_upkeep.py \
+  .claude/hooks/test_prune_worktrees.py \
+  .claude/hooks/test_skill_usage_log.py \
+  .claude/hooks/test_skill_usage_table.py \
+  .claude/hooks/test_stop_checks.py \
+  .claude/hooks/test_worktree_landed.py \
+  .claude/hooks/_testkit.py \
+; do
+  p="$HOME/$f"
+  if [ -e "$p" ] || [ -L "$p" ]; then
+    rm -f "$p"
+    echo "$TAG: removed $f"
+  fi
+done
+echo "$TAG: done."
+{{- end -}}

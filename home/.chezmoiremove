@@ -130,64 +130,11 @@
 .local/bin/tools-inventory
 .local/share/tools-inventory
 
-# Deploy desktop, macOS and sandbox files only to the machines that use them. These paths
-# deployed to daniel-box and daniel-server only because nothing had gated them by profile or
-# host before; the matching home/.chezmoiignore blocks landed in the same change. NOTE:
-# verified against a scratch --destination that a target BOTH ignored and listed here is a
-# silent no-op — chezmoi drops an ignored path from the removal set as well as from the deploy
-# set, so none of these four blocks actually clears the stale copy on an already-applied host.
-# They stay because a later `chezmoi forget`/state change could make them take effect, and
-# because they document the intent; today, clearing daniel-box and daniel-server needs a manual
-# `rm -rf` of each path below, under $HOME. No systemd unit file appears in any of these four
-# blocks — see the dangling-unit rule in this repo's CLAUDE.md.
-{{ if and (eq .chezmoi.os "linux") (not (includeTemplate "is-desktop-linux" .)) }}
-.local/bin/audio-sink-toggle
-.local/bin/bt-hid-kick
-.local/bin/clip2server
-.local/bin/desk-away
-.local/bin/discord
-.local/bin/flatpak-update
-.local/bin/login-window-layout
-.local/bin/mic-mute-toggle
-.local/bin/mullvad-settings-watch
-.local/bin/mx-ergo-pointer
-.local/bin/mx-ergo-resync
-.local/bin/mx-ergo-solaar
-.local/bin/mx-ergo-watch
-.local/bin/steam
-.local/bin/streamcontroller-health
-.local/bin/streamdeck-usb-reset
-.config/powerdevilrc
-.config/solaar
-.config/wireplumber
-.config/wallpaperengine
-.local/share/applications
-.local/share/kwin
-.local/share/sounds
-{{ end }}
-
-{{ if eq .profile "server" }}
-.local/bin/claude-sandbox
-.claude/sandbox
-{{ end }}
-
-{{ if ne .chezmoi.os "darwin" }}
-.local/bin/mac-askpass
-.local/bin/logi-dev-mgr-kick
-{{ end }}
-
-{{ if and (eq .chezmoi.os "linux") (not (includeTemplate "is-desktop-linux" .)) }}
-.config/warp-terminal
-{{ end }}
-
-# The 8 hooks/test_*.py files and _testkit.py: never host-conditional, so no template guard —
-# they stop deploying everywhere, and this clears every host's already-deployed copy.
-.claude/hooks/test_bash_write_fanout.py
-.claude/hooks/test_isolation_guard.py
-.claude/hooks/test_memory_upkeep.py
-.claude/hooks/test_prune_worktrees.py
-.claude/hooks/test_skill_usage_log.py
-.claude/hooks/test_skill_usage_table.py
-.claude/hooks/test_stop_checks.py
-.claude/hooks/test_worktree_landed.py
-.claude/hooks/_testkit.py
+# Deploy desktop, macOS and sandbox files only to the machines that use them: no
+# `.chezmoiremove` entries here. Verified against a scratch --destination that a target BOTH
+# ignored (home/.chezmoiignore) and listed here is a silent no-op — chezmoi drops an ignored
+# path from the removal set as well as from the deploy set, so an entry here would read as if
+# it worked and would not. The cleanup instead runs live, in
+# .chezmoiscripts/{os-linux,os-windows,os-darwin}/run_onchange_after_cleanup-host-gated-files.*,
+# the same way a systemd unit's dangling-unit cleanup does (#688) — this is that mechanism
+# applied to plain files and directories instead of units.
