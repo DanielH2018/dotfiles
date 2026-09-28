@@ -48,18 +48,26 @@ function hash(s) {
 // the "alerts" that prompted this were the test fixtures all along, landing on the
 // desktop as if a machine were down. The stub therefore shadows notify-send for
 // EVERY run, not only the tests that assert on notifications.
+//
+// The same bin also shadows logger, for the same reason. The script writes a
+// status=up or status=down line to syslog on every run, and on daniel-box syslog
+// reaches Loki, where `probe.py alerts` reads status=down lines. Unstubbed, each
+// suite run put about 20 fixture findings there, indistinguishable from real ones.
 function notifyStub() {
   const bin = scratch(DIR, 'bin-');
-  const log = path.join(bin, 'calls');
-  fs.writeFileSync(path.join(bin, 'notify-send'), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >>${log}\n`);
-  fs.chmodSync(path.join(bin, 'notify-send'), 0o755);
+  const record = (name, log) => {
+    fs.writeFileSync(path.join(bin, name), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >>${log}\n`);
+    fs.chmodSync(path.join(bin, name), 0o755);
+    return () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : []);
+  };
   return {
     bin,
-    calls: () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : []),
+    calls: record('notify-send', path.join(bin, 'calls')),
+    logged: record('logger', path.join(bin, 'logged')),
   };
 }
 
-// Shadows notify-send for every run that does not bring its own stub.
+// Shadows notify-send and logger for every run that does not bring its own stub.
 const SILENT = notifyStub();
 
 function run(payload, extra = {}) {
@@ -264,6 +272,16 @@ test('a finding raised by any test is intercepted, never drawn', { skip }, () =>
   const before = SILENT.calls().length;
   assert.strictEqual(run(LOKI_DOWN).code, 1);
   assert.strictEqual(SILENT.calls().length, before + 1, 'the banner must land in the stub, not on the desktop');
+});
+
+test('a finding raised by any test is logged to the stub, never to syslog', { skip }, () => {
+  // Same guard for the syslog channel. Fixture findings that reach the real logger
+  // arrive in Loki as status=down lines and read as a machine actually being down.
+  const before = SILENT.logged().length;
+  assert.strictEqual(run(LOKI_DOWN).code, 1);
+  const lines = SILENT.logged().slice(before);
+  assert.strictEqual(lines.length, 1, 'the status line must land in the stub, not in syslog');
+  assert.match(lines[0], /^-t otel-sweep-watch status=down /);
 });
 
 // --- store grouping -------------------------------------------------------
