@@ -208,8 +208,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_session-context.sh",
-      "hash": "e463eda69d522394c4640b71024d2d5de85cf8d1f55efd7984f6f0b086fbe28f",
-      "landed": "2026-09-24T21:24:03.602Z"
+      "hash": "dc5115bbbd84fce54db85f39dc0ba354b97aa72f450507a4c5f2a075bca2f3c2",
+      "landed": "2026-09-28T15:54:18.180Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_session-end.sh",
@@ -223,8 +223,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_stop-checks.py",
-      "hash": "5fd367efe55c468d1b4d8d148920074f6a7b914e92939b6f168c3c6b3c7c8277",
-      "landed": "2026-09-24T20:40:06.087Z"
+      "hash": "8527b3e4c15f434bfa140b16aa4e41cc72f1b0bf8cdc5e940b902e50b9cc75df",
+      "landed": "2026-09-28T15:54:18.180Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_stop-failure.sh",
@@ -323,8 +323,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_stop_checks.py",
-      "hash": "d7c08d1881f8bd71b7ed7149520fb45eafc2ee7f072ec9ee6680d89ad5bbeedf",
-      "landed": "2026-09-24T20:40:06.087Z"
+      "hash": "47a7c6a482eec826ce341534be34a5f139eb64b2d925d59499aea9f12579efa7",
+      "landed": "2026-09-28T15:54:18.180Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_worktree_landed.py",

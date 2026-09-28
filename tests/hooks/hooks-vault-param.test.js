@@ -83,6 +83,14 @@ test('stop-checks.py git-state: protected-branch block, vault exemption, dead pa
   assert.doesNotMatch(r2.stdout, /"decision":\s*"block"/, 'vault repo is exempt');
   assert.strictEqual(r2.status, 0);
 
+  // The bash hook sourced local.env, so a `$HOME/...` value expanded. stop-checks.py
+  // reads the file instead of executing it, and must expand the prefix the same way.
+  const realHome = fs.realpathSync(home);
+  const rel = path.relative(realHome, top);
+  fs.writeFileSync(path.join(home, '.config', 'claude', 'local.env'), `CLAUDE_VAULT_DIR="$HOME/${fwd(rel)}"\n`);
+  const r3 = runHook(CHECK_STOP, { input: '{}', home: realHome, cwd: repo });
+  assert.doesNotMatch(r3.stdout, /"decision":\s*"block"/, 'a $HOME-relative vault path is exempt too');
+
   const src = fs.readFileSync(CHECK_STOP, 'utf8');
   assert.ok(!src.includes('.dotfiles'), 'retired ~/.dotfiles logic removed');
   assert.ok(!/My_Vault/.test(src), 'hardcoded My_Vault removed');

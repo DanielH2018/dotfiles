@@ -311,6 +311,7 @@ def _first_lines(text: str | None, n: int = 5) -> str:
 
 
 VAULT_LINE = re.compile(r"\s*(?:export\s+)?CLAUDE_VAULT_DIR=(.*)$")
+HOME_PREFIX = re.compile(r"^(?:~(?=/|$)|\$\{HOME\}|\$HOME(?![A-Za-z0-9_]))")
 
 
 def _vault_dir(env: dict) -> str:
@@ -333,8 +334,13 @@ def _vault_dir(env: dict) -> str:
         if not found:
             continue
         raw = found.group(1).strip()
-        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
+        quote = raw[:1] if len(raw) >= 2 and raw[0] == raw[-1] else ""
+        if quote in ("'", '"'):
             raw = raw[1:-1]
+        # The shell expanded a leading ~ or $HOME when it sourced the file (but not
+        # inside single quotes), and the toplevel it is compared with is absolute.
+        if quote != "'":
+            raw = HOME_PREFIX.sub(lambda _: home, raw, count=1)
         value = raw
     return value
 

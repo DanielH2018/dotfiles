@@ -9,6 +9,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { skipUnless } = require('./lib/probe');
 const { srcPath } = require('./lib/paths');
+const { scratch } = require('./lib/tmp');
 
 const SCRIPT = srcPath('private_dot_claude', 'executable_statusline-command.sh');
 
@@ -34,7 +35,7 @@ const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
 // SessionStart banner, which put it in the model's context. The statusline is where the
 // operator, who is the only one who can act on it, sees it until it is cleared.
 function leakFile(lines) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'statusline-leak-'));
+  const dir = scratch(os.tmpdir(), 'statusline-leak-');
   const f = path.join(dir, 'pending.tsv');
   fs.writeFileSync(f, lines.map((l) => l.join('\t')).join('\n') + '\n');
   return f;
