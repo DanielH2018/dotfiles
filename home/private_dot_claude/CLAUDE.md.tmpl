@@ -9,17 +9,13 @@ disk, not just my replies.
 #### Formatting rules for written output
 
 - No emojis unless I ask. Reference code as `file:line`.
-- Paths to things I'll open (specs, plans, HTML reports, sandbox artifacts) go as short clickable markdown links, never raw. Raw paths wrap in Ghostty and stop being clickable once they cross a line boundary. Which form depends on the surface: Ghostty wants `[label](file:///abs/path)`; the Claude desktop app rejects `file://` outright and resolves a bare path against the session's granted folders, so there it is a path relative to the working directory, or the `http://127.0.0.1` URL for anything under `~/.claude/artifacts` (which the app will never grant, being inside its own config tree).
+- Paths to things I'll open (specs, plans, HTML reports, sandbox artifacts) go as short clickable markdown links, never raw. A raw path wraps in a terminal session and stops being clickable once it crosses a line boundary. Which form depends on the surface: a terminal session takes `[label](file:///abs/path)`; the Claude desktop app rejects `file://` outright and resolves a bare path against the session's granted folders, so there it is a path relative to the working directory, or the `http://127.0.0.1` URL for anything under `~/.claude/artifacts` (which the app will never grant, being inside its own config tree).
 - Match written deliverables — specs, plans, reports, any Markdown you write to disk — to what the task needs. Cover the substance without padding it out.
 
 ### Sentence-level clarity
 
-Adapted from the writing rules of ASD-STE100, the controlled-English standard used for
-aerospace maintenance documentation. Its *rules* transfer to prose; its **approved-word
-dictionary does not** — nothing here can enforce a vocabulary allowlist, and its
-procedure-specific rules (the ban on `-ing` forms, the procedural/descriptive split) are
-written for assembly steps and make ordinary prose stilted. The six below are the part that
-carries over, and each is checkable by rereading what you wrote:
+The six rules below adapt ASD-STE100's writing rules, not its vocabulary list, and each is
+checkable by rereading what you wrote:
 
 - **One idea per sentence.** Two independent claims means two sentences. A four-line sentence carrying a fact, its evidence, and its caveat at once is the single biggest thing that makes a doc here hard to read.
 - **Claim first, qualification second.** Lead with what is true, then bound it. Don't make me hold three subordinate clauses before reaching the verb.
@@ -28,8 +24,7 @@ carries over, and each is checkable by rereading what you wrote:
 - **No noun stacks past three words.** "backup target arm state check" → "the check that reads whether the backup target is armed".
 - **At most one em-dash aside per paragraph.** A load-bearing fact parenthesised in an aside belongs in its own sentence.
 
-Four more, from the Google developer documentation style guide. They catch failures the six
-above do not, and each is likewise checkable by rereading:
+Four more, from the Google developer documentation style guide:
 
 - **Conditions and purpose before the instruction.** "To deploy the change, run `chezmoi apply ~/.claude/CLAUDE.md`", not "Run `chezmoi apply ~/.claude/CLAUDE.md` to deploy the change". Leading with the goal lets me skip a step that doesn't apply to me before I've read the command.
 - **Nothing dates the prose.** Cut *currently*, *now*, *new*, *soon*, *latest*, *existing*, *as of this writing*. "The hook matches `auto|manual`" stays true longer than "the hook currently matches `auto|manual`". Memory files and skill docs get read months later. Use an absolute date when the timing is itself the fact.
@@ -49,7 +44,7 @@ to memory files and status lines as much as to docs.
 
 ## Config & dotfiles management (chezmoi)
 
-My dotfiles and Claude config are managed across **two repos** — edit the *source*, never the deployed copy under `~`. `chezmoi-edit-guard.sh` (PreToolUse) denies an Edit or Write to a deployed file whose source is a `.tmpl`/`modify_`/`run_`, and names that source. `chezmoi-guard.sh` (PostToolUse) auto-resyncs the source after an edit to a plain managed file. Run `chezmoi source-path <file>` before editing any config under `~`.
+My dotfiles and Claude config are managed across **two repos** — edit the *source*, never the deployed copy under `~`. Run `chezmoi source-path <file>` before editing any config under `~`.
 
 - **Personal / general** → chezmoi, source `~/.local/share/chezmoi` (remote `DanielH2018/dotfiles`, `.chezmoiroot=home`). Owns most of `~/.claude` as **real files** under `home/private_dot_claude/`. `~/.claude/settings.json` is **generated** from `home/.chezmoitemplates/settings.base.json` — to change settings/permissions, edit that base template, then `chezmoi apply ~/.claude/settings.json`. A hook registers itself in the `# gen-hooks:` block at the top of its file and `bin/gen-hooks` renders the hooks block from those.
 - **Work-specific** → `~/work-laptop-config` (plain git, remote `DanielH2018/work-laptop-config`), a symlink farm installed by `install.sh`. Owns `CLAUDE.local.md`, `docs/{integrations,enforcement}.md`, work agents, and PCI/redaction hooks — these appear as **symlinks** in `~/.claude`.
@@ -58,9 +53,8 @@ My dotfiles and Claude config are managed across **two repos** — edit the *sou
 
 Isolate before editing, and treat a failure to isolate as a stop rather than a fallback.
 **Retry `EnterWorktree` once. If it fails again, make no edits — report the failure and
-stop.** `isolation-guard.sh` (PreToolUse) backstops this for a background job: it denies
-an Edit/Write landing in a git checkout outside `.claude/worktrees/`. It only fires once
-an edit is already attempted, so retrying `EnterWorktree` first is still on you.
+stop.** `isolation-guard.sh` backstops this for a background job, and only catches a
+missed isolation after an edit is already attempted, so retrying first is on you.
 
 This binds only where isolation was called for in the first place. Reading, searching and
 answering questions happen in place as usual, and a session already inside
@@ -69,7 +63,7 @@ answering questions happen in place as usual, and a session already inside
 ## Git conventions
 
 - Commits are signed{{ if eq .chezmoi.os "darwin" }} via the 1Password SSH agent (work laptop only){{ else }} via an OpenSSH signing key{{ end }} — `bin/check-push-signatures` (the pre-push gate) rejects anything that reaches origin unsigned, however it got that way; `--no-verify` itself is denied at the permission layer.
-- Default branch is `main`. Prefer rebase over merge. Create a new commit rather than amending unless I ask for an amend. The `claude_guard` PreToolUse hook (`guard-pre-tool-use.sh`) asks before `git commit --amend`, before a `git merge` without `--ff-only`, and before a `git pull` that can create a merge commit: one without `--ff-only` or `--rebase`, where git config sets neither `pull.ff=only` nor `pull.rebase`.
+- Default branch is `main`. Prefer rebase over merge. Create a new commit rather than amending unless I ask for an amend.
 - Write commit messages that explain *why*, not just what changed:
   ```
   Fix race condition in settlement processor on concurrent retries
@@ -97,21 +91,17 @@ Size them like the neighbouring test files: roughly one focused test per stated 
 the place the repo already keeps tests for that kind of change. Verify however you like while
 working, but a scratch script or a quick check is not a test — don't promote it into an extra
 permanent test file. This governs extras only: every behaviour the task asks for gets its test.
-(Anthropic's Fable 5.1 prompting guide measured this instruction cutting committed test sprawl
-with no change in task success.)
 
 The sweep that enforces that at the end of a change is the `test-scenario-hygiene` skill; it
 owns test content, where `pr-authoring` owns diff shape.
 
 Before you write a stub or a textual assertion, read that skill's *Anti-patterns* section: it lists five ways a test stays green while checking nothing.
 
-`stop-checks.py` blocks once per session when the session created a source file and edited no test file.
-
 ## Verification & self-checking
 
 Don't dispatch a review subagent on your own initiative to double-check work you already finished. User instructions take precedence over skills, and this is the instruction. Asked for a review, run one.
 
-**Evidence before claims.** Say tests pass, the linter is clean or a bug is fixed only when you ran that command in this session and read its output; otherwise say the status is unverified. `stop-checks.py` enforces the common case.
+**Evidence before claims.** Say tests pass, the linter is clean or a bug is fixed only when you ran that command in this session and read its output; otherwise say the status is unverified.
 
 ## Code review
 
@@ -127,7 +117,7 @@ Finishing the whole thing has two failure modes that look finished. **Reverse st
 
 - When you produce a document for me to read — an implementation plan, a spec, a findings or review write-up, an audit, a handoff meant for me rather than for a successor agent — also render it as an HTML artifact for readability, in addition to the written version, not instead of it. Load the `artifact-design` skill first. The trigger is "a document I'm going to sit down and read", not the narrower "a plan": writing only the Markdown is the most common way this gets missed.
 - Keep it **local by default**: write a self-contained HTML file to `~/.claude/artifacts/` and tell me the path. Publishing to claude.ai or calling the Artifact tool needs me to ask for it explicitly.
-- **The link is the last thing in your reply.** Written plan first, then the artifact, then the link as the closing line — otherwise I have to scroll back up past the plan to open it. `link-artifact.sh` emits the link to use; relay it verbatim rather than composing one. `stop-checks.py` blocks once when a reply carries an artifact link that is not on its last line.
+- **The link is the last thing in your reply.** Written plan first, then the artifact, then the link as the closing line — otherwise I have to scroll back up past the plan to open it. `link-artifact.sh` emits the link to use; relay it verbatim rather than composing one.
 - **In the Claude desktop app, also load that URL in the Browser pane.** Clicking the link only opens the external browser — the app has no in-app viewer for a clicked link, and its native preview covers `.pdf`/`.doc(x)`/`.ppt(x)`/`.xls(x)` but never `.html`. The Browser pane is the only surface that renders an artifact inside the app, and it takes `http://` but refuses `file://`. Open the pane *and* close with the link; the pane is the render, the link is what I keep.
 - Skip the artifact when the plan is trivial (a one-liner or single obvious step) or I've said not to.
 - **Docs change in the same PR as the code they describe.** A README, a docstring or a role's `CLAUDE.md` updated in a follow-up is a doc that stays wrong until someone notices. Generated pages are the exception — their generator is the thing to change.
@@ -135,7 +125,7 @@ Finishing the whole thing has two failure modes that look finished. **Reverse st
 
 ## Tool use & context discipline
 
-Long sessions die of a thousand medium tool calls, never one big one. Every extra turn also re-spends a turn's worth of reasoning, so the cheapest saving is a turn I never take. Prefer the one command that answers the question over three that circle it.
+A long session runs out of context from many medium tool calls, not from one big one. Every extra turn also re-spends a turn's worth of reasoning, so the cheapest saving is a turn I never take. Prefer the one command that answers the question over three that circle it.
 
 - `jsonq` is installed and allowlisted for JSON work that shell tools can't express, where `python3 -c` costs a prompt. It has no attribute access; `jsonq --functions` lists what it can call.
 
