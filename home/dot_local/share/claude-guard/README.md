@@ -102,8 +102,10 @@ to its segment set. For text the parser cannot read, such as `bash -c '…'`, it
 `GIT_PUSH_AT` regex built from the same option table. Two rules are new with it.
 `push_config` denies a push whose inline config (`-c`, `--config-env`, `GIT_CONFIG_*`) sets a
 `+` refspec, a refspec onto main/master, or `remote.<name>.mirror`. `push_no_verify` denies
-`--no-verify` or an inline `core.hooksPath` on a push. `--mirror` and `git send-pack` read as
-force pushes. `checks/git_conventions.py` reads git through the same module and denies a
+`--no-verify` or an inline `core.hooksPath` on a push. `config_write` denies the persistent
+form: a `git config` write of those keys, of an alias that force-pushes, or `git remote add
+--mirror`, each of which makes a later plain `git push` do what no flag on it shows.
+`--mirror` and `git send-pack` read as force pushes. `checks/git_conventions.py` reads git through the same module and denies a
 commit that skips its hooks. The rules
 read three subjects the bash builds: the normalised whole command, that plus one line per
 segment and substitution, and the segment lines alone for the pair rules. A parse refusal

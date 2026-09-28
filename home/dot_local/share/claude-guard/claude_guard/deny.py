@@ -42,10 +42,13 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from claude_guard.gitargv import (
+    GLOBALS_RE,
     PUSH_SUBCOMMANDS,
     Invocation,
     canonical_lines,
+    config_writes,
     invocations,
+    remote_add_mirrors_push,
     subcommand_at,
 )
 from claude_guard.segment import parse
@@ -929,6 +932,64 @@ def push_no_verify(sc: Scan, target: str) -> Verdict | None:
     return None
 
 
+_PUSH_RULES = frozenset(
+    {
+        "force-push-main",
+        "force-push-refspec",
+        "push-main",
+        "force-push-flag",
+        "push-config",
+        "push-no-verify",
+    }
+)
+
+# The same writes for text the parser cannot read.
+_CONFIG_WRITE_AT = rf"git{GLOBALS_RE}\s+config\b[^;&|]*\s"
+_CONFIG_WRITE_TEXT = (
+    rf"{_CONFIG_WRITE_AT}(remote\.[^\s=]+\.push\s+\+"
+    r"|remote\.[^\s=]+\.push\s+[^\s]*:(refs/heads/)?(main|master)(\s|$)"
+    r"|remote\.[^\s=]+\.mirror\s+(true|yes|on|1)(\s|$)"
+    r"|core\.hookspath\s"
+    r"|alias\.[^\s]+\s+!?[^;&|]*\b(push|send-pack|http-push)\b[^;&|]*"
+    r"(\s-[vqdnu46]*f|--force(\s|$)|--mirror|\s\+|--no-veri))"
+    rf"|git{GLOBALS_RE}\s+remote\s+add\b[^;&|]*\s--mirror(=push)?(\s|$)"
+)
+
+
+def _alias_pushes_badly(value: str) -> bool:
+    """Would running this alias value be denied as a push?"""
+    text = value[1:] if value.startswith("!") else f"git {value}"
+    return deny(text).rule in _PUSH_RULES
+
+
+def _write_forces(key: str, value: str) -> bool:
+    if _config_forces(key, value) or key == "core.hookspath":
+        return True
+    return key.startswith("alias.") and _alias_pushes_badly(value)
+
+
+def config_write(sc: Scan, target: str) -> Verdict | None:
+    """A `git config` write or `git remote add --mirror` that makes a LATER plain push force,
+    mirror, land on main/master, or skip the pre-push hook. `Bash(git push:*)` approves that
+    later push with no prompt, and it reads clean to every rule above, so the write is where
+    the decision has to be made. An alias counts when running its value would be denied as a
+    push."""
+    hit = any(
+        remote_add_mirrors_push(inv) or any(_write_forces(k, v) for k, v in config_writes(inv))
+        for inv in sc.gits
+    )
+    if hit or bdb_rei(sc.segset, _CONFIG_WRITE_TEXT):
+        return Verdict(
+            "deny",
+            "push-config-write",
+            "Blocked: this config write makes a later plain `git push` force, mirror, push to "
+            "main/master or skip the pre-push hook (a `+` or main refspec, "
+            "`remote.<name>.mirror`, `remote add --mirror`, `core.hooksPath`, or an alias "
+            "that force-pushes). Pass those choices on the push itself, where they are seen.",
+        )
+    return None
+
+
 # --- the decision ------------------------------------------------------------------------------
 
 # Bash order (:625-1142). The first match wins and carries its message; later tasks append.
@@ -957,6 +1018,7 @@ RULES: tuple[Rule, ...] = (
     force_push_flag,
     push_config,
     push_no_verify,
+    config_write,
 )
 
 

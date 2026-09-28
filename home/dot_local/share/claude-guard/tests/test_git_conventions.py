@@ -280,6 +280,8 @@ def test_planka_title_is_clean(config, command):
         "git -C /tmp/repo commit -a -n -m x",
         "git -c core.hooksPath=/dev/null commit -m x",
         "git --config-env=core.hooksPath=H commit -m x",
+        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null "
+        "git commit -m x",
     ],
 )
 def test_a_commit_that_skips_the_hooks_is_denied(config, command):
@@ -295,6 +297,9 @@ def test_a_commit_that_skips_the_hooks_is_denied(config, command):
         "git commit -am x",
         "git commit -m x -- -n",
         "git -c user.name=x commit -m x",
+        # -u and -S take an optional ATTACHED value, which may hold an n.
+        "git commit -uno -m x",
+        "git commit -Sdaniel@example.com -m x",
     ],
 )
 def test_a_commit_that_runs_the_hooks_is_not_denied(config, command):

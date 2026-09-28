@@ -942,6 +942,50 @@ def test_a_global_option_on_an_ordinary_git_command_is_no_decision(command):
     assert d.deny(command, "", ENV) == d.NONE
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Each makes a later plain `git push <remote>`, which Bash(git push:*) approves, force,
+        # mirror, land on main, or skip the pre-push hook.
+        "git config remote.origin.push '+refs/heads/*:refs/heads/*'",
+        "git config set remote.origin.push +HEAD:feat",
+        "git config --add remote.origin.push HEAD:main",
+        "git -C /tmp config --local remote.origin.mirror true",
+        "git config --file .git/config core.hooksPath /dev/null",
+        "git config alias.p 'push -f'",
+        # A `!` alias is read as the shell command it runs. (One whose text already reads as a
+        # force push is denied earlier, by the rule that text matches.)
+        "git config alias.p '!git -C \"/tmp/a b\" push -f origin feat'",
+        "git config alias.p 'push origin main'",
+        "git remote add --mirror=push backup https://example.com/r.git",
+        "git remote add --mirror backup https://example.com/r.git",
+        "bash -c 'git config remote.origin.push +HEAD:feat'",
+        "bash -c 'git config alias.p \"push -f\"'",
+        "bash -c 'git remote add --mirror=push backup ../r'",
+    ],
+)
+def test_a_config_write_that_makes_a_later_push_force_is_denied(command):
+    v = d.deny(command, "", ENV)
+    assert (v.kind, v.rule) == ("deny", "push-config-write")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git config user.email a@example.com",
+        "git config --get remote.origin.push",
+        "git config remote.origin.push refs/heads/feat:refs/heads/feat",
+        "git config remote.origin.mirror false",
+        "git config alias.st status",
+        "git config alias.p 'push --force-with-lease'",
+        "git remote add origin https://example.com/r.git",
+        "git remote add --mirror=fetch backup https://example.com/r.git",
+    ],
+)
+def test_an_ordinary_config_write_is_no_decision(command):
+    assert d.deny(command, "", ENV) == d.NONE
+
+
 # --- the corpus (tests/fixtures/block-dangerous-bash-vectors.json) ---------------------------
 
 # Members the census must contain, so a fixture that loads as [] fails by NAME rather than

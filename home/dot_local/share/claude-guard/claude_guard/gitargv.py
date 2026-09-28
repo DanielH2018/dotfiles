@@ -220,6 +220,70 @@ def canonical_lines(text: str, subs: frozenset[str]) -> list[str]:
     return [" ".join(["git", inv.sub, *(_SEPARATORS.sub(" ", a) for a in inv.args)])]
 
 
+# `git config` options that take their value as the next word, and the ones that make the
+# legacy form (no subcommand word) a read or a removal rather than a write.
+_CONFIG_WITH_ARG = frozenset(
+    {"-f", "--file", "--blob", "--type", "--default", "--comment", "--value", "--url"}
+)
+_CONFIG_READ_SUBCOMMANDS = frozenset(
+    {"get", "list", "unset", "edit", "rename-section", "remove-section"}
+)
+_CONFIG_NOT_A_WRITE = frozenset(
+    {
+        "--get",
+        "--get-all",
+        "--get-regexp",
+        "--get-urlmatch",
+        "--get-color",
+        "--get-colorbool",
+        "-l",
+        "--list",
+        "--unset",
+        "--unset-all",
+        "--rename-section",
+        "--remove-section",
+        "-e",
+        "--edit",
+    }
+)
+
+
+def config_writes(inv: Invocation) -> list[tuple[str, str]]:
+    """(key, value) for each setting a `git config` invocation writes, keys lowercased. Both
+    spellings: `git config [opts] <key> <value>` and `git config set [opts] <key> <value>`."""
+    if inv.sub != "config":
+        return []
+    words: list[str] = []
+    flags: set[str] = set()
+    args = list(inv.args)
+    i = 0
+    while i < len(args):
+        tok = args[i]
+        if tok.startswith("-") and tok != "-":
+            name = tok.split("=", 1)[0]
+            flags.add(name)
+            i += 2 if tok in _CONFIG_WITH_ARG else 1
+            continue
+        words.append(tok)
+        i += 1
+    if words and words[0] == "set":
+        words = words[1:]
+    elif (words and words[0] in _CONFIG_READ_SUBCOMMANDS) or flags & _CONFIG_NOT_A_WRITE:
+        return []
+    if len(words) < 2:
+        return []
+    return [(words[0].lower(), words[1])]
+
+
+def remote_add_mirrors_push(inv: Invocation) -> bool:
+    """`git remote add --mirror[=push]`: every later `git push <that remote>` is a mirror
+    push. A bare `--mirror` configures both directions; `--mirror=fetch` configures none of
+    the push side."""
+    if inv.sub != "remote" or not inv.args or inv.args[0] != "add":
+        return False
+    return any(a in ("--mirror", "--mirror=push") for a in inv.args[1:])
+
+
 def invocations(text: str) -> list[Invocation]:
     """invocation() of one segment's text, or [] when it runs no git or cannot be split."""
     try:

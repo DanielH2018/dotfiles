@@ -228,6 +228,8 @@ def _skips_hooks(args: list[str], config: tuple[tuple[str, str | None], ...]) ->
             if ch in _COMMIT_SHORT_WITH_ARG:
                 skip = pos == len(tok) - 1
                 break
+            if ch in "uS":  # -u[<mode>] and -S[<keyid>]: the rest is their attached value
+                break
     return False
 
 
@@ -390,6 +392,7 @@ def _title_deny(what: str, title: str, problem: str, why: str) -> tuple[str, str
 
 
 def _one(argv: list[str], cwd: str, read_config: ConfigReader) -> tuple[str, str] | None:
+    git = invocation(argv)  # before strip_env: GIT_CONFIG_* assignments are config
     argv = strip_env(argv)
     for card_title in _planka_titles(argv):
         problem = _title_problem(card_title)
@@ -412,12 +415,11 @@ def _one(argv: list[str], cwd: str, read_config: ConfigReader) -> tuple[str, str
                 "commit rules",
             )
         return None
-    inv = invocation(argv)
-    if inv is None:
+    if git is None:
         return None
-    sub, args, global_opts = inv.sub, list(inv.args), list(inv.global_opts)
+    sub, args, global_opts = git.sub, list(git.args), list(git.global_opts)
     if sub == "commit":
-        if _skips_hooks(args, inv.config):
+        if _skips_hooks(args, git.config):
             return ("deny", HOOKS_REASON)
         flags = _flags(args, _COMMIT_WITH_ARG, _COMMIT_SHORT_WITH_ARG)
         if any(_is_amend(f) for f in flags):
