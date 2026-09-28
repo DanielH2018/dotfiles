@@ -265,7 +265,7 @@ const assertShapes = (merged) => {
 };
 
 // Keys the *running harness* writes back into the deployed settings.json at session time
-// (`/effort` writes effortLevel). A template that does not set one would drop it on every
+// (`/effort` writes effortLevel on models before Opus 5.5). A template that does not set one would drop it on every
 // `chezmoi apply`, so the pin would silently vanish mid-session. This list is a
 // fixed literal, never inferred from the prior file: carrying forward whatever happens to
 // be in the deployed copy would make an uncommitted local edit into policy, which is the
@@ -286,7 +286,8 @@ const warnDroppedModelEffort = (acc, prior) => {
     if (JSON.stringify(kept) === JSON.stringify(s.effortLevel)) continue;
     process.stderr.write(
       `claude-settings-merge: dropping deployed modelSettings.${model}.effortLevel=` +
-        `${JSON.stringify(s.effortLevel)}; effortLevel=${JSON.stringify(acc.effortLevel)} applies\n`,
+        `${JSON.stringify(s.effortLevel)}; effortLevel=` +
+        `${acc.effortLevel === undefined ? 'unset' : JSON.stringify(acc.effortLevel)} applies\n`,
     );
   }
 };
@@ -307,7 +308,6 @@ const carryForward = (acc, priorFile) => {
     return acc;
   }
   if (!isObj(prior)) return acc;
-  warnDroppedModelEffort(acc, prior);
   for (const k of RUNTIME_OWNED_KEYS) {
     if (!Object.prototype.hasOwnProperty.call(prior, k)) continue;
     if (Object.prototype.hasOwnProperty.call(acc, k)) {
@@ -323,6 +323,8 @@ const carryForward = (acc, priorFile) => {
     }
     acc[k] = prior[k];
   }
+  // After the carry-forward, so the warning names the top-level level actually in force.
+  warnDroppedModelEffort(acc, prior);
   return acc;
 };
 

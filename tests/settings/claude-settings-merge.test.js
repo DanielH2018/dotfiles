@@ -195,6 +195,19 @@ test('a dropped per-model effort pin is warned about, not carried', () => {
   assert.ok(!('modelSettings' in JSON.parse(r.stdout)), 'the per-model pin must not survive');
 });
 
+// With no template pin, the carried-forward top-level value is the one in force, so the
+// warning must name it rather than the template's absent key.
+test('the dropped per-model warning names the carried-forward level', () => {
+  const base = w('rt-base-ms2.json', withFloor({}));
+  const prior = w('rt-prior-ms2.json', {
+    effortLevel: 'high',
+    modelSettings: { 'claude-opus-5-5': { effortLevel: 'xhigh' } },
+  });
+  const r = runProc('node', [BIN, base], { env: { ...process.env, CLAUDE_SETTINGS_PRIOR: prior } });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stderr, /effortLevel="high" applies/);
+});
+
 // Losing a UX pin is not worth aborting an apply that would otherwise deploy every other
 // dotfile — unlike a fragment parse failure, which is a malformed input to the derivation.
 test('an unreadable prior file warns but still generates', () => {
