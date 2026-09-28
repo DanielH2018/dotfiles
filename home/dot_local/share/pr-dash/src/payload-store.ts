@@ -53,8 +53,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 // Deliberately shallower than the browser's validateRecord, and deliberately not shared
 // with it: that validator lives in public/render-guards.js, which src/ must not import —
-// the import-convention guard bans relative .js imports outside public/, and the browser
-// and the server are separate module graphs on purpose.
+// the browser and the server are separate module graphs on purpose.
 //
 // This is not a full PrRecord validator. It checks exactly the fields src/stacks.ts reads
 // before a restored payload is serialized: buildStacks sorts stack siblings with
