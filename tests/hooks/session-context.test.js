@@ -166,59 +166,15 @@ test('exits quietly outside a git repo', { skip }, () => {
   assert.strictEqual(out.trim(), '');
 });
 
-// ── The transcript-leak banner ────────────────────────────────────────────────
-//
-// claude-transcript-scan writes ~/.claude/logs/transcript-leaks-pending because neither of
-// its unattended callers keeps a verdict: session-end.sh backgrounds it, and the timer's
-// journal line reaches nobody on a headless host. This hook is the reader. The pair below
-// is the contract — it must speak when there is something to say, and stay silent otherwise.
-
-function pendingFile(lines) {
-  const f = path.join(fs.realpathSync(scratch(os.tmpdir(), 'sesctx-')), 'pending.tsv');
-  fs.writeFileSync(f, lines.map((l) => l.join('\t')).join('\n') + '\n');
-  return f;
-}
-
-test('untriaged credential findings are reported at session start', { skip }, () => {
+// The transcript-leak banner moved to the statusline in #693, and
+// statusline-command.test.js holds its tests. Only the operator can act on it, and
+// SessionStart stdout goes to the model, so a marker on disk must not reach this output.
+test('a pending transcript-leak marker stays out of the model context', { skip }, () => {
   const root = repoWithShim();
-  const f = pendingFile([
-    ['2026-08-29T16:02:09Z', '2', '/home/u/.claude/logs/transcript-leaks.jsonl'],
-    ['2026-08-29T16:45:03Z', '3', '/home/u/.claude/logs/transcript-leaks.jsonl'],
-  ]);
+  const f = path.join(fs.realpathSync(scratch(os.tmpdir(), 'sesctx-')), 'pending.tsv');
+  fs.writeFileSync(f, '2026-08-29T16:45:03Z\t3\t/home/u/.claude/logs/transcript-leaks.jsonl\n');
   const { out, code } = runHook(root, { trusted: '/nonexistent', pending: f });
   assert.strictEqual(code, 0);
-  assert.match(out, /SECURITY: 5 untriaged credential finding\(s\)/,
-    'counts are summed across runs, not reported as the last run alone');
-  assert.match(out, /16:45:03Z/, 'and dated by the most recent run');
-  assert.match(out, /--clear-pending/, 'the banner names the way out');
-});
-
-test('a could-not-evaluate run is reported as such, not as a finding', { skip }, () => {
-  const root = repoWithShim();
-  const f = pendingFile([['2026-08-29T04:17:00Z', '0', 'no gitleaks binary']]);
-  const { out } = runHook(root, { trusted: '/nonexistent', pending: f });
-  // The distinction is the whole point: silence from a detector that never ran is
-  // indistinguishable from a clean result, which is why exit 3 is not exit 0.
-  assert.match(out, /could not run 1 time\(s\)/);
-  assert.match(out, /no gitleaks binary/, 'and says what was missing');
-  assert.doesNotMatch(out, /untriaged credential finding/,
-    'a scan that did not run has found nothing — reporting it as a finding would be a lie');
-});
-
-test('no marker means no banner', { skip }, () => {
-  const root = repoWithShim();
-  const { out } = runHook(root, { trusted: '/nonexistent', pending: path.join(fs.realpathSync(scratch(os.tmpdir(), 'sesctx-')), 'absent') });
-  assert.doesNotMatch(out, /SECURITY:/, 'a banner on every session is a banner nobody reads');
+  assert.doesNotMatch(out, /SECURITY|credential/);
   assert.match(out, /=== Repo context ===/, 'the rest of the context still runs');
-});
-
-test('the banner does not depend on being inside a git repo', { skip }, () => {
-  // Above the git check on purpose. A leaked credential is a fact about the machine, not
-  // about the directory Claude was opened in, and gating it on a repo would hide it exactly
-  // when you are not in one.
-  const bare = fs.realpathSync(scratch(os.tmpdir(), 'sesctx-'));
-  const f = pendingFile([['2026-08-29T16:45:03Z', '1', '/home/u/leaks.jsonl']]);
-  const { out } = runHook(bare, { trusted: '/nonexistent', pending: f });
-  assert.match(out, /SECURITY: 1 untriaged credential finding\(s\)/);
-  assert.doesNotMatch(out, /=== Repo context ===/, 'and the git half still short-circuits');
 });

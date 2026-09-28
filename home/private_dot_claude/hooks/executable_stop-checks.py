@@ -6,6 +6,8 @@
 # String checks over text the harness already hands a Stop hook: the final reply, and
 # the session transcript. Each rule is a CLAUDE.md sentence that a regex can decide,
 # and each blocks at most once, so a false positive costs one turn rather than a loop.
+# One check, git-state, reads the repo instead. It absorbed check-before-stop.sh (#693),
+# so the repo-state guard costs no Stop process of its own.
 """Stop hook: block once when the final reply breaks a rule a regex can check.
 
 Each check is a named function over a `Turn` (the final reply plus a lazily parsed view
@@ -20,13 +22,20 @@ with its tag, `[stop-checks:<name>]`, and that tag is also how "once" is decided
 The harness writes a Stop hook's block reason into the transcript as a user record whose
 text opens `Stop hook feedback:`, so the transcript already holds the stamp, and this
 hook keeps no state file. `stop_hook_active` is deliberately NOT the once-switch:
-it is shared by every Stop hook, so a block from check-before-stop.sh would otherwise
+it is shared by every Stop hook, so a block from any other Stop hook would otherwise
 switch this hook off for the re-stop that follows.
 
 Every failure path is silent. A Stop hook that cannot read its input has no business
 blocking a turn. Opt out with CLAUDE_STOP_CHECKS=0.
 
 Checks:
+
+  git-state (turn) -- a session must not stop in a repo state that loses work. A rebase
+      or merge in progress blocks on any branch. Staged, then unstaged, then untracked
+      files block on a protected branch (main, master, production, release), and the
+      reason names only the most urgent of the three. Two repos commit to main by
+      convention and are exempt: dotfiles, matched by remote URL so a worktree at any
+      path matches, and the vault at $CLAUDE_VAULT_DIR. Git runs in the payload's `cwd`.
 
   artifact-link-last (turn) -- CLAUDE.md "The link is the last thing in your reply".
       The reply contains an artifact link outside a code fence, and its last non-blank
@@ -40,7 +49,6 @@ Checks:
   evidence-for-claims (turn) -- CLAUDE.md "evidence before claims". The reply says the
       tests pass or the linter is clean, outside a fence and not marked unverified, and
       no Bash command in the session looks like a test or lint run.
-      premature-done.py covers only the `result:` marker.
 
   tests-for-source (session) -- CLAUDE.md "Write tests for any new code". The session
       created a source file (a Write whose result was "create") outside scratch space
@@ -74,7 +82,7 @@ FENCE = re.compile(r"^[ \t]*(?:`{3,}|~{3,})", re.M)
 
 
 def fence_spans(text: str) -> list[tuple[int, int]]:
-    """Character ranges of `text` inside a fenced code block (premature-done.py's rule).
+    """Character ranges of `text` inside a fenced code block.
 
     An unclosed final fence runs to the end of the text, as a Markdown renderer does.
     """
@@ -263,6 +271,139 @@ class Session:
 
     def fired(self, tag: str) -> bool:
         return any(tag in text for text in self.feedback)
+
+
+# ------------------------------------------------------------------ git-state
+
+PROTECTED_BRANCHES = ("main", "master", "production", "release")
+
+# DECIDED: every git call here carries a 2s timeout, and a call that fails or times
+# out reads as "nothing to report" (#661). They are local ref and index reads. The
+# three that walk the tree (`diff --name-only`, `ls-files --others`, and
+# `diff --diff-filter=U` during a merge) measured 3-10ms on the server repo's 2,358
+# files. A check that could not run must let the stop stand: blocking on it forces a
+# turn for nothing the session can fix, and the harness lets the stop through at the
+# hook's 10s timeout anyway.
+GIT_TIMEOUT_S = 2
+
+
+def _git(cwd: str, *args: str) -> str | None:
+    """`git <args>` run in `cwd`: its stripped stdout, or None on any failure."""
+    import subprocess  # local: the transcript checks never pay for it
+
+    try:
+        done = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=GIT_TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode != 0:
+        return None
+    return done.stdout.strip()
+
+
+def _first_lines(text: str | None, n: int = 5) -> str:
+    return "\n".join((text or "").splitlines()[:n])
+
+
+VAULT_LINE = re.compile(r"\s*(?:export\s+)?CLAUDE_VAULT_DIR=(.*)$")
+
+
+def _vault_dir(env: dict) -> str:
+    """$CLAUDE_VAULT_DIR, where ~/.config/claude/local.env wins over the environment.
+
+    That precedence is the one check-before-stop.sh had, because it sourced the file.
+    This reads the file instead of executing it, so only a plain
+    `[export ]CLAUDE_VAULT_DIR=value` line counts.
+    """
+    value = env.get("CLAUDE_VAULT_DIR") or ""
+    home = env.get("HOME") or ""
+    if not home:
+        return value
+    try:
+        text = (Path(home) / ".config" / "claude" / "local.env").read_text()
+    except OSError:
+        return value
+    for line in text.splitlines():
+        found = VAULT_LINE.match(line)
+        if not found:
+            continue
+        raw = found.group(1).strip()
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
+            raw = raw[1:-1]
+        value = raw
+    return value
+
+
+def git_state(turn: Turn) -> str | None:
+    cwd = turn.payload.get("cwd")
+    if not isinstance(cwd, str) or not os.path.isdir(cwd):
+        cwd = os.getcwd()
+    if _git(cwd, "rev-parse", "--is-inside-work-tree") != "true":
+        return None
+    vault = _vault_dir(turn.env)
+    if vault and _git(cwd, "rev-parse", "--show-toplevel") == vault:
+        return None
+    # DanielH2018/server was exempt too until 2026-08-21. Its master is a production
+    # deploy trigger reachable only through a PR, so that exemption switched the guard
+    # off in the one repo where it mattered most. Only dotfiles commits to main.
+    if "dotfiles" in (_git(cwd, "remote", "get-url", "origin") or ""):
+        return None
+
+    git_dir = Path(cwd, _git(cwd, "rev-parse", "--git-dir") or ".git")
+    if (git_dir / "rebase-merge").is_dir() or (git_dir / "rebase-apply").is_dir():
+        return (
+            "A rebase is in progress. Complete it with `git rebase --continue` or "
+            "abort with `git rebase --abort` before stopping."
+        )
+    if (git_dir / "MERGE_HEAD").is_file():
+        conflicts = _first_lines(_git(cwd, "diff", "--name-only", "--diff-filter=U"))
+        if conflicts:
+            return (
+                f"Merge in progress with unresolved conflicts:\n{conflicts}\n\n"
+                "Resolve conflicts and commit, or abort with `git merge --abort`."
+            )
+        return (
+            "A merge is in progress. Commit the merge result or abort with "
+            "`git merge --abort` before stopping."
+        )
+
+    branch = _git(cwd, "rev-parse", "--abbrev-ref", "HEAD")
+    if branch not in PROTECTED_BRANCHES:
+        return None
+    if _first_lines(_git(cwd, "diff", "--cached", "--name-only")):
+        return (
+            f"There are staged changes on protected branch {branch}. Please create a "
+            "feature branch with `git switch -c <name>` and move the changes there "
+            "before finishing."
+        )
+    unstaged = _first_lines(_git(cwd, "diff", "--name-only"))
+    if unstaged:
+        return (
+            f"There are unstaged modifications on protected branch {branch}:\n"
+            f"{unstaged}\n\nPlease either stage and commit these on a feature branch, "
+            "or confirm with the user that discarding them is intentional."
+        )
+    # Last, because an untracked file is the least likely of the three to be work in
+    # progress and the most likely to be deliberate. It is also the common case: of 54
+    # dirty_exit events in sessions.log, 52 were on master, and 12 in one afternoon were
+    # one finished evaluation nobody committed. `--exclude-standard` lets .gitignore
+    # answer for build output. The reason names every exit, including leaving the file,
+    # because an untracked file has no history to recover it from.
+    untracked = _first_lines(_git(cwd, "ls-files", "--others", "--exclude-standard"))
+    if untracked:
+        return (
+            f"There are untracked files on protected branch {branch}:\n{untracked}\n\n"
+            "An untracked file exists nowhere but this disk. Decide which it is: "
+            "commit it on a feature branch, add it to .gitignore if it is build output "
+            "or scratch, delete it, or tell the user it is deliberate and leave it. Do "
+            "not guess — say which you chose and why."
+        )
+    return None
 
 
 # ------------------------------------------------------------------ artifact-link-last
@@ -484,6 +625,7 @@ def migration(turn: Turn) -> str | None:
 
 # Order is the order reasons appear in a block that carries more than one.
 CHECKS = [
+    ("git-state", "turn", git_state),
     ("artifact-link-last", "turn", artifact_link_last),
     ("preamble", "turn", preamble),
     ("evidence-for-claims", "turn", evidence_for_claims),

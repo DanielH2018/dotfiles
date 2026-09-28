@@ -36,7 +36,7 @@
 # --no-loki is for a machine with no otelq or no reachable Loki. Without it a missing
 # otelq is exit 3, could-not-evaluate, the same as a missing gitleaks: skipping a store
 # silently is the failure this tool exists to prevent.
-#   claude-transcript-scan --clear-pending    # dismiss the SessionStart banner WITHOUT baselining anything
+#   claude-transcript-scan --clear-pending    # dismiss the statusline alert WITHOUT baselining anything
 #
 # Exit 0 clean or nothing new, 1 NEW findings, 2 usage error, 3 could-not-evaluate. 3 is
 # deliberately not 0: a missing gitleaks means the question was never asked, and a detector
@@ -75,8 +75,8 @@ GL_LOKI_CONFIG=${CLAUDE_TRANSCRIPT_GITLEAKS_LOKI_CONFIG:-$HOME/.config/gitleaks/
 # verdict: session-end.sh backgrounds this with its output discarded, and the timer's
 # journal line is read by nobody. A desktop notification does not close that gap either —
 # notify-send needs a running daemon and osascript needs a Mac, and a headless host has
-# neither. So the durable alert is a FILE, which session-context.sh reads into the next
-# session's context on every platform. Cleared by --accept-baseline or --clear-pending.
+# neither. So the durable alert is a FILE, which the Claude Code statusline shows to the
+# operator on every platform. Cleared by --accept-baseline or --clear-pending.
 PENDING=${CLAUDE_TRANSCRIPT_LEAK_PENDING:-$HOME/.claude/logs/transcript-leaks-pending}
 SINCE_H=24
 MODE=window
@@ -144,7 +144,7 @@ fi
 
 # Exit 3 is could-not-evaluate, and it is the one verdict with no other durable trace: a
 # finding lands in $LOG, but a scan that never ran leaves nothing behind at all. Record it
-# in the same marker, as a zero-count row, so the SessionStart banner reports "the detector
+# in the same marker, as a zero-count row, so the statusline reports "the detector
 # could not run" rather than the silence that is indistinguishable from "clean".
 mark_unavailable() {
   mkdir -p "$(dirname "$PENDING")" 2>/dev/null

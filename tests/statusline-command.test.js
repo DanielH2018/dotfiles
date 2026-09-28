@@ -15,16 +15,66 @@ const SCRIPT = srcPath('private_dot_claude', 'executable_statusline-command.sh')
 const skip = skipUnless('bash', 'jq');
 
 // COLUMNS is pinned wide so segment assertions stay on one line regardless of the runner's
-// terminal; the wrapping tests below set it themselves.
-function run(input, columns = '400') {
+// terminal; the wrapping tests below set it themselves. The leak marker points at a path
+// that does not exist unless a test passes one, so the runner's own marker never renders.
+function run(input, columns = '400', leakPending = '/nonexistent/transcript-leaks-pending') {
   const r = spawnSync('bash', [SCRIPT], {
     input: JSON.stringify(input), encoding: 'utf8',
-    env: { ...process.env, COLUMNS: columns },
+    env: { ...process.env, COLUMNS: columns, CLAUDE_TRANSCRIPT_LEAK_PENDING: leakPending },
   });
   return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
 }
 
 const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
+
+// ── The transcript-leak segment ───────────────────────────────────────────────
+//
+// claude-transcript-scan writes ~/.claude/logs/transcript-leaks-pending because neither of
+// its unattended callers keeps a verdict. Until #693 session-context.sh printed it as a
+// SessionStart banner, which put it in the model's context. The statusline is where the
+// operator, who is the only one who can act on it, sees it until it is cleared.
+function leakFile(lines) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'statusline-leak-'));
+  const f = path.join(dir, 'pending.tsv');
+  fs.writeFileSync(f, lines.map((l) => l.join('\t')).join('\n') + '\n');
+  return f;
+}
+const LEAK_INPUT = { workspace: { current_dir: os.tmpdir() }, model: { id: 'claude-opus-5-5' } };
+
+test('untriaged credential findings show, summed across runs, with the marker path', { skip }, () => {
+  const f = leakFile([
+    ['2026-08-29T16:02:09Z', '2', '/home/u/.claude/logs/transcript-leaks.jsonl'],
+    ['2026-08-29T16:45:03Z', '3', '/home/u/.claude/logs/transcript-leaks.jsonl'],
+  ]);
+  const out = stripAnsi(run(LEAK_INPUT, '400', f).stdout);
+  assert.match(out, /⚠ 5 transcript leak\(s\), see /, 'counts are summed, not the last run alone');
+  assert.ok(out.includes(f), 'the segment names the file that says where the details are');
+});
+
+test('a scan that could not run shows as such, not as a finding', { skip }, () => {
+  // Silence from a detector that never ran is indistinguishable from a clean result.
+  const f = leakFile([['2026-08-29T04:17:00Z', '0', 'no gitleaks binary']]);
+  const out = stripAnsi(run(LEAK_INPUT, '400', f).stdout);
+  assert.match(out, /transcript scan could not run 1 time\(s\)/);
+  assert.doesNotMatch(out, /transcript leak\(s\)/);
+});
+
+test('both record types show together, whatever their order', { skip }, () => {
+  // The old SessionStart banner lost the could-not-run half when a record carried an empty
+  // field; the counts here come from one awk pass that emits no text fields at all.
+  const f = leakFile([
+    ['2026-08-29T04:17:00Z', '0', ''],
+    ['2026-08-29T16:45:03Z', '1', '/home/u/leaks.jsonl'],
+  ]);
+  const out = stripAnsi(run(LEAK_INPUT, '400', f).stdout);
+  assert.match(out, /⚠ 1 transcript leak\(s\)/);
+  assert.match(out, /could not run 1 time\(s\)/);
+});
+
+test('no marker means no leak segment', { skip }, () => {
+  const out = stripAnsi(run(LEAK_INPUT).stdout);
+  assert.doesNotMatch(out, /⚠/);
+});
 
 test('full fixture renders cwd, model, and cost/usage segments', { skip }, () => {
   const fixture = {

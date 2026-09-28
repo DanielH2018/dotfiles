@@ -24,7 +24,8 @@ delete process.env.CLAUDE_VAULT_DIR;
 
 const HOOKS = srcPath('private_dot_claude', 'hooks');
 const AUTO_FORMAT = path.join(HOOKS, 'executable_auto-format.sh');
-const CHECK_STOP = path.join(HOOKS, 'executable_check-before-stop.sh');
+// The git-state check of stop-checks.py, which absorbed check-before-stop.sh (#693).
+const CHECK_STOP = path.join(HOOKS, 'executable_stop-checks.py');
 
 // Claude passes file paths and CLAUDE_VAULT_DIR to hooks with forward slashes, even on
 // Windows (Git Bash). Feed the hooks forward-slash paths so the tests mirror reality and
@@ -39,7 +40,8 @@ function writeLocalEnv(home, vaultDir) {
 function runHook(hook, { input = '', home, cwd, extraPath } = {}) {
   const env = { ...process.env, HOME: fwd(home) };
   if (extraPath) env.PATH = extraPath + ':' + process.env.PATH;
-  const r = run('bash', [hook], { input, env, cwd });
+  delete env.CLAUDE_STOP_CHECKS;
+  const r = run(hook.endsWith('.py') ? 'python3' : 'bash', [hook], { input, env, cwd });
   return { stdout: r.stdout, stderr: r.stderr, status: r.code };
 }
 
@@ -63,7 +65,7 @@ test('auto-format.sh: vault markdown skipped, non-vault markdown formatted', () 
   assert.ok(fs.existsSync(marker), 'non-vault markdown must be formatted');
 });
 
-test('check-before-stop.sh: protected-branch block, vault exemption, dead paths removed', () => {
+test('stop-checks.py git-state: protected-branch block, vault exemption, dead paths removed', () => {
   const home = scratch(os.tmpdir(), 'hookhome-');
   const repo = path.join(home, 'repo');
   fs.mkdirSync(repo, { recursive: true });

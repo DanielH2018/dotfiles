@@ -58,7 +58,13 @@ def evaluate(reply: str, records=(), env=None) -> str | None:
         # prefilters lines on the literal byte string `"type":"create"`.
         lines = (json.dumps(r, separators=(",", ":")) + "\n" for r in records)
         transcript.write_text("".join(lines))
-        payload = {"transcript_path": str(transcript), "last_assistant_message": reply}
+        # A non-repo cwd keeps git-state quiet whatever checkout the suite runs from;
+        # tests/hooks/stop-checks-git-state.test.js drives that check with real repos.
+        payload = {
+            "transcript_path": str(transcript),
+            "last_assistant_message": reply,
+            "cwd": tmp,
+        }
         return mod.evaluate(payload, dict(env or ENV))
 
 
@@ -341,7 +347,11 @@ def run_hook(payload: dict, **env) -> dict | None:
     environ.update(env)
     proc = subprocess.run(
         [sys.executable, str(HOOK)],
-        input=json.dumps(payload),
+        input=json.dumps(
+            {"cwd": tempfile.gettempdir(), **payload}
+            if isinstance(payload, dict)
+            else payload
+        ),
         capture_output=True,
         text=True,
         env=environ,

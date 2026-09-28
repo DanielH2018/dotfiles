@@ -1,7 +1,8 @@
-// check-before-stop.sh blocks a session from stopping with the repo in a state that
-// loses work. It had no test until the untracked check was added, which is the wrong way
-// round for a hook whose only output is a block: every false positive interrupts a
-// working session, and every miss is lost work.
+// stop-checks.py's git-state check blocks a session from stopping with the repo in a
+// state that loses work. It was check-before-stop.sh until #693 folded it into
+// stop-checks.py, and these tests moved with it. A check whose only output is a block
+// needs both halves tested: every false positive interrupts a working session, and every
+// miss is lost work.
 //
 // Two axes matter and they are independent. WHICH repo (the dotfiles exemption is the
 // only one left; the homelab one was removed 2026-08-21 because master there is a deploy
@@ -18,7 +19,7 @@ const os = require('node:os');
 const { scratch } = require('../lib/tmp');
 const { srcPath } = require('../lib/paths');
 
-const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_check-before-stop.sh');
+const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_stop-checks.py');
 
 // Scrub git's own environment. These tests build real repos in a temp dir and drive them
 // with cwd, but GIT_DIR and GIT_WORK_TREE outrank cwd — and git exports both to every
@@ -28,6 +29,7 @@ const GIT_ENV = { ...process.env };
 for (const k of Object.keys(GIT_ENV)) if (k.startsWith('GIT_')) delete GIT_ENV[k];
 GIT_ENV.GIT_CONFIG_GLOBAL = '/dev/null';
 GIT_ENV.GIT_CONFIG_SYSTEM = '/dev/null';
+delete GIT_ENV.CLAUDE_STOP_CHECKS; // the hook's off switch, if the runner has it set
 
 function sh(cmd, cwd) {
   const r = spawnSync('bash', ['-c', cmd], { cwd, encoding: 'utf8', env: GIT_ENV });
@@ -46,12 +48,13 @@ function repo({ remote = 'https://github.com/DanielH2018/server.git', branch = '
 }
 
 // Returns the hook's decision, or null when it stayed silent (the common, correct case).
-function run(cwd, { stopHookActive = false } = {}) {
-  const r = spawnSync('bash', [HOOK], {
+// With no `cwd` in the payload the hook falls back to its own working directory.
+function run(cwd, { payload = {} } = {}) {
+  const r = spawnSync('python3', [HOOK], {
     cwd,
     encoding: 'utf8',
     env: GIT_ENV,
-    input: JSON.stringify({ session_id: 'test', stop_hook_active: stopHookActive }),
+    input: JSON.stringify({ session_id: 'test', ...payload }),
   });
   assert.strictEqual(r.status, 0, `hook exited ${r.status} (stderr: ${r.stderr})`);
   const out = (r.stdout || '').trim();
@@ -116,10 +119,34 @@ test('unstaged changes outrank untracked ones in the reason', () => {
   assert.match(reason, /unstaged/i);
 });
 
-test('stop_hook_active lets a second pass through', () => {
+// The once-switch is the check's own tag in this turn's Stop-hook feedback, not
+// stop_hook_active: that flag is shared by every Stop hook, so another hook's block
+// would switch this check off.
+test('a second stop in the same turn passes through', () => {
   const work = repo();
   fs.writeFileSync(path.join(work, 'stray.md'), 'x\n');
-  assert.strictEqual(run(work, { stopHookActive: true }), null, 'must not loop');
+  const first = run(work);
+  assert.match(first.reason, /^\[stop-checks:git-state\] /, 'the reason carries its tag');
+  const transcript = path.join(scratch(os.tmpdir(), 'cbs-tx-'), 'session.jsonl');
+  const records = [
+    { message: { role: 'user', content: 'finish up' } },
+    { message: { role: 'user', content: `Stop hook feedback:\n${first.reason}` } },
+  ];
+  fs.writeFileSync(transcript, records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  assert.strictEqual(run(work, { payload: { transcript_path: transcript } }), null, 'must not loop');
+});
+
+test('stop_hook_active alone does not silence it', () => {
+  const work = repo();
+  fs.writeFileSync(path.join(work, 'stray.md'), 'x\n');
+  assert.ok(run(work, { payload: { stop_hook_active: true } }), 'another hook blocked, not this one');
+});
+
+test('git runs in the payload cwd, not the hook process cwd', () => {
+  const work = repo();
+  fs.writeFileSync(path.join(work, 'stray.md'), 'x\n');
+  const elsewhere = scratch(os.tmpdir(), 'cbs-nogit-');
+  assert.ok(run(elsewhere, { payload: { cwd: work } }), 'the session repo is the one judged');
 });
 
 test('the dotfiles repo is still exempt', () => {

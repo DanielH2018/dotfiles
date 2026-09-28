@@ -100,6 +100,35 @@ end_seg() {
 
 add() { put "$@"; end_seg; }
 
+# Segment: transcript credential leaks (red). First, so a narrow terminal cannot pack it
+# off the row. claude-transcript-scan writes this marker because neither of its unattended
+# callers keeps a verdict. The marker stays until the operator answers it with
+# `claude-transcript-scan --clear-pending` (after a rotation) or `--accept-baseline`.
+# It used to be a SECURITY banner in session-context.sh's SessionStart output. That put
+# it in the model's context at every session start, while only the operator can act on
+# it (#693). A leak is a fact about the machine, so this reads it in any directory.
+#
+# Two record types share the file, both `ts \t count \t detail`. A positive count is a
+# finding. A zero count is a scan that could not run, which needs saying separately:
+# silence from a detector that never ran looks exactly like a clean result. The segment
+# names the marker file, whose third column says where the details are. `-s` comes
+# first, so the common case costs no fork.
+leak_file="${CLAUDE_TRANSCRIPT_LEAK_PENDING:-$HOME/.claude/logs/transcript-leaks-pending}"
+if [[ -s "$leak_file" ]]; then
+  read -r leak_found leak_down < <(awk -F'\t' '
+    $2 + 0 > 0 { found += $2; next }
+    { down += 1 }
+    END { printf "%d %d\n", found, down }
+  ' "$leak_file" 2>/dev/null)
+  leak_where="${leak_file/#$HOME/\~}"
+  if [[ "${leak_found:-0}" =~ ^[0-9]+$ ]] && (( leak_found > 0 )); then
+    add '\033[38;2;243;139;168m ⚠ %s transcript leak(s), see %s \033[0m' "$leak_found" "$leak_where"
+  fi
+  if [[ "${leak_down:-0}" =~ ^[0-9]+$ ]] && (( leak_down > 0 )); then
+    add '\033[38;2;243;139;168m ⚠ transcript scan could not run %s time(s), see %s \033[0m' "$leak_down" "$leak_where"
+  fi
+fi
+
 # Segment: vim mode (purple) — only shown when vim mode is active
 [[ -n "$vim_mode" ]] && add '\033[38;2;203;166;247m %s \033[0m' "$vim_mode"
 

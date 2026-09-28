@@ -96,7 +96,7 @@ function sandbox() {
     // Load-bearing, not decoration. The scanner appends to this file on every finding, and
     // these fixtures deliberately produce findings — left unset it defaults to the real
     // ~/.claude/logs/transcript-leaks-pending, so a suite run would raise a credential
-    // banner in the operator's next session out of a test fixture.
+    // statusline alert for the operator out of a test fixture.
     pending: path.join(dir, 'pending.tsv'),
   };
 }
@@ -548,7 +548,7 @@ test('a bad argument is a usage error, not a silent pass', { skip }, () => {
 // with its output discarded, and the timer's journal line reaches nobody on a headless
 // host. notify-send does not close that (it needs a daemon) and neither does osascript
 // (it needs a Mac). The marker is the platform-independent half, read back by
-// hooks/session-context.sh at the start of the next session.
+// the statusline (statusline-command.sh) until it is cleared.
 
 test('a finding leaves a durable marker, not just a log line', { skip }, () => {
   const sb = sandbox();
