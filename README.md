@@ -74,58 +74,43 @@ so the ownership map never drifts.
 Manifest fragments live in `~/.config/dotsync/manifest.d/*.json` (merged in lexical order).
 See `docs/RESTORE.md` for the bare-metal bootstrap.
 
-## config-soak — review + soak gate for behavior-affecting config
+## config-soak — soak report for behavior-affecting config
 
-`bin/config-soak` (repo tooling, not deployed) treats behavior-affecting Claude Code config —
-`settings.base.json`, hooks, agents, skills, `CLAUDE.md` — like code: a change must be consciously
-acknowledged before it counts as reviewed, and is only flagged stable after a soak window.
+`bin/config-soak` (repo tooling, not deployed) reports how long each piece of behavior-affecting
+Claude Code config — the settings templates, hooks, agents, skills, rules, output styles and
+`CLAUDE.md` — has been live. A file's landed date is the committer date of the last `origin/main`
+commit that touched it, read from git on every run; there is no ledger to maintain. It is
+advisory and gates nothing.
 
-- `config-soak status [--json] [--strict]` — fingerprint the tracked config, diff against the
-  committed ledger (`config-soak.json`), and report
-  `unrecorded`/`changed`/`removed`/`soaking`/`stable`/`neverFired`. Exits non-zero if any
-  unreviewed change exists (the gate); `--strict` also fails it on `neverFired` entries.
-- `config-soak land [PATH...]` — record the current config as reviewed; stamps `landed=now` for
-  new/changed files, preserves the clock (and any recorded `outcome`) for unchanged ones. Commit
-  the ledger to persist it.
-- `config-soak outcomes [--since PATH]` — for every hook or `settings.*.json` ledger entry inside
-  its soak window, ask this machine's local Loki (`http://127.0.0.1:3100`, read-only, no other
-  host) whether the landed config actually fired since it landed, and write the answer back as
-  that entry's `outcome: {checkedAt, fired, denied, errors, source, note}`. Attribution is only as
-  fine as Claude Code's OTEL schema allows: a `settings.*.json` change is attributed to the merged
-  permission ruleset's `tool_decision{source="config"}` events (the three templates cannot be told
-  apart); a hook script is attributed only when it is the *sole* hook registered for a
-  PreToolUse/PermissionRequest matcher (a shared matcher, or any other hook event — SessionStart,
-  PostToolUse, Stop, ... — carries no field naming which hook fired, so those get `source:"none"`
-  and an explanatory `note` rather than a false zero). `--since PATH` resumes a partial run
-  (sorted path order), since each entry costs a live query. A `status` entry that soaked out with
-  `outcome.fired === 0` and `source:"loki"` prints as "landed, never fired" — feed those to the
-  `scaffolding-delete-pass` skill as removal candidates.
+- `config-soak status [--json]` — each tracked file as `unlanded` (the working tree differs
+  from `origin/main`), `soaking` (landed inside the 7-day window) or `stable`. Always exits 0.
+- `config-soak outcomes [--since PATH]` — for every landed hook or `settings.*.json` file, ask
+  this machine's local Loki (`http://127.0.0.1:3100`, read-only, no other host) whether it
+  actually fired since it landed, and print the answer. Attribution is only as fine as Claude
+  Code's OTEL schema allows: a `settings.*.json` change is attributed to the merged permission
+  ruleset's `tool_decision{source="config"}` events; a hook script is attributed only when it is
+  the *sole* hook registered for a PreToolUse/PermissionRequest matcher. Anything else reports
+  `source:"none"` with a note rather than a false zero. A stable file with zero hits prints
+  under "NEVER FIRED" — feed those to the `scaffolding-delete-pass` skill as removal candidates.
 - `config-soak list` — print the tracked paths.
 
-`status`, `land` and `list` are allow-listed in `settings.base.json`, so Claude runs them
-unprompted — including `land`, which means Claude can acknowledge config it wrote itself. The
-gate still records *what* changed and *when*; it no longer guarantees a human looked. `outcomes`
-is deliberately NOT allow-listed (see the comment above the allow-list rules in
-`settings.permissions.json`: the three documented verbs only, never a bare
-`node bin/config-soak:*` wildcard, so a new subcommand is never pre-approved) — it makes a
-network call, however narrow, and that crosses the line the other three don't. Invoke it as
-`cd <repo-or-worktree> && node bin/config-soak <verb>`: the ledger is anchored to the script's own
-location, so a worktree must run its own copy, and that compound form is the shape
-`claude_guard.judge` auto-approves for the allow-listed verbs.
-
-It is deterministic: no LLM and no judgement, only a fingerprint ledger. See
-`docs/specs/2026-07-08-config-soak-gate-design.md` for the design rationale, including the
-`outcomes` addition.
+`status` and `list` are allow-listed in `settings.permissions.json`; `outcomes` is not, because
+it makes a network call. Run `git fetch` first if `origin/main` may be stale. Until #694 (2026-09-28)
+this was a push gate over a committed `config-soak.json` ledger with a `land` verb;
+`docs/specs/2026-07-08-config-soak-gate-design.md` records that design and why it was dropped.
 
 ## pre-push gate — one-time install per clone
 
-`.githooks/pre-push` runs config-soak, instruction quality, the injection red-team, and the
-`node --test` suite. Git does not clone hook configuration, so **each clone must opt in once**:
+`.githooks/pre-push` runs the commit-signature check and the pre-commit lint hooks (`prek run
+--all-files`), a few seconds in all. The heavy suite (eval freshness, instruction quality, the
+injection red-team and the `node --test` suite) is `bin/gate`, which the required CI `gate` job
+runs on every PR and every push to main, and which you can run by hand before pushing. Git does
+not clone hook configuration, so **each clone must opt in once**:
 
 ```sh
 git config core.hooksPath .githooks
 ```
 
-Without it the hook is inert and every check above is advisory — the repo looks gated while
+Without it the hook is inert and the local checks are advisory — the repo looks gated while
 nothing runs. Verify with `git config core.hooksPath` (expect `.githooks`); a `git push` then
-prints the four check headings before it contacts the remote.
+prints the two check headings before it contacts the remote.

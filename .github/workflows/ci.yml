@@ -1,7 +1,7 @@
-# Runs the same gate `.githooks/pre-push` runs, on GitHub's runners instead of a laptop.
+# Runs the repo's full check suite, bin/gate, on GitHub's runners instead of a laptop.
 #
-# Why this exists: every gate in this repo — signatures, config-soak, instruction quality,
-# lint, the unit suite — was a LOCAL pre-push hook and nothing else. Two holes follow from
+# Why this exists: every gate in this repo — signatures, instruction quality, lint, the unit
+# suite — was once a LOCAL pre-push hook and nothing else. Two holes follow from
 # that, and neither is fixable locally. A clone that never ran `bin/install-hook-shim`, or
 # whose `core.hooksPath` drifted, has no gate at all. And commits arriving from a second
 # machine are gated by whatever that machine happens to have installed — which is how 173
@@ -11,10 +11,10 @@
 # reports: main cannot move onto a commit until this job has passed on it. Rename the job and
 # the ruleset's required check (and bin/land's LAND_REQUIRED_CHECK default) together.
 #
-# The gate is invoked as the hook script rather than reimplemented step by step, so CI and
-# a local push cannot drift into checking different things. The one step that does not
-# survive that is the signature check, which reads git's pre-push protocol from stdin — it
-# gets its own step below with the protocol line synthesized.
+# The gate is invoked as bin/gate rather than reimplemented step by step, so CI and a hand
+# run cannot drift into checking different things. Since #694 the pre-push hook runs only the
+# signature check and lint, and this job is where the suite runs. The signature check reads
+# git's pre-push protocol from stdin, so it gets its own step below with an explicit range.
 
 name: CI
 
@@ -160,21 +160,14 @@ jobs:
           chezmoi execute-template --source home '{{ .profile }} {{ .chezmoi.os }}'
           echo
 
-      - name: Run the pre-push gate
+      - name: Run the gate
         env:
-          # The cache keys on a clean tree at a known sha and would let a second run skip
-          # the suite. A runner is not the machine that recorded it, but turn it off rather
-          # than rely on that.
-          GATE_CACHE_OFF: '1'
           # tq digests output for a human reading a terminal. CI wants the failing test's
           # own lines, so take the raw runner output.
           TQ_OFF: '1'
         run: |
           set -euo pipefail
-          # </dev/null: the hook reads the pre-push protocol on stdin for its signature
-          # step. An empty stream makes that step a no-op with nothing to check, which is
-          # correct here — the next step does it properly with a real range.
-          .githooks/pre-push </dev/null 2>&1 | tee gate.log
+          bin/gate 2>&1 | tee gate.log
 
           # A gate that skipped a step passed less than it says. Locally that is a
           # deliberate kindness to a machine missing a tool; in CI every tool is installed

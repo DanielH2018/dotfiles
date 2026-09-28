@@ -3,7 +3,7 @@
 //
 //   1. modify_settings.json.sh.tmpl refuses to generate from an uncommitted tree, so an
 //      unreviewable edit cannot become live policy;
-//   2. bin/config-soak requires review + `config-soak land` before a change ships;
+//   2. bin/config-soak reports each template's soak state (advisory since #694);
 //   3. tests/settings/settings-permissions-no-spawners.test.js and tests/secret-registry.test.js
 //      parse the permission rules out of the template text.
 //

@@ -5,7 +5,7 @@
 // would have been skipped in silence, and a skipped suite looks exactly like a passing one
 // because the only evidence is a total nobody has a baseline for.
 //
-// So .githooks/pre-push now derives the file list from `git ls-files` and passes it
+// So bin/gate (the suite .githooks/pre-push ran until #694) derives the file list from `git ls-files` and passes it
 // explicitly, making the covered set the tracked set by construction. This file guards that
 // property, because the failure it prevents is invisible: if someone restores a bare
 // `node --test`, every suite under a dot-directory silently stops running and the push still
@@ -21,7 +21,7 @@ const fs = require('node:fs');
 const { execFileSync } = require('node:child_process');
 const { repoPath } = require('./lib/paths');
 
-const HOOK = repoPath('.githooks', 'pre-push');
+const HOOK = repoPath('bin', 'gate');
 const hookText = fs.readFileSync(HOOK, 'utf8');
 
 const trackedTests = execFileSync(
@@ -37,7 +37,7 @@ test('the hook derives its test list from git rather than node discovery', () =>
   assert.match(
     hookText,
     /TEST_FILES=\$\(git ls-files '\*\.test\.js' '\*\.test\.mjs' '\*\.test\.ts'\)/,
-    'pre-push must build the unit-test file list with git ls-files',
+    'bin/gate must build the unit-test file list with git ls-files',
   );
 });
 
@@ -45,7 +45,7 @@ test('the hook passes that list to the runner instead of letting node discover',
   assert.match(
     hookText,
     /run "unit tests \(node --test\)" tq_node unit \$TEST_FILES/,
-    'pre-push must pass $TEST_FILES to the runner; a bare invocation re-enables node discovery',
+    'bin/gate must pass $TEST_FILES to the runner; a bare invocation re-enables node discovery',
   );
 });
 
@@ -62,7 +62,7 @@ test('every tracked test file under a dot-directory is still covered', () => {
   for (const file of hidden) {
     assert.ok(
       /\.test\.(js|mjs|ts)$/.test(file),
-      `${file} sits under a dot-directory but does not match the globs in pre-push, so nothing runs it`,
+      `${file} sits under a dot-directory but does not match the globs in bin/gate, so nothing runs it`,
     );
   }
 });

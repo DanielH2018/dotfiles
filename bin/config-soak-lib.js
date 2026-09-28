@@ -1,34 +1,19 @@
 'use strict';
-// Pure, deterministic logic for the config soak gate. No filesystem, network,
-// or clock access lives here — callers inject `now` and the scanned file set —
-// so every function is a total function of its arguments and trivially testable.
+// Pure, deterministic logic for config-soak. No filesystem, network or clock access lives
+// here: callers inject `now`, the tracked path set and each path's landed date, so every
+// function is a total function of its arguments.
 //
-// Vocabulary:
-//   tracked   { repoRelPath: sha256hex }   fingerprints of the current config on disk
-//   manifest  { windowDays, entries: [{ path, hash, landed }] }   the committed ledger
-//   now       ISO-8601 string or epoch ms  injected wall clock
+// A path's landed date is the committer date of the last commit on origin/main that touched
+// it. main only moves by fast-forward (bin/land, and the ruleset forbids anything else), so
+// that date is stable once a commit lands. It replaced a committed fingerprint ledger
+// (config-soak.json) in #694: every acknowledgement in that ledger was self-issued by the
+// author running `config-soak land`, so it recorded nothing the history did not already hold.
 //
-// A config file's lifecycle: unrecorded -> (land) -> soaking -> stable.
-// A content change moves it to `changed`; a deletion moves its ledger entry to
-// `removed`. `unrecorded`, `changed`, and `removed` are the gate-failing states —
-// they represent behavior-affecting config that a human has not consciously
-// acknowledged via `land`.
-
-const crypto = require('node:crypto');
+// A config file's lifecycle: unlanded -> soaking -> stable. `unlanded` means the working
+// tree differs from origin/main at that path, or origin/main has never carried it.
 
 const DEFAULT_WINDOW_DAYS = 7;
 const DAY_MS = 86400000;
-
-// sha256 of file content, hex. EOL-agnostic: CRLF is collapsed to LF before
-// hashing, so a file checked out with Windows line endings (autocrlf) fingerprints
-// identically to the LF ledger written on macOS/Linux — otherwise every CRLF
-// checkout false-flags as `changed`. The tracked surface is all text config;
-// latin1 is a byte-exact round-trip, so nothing but literal CRLF pairs is touched.
-function fingerprint(content) {
-  const buf = Buffer.isBuffer(content) ? content : Buffer.from(content);
-  const lf = Buffer.from(buf.toString('latin1').replace(/\r\n/g, '\n'), 'latin1');
-  return crypto.createHash('sha256').update(lf).digest('hex');
-}
 
 function toMs(t) {
   const ms = typeof t === 'number' ? t : Date.parse(t);
@@ -36,136 +21,41 @@ function toMs(t) {
   return ms;
 }
 
-function resolveWindow(manifest, override) {
-  if (override != null) return override;
-  if (manifest && manifest.windowDays != null) return manifest.windowDays;
-  return DEFAULT_WINDOW_DAYS;
-}
+const byPath = (a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
 
-// Classify every tracked path and every ledger entry into buckets.
-// Returns { windowDays, soaking[], stable[], unrecorded[], changed[], removed[] }.
-// Each bucket is sorted by path for stable, reviewable output.
-function buildReport({ tracked, manifest = {}, now, windowDays } = {}) {
-  const win = resolveWindow(manifest, windowDays);
+// Classify every tracked path.
+//   paths    repo-relative paths git tracks under the config surface
+//   landed   { path: ISO committer date on origin/main }, absent when main never had it
+//   pending  paths whose working-tree content differs from origin/main
+// Returns { windowDays, unlanded[], soaking[], stable[] }, each sorted by path.
+function classify({ paths, landed = {}, pending = [], now, windowDays = DEFAULT_WINDOW_DAYS } = {}) {
   const nowMs = toMs(now);
-  const entries = manifest.entries || [];
-  const byPath = new Map(entries.map((e) => [e.path, e]));
-
-  const report = {
-    windowDays: win,
-    soaking: [],
-    stable: [],
-    unrecorded: [],
-    changed: [],
-    removed: [],
-  };
-
-  for (const path of Object.keys(tracked).sort()) {
-    const hash = tracked[path];
-    const entry = byPath.get(path);
-    if (!entry) {
-      report.unrecorded.push({ path, hash });
+  const pendingSet = new Set(pending);
+  const report = { windowDays, unlanded: [], soaking: [], stable: [] };
+  for (const path of [...paths].sort()) {
+    const date = landed[path];
+    if (!date || pendingSet.has(path)) {
+      report.unlanded.push({ path, landed: date || null });
       continue;
     }
-    if (entry.hash !== hash) {
-      report.changed.push({ path, hash, recordedHash: entry.hash, landed: entry.landed });
-      continue;
-    }
-    const ageDays = (nowMs - toMs(entry.landed)) / DAY_MS;
-    if (ageDays >= win) {
-      report.stable.push({ path, hash, landed: entry.landed, ageDays, outcome: entry.outcome || null });
-    } else {
-      report.soaking.push({
-        path,
-        hash,
-        landed: entry.landed,
-        ageDays,
-        daysRemaining: win - ageDays,
-        outcome: entry.outcome || null,
-      });
-    }
+    const ageDays = (nowMs - toMs(date)) / DAY_MS;
+    if (ageDays >= windowDays) report.stable.push({ path, landed: date, ageDays });
+    else report.soaking.push({ path, landed: date, ageDays, daysRemaining: windowDays - ageDays });
   }
-
-  for (const entry of entries) {
-    if (!(entry.path in tracked)) {
-      report.removed.push({ path: entry.path, recordedHash: entry.hash, landed: entry.landed });
-    }
-  }
-  report.removed.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-
-  // "landed, never fired": the soak window fully elapsed (stable), an
-  // outcomes run actually reached Loki (source:"loki" — never true for a
-  // path outcomes never attempted, or one that came back source:"none"),
-  // and it recorded zero hits the whole time. A warning, not a gate
-  // failure, unless the caller passes { strict: true } to gateFailures.
-  report.neverFired = report.stable.filter(
-    (x) => x.outcome && x.outcome.source === 'loki' && x.outcome.fired === 0
-  );
+  for (const bucket of [report.unlanded, report.soaking, report.stable]) bucket.sort(byPath);
   return report;
 }
 
-// Count of gate-failing findings. Zero => the gate passes (all config is
-// acknowledged, whether still soaking or already stable). `opts.strict`
-// additionally fails the gate on "landed, never fired" entries (see
-// buildReport's `neverFired`) — off by default, since a config that soaked
-// out without firing is a scaffolding-delete-pass candidate, not by itself
-// evidence the change was wrong.
-function gateFailures(report, opts = {}) {
-  let n = report.unrecorded.length + report.changed.length + report.removed.length;
-  if (opts.strict) n += (report.neverFired || []).length;
-  return n;
-}
-
-// Produce a NEW manifest that records the current reality as reviewed.
-//   - unchanged files keep their existing `landed` (soak clock is NOT reset)
-//   - new or content-changed files (within scope) are stamped landed=now
-//   - deleted files (within scope) are dropped from the ledger
-// `paths` is an optional allow-list: when given, only those paths are refreshed
-// (acknowledge just what you actually reviewed); everything else keeps its prior
-// ledger state. Pure — returns a fresh object, never mutates its input.
-function land({ tracked, manifest = {}, now, paths } = {}) {
-  const win = resolveWindow(manifest, undefined);
-  const nowIso = typeof now === 'number' ? new Date(now).toISOString() : now;
-  const scope = paths && paths.length ? new Set(paths) : null;
-  const inScope = (p) => !scope || scope.has(p);
-  const prev = new Map((manifest.entries || []).map((e) => [e.path, e]));
-  const out = [];
-
-  for (const path of Object.keys(tracked).sort()) {
-    const hash = tracked[path];
-    const existing = prev.get(path);
-    if (existing && existing.hash === hash) {
-      // unchanged: preserve clock AND any recorded outcome — nothing about
-      // this file's review state changed.
-      const rec = { path, hash, landed: existing.landed };
-      if (existing.outcome) rec.outcome = existing.outcome;
-      out.push(rec);
-    } else if (inScope(path)) {
-      // new/changed & reviewed: (re)start clock. Deliberately no `outcome`
-      // carried forward — a changed file's prior outcome describes content
-      // that no longer exists, and `outcomes` has not observed the new one.
-      out.push({ path, hash, landed: nowIso });
-    } else if (existing) {
-      // out of scope: keep old, outcome included
-      const rec = { path: existing.path, hash: existing.hash, landed: existing.landed };
-      if (existing.outcome) rec.outcome = existing.outcome;
-      out.push(rec);
-    }
-    // new & out of scope: intentionally omitted (stays unrecorded)
+// Read the output of a log walk printed as `--format=%x00%cI --name-only` (newest first)
+// into { path: date }, keeping each path's FIRST, i.e. newest, occurrence. One walk answers
+// every path, where asking per path costs a process per tracked file.
+function parseLandedLog(text) {
+  const landed = {};
+  for (const block of text.split('\0').filter(Boolean)) {
+    const [date, ...files] = block.split('\n').map((l) => l.trim()).filter(Boolean);
+    for (const f of files) if (!(f in landed)) landed[f] = date;
   }
-
-  // Deleted files: recorded entries whose path is gone from `tracked`.
-  // Drop them when in scope (acknowledging the removal), keep them otherwise.
-  for (const entry of manifest.entries || []) {
-    if (!(entry.path in tracked) && !inScope(entry.path)) {
-      const rec = { path: entry.path, hash: entry.hash, landed: entry.landed };
-      if (entry.outcome) rec.outcome = entry.outcome;
-      out.push(rec);
-    }
-  }
-
-  out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  return { windowDays: win, entries: out };
+  return landed;
 }
 
 // ---------------------------------------------------------------------------
@@ -401,10 +291,8 @@ function unattributedOutcome({ checkedAt, note }) {
 module.exports = {
   DEFAULT_WINDOW_DAYS,
   DAY_MS,
-  fingerprint,
-  buildReport,
-  gateFailures,
-  land,
+  classify,
+  parseLandedLog,
   ATTRIBUTABLE_HOOK_EVENTS,
   isSettingsPath,
   isHookPath,

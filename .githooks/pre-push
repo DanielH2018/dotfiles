@@ -1,37 +1,26 @@
 #!/usr/bin/env bash
 #
-# pre-push — fast, offline, deterministic gate for behavior-affecting config.
+# pre-push — the fast local half of the gate: commit signatures and the lint hooks.
 #
-# Runs fast, offline checks: no network, no LLM, no token spend. The slow,
-# non-deterministic LLM eval suite is deliberately NOT here — run it by hand
-# when you actually change an agent definition:
+# The full suite (eval freshness, instruction quality, the injection red-team, the unit
+# tests) is bin/gate, and the required CI `gate` job runs it on every PR and on every push
+# to main. main's ruleset refuses to move onto a commit that job has not passed, and bin/land
+# waits for it, so nothing reaches main unchecked. Run bin/gate by hand before pushing when
+# you want the answer sooner than CI gives it.
 #
-#     node evals/run-evals.mjs --agent <name>      # scoped
-#     node evals/run-evals.mjs                      # full k=5 soak
+# The suite lived here until #694. bin/land pushes three times per landing, each push re-ran
+# the whole suite, and CI then ran it again on the same head. Measured 2026-09-28: 37.4s
+# per push with the suite, about 3s without.
 #
 # Bypass once (rarely, e.g. WIP push): git push --no-verify
 #
 # Checks:
-#   1. commit signatures    — every commit this push adds must carry a signature.
-#                             commit.gpgsign is only a default; nothing enforced it, and
-#                             173 of this repo's 607 commits do not verify as a result.
-#   2. config-soak status   — every behavior-affecting config change must be
-#                             reviewed and `config-soak land`ed before push.
-#   3. instruction quality  — security dimension is a hard gate (>=70) on the
-#                             agent / skill / CLAUDE instruction files; the
-#                             composite floor is a soft ratchet (QUALITY_MIN_SCORE,
-#                             default 45 — raise it as the files improve).
-#   4. screen-injection     — red-team regression guard on the injection hook.
-#   5. unit tests           — the deterministic `node --test` suite (hooks, config-soak,
-#                             settings merge, dotsync, evals lib); offline, self-skips the
-#                             chezmoi-template tests when chezmoi isn't installed.
-#
-# Checks 2-5 read the working tree, not the refs being pushed, so bin/gate-cache lets a
-# second push of the same clean tree skip them — see the guard below. Check 1 is never
-# cached. GATE_CACHE_OFF=1 git push re-runs everything.
-#
-# Both test steps print a tq digest rather than the runner's own log — see
-# tq_node below. TQ_OFF=1 git push restores the raw output.
+#   1. commit signatures — every commit this push adds must carry a signature.
+#                          commit.gpgsign is only a default; nothing enforced it, and
+#                          173 of this repo's 607 commits do not verify as a result. The
+#                          ruleset enforces signatures server-side on refs/heads/main only,
+#                          so this is the check for every other branch.
+#   2. lint              — every hook in .pre-commit-config.yaml, through prek.
 #
 # Kept bash-3.2 clean (macOS default bash): no mapfile / associative arrays.
 
@@ -40,10 +29,8 @@ set -u
 ROOT="$(git rev-parse --show-toplevel)" || exit 1
 cd "$ROOT" || exit 1
 
-# Git exports GIT_DIR/GIT_PREFIX (and friends) into its hooks. Anything below that
-# shells out to git in a temp directory — several tests build throwaway repos — would
-# otherwise operate on THIS repo instead of their own fixture, so the suite fails under
-# the hook while passing when run by hand. Drop them now that ROOT is resolved.
+# Git exports GIT_DIR/GIT_PREFIX (and friends) into its hooks. prek shells out to git and
+# would otherwise act on the hook's view of the repo rather than the checkout's.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR \
       GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_QUARANTINE_PATH \
       GIT_CONFIG_PARAMETERS GIT_REFLOG_ACTION
@@ -56,22 +43,7 @@ else
 fi
 
 fail=0
-
-# Steps below degrade to a skip rather than a failure when a local tool is absent, which is
-# deliberate — a machine that never installed prek should still be able to push. What was not
-# deliberate is the closing verdict saying "pre-push checks passed." either way, so a run that
-# checked less than the header advertises is indistinguishable from a full one. Every degrade
-# site records itself here and the verdict names them.
-#
-# Plain string + counter, not an array: this file is bash-3.2 clean (see header) and `set -u`
-# above makes "${arr[@]}" an error there when the array is empty.
 skipped=""
-nskipped=0
-note_skip() { # note_skip "<short-name>" "<printed message>"
-  skipped="${skipped:+$skipped, }$1"
-  nskipped=$((nskipped + 1))
-  printf '%s-%s %s\n' "$B" "$Z" "$2"
-}
 
 run() { # run "<label>" <cmd...>
   label="$1"; shift
@@ -85,186 +57,30 @@ run() { # run "<label>" <cmd...>
   fi
 }
 
-# node --test relays a line per test: ~65KB / 680 lines on a run where nothing
-# is wrong, which is the bulk of everything this gate prints. tq collapses that
-# to a one-line verdict, and on failure to the failures alone — file:line, the
-# assertion, the failing test's output — plus a json path holding the untrimmed
-# record. It re-exports the runner's exit code verbatim (bin/tq returns
-# result.exit; no adapter assigns to it), so `run` above still branches on
-# node's own verdict. tq decides what gets printed, never what passes.
-#
-# Resolved from the repo, not from PATH: a gate should exercise the tq being
-# pushed, and this has to work in a clone where `chezmoi apply` has not run.
-# Falls back to the raw runner when tq or python3 is absent, or on TQ_OFF=1 —
-# tq buffers, so a long suite says nothing until it finishes.
-TQ="$ROOT/home/dot_local/bin/executable_tq"
-if [ -z "${TQ_OFF:-}" ] && [ -f "$TQ" ] && command -v python3 >/dev/null 2>&1; then
-  TQ_HOME="$ROOT/home/dot_local/share/tq"
-  export TQ_HOME
-  # --absolute-git-dir, not $ROOT/.git: in a worktree that is a file, not a
-  # directory. Absolute because TQ_JSON is a path some other process may resolve
-  # from a cwd of its own; --git-path answers relatively in the main checkout.
-  # Pinning TQ_JSON also stops tq's mkstemp default littering /tmp with a
-  # never-read record on every green push.
-  TQ_JSON_DIR="$(git rev-parse --absolute-git-dir)/tq"
-  mkdir -p "$TQ_JSON_DIR" || TQ_JSON_DIR=""
-  # Invoked indirectly, as `run <label> tq_node ...`, so no call site is visible here: SC2329
-  # fires for the function and SC2317 for every command in its body.
-  # shellcheck disable=SC2329,SC2317
-  tq_node() { # tq_node <json-name> [node --test args...]
-    name="$1"; shift
-    TQ_JSON="${TQ_JSON_DIR:+$TQ_JSON_DIR/$name.json}" python3 "$TQ" node --test "$@"
-  }
-else
-  # Invoked indirectly, as `run <label> tq_node ...`, so no call site is visible here: SC2329
-  # fires for the function and SC2317 for every command in its body.
-  # shellcheck disable=SC2329,SC2317
-  tq_node() { shift; node --test "$@"; }
-  # NOT a skipped step, so it stays out of note_skip: the raw runner executes the same tests
-  # and `run` still branches on node's own exit code, so coverage is identical — only the
-  # digest is lost. Said out loud anyway, or the sudden wall of per-test output reads as
-  # something having gone wrong. TQ_OFF=1 is a deliberate opt-out and needs no notice.
-  if [ -z "${TQ_OFF:-}" ]; then
-    printf '%s-%s tq digest unavailable (tq or python3 missing) - raw node --test output, same coverage\n' "$B" "$Z"
-  fi
-fi
-
 # 1. Commit signatures. Reads git's pre-push protocol from stdin, so it has to come
 #    before anything else that might consume it. Unsigned/bad/revoked fail; signed but
 #    unverifiable (signer absent from allowed_signers) warns — SIGN_GATE_STRICT=1 to
 #    demand a good signature outright.
 run "commit signatures" bin/check-push-signatures
 
-# Steps 2-5 read the WORKING TREE, not the refs being pushed, so their answer cannot change
-# between two pushes of the same clean tree — and bin/land makes three such pushes per
-# landing (the branch, then <branch>:main, then the branch deletion). Measured 2026-08-07:
-# 3 × 58s of gate inside a 183s landing, two thirds of it re-answering an answered question.
-# bin/gate-cache keys on HEAD's sha and answers only for a clean tree; the reasoning for a
-# key that narrow is in that file. The signature check above stays outside this on purpose —
-# it is the one step that reads the push range, so its answer really does differ per push.
-GATE="$ROOT/bin/gate-cache"
-tree_cached=0
-if [ -x "$GATE" ] && cache_age=$("$GATE" check 2>/dev/null); then
-  tree_cached=1
-  note_skip "tree gate" "tree gate - this clean tree passed ${cache_age}s ago (GATE_CACHE_OFF=1 to re-run)"
+# 2. Lint. Skips rather than fails when prek is absent: a missing local tool should not
+#    block a push on a machine that never installed it, and CI's bin/gate run has it.
+if command -v prek >/dev/null 2>&1; then
+  run "lint (ruff + shellcheck)" prek run --all-files
+else
+  skipped="lint"
+  printf '%s-%s lint (ruff + shellcheck) - prek not installed, skipped\n' "$B" "$Z"
 fi
-
-if [ "$tree_cached" -eq 0 ]; then
-  # 2. Deterministic review/soak ledger — no LLM, no judgement.
-  run "config-soak (review ledger)" node bin/config-soak status
-
-  # 2b. Skill eval freshness. A model-invoked skill's `description` IS its invocation
-  #     mechanism, so editing it can move the trigger rate with nothing visible to a
-  #     reader: pr-authoring shipped at a 70% fire rate on its plainest trigger and only
-  #     the eval saw it. This checks that a description edit came with re-recorded
-  #     results, and deliberately does NOT run the eval — that costs ~24 model calls,
-  #     several minutes and network, none of which belongs in a gate whose contract is
-  #     deterministic, free and offline. Opt-in per skill: having evals/cases.json is
-  #     what gates you. EVAL_FRESHNESS_OFF=1 bypasses.
-  if [ -z "${EVAL_FRESHNESS_OFF:-}" ]; then
-    run "skill eval freshness" bin/check-eval-freshness
-  else
-    note_skip "skill eval freshness" "skill eval freshness - EVAL_FRESHNESS_OFF=1, skipped"
-  fi
-
-  # 3. Instruction-file quality. Security gate (>=70) is always enforced by
-  #    `verify`; the composite floor is a ratchet pinned to today's worst file, so
-  #    any regression below the current baseline blocks the push. rules/python.md
-  #    and rules/rust.md both score 52 and set the floor; 53 fails. Raise this as
-  #    those files improve — a floor below the true minimum is slack, not a gate.
-  #
-  #    commands/ and output-styles/ were outside this glob until 2026-08-17, so 13 files
-  #    that steer behaviour every session were scored by nothing. output-styles is the one
-  #    that matters most: daniel-voice.md is part of the system prompt on every turn.
-  #    Measured before widening: the new minimum is commands/config-map.md at 58, so this
-  #    does not move the floor.
-  QUALITY_MIN_SCORE="${QUALITY_MIN_SCORE:-52}"
-  QFILES=$(ls home/private_dot_claude/agents/*.md \
-              home/private_dot_claude/skills/*/SKILL.md \
-              home/private_dot_claude/rules/*.md \
-              home/private_dot_claude/commands/*.md \
-              home/private_dot_claude/output-styles/*.md \
-              home/private_dot_claude/CLAUDE.md.tmpl 2>/dev/null)
-  if [ -n "$QFILES" ]; then
-    # shellcheck disable=SC2086  # word-split intended; these paths have no spaces
-    run "instruction quality (security>=70; composite>=${QUALITY_MIN_SCORE})" \
-      python3 quality/instruction_quality.py verify $QFILES --min-score "$QUALITY_MIN_SCORE"
-  else
-    # The `ls` above eats its own error, so an empty match dropped the security gate entirely
-    # and printed nothing at all — the one degrade site with no trace in the log.
-    note_skip "instruction quality" "instruction quality - no instruction files matched, skipped"
-  fi
-
-  # 3b. Lint. Scope comes from .pre-commit-config.yaml so there is one definition of what
-  #    gets linted; prek is the runner because it is what is installed here. Before this
-  #    step the config had no runner attached at all — .git/hooks-safe holds only a
-  #    pre-push, so nothing ever executed it, and ruff/shellcheck reached files solely via
-  #    the lint-after-edit PostToolUse hook. That made coverage depend on Claude being the
-  #    editor. Skips rather than fails when prek is absent, matching how tq degrades above:
-  #    a missing local tool should not block a push on a machine that never installed it.
-  if command -v prek >/dev/null 2>&1; then
-    run "lint (ruff + shellcheck)" prek run --all-files
-  else
-    note_skip "lint" "lint (ruff + shellcheck) - prek not installed, skipped"
-  fi
-
-  # 4. Injection-hook red-team regression guard. Run through --test rather than as
-  #    a bare script so the digest covers it too; the file is a node:test suite
-  #    either way, and step 5's list picks it up as well — it stays a named step so
-  #    a red-team regression is attributed instead of buried in the suite total.
-  run "screen-injection red-team" tq_node injection tests/hooks/screen-injection.test.js
-
-  # 5. Deterministic unit suite — hooks, config-soak, settings merge, dotsync, evals lib.
-  #    Fast + offline; the chezmoi-template tests self-skip when chezmoi isn't installed.
-  #
-  #    The file list comes from git, NOT from `node --test`'s own discovery. Node's default
-  #    discovery skips every directory whose name starts with a dot, at any depth — verified
-  #    on node 24.18.1 with a fixture: a *.test.js under sub/.hidden/deep/ is not collected.
-  #    Two real suites once lived under a .claude/ directory and were therefore never run
-  #    by this gate, and nothing said so: the run just reported a smaller total, and a
-  #    total nobody has a baseline for looks exactly like a passing one.
-  #
-  #    Deriving the list from `git ls-files` also makes the covered set the TRACKED set, so a
-  #    suite added under any future dot-directory — home/.chezmoiscripts/, .chezmoitemplates/,
-  #    .chezmoidata/ are all invisible to node's walk — is picked up by construction rather
-  #    than by remembering this constraint.
-  TEST_FILES=$(git ls-files '*.test.js' '*.test.mjs' '*.test.ts')
-  if [ -z "$TEST_FILES" ]; then
-    # Bare `node --test` would silently fall back to its own discovery, i.e. the bug above.
-    printf '%s✗ unit tests: git ls-files matched no test files%s\n' "$R" "$Z" >&2
-    fail=1
-  else
-    # shellcheck disable=SC2086  # word-split intended; these paths have no spaces
-    run "unit tests (node --test)" tq_node unit $TEST_FILES
-  fi
-fi  # tree_cached
-
-# Reap scratch dirs from runs that were killed before their cleanup handlers could run.
-# After the suite, not before: this is the run most likely to have just made some, and a
-# sweep here cannot race the tests it follows. Never gates — a push does not fail over
-# housekeeping, so its status is deliberately ignored.
-"$(git rev-parse --show-toplevel)/bin/sweep-test-tmp" || true
 
 if [ "$fail" -ne 0 ]; then
   printf '\n%spre-push blocked.%s Fix the above, or bypass once: git push --no-verify\n' "$R" "$Z" >&2
   exit 1
 fi
 
-# Green, and the tree gate actually ran — vouch for this tree so the rest of the landing's
-# pushes can skip it. After the fail check, never before: a record written by a red run is
-# the one thing that would let a broken tree onto main. Re-recording after a hit would let
-# a chain of hits slide the record's timestamp forward indefinitely, so a tree is only ever
-# vouched for by a run that tested it.
-if [ "$tree_cached" -eq 0 ] && [ -x "$GATE" ]; then
-  "$GATE" save || true
-fi
-
-if [ "$nskipped" -eq 0 ]; then
-  printf '\n%spre-push checks passed.%s\n' "$G" "$Z"
+if [ -z "$skipped" ]; then
+  printf '\n%spre-push checks passed.%s CI runs the full suite (bin/gate).\n' "$G" "$Z"
 else
-  noun="steps"
-  [ "$nskipped" -eq 1 ] && noun="step"
-  printf '\n%spre-push checks passed, %d %s skipped (%s).%s\n' \
-    "$G" "$nskipped" "$noun" "$skipped" "$Z"
+  printf '\n%spre-push checks passed, 1 step skipped (%s).%s CI runs the full suite (bin/gate).\n' \
+    "$G" "$skipped" "$Z"
 fi
 exit 0

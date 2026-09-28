@@ -10,7 +10,7 @@
 //          'executable_tq', not the deployed '.local/bin/tq'. A test reads what is committed.
 //          With no segments it is home/ itself.
 // repoPath(...segments) -> a path under the checkout (the worktree, not the primary checkout):
-//          bin/, .githooks/, config-soak.json.
+//          bin/, .githooks/.
 // REPO, SOURCE  the same two roots as values, for the other tests/lib modules. A test file
 //          calls the functions instead, and the reason is the guard below.
 //

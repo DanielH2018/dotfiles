@@ -1,7 +1,8 @@
 # Config review + soak gate
 
 **Date:** 2026-07-08
-**Status:** Proposal (branch `config-soak-gate`)
+**Status:** Proposal (branch `config-soak-gate`). **Ledger and gate superseded 2026-09-28 by
+#694** — see *Superseded* at the end.
 **Backlog item:** #2 — "treat `.claude/` changes like code: a lightweight review + soak step before behavior-affecting config lands"
 
 ## Problem
@@ -189,3 +190,26 @@ stack answers on bare localhost; a k3s host whose Loki sits behind a ClusterIP d
 `status`/`land`/`list` — it makes a network call, however narrow, which the other three verbs do
 not, and the allow-list's own comment already documents that a new subcommand is never
 pre-approved by default.
+
+## Superseded (2026-09-28, #694)
+
+The committed ledger (`config-soak.json`), the `land` verb and the pre-push step that failed on
+an unacknowledged change are gone. `config-soak status` now takes each file's landed date from
+`git log -1 --format=%cI origin/main -- <path>` (read in one log walk) and always exits 0.
+
+This reverses rejected alternative 2 above, for reasons that section could not have known:
+
+- **Every acknowledgement was self-issued.** The pre-push step hard-gated on the ledger, so the
+  author ran `config-soak land` before every push. `land` is allow-listed, so Claude did the
+  same for config it had just written. "Reviewed and accepted" and "authored" were the same
+  event. In the 30 days to 2026-09-28, 73 of 514 commits touched only `config-soak.json`.
+- **Rebases and squashes no longer rewrite the date that matters.** main is linear: `bin/land`
+  fast-forwards it, and the `Default` ruleset forbids non-fast-forward pushes. A commit's `%cI`
+  on `origin/main` is fixed once it lands.
+- **The single reviewable file** was a merge-conflict magnet shared by every concurrent PR, which
+  is why `bin/land` carried a `config-soak land` re-run after each rebase.
+
+What is lost is per-file partial acknowledgement: "acknowledge file A but keep watching file B".
+The operator accepted that loss on 2026-09-28. `outcomes` survives and prints its result instead
+of writing it into the ledger; `status --strict` and its never-fired gate went with the ledger,
+and `outcomes` now prints the never-fired list itself.

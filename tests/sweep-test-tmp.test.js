@@ -166,12 +166,12 @@ test('every suite that makes scratch in $TMPDIR also removes it', () => {
   );
 });
 
-test('the pre-push gate runs the sweep without letting it block a push', () => {
-  const hook = fs.readFileSync(repoPath('.githooks', 'pre-push'), 'utf8');
+test('bin/gate runs the sweep without letting it fail the gate', () => {
+  const hook = fs.readFileSync(repoPath('bin', 'gate'), 'utf8');
   assert.match(hook, /bin\/sweep-test-tmp/, 'the gate must actually invoke the sweep');
   assert.match(
     hook,
     /bin\/sweep-test-tmp"? \|\| true/,
-    'housekeeping must not be able to fail a push',
+    'housekeeping must not be able to fail the gate',
   );
 });

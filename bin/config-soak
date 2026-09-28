@@ -1,28 +1,23 @@
 #!/usr/bin/env node
 'use strict';
-// config-soak — deterministic review + soak gate for behavior-affecting config.
+// config-soak — advisory soak report for behavior-affecting config.
 //
-// Treats ~/.claude config (settings.base.json, hooks, agents, skills, CLAUDE.md)
-// like code: a change must be consciously acknowledged (`land`) before it is
-// considered reviewed, and is only flagged `stable` after an observation window.
-// It is deterministic and mechanical: no LLM, no judgement, just a fingerprint ledger.
+// Treats ~/.claude config (settings templates, hooks, agents, skills, rules, CLAUDE.md) as
+// something to watch after it ships: each file is `soaking` for a window after it lands on
+// main, then `stable`. A file whose working-tree content differs from origin/main is
+// `unlanded`. Deterministic and mechanical: no LLM, no judgement, no state of its own.
 //
 // Usage:
-//   config-soak status [--json] [--strict]   report + exit non-zero if unreviewed
-//                                             changes exist (--strict also fails on
-//                                             "landed, never fired" entries)
-//   config-soak land [PATH...]               record current config as reviewed
-//                                             (starts soak clock)
-//   config-soak outcomes [--since PATH]       query Loki for evidence that each
-//                                             hook/settings entry inside its soak
-//                                             window actually fired, and write the
-//                                             result back as that entry's `outcome`
-//   config-soak list                         print the tracked path set and exit
+//   config-soak status [--json]          report each tracked file's state; always exits 0
+//   config-soak outcomes [--since PATH]  query Loki for evidence that each landed
+//                                        hook/settings file actually fired
+//   config-soak list                     print the tracked path set and exit
 //   config-soak --help
 //
-// The ledger lives at <repo>/config-soak.json and is committed. Fingerprints are
-// taken over the chezmoi SOURCE files (executable_*, *.tmpl) — the reviewable
-// source of truth — not the deployed/rendered output.
+// A file's landed date is the committer date of the last origin/main commit that touched
+// it, read from git on every run. This replaced the committed config-soak.json ledger and
+// its `land` verb in #694; docs/specs/2026-07-08-config-soak-gate-design.md has the history.
+// Nothing here gates a push. Run `git fetch` first if origin/main may be stale.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -30,7 +25,7 @@ const { execFileSync } = require('node:child_process');
 const lib = require('./config-soak-lib.js');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
-const MANIFEST_PATH = path.join(REPO_ROOT, 'config-soak.json');
+const MAIN_REF = 'origin/main';
 const HOOKS_CONFIG_SOURCE = path.join(REPO_ROOT, 'home/.chezmoitemplates/settings.base.json');
 
 // Loki, this machine only. No other host, no other port — the query text is
@@ -60,10 +55,9 @@ async function queryLoki(logql, atSeconds) {
 }
 
 // Behavior-affecting config surface. `file` = a single path; `dir` = recurse.
-// Paths are repo-relative and use forward slashes in the ledger.
 // settings.json is generated from all three templates below, so all three are policy.
 // Listed individually rather than tracking .chezmoitemplates as a dir: the rest of that
-// directory is installer scripts and OS probes, which are not this gate's surface.
+// directory is installer scripts and OS probes, which are not this surface.
 // tests/settings/settings-templates-tracked.test.js fails if a fourth appears without a line here.
 const TRACKED = [
   { type: 'file', path: 'home/.chezmoitemplates/settings.base.json' },
@@ -76,58 +70,44 @@ const TRACKED = [
   { type: 'dir', path: 'home/private_dot_claude/rules' },
   { type: 'dir', path: 'home/private_dot_claude/output-styles' },
 ];
+const PATHSPEC = TRACKED.map((s) => s.path);
 
-// The tracked surface is what git tracks under each spec, not what is on disk there.
-// A bare readdir walk fingerprinted whatever the working tree held under a tracked
-// directory — the python suites' `hooks/__pycache__/*.pyc` got landed into the ledger
-// and every other checkout then read it as REMOVED (#547). `git ls-files` is the same
-// source bin/gen-lint-files reads; a pathspec per spec keeps git doing the walk.
-function gitTrackedPaths() {
-  let out;
+function git(args) {
   try {
-    out = execFileSync('git', ['ls-files', '-z', '--', ...TRACKED.map((s) => s.path)], {
-      cwd: REPO_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    return execFileSync('git', args, {
+      cwd: REPO_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024,
     });
   } catch (e) {
-    process.stderr.write(`config-soak: git ls-files failed in ${REPO_ROOT}: ${e.message}\n`);
+    process.stderr.write(`config-soak: git ${args[0]} failed in ${REPO_ROOT}: ${e.message}\n`);
     process.exit(2);
   }
-  const paths = out.split('\0').filter(Boolean);
-  // An empty set would classify every ledger entry as REMOVED — a gate that fails on every
-  // checkout, which is worse than the bug this replaces. Refuse rather than report it.
+}
+
+// The tracked surface is what git tracks under each spec, not what is on disk there. A bare
+// readdir walk once picked up the python suites' `hooks/__pycache__/*.pyc` (#547).
+function gitTrackedPaths() {
+  const paths = git(['ls-files', '-z', '--', ...PATHSPEC]).split('\0').filter(Boolean);
   if (!paths.length) {
     process.stderr.write(`config-soak: git ls-files returned no tracked config under ${REPO_ROOT}\n`);
     process.exit(2);
   }
-  return paths;
+  return paths.sort();
 }
 
-// Scan the tracked surface into { repoRelPath: sha256 }. A path git tracks but the working
-// tree lacks (deleted, not yet committed) is skipped, so the report lists it as REMOVED.
-function scanTracked() {
-  const tracked = {};
-  for (const rel of gitTrackedPaths().sort()) {
-    const abs = path.join(REPO_ROOT, rel);
-    if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) continue;
-    tracked[rel] = lib.fingerprint(fs.readFileSync(abs));
-  }
-  return tracked;
+// { path: committer date of the newest MAIN_REF commit touching it }, in one log walk.
+function landedDates() {
+  git(['rev-parse', '--verify', '--quiet', `${MAIN_REF}^{commit}`]);
+  return lib.parseLandedLog(git(['log', '--format=%x00%cI', '--name-only', MAIN_REF, '--', ...PATHSPEC]));
 }
 
-function readManifest() {
-  if (!fs.existsSync(MANIFEST_PATH)) return { windowDays: lib.DEFAULT_WINDOW_DAYS, entries: [] };
-  try {
-    const m = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8'));
-    m.entries = m.entries || [];
-    return m;
-  } catch (e) {
-    process.stderr.write(`config-soak: cannot parse ${MANIFEST_PATH}: ${e.message}\n`);
-    process.exit(2);
-  }
+// Paths whose working-tree content differs from MAIN_REF: committed on this branch, staged,
+// or unstaged alike.
+function pendingPaths() {
+  return git(['diff', '--name-only', '-z', MAIN_REF, '--', ...PATHSPEC]).split('\0').filter(Boolean);
 }
 
-function writeManifest(m) {
-  fs.writeFileSync(MANIFEST_PATH, JSON.stringify(m, null, 2) + '\n');
+function report(nowIso) {
+  return lib.classify({ paths: gitTrackedPaths(), landed: landedDates(), pending: pendingPaths(), now: nowIso });
 }
 
 function pluralLine(label, items, render) {
@@ -135,93 +115,50 @@ function pluralLine(label, items, render) {
   return `\n${label} (${items.length}):\n` + items.map((i) => '  ' + render(i)).join('\n') + '\n';
 }
 
-function outcomeSuffix(outcome) {
-  if (!outcome) return '';
-  if (outcome.source === 'none') return `  [outcome: unattributed — ${outcome.note}]`;
-  return `  [outcome: fired=${outcome.fired} denied=${outcome.denied} errors=${outcome.errors}` +
-    ` @ ${outcome.checkedAt}]`;
-}
-
 function cmdStatus(argv) {
-  const json = argv.includes('--json');
-  const strict = argv.includes('--strict');
-  const tracked = scanTracked();
-  const manifest = readManifest();
-  const now = new Date().toISOString();
-  const report = lib.buildReport({ tracked, manifest, now });
-  const failures = lib.gateFailures(report, { strict });
-
-  if (json) {
-    process.stdout.write(JSON.stringify({ ...report, failures, ok: failures === 0, strict }, null, 2) + '\n');
-    return failures === 0 ? 0 : 1;
+  const r = report(new Date().toISOString());
+  if (argv.includes('--json')) {
+    process.stdout.write(JSON.stringify(r, null, 2) + '\n');
+    return 0;
   }
-
   const d1 = (n) => n.toFixed(1);
-  let out = `config soak status  (window: ${report.windowDays}d${strict ? ', --strict' : ''})\n`;
-  out += pluralLine('UNREVIEWED — new config, run `config-soak land`', report.unrecorded, (i) => i.path);
-  out += pluralLine('CHANGED — content differs from ledger, re-review then `land`', report.changed, (i) => i.path);
-  out += pluralLine('REMOVED — deleted since last land, `land` to acknowledge', report.removed, (i) => i.path);
-  out += pluralLine('SOAKING — reviewed, not yet stable', report.soaking,
-    (i) => `${i.path}  (${d1(i.daysRemaining)}d remaining)${outcomeSuffix(i.outcome)}`);
-  out += pluralLine('STABLE — soaked past the window', report.stable,
-    (i) => `${i.path}  (${d1(i.ageDays)}d)${outcomeSuffix(i.outcome)}`);
-  out += pluralLine(
-    `NEVER FIRED — landed, soak window elapsed, zero Loki hits the whole time` +
-      (strict ? ' (gates under --strict)' : ' (warning only — pass --strict to gate on it)'),
-    report.neverFired, (i) => `${i.path}  (${d1(i.ageDays)}d, checked ${i.outcome.checkedAt}) — a scaffolding-delete-pass candidate`
-  );
-  out += failures === 0
-    ? '\nGATE PASS — all behavior-affecting config is acknowledged.\n'
-    : `\nGATE FAIL — ${failures} unreviewed change(s)${strict ? ' (incl. never-fired, --strict)' : ''}. Review the diff, then \`config-soak land\`.\n`;
+  let out = `config soak status  (window: ${r.windowDays}d, landed = last ${MAIN_REF} commit)\n`;
+  out += pluralLine(`UNLANDED — differs from ${MAIN_REF}`, r.unlanded, (i) => i.path);
+  out += pluralLine('SOAKING — landed inside the window', r.soaking,
+    (i) => `${i.path}  (${d1(i.daysRemaining)}d remaining)`);
+  out += pluralLine('STABLE — landed before the window', r.stable, (i) => `${i.path}  (${d1(i.ageDays)}d)`);
   process.stdout.write(out);
-  return failures === 0 ? 0 : 1;
-}
-
-function cmdLand(argv) {
-  const paths = argv.filter((a) => !a.startsWith('-'));
-  const tracked = scanTracked();
-  const manifest = readManifest();
-  const now = new Date().toISOString();
-  const before = lib.buildReport({ tracked, manifest, now });
-  const next = lib.land({ tracked, manifest, now, paths });
-  writeManifest(next);
-  const after = lib.buildReport({ tracked, manifest: next, now });
-  const acknowledged = lib.gateFailures(before) - lib.gateFailures(after);
-  process.stdout.write(
-    `config-soak: landed ${acknowledged} change(s); ${after.soaking.length} soaking, ${after.stable.length} stable.\n` +
-    `Ledger written to ${path.relative(REPO_ROOT, MANIFEST_PATH)}. Commit it to persist the soak clock.\n`
-  );
   return 0;
 }
 
 function cmdList() {
-  const tracked = scanTracked();
-  process.stdout.write(Object.keys(tracked).sort().join('\n') + '\n');
+  process.stdout.write(gitTrackedPaths().join('\n') + '\n');
   return 0;
 }
 
-// `config-soak outcomes [--since PATH]` — for every ledger entry inside its
-// soak window (soaking or stable) that names a hook or a settings file, ask
-// Loki whether the landed config actually fired since it landed, and write
-// the answer back into the entry as `outcome`. Read-only against Loki (GET
-// only, one fixed host — see queryLoki above); a query failure downgrades
-// that entry to source:"none" rather than aborting the run.
+function describeOutcome(o) {
+  if (o.source === 'none') return `unattributed — ${o.note}`;
+  return `fired=${o.fired} denied=${o.denied} errors=${o.errors}`;
+}
+
+// `config-soak outcomes [--since PATH]` — for every landed hook or settings file (soaking or
+// stable), ask Loki whether it fired since it landed, and print the answer. Read-only against
+// Loki (GET only, one fixed host — see queryLoki above); a query failure downgrades that path
+// to source:"none" rather than aborting the run. A stable path that Loki answered for with
+// zero hits is "landed, never fired", the scaffolding-delete-pass skill's raw material.
 //
-// `--since PATH` resumes a partial run: entries are processed in sorted
-// path order, and this skips every path before PATH (each entry costs a
-// live Loki round trip, so a run over dozens of entries is resumable rather
-// than all-or-nothing).
+// `--since PATH` resumes a partial run: paths are processed in sorted order, and this skips
+// every path before PATH (each costs a live Loki round trip).
 async function cmdOutcomes(argv) {
   const sinceIdx = argv.indexOf('--since');
   const sinceArg = sinceIdx !== -1 ? argv[sinceIdx + 1] : null;
-
-  const tracked = scanTracked();
-  const manifest = readManifest();
   const now = new Date();
   const nowIso = now.toISOString();
-  const report = lib.buildReport({ tracked, manifest, now: nowIso });
-  const inWindow = [...report.soaking, ...report.stable].map((x) => x.path).sort();
-  const paths = sinceArg ? inWindow.filter((p) => p >= sinceArg) : inWindow;
+  const r = report(nowIso);
+  const stable = new Set(r.stable.map((x) => x.path));
+  const entries = [...r.soaking, ...r.stable]
+    .filter((x) => !sinceArg || x.path >= sinceArg)
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 
   let hooksConfig = null;
   try {
@@ -230,71 +167,50 @@ async function cmdOutcomes(argv) {
     hooksConfig = null; // every hooks/ path below reports its own unattributed note
   }
 
-  const byPath = new Map(manifest.entries.map((e) => [e.path, e]));
-  let checked = 0;
-  let attributed = 0;
-  let unattributed = 0;
-
-  for (const p of paths) {
-    const attribution = lib.attributeEntry(p, hooksConfig);
-    if (!attribution.inScope) continue; // not a hook or settings file — outcomes doesn't touch it
-    const entry = byPath.get(p);
-    if (!entry) continue;
-    checked++;
-
+  const lines = [];
+  const neverFired = [];
+  for (const entry of entries) {
+    const attribution = lib.attributeEntry(entry.path, hooksConfig);
+    if (!attribution.inScope) continue; // not a hook or settings file
+    let outcome;
     if (!attribution.attributable) {
-      entry.outcome = lib.unattributedOutcome({ checkedAt: nowIso, note: attribution.note });
-      unattributed++;
-      continue;
+      outcome = lib.unattributedOutcome({ checkedAt: nowIso, note: attribution.note });
+    } else {
+      const sinceSeconds = (now.getTime() - Date.parse(entry.landed)) / 1000;
+      const queries = lib.buildOutcomeQueries(attribution.slices, sinceSeconds);
+      const atSeconds = now.getTime() / 1000;
+      try {
+        const [fired, denied, errors] = await Promise.all([
+          queryLoki(queries.fired, atSeconds).then(lib.parseLokiScalar),
+          queryLoki(queries.denied, atSeconds).then(lib.parseLokiScalar),
+          queryLoki(queries.errors, atSeconds).then(lib.parseLokiScalar),
+        ]);
+        outcome = lib.makeOutcome({ fired, denied, errors, checkedAt: nowIso });
+      } catch (e) {
+        outcome = lib.unattributedOutcome({ checkedAt: nowIso, note: `Loki did not answer at ${LOKI_BASE}: ${e.message}` });
+      }
     }
-
-    const sinceSeconds = (now.getTime() - Date.parse(entry.landed)) / 1000;
-    const queries = lib.buildOutcomeQueries(attribution.slices, sinceSeconds);
-    const atSeconds = now.getTime() / 1000;
-    try {
-      const [fired, denied, errors] = await Promise.all([
-        queryLoki(queries.fired, atSeconds).then(lib.parseLokiScalar),
-        queryLoki(queries.denied, atSeconds).then(lib.parseLokiScalar),
-        queryLoki(queries.errors, atSeconds).then(lib.parseLokiScalar),
-      ]);
-      entry.outcome = lib.makeOutcome({ fired, denied, errors, checkedAt: nowIso });
-      attributed++;
-    } catch (e) {
-      entry.outcome = lib.unattributedOutcome({
-        checkedAt: nowIso,
-        note: `Loki did not answer at ${LOKI_BASE}: ${e.message}`,
-      });
-      unattributed++;
-    }
+    lines.push(`  ${entry.path}  ${describeOutcome(outcome)}`);
+    if (stable.has(entry.path) && outcome.source === 'loki' && outcome.fired === 0) neverFired.push(entry.path);
   }
 
-  writeManifest(manifest);
-  process.stdout.write(
-    `config-soak: checked ${checked} hook/settings entr${checked === 1 ? 'y' : 'ies'} in window ` +
-    `(${attributed} attributed via Loki, ${unattributed} unattributed).\n` +
-    `Ledger written to ${path.relative(REPO_ROOT, MANIFEST_PATH)}. Commit it to persist the outcomes.\n`
-  );
+  let out = `config-soak outcomes  (${lines.length} hook/settings path${lines.length === 1 ? '' : 's'} checked)\n`;
+  out += lines.join('\n') + (lines.length ? '\n' : '');
+  out += pluralLine('NEVER FIRED — stable, zero Loki hits since landing (a scaffolding-delete-pass candidate)',
+    neverFired, (p) => p);
+  process.stdout.write(out);
   return 0;
 }
 
-const HELP = `config-soak — deterministic review + soak gate for behavior-affecting config
+const HELP = `config-soak — advisory soak report for behavior-affecting config
 
-  config-soak status [--json] [--strict]  report; exit 1 if any unreviewed change
-                                           exists. --strict also fails the gate on
-                                           "landed, never fired" entries (soaked out
-                                           with zero Loki hits) instead of only
-                                           warning about them.
-  config-soak land [PATH...]              record current config as reviewed
-                                           (start soak clock)
-  config-soak outcomes [--since PATH]     query Loki for every hook/settings entry
-                                           inside its soak window and record whether
-                                           it actually fired, as that entry's
-                                           \`outcome\`. Read-only, localhost only.
-                                           --since PATH resumes a partial run.
-                                           A "landed, never fired" entry (see
-                                           \`status\`) is the scaffolding-delete-pass
-                                           skill's raw material for what to remove.
-  config-soak list                        print the tracked config paths
+  config-soak status [--json]          each tracked file as unlanded, soaking or stable;
+                                        landed = last ${MAIN_REF} commit to touch it.
+                                        Always exits 0.
+  config-soak outcomes [--since PATH]  query Loki for every landed hook/settings file and
+                                        print whether it actually fired since landing.
+                                        Read-only, localhost only. --since PATH resumes.
+  config-soak list                     print the tracked config paths
   config-soak --help
 `;
 
@@ -303,7 +219,6 @@ async function main() {
   switch (cmd) {
     case undefined:
     case 'status': return cmdStatus(rest);
-    case 'land': return cmdLand(rest);
     case 'outcomes': return cmdOutcomes(rest);
     case 'list': return cmdList();
     case '-h':

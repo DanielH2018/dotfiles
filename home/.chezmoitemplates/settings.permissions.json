@@ -2,14 +2,12 @@
     settings.base.json as the value of its "permissions" key. Split out because it was
     43% of a 1284-line file; nothing about the rules changed in the move.
 
-    THIS FILE IS POLICY. Four gates have to keep seeing it, and each fails silently
+    THIS FILE IS POLICY. Three gates have to keep seeing it, and each fails silently
     rather than loudly if it stops:
 
       * modify_settings.json.sh.tmpl refuses to generate settings.json from a dirty
         tree. Its pathspec is a wildcard over .chezmoitemplates/settings.*.json so a
         new fragment is covered on creation; do not narrow it back to a list.
-      * bin/config-soak tracks this path, so a change here needs review + `config-soak
-        land` before it can ship.
       * tests/settings/settings-permissions-no-spawners.test.js and
         tests/secret-registry.test.js read this file's RAW TEXT and parse the allow/deny
         arrays out of it. They anchor on finding the arrays first, so moving rules out of
@@ -348,19 +346,17 @@
       "Bash(chezmoi data:*)",
       "Bash(chezmoi verify:*)",
       "Bash(chezmoi status:*)",
-      {{/* this repo's own review gate — the three documented verbs only, never a bare
+      {{/* this repo's soak report — the two read-only verbs only, never a bare
            `node bin/config-soak:*` wildcard, so a future subcommand is not pre-approved.
-           Relative path because the ledger is anchored to the script's own location
-           (REPO_ROOT = __dirname/..), so a worktree must run ITS copy: the invocation is always
+           Relative path because the script reads the repo it sits in (REPO_ROOT =
+           __dirname/..), so a worktree must run ITS copy: the invocation is always
            `cd <root> && node bin/config-soak <verb>`, and that compound form is what
            claude_guard.judge matches (prefix only, no mid-path globs, so an absolute rule
            spanning every worktree under .claude cannot be written). Same relative-executable risk shape
-           as the already-allowed ./gradlew and make. `land` is included deliberately: it lets
-           Claude self-certify config it just wrote, trading the gate's independence for an
-           unattended push — an explicit call by the repo owner, not an oversight. */}}
+           as the already-allowed ./gradlew and make. `land` was a third verb until #694
+           removed the ledger it wrote. */}}
       "Bash(node bin/config-soak status:*)",
       "Bash(node bin/config-soak list)",
-      "Bash(node bin/config-soak land:*)",
       "Bash(claude --help)",
       {{/* exact match only — `claude agents` takes no subcommands, but it does accept --dangerously-skip-permissions, --permission-mode, --settings and --plugin-dir, so any trailing wildcard (even after --json) would auto-approve a permission escalation */}}
       "Bash(claude agents)",

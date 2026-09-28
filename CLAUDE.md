@@ -19,7 +19,7 @@ vault, `Work/Claude_Code_Setup.md` — not in this repo.
 
 - `home/` is the chezmoi source root (`.chezmoiroot`). Files under it deploy to `$HOME`
   (`dot_` → `.`, `private_` → mode 0700, `*.tmpl` → templated, `modify_`/`run_` → scripts).
-- Everything **outside** `home/` (this file, `bin/`, `config-soak.json`) is repo tooling and
+- Everything **outside** `home/` (this file, `bin/`, `.githooks/`) is repo tooling and
   is **not** deployed.
 
 ## Editing rules

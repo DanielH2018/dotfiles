@@ -2,10 +2,10 @@
 // End-to-end pair for the config-soak scan. The lib tests beside this file are pure; this
 // one runs the real binary against a staged git repo, because the property under test is
 // the boundary between git and the working tree: a file on disk under a tracked directory
-// that git does not track must not be fingerprinted (#547 — the python suites' __pycache__
-// got landed into the ledger and every other checkout read it as REMOVED), while a tracked
-// sibling still is. Staged in a temp dir rather than planted in this checkout, for the
-// reason tests/lib/sandbox-escape.js gives.
+// that git does not track must not be listed (#547 — the python suites' __pycache__ was
+// once swept into the tracked set), while a tracked sibling still is; and a file's state
+// comes from origin/main's history against the working tree. Staged in a temp dir rather
+// than planted in this checkout, for the reason tests/lib/sandbox-escape.js gives.
 const { test } = require('node:test');
 const { execFileSync, spawnSync } = require('node:child_process');
 const assert = require('node:assert');
@@ -44,4 +44,31 @@ test('list prints a tracked file under a tracked directory', () => {
 
 test('list omits an untracked file under a tracked directory', () => {
   assert.deepStrictEqual(stageRepo().filter((p) => p.includes('__pycache__')), []);
+});
+
+test('status dates a file by its last origin/main commit, flags a changed one unlanded, and exits 0', () => {
+  const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'config-soak-'));
+  try {
+    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
+    const identity = ['-c', 'commit.gpgsign=false', '-c', 'user.name=t', '-c', 'user.email=t@t'];
+    const git = (...args) => execFileSync('git', [...identity, ...args], { cwd: stage, env, stdio: 'pipe' });
+    git('init', '-q');
+    fs.mkdirSync(path.join(stage, 'bin'));
+    for (const f of ['config-soak', 'config-soak-lib.js']) {
+      fs.copyFileSync(repoPath('bin', f), path.join(stage, 'bin', f));
+    }
+    fs.mkdirSync(path.join(stage, HOOKS), { recursive: true });
+    for (const f of ['executable_a.sh', 'executable_b.sh']) fs.writeFileSync(path.join(stage, HOOKS, f), '#!/bin/sh\n');
+    git('add', '.');
+    git('commit', '-q', '-m', 'land');
+    git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+    fs.appendFileSync(path.join(stage, HOOKS, 'executable_b.sh'), 'echo changed\n');
+    const res = spawnSync('node', [path.join(stage, 'bin', 'config-soak'), 'status', '--json'], { encoding: 'utf8', env });
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    const r = JSON.parse(res.stdout);
+    assert.deepStrictEqual(r.soaking.map((x) => x.path), [`${HOOKS}/executable_a.sh`]);
+    assert.deepStrictEqual(r.unlanded.map((x) => x.path), [`${HOOKS}/executable_b.sh`]);
+  } finally {
+    fs.rmSync(stage, { recursive: true, force: true });
+  }
 });
