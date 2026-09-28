@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "217b6f60ada1a02d8c6835e161acd961955a982a6bd9f73c30e3501e6bebf59a",
-      "landed": "2026-09-28T13:18:03.157Z"
+      "hash": "d57039fc1a2eaf8dfc5e5ff74ff53bf3d77ed3438a507cd88010b45a63e7a56b",
+      "landed": "2026-09-28T13:23:29.814Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -28,8 +28,8 @@
     },
     {
       "path": "home/private_dot_claude/agents/deep-review.md",
-      "hash": "30bcc7059cc3020c7bc062eb8cf6b0c624d90220aef25e1b46e8f6e3f6cc7bba",
-      "landed": "2026-07-29T21:20:52.171Z"
+      "hash": "1e19979cbfdaa1d501203deaae172be07287cd0e0c80b59937d000f4688a70b5",
+      "landed": "2026-09-28T13:23:29.814Z"
     },
     {
       "path": "home/private_dot_claude/agents/implementer.md",
@@ -38,13 +38,13 @@
     },
     {
       "path": "home/private_dot_claude/agents/migration-reviewer.md",
-      "hash": "fea0b8232b9309b562a4d5ed09502ecc91a853fdfe00b55faa109a1fd685e54e",
-      "landed": "2026-09-28T12:29:15.418Z"
+      "hash": "40a6736a3a0f7fb316cf62f264975d5535062b4c035a0d155b734493a07100c1",
+      "landed": "2026-09-28T13:23:29.814Z"
     },
     {
       "path": "home/private_dot_claude/agents/root-cause.md",
-      "hash": "2772f8c4ca7e26250a76c223022e3c3bc54c4ce57150200a37269e62eef80ac3",
-      "landed": "2026-07-29T21:20:52.171Z"
+      "hash": "654cbe3eb4716753ab30d7af4f23f8191147b080d39e8d546c314277e08f5940",
+      "landed": "2026-09-28T13:23:29.814Z"
     },
     {
       "path": "home/private_dot_claude/hooks/_testkit.py",
@@ -453,8 +453,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/orchestrating-subagents/SKILL.md",
-      "hash": "aec5feed70aaa8ddb851a0636e7925bceb0ec2c9b868fa62fa2cfcb278b06a67",
-      "landed": "2026-09-26T19:28:18.266Z"
+      "hash": "e1896dc2b8b0e0858b5ace5c2f74231026ef123e63eaa522a650094c9bcd72c2",
+      "landed": "2026-09-28T13:23:29.814Z"
     },
     {
       "path": "home/private_dot_claude/skills/otel-review/SKILL.md",
