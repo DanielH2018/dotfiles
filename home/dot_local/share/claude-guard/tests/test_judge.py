@@ -429,8 +429,10 @@ def test_the_real_template_allows_a_lease_push_to_a_feature_branch(real):
 
 def test_the_real_template_leaves_an_rm_below_root_or_home_to_the_rm_rules(real):
     # `rm -rf /*` extracted to the plain prefix `rm -rf /`, which never matched a deeper
-    # path here; the over-match was Claude Code's own matcher. This pins that the narrowed
-    # rules still refuse root and home themselves.
+    # path here; the over-match was Claude Code's own matcher. So the cleanup below pins
+    # the judge's behaviour and would pass on the old template too. The narrowed rules
+    # must still refuse root and home themselves.
+    assert allowed("rm -rf /home/testuser/.claude/jobs/x/tmp/nope", real)
     assert not allowed("rm -rf /", real)
     assert not allowed("rm -rf ~", real)
 

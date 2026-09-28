@@ -564,12 +564,21 @@
       "Bash(git push --force-with-lease * master *)",
       {{/* DECIDED: every rule from here down that carries an INTERIOR `*` -- the --no-verify
            pair, the three pipe-to-shell rules, the find/awk execution forms below, and the
-           `gh api -X`/`npx -p` families in the ask tier -- is enforced by claude_guard's
-           rules.py/judge(), NOT by Claude Code's own matcher. allow-compound-bash.sh did this
-           until claude-guard slice 3 cut over and deleted it; rules.matches_glob /
-           Rules.whole_glob_defer now route any pattern with an interior wildcard against the
-           WHOLE command before it is split into segments, the same thing the hook's
-           matches_glob/:78-81,:278 did. Proof both ways in
+           `gh api -X`/`npx -p` families in the ask tier -- is read by TWO engines.
+
+           Claude Code's own matcher reads them, and it is the one that hard-denies: the
+           2026-09-26 measurements in dotfiles #680 were its denies of `find` and `awk`
+           commands. claude_guard's judge reads them too, from the PermissionRequest hook
+           only. There a match withholds the judge's auto-approval and hands the command to
+           the prompt; it never hard-denies. rules.matches_glob / Rules.whole_glob_defer
+           route any pattern with an interior wildcard against the WHOLE command before it
+           is split into segments, as allow-compound-bash.sh did until claude-guard slice 3
+           deleted it. Without these rules, the judge's allow list auto-approves `find
+           . -exec id \;`. The judge appends `*` to every glob, so it anchors a rule on the
+           left only.
+
+           The tests below prove the claude_guard side only; nothing here runs Claude Code's
+           matcher. Proof both ways in
            home/dot_local/share/claude-guard/tests/test_judge.py:
            test_deny_and_ask_rules_with_an_interior_wildcard_are_globs fires them, and
            test_deny_globs_leave_the_everyday_form_of_each_spawner_allowed proves they do not
@@ -578,11 +587,11 @@
            force-push form is refused, and each ordinary argument that merely contains a
            flag's text (`-name '*-delete*'`, `./k8s-ok/`, `/filesystem/`) is allowed.
 
-           This matters because docs/claude-shell-permissions.md in the server repo measures
-           the NATIVE matcher and concludes a flag-level guard "cannot be written at all".
-           That is true of the native engine and false of what runs here, and a reviewer has
-           already read it as grounds to delete these rules as decorative. They are not.
-           Deleting them removes real coverage. */}}
+           docs/claude-shell-permissions.md in the server repo concludes a flag-level guard
+           "cannot be written at all" in the native matcher, and a reviewer has read that as
+           grounds to delete these rules as decorative. They are not: the #680 denies show
+           the native matcher acting on them, and the judge relies on them to withhold
+           auto-approval. Deleting them removes real coverage from both engines. */}}
       "Bash(git commit *--no-verify*)",
       "Bash(git commit -n:*)",
       "Bash(git push *--no-verify*)",
