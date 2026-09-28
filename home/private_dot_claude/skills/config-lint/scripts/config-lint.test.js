@@ -1,5 +1,8 @@
 "use strict";
 const assert = require("assert");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const m = require("./config-lint.js");
 
 let pass = 0, fail = 0;
@@ -60,6 +63,21 @@ test("findDuplicateSkills reports only names in >1 source", () => {
   assert.deepStrictEqual(dupes[0].sources.sort(), ["plugin:x", "user"]);
 });
 
+test("enumeratePluginSkills only returns skills for a plugin settings.json actually enables (B6)", () => {
+  const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), "config-lint-plugins-"));
+  for (const [plugin, skill] of [["enabled-plugin", "on-skill"], ["superpowers", "systematic-debugging"]]) {
+    const skillDir = path.join(cacheRoot, "claude-plugins-official", plugin, "1.0.0", "skills", skill);
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(path.join(skillDir, "SKILL.md"), "---\n");
+  }
+  const enabledPlugins = {
+    "enabled-plugin@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": false, // installed, but disabled -- like this host's
+  };
+  const bySource = m.enumeratePluginSkills(cacheRoot, enabledPlugins);
+  assert.deepStrictEqual(bySource, { "plugin:enabled-plugin": ["on-skill"] });
+});
+
 test("checkBloat flags over-threshold on bytes and lines", () => {
   assert.strictEqual(m.checkBloat("ok\n", { maxBytes: 100, maxLines: 100 }).overBytes, false);
   assert.strictEqual(m.checkBloat("x".repeat(200), { maxBytes: 100, maxLines: 100 }).overBytes, true);
@@ -98,6 +116,41 @@ test("extractBinaryDeps ignores prose mentions of \"which\"/\"command\" inside c
   ].join("\n");
   const deps = m.extractBinaryDeps([{ path: "hooks/worktree-context.sh", text }]);
   assert.deepStrictEqual(deps, []);
+});
+
+test("extractBinaryDeps ignores \"which\" appearing mid-sentence in a quoted message, not in command position (E1b)", () => {
+  // hooks/executable_chezmoi-apply-guard.sh's actual deny message: two "which"es, both
+  // prose ("...which deploys...", "...which is $BEHIND commit(s)..."), neither a guard.
+  const text = 'deny "the switch back is `bin/try --back`, which deploys to the ' +
+    'operator live $HOME. Applying reads its source from $TOP, which is $BEHIND ' +
+    'commit(s) behind origin/main."';
+  const deps = m.extractBinaryDeps([{ path: "hooks/chezmoi-apply-guard.sh", text }]);
+  assert.deepStrictEqual(deps, []);
+});
+
+test("extractBinaryDeps skips names a scanned file defines as a shell function (E1a)", () => {
+  // run_bounded/hook_field/oc_mark are each guarded at their call site with the same
+  // command -v/which idioms a real binary dependency uses, but each is a shell function
+  // defined in a sibling file under home/private_dot_claude/hooks/ -- never a PATH lookup.
+  const files = [
+    { path: "hooks/run-bounded.sh", text: "run_bounded() {\n  :\n}\n" },
+    { path: "hooks/hook-input.sh", text: "hook_field() {\n  :\n}\n" },
+    { path: "hooks/outcome-lib.sh", text: "function oc_mark() {\n  :\n}\n" },
+    {
+      path: "hooks/auto-format.sh",
+      text: 'if ! command -v run_bounded >/dev/null 2>&1; then exit 1; fi',
+    },
+    {
+      path: "hooks/skill-usage-log.sh",
+      text: 'command -v hook_field >/dev/null 2>&1 || hook_field() { jq -r "$1"; }',
+    },
+    { path: "hooks/some-consumer.sh", text: "which oc_mark >/dev/null 2>&1 && oc_mark ok" },
+  ];
+  assert.deepStrictEqual(m.extractBinaryDeps(files), []);
+  assert.deepStrictEqual(
+    [...m.extractShellFunctionNames(files)].sort(),
+    ["hook_field", "oc_mark", "run_bounded"],
+  );
 });
 
 test("checkBinaryDeps reports info findings only for tools the injected checker says are missing", () => {

@@ -108,10 +108,17 @@ function checkBloat(text, { maxBytes = BLOAT_MAX_BYTES, maxLines = BLOAT_MAX_LIN
 //   command -v cargo >/dev/null 2>&1 && ...    (ad-hoc guards elsewhere)
 // Both idioms name the *literal* tool at the call site; only the wrapper's own
 // definition (`command -v "$1"`) references a shell parameter, which is excluded.
+//
+// The bare `which` form is anchored to command position (line start, or right after
+// a `;`/`&&`/`||`/`|`/`(`/backtick) rather than matched anywhere in the line — a bare
+// `\bwhich\b` also matches prose inside a quoted message string, e.g. chezmoi-apply-
+// guard.sh's "...bin/try --back\`, which deploys to the operator's live $HOME..." and
+// "...reads its source from $TOP, which is $BEHIND commit(s) behind...", neither a
+// guard at all.
 const BINARY_DEP_PATTERNS = [
     /\brun_if_installed\s+([A-Za-z0-9_.-]+)/g,
     /\bcommand\s+-v\s+"?([A-Za-z0-9_.-]+)"?/g,
-    /\bwhich\s+"?([A-Za-z0-9_.-]+)"?/g,
+    /(?:^|[;&|(`])[ \t]*which\s+"?([A-Za-z0-9_.-]+)"?/gm,
 ];
 
 // Strip shell comments (naive: '#' at line start or preceded by whitespace) so
@@ -123,9 +130,33 @@ function stripShellComments(text) {
     }).join("\n");
 }
 
+// A name a scanned file defines as a shell function (`name() { ... }` or
+// `function name { ... }`) is not a binary dependency at all -- it is a local
+// helper, callable without ever touching PATH. run_bounded (run-bounded.sh),
+// hook_field (hook-input.sh) and oc_mark (outcome-lib.sh) are all guarded at
+// their OWN call sites with `command -v run_bounded` / `which`-shaped idioms
+// (the same idioms a real binary dependency uses), which is what put them in
+// BINARY_DEP_PATTERNS' catch in the first place. Collected across every scanned
+// file, not just the one that defines it, since a caller in a different file
+// than the definition is the common case here.
+const FUNCTION_DEF_PATTERN = /^[ \t]*(?:function\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(\)/gm;
+
+function extractShellFunctionNames(files) {
+    const names = new Set();
+    for (const { text } of files) {
+        FUNCTION_DEF_PATTERN.lastIndex = 0;
+        let match;
+        while ((match = FUNCTION_DEF_PATTERN.exec(text)) !== null) {
+            names.add(match[1]);
+        }
+    }
+    return names;
+}
+
 function extractBinaryDeps(files) {
     const seen = new Set();
     const deps = [];
+    const definedFunctions = extractShellFunctionNames(files);
     for (const { path: filePath, text: rawText } of files) {
         const text = stripShellComments(rawText);
         for (const re of BINARY_DEP_PATTERNS) {
@@ -134,6 +165,7 @@ function extractBinaryDeps(files) {
             while ((match = re.exec(text)) !== null) {
                 const tool = match[1];
                 if (/^\$/.test(tool)) continue; // shell parameter (e.g. "$1"), not a literal tool name
+                if (definedFunctions.has(tool)) continue; // a local shell function, not a binary
                 const key = `${filePath} ${tool}`;
                 if (seen.has(key)) continue;
                 seen.add(key);
@@ -289,12 +321,18 @@ function listSkillNames(skillsDir) {
         .map(d => d.name);
 }
 
-function enumeratePluginSkills(cacheRoot) {
+// enabledPlugins is settings.json's map, keyed "pluginname@marketplace" -> bool. A
+// plugin present in the cache but not enabled there (dormant, or from a marketplace
+// the operator disabled) contributes no skills to the duplicate-name check -- it
+// reported "systematic-debugging defined in user, plugin:superpowers" with superpowers
+// disabled, which is not a name collision anyone will hit.
+function enumeratePluginSkills(cacheRoot, enabledPlugins = {}) {
     const bySource = {};
     if (!fs.existsSync(cacheRoot)) return bySource;
     for (const mkt of fs.readdirSync(cacheRoot, { withFileTypes: true }).filter(d => d.isDirectory())) {
         const mktDir = path.join(cacheRoot, mkt.name);
         for (const plugin of fs.readdirSync(mktDir, { withFileTypes: true }).filter(d => d.isDirectory())) {
+            if (enabledPlugins[`${plugin.name}@${mkt.name}`] !== true) continue;
             const pluginDir = path.join(mktDir, plugin.name);
             for (const version of fs.readdirSync(pluginDir, { withFileTypes: true }).filter(d => d.isDirectory())) {
                 const names = listSkillNames(path.join(pluginDir, version.name, "skills"));
@@ -347,7 +385,7 @@ function audit(root, home) {
     }
 
     // Duplicate skill names
-    const skillsBySource = { user: listSkillNames(path.join(root, "skills")), ...enumeratePluginSkills(path.join(root, "plugins", "cache")) };
+    const skillsBySource = { user: listSkillNames(path.join(root, "skills")), ...enumeratePluginSkills(path.join(root, "plugins", "cache"), settings.enabledPlugins || {}) };
     for (const dupe of findDuplicateSkills(skillsBySource)) {
         add("info", "skills", `skill name "${dupe.name}" defined in: ${dupe.sources.join(", ")}`);
     }
@@ -406,6 +444,7 @@ module.exports = {
     diffPlugins, extractHookCommands, extractPaths, parseIncludes,
     findDuplicateSkills, checkBloat, extractBinaryDeps, checkBinaryDeps, audit,
     extractPermissionDeps, extractPathDeps, checkPathDeps,
+    extractShellFunctionNames, enumeratePluginSkills,
     BLOAT_MAX_BYTES, BLOAT_MAX_LINES,
 };
 
