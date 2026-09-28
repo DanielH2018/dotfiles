@@ -35,3 +35,8 @@ select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
 "home/private_dot_claude/vault-tooling/config-map/**" = ["E501"]
 "home/private_dot_claude/vault-tooling/vault-index/**" = ["E501"]
 "quality/instruction_quality.py" = ["E501"]
+
+# gen-hooks' FIELD_RE captures a `#   command:` value as everything to end of line, so the
+# Windows/non-Windows branch of this hook's registration must stay on one line -- a trailing
+# noqa comment would be captured into the rendered command text itself.
+"home/private_dot_claude/hooks/executable_tq-wrap-tests.py" = ["E501"]

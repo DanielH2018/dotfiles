@@ -138,3 +138,8 @@
 # .chezmoiscripts/{os-linux,os-windows,os-darwin}/run_onchange_after_cleanup-host-gated-files.*,
 # the same way a systemd unit's dangling-unit cleanup does (#688) — this is that mechanism
 # applied to plain files and directories instead of units.
+
+# Delete unused tools, old-client workarounds and the WezTerm/Ghostty configs (2026-09-28):
+# each of these had its home/ source deleted in this PR, so its deployed copy needs an
+# explicit removal or it survives `chezmoi apply` as an unmanaged leftover.
+.claude/hooks/tq-wrap-tests.sh

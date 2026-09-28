@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
-# gen-hooks: library
-#   reason: authority behind tq-wrap-tests.sh, which holds the PreToolUse registration
+# gen-hooks: register
+#   event: PreToolUse
+#   matcher: Bash
+#   timeout: 10
+#   order: 40
+#   command: {{ if eq .chezmoi.os "windows" }}py -3 ~/.claude/hooks/tq-wrap-tests.py{{ else }}python3 ~/.claude/hooks/tq-wrap-tests.py{{ end }}
 """PreToolUse hook: route an agent's test and lint commands through tq.
 
 A `node --test` run over this repo prints ~65KB that nobody reads when nothing
