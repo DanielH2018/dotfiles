@@ -16,12 +16,15 @@
 # the one you cannot address.
 #
 # **This is not a cosmetic change here, and that is why the guard is what it is.** This repo
-# templates on `.chezmoi.hostname` in four places — `.chezmoiignore` decides whether
-# `~/.ssh/config` deploys at all, and settings.base.json picks CLAUDE_ARTIFACTS_PORT from it.
-# Every one of those conditionals tests membership of the list
-# (daniel-box, daniel-server, daniel-pi), so a name outside that set leaves all of them taking
-# exactly the branch they take today: ssh/config keeps deploying, and the artifacts port stays
-# 8181, "the client's own" in that file's words. Do not name this box one of those three.
+# templates on `.chezmoi.hostname` in several places, and they don't all test the same thing.
+# `.chezmoiignore`'s `~/.ssh/config` gate and settings.base.json's CLAUDE_ARTIFACTS_PORT test
+# membership of the three-server list (daniel-box, daniel-server, daniel-pi) — a name outside
+# that set leaves both taking exactly the branch they take today: ssh/config keeps deploying,
+# and the artifacts port stays 8181, "the client's own" in that file's words. Do not name this
+# box one of those three. Other conditionals — kwinrulesrc, fix-games-mount, clip-bridge, and
+# the daniel-box-only enable scripts for claude-changelog-watch, otel-sweep-watch and
+# retention-sweep — test THIS box's own name (`fedora` or `daniel-desktop`, or `daniel-box`),
+# which is exactly the name set below and is unaffected by which of those two this box reports.
 #
 # The guard is "no static hostname set" rather than a hostname match, because keying a hostname
 # change on the hostname is circular. It is also what makes this safe fleet-wide: the other

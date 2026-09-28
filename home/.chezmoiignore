@@ -33,6 +33,16 @@ Brewfile
 .config/ghostty
 {{ end }}
 
+{{ if eq .profile "server" }}
+# claude-sandbox is the Docker tool (see this repo's CLAUDE.md on the two different
+# "sandboxes"), and daniel-box and daniel-server have no Docker at all — the k3s migration
+# completed 2026-08-14, and neither box ever had Docker before it. ct/cts/ctw stay deployed:
+# ctw is the remote end of `cts --ssh`, so a server still needs it to accept a sandbox session
+# forwarded from a machine that does run Docker.
+.local/bin/claude-sandbox
+.claude/sandbox
+{{ end }}
+
 {{ if ne .chezmoi.os "windows" }}
 .config/wezterm
 .config/windows-provisioning
@@ -47,23 +57,16 @@ Scripts
 # environment.d is a systemd user-manager mechanism; it does nothing on Windows or macOS, and
 # the Steam UI scale it carries only makes sense next to the Linux XWayland-scale script.
 .config/environment.d
-# powerdevilrc is read by PowerDevil, which is part of KDE Plasma and ships nowhere but
-# Linux. The modify_ script that maintains it asserts a single display-blank timeout and
-# passes the rest of the file through, so on a headless Linux host it is inert rather than
-# wrong -- which is why this is gated on the OS and not on the hostname.
-.config/powerdevilrc
 # wpe drives linux-wallpaperengine, a native reimplementation of Wallpaper Engine's renderer that
 # exists only for Linux — Wallpaper Engine itself is a Windows app and does not work under Proton.
 # The control script talks to a systemd user manager, kscreen-doctor and wlr-layer-shell, none of
-# which exist on macOS or Windows, so these paths are dead weight there rather than degraded.
-# The .desktop entry goes with them: XDG desktop entries are a freedesktop mechanism, and the one
-# here launches the Linux-only picker.
+# which exist on macOS or Windows, so these paths are dead weight there rather than degraded. Only
+# the launcher scripts are gated here (OS, not desktop): they cost nothing sitting unused on a
+# headless host. The unit, the config directory, and the .desktop entry that goes with them
+# render a wallpaper, so they move to the desktop-only gate further down.
 .local/bin/wpe
 .local/bin/wpe-pick
 .local/bin/wpe-watch
-.config/systemd/user/wallpaperengine.service
-.config/wallpaperengine
-.local/share/applications/wpe-pick.desktop
 
 # systemd user units, whole tree. systemd is a Linux init system and no other OS has a user
 # manager to read these, so on macOS and Windows the directory is 20-odd files that look
@@ -81,25 +84,38 @@ Scripts
 # ignores exactly the same set of files and takes the directory with it.
 .config/systemd
 
-# Linux-desktop utilities: each needs something the OS supplies and macOS does not — PipeWire
-# (pactl), a Wayland compositor (wl-copy/wl-paste), KWin/kscreen-doctor, solaar's Logitech HID
-# stack, or a systemd timer to drive it. On a Mac they are not degraded, they are commands that
-# fail on invocation, and they overstate what the machine can do in the generated tools
-# inventory. Gated on the OS rather than the hostname because none of them is about one box's
-# hardware — a second Linux desktop should get all of them without being named.
+# claude-changelog-watch and otel-sweep-watch stay OS-gated (not desktop-gated) rather than
+# joining the desktop-only block below: both run on daniel-box, a headless server, by the
+# operator's choice (see the enable-*-timer.sh.tmpl scripts, which enable each only on
+# daniel-box and disable it everywhere else). The binary sitting unused on a Linux desktop or
+# on daniel-server costs nothing; what matters is which host's timer enables it.
+.local/bin/claude-changelog-watch
+.local/bin/otel-sweep-watch
+{{ end }}
+
+# Linux-desktop utilities: each needs something the OS supplies and headless Linux does not —
+# PipeWire (pactl), a Wayland compositor (wl-copy/wl-paste), KWin/kscreen-doctor, solaar's
+# Logitech HID stack, GNOME/KDE session plumbing, or a physical StreamController/Wallpaper
+# Engine/Flatpak-managed desktop app. On macOS, Windows, or a headless Linux server they are not
+# degraded, they are commands that fail on invocation or config nothing reads, and they overstate
+# what the machine can do in the generated tools inventory. Gated on is-desktop-linux rather than
+# on the OS or the hostname because none of them is about one box's hardware — a second Linux
+# desktop should get all of them without being named, and none of them belongs on daniel-box or
+# daniel-server, which hold deployed copies today only because nothing had gated them before.
 #
-# Three siblings that look like they belong here and do NOT:
+# Two siblings that look like they belong here and do NOT:
 #   * the clipboard shims and the bmp converter one of them calls — deliberately deployed
 #     everywhere as the inert remote half of the clipboard bridge, see its own note below
 #   * the retention sweeper — its header records that its author considered the platform
 #     (GNU spellings, Linux-only timer) and left it deployed anyway, so this does not overrule
 #     that; it probes for the spelling it needs at runtime
-#   * the trackball pointer/solaar helpers' shared unit, covered by the whole-tree rule above
+{{ if not (includeTemplate "is-desktop-linux" .) }}
 .local/bin/audio-sink-toggle
 .local/bin/bt-hid-kick
-.local/bin/claude-changelog-watch
 .local/bin/clip2server
 .local/bin/desk-away
+.local/bin/discord
+.local/bin/flatpak-update
 .local/bin/login-window-layout
 .local/bin/mic-mute-toggle
 .local/bin/mullvad-settings-watch
@@ -107,8 +123,24 @@ Scripts
 .local/bin/mx-ergo-resync
 .local/bin/mx-ergo-solaar
 .local/bin/mx-ergo-watch
-.local/bin/otel-sweep-watch
+.local/bin/steam
 .local/bin/streamcontroller-health
+.local/bin/streamdeck-usb-reset
+.config/powerdevilrc
+.config/solaar
+.config/wireplumber
+# The unit and the config directory that make linux-wallpaperengine render (see the OS-gated
+# note above for the launcher scripts, which stay everywhere on Linux). No .chezmoiremove for
+# the unit: see the dangling-unit note in this repo's CLAUDE.md — disabling it lives in
+# enable-wpe-watch.sh.tmpl, not here.
+.config/systemd/user/wallpaperengine.service
+.config/wallpaperengine
+# XDG desktop entries: clip2server.desktop, discord.desktop, steam.desktop, wpe-pick.desktop.
+# Gated as the whole directory, like .config/systemd above — chezmoi manages the directory
+# itself as a target, and there is no re-include here to lose.
+.local/share/applications
+.local/share/kwin
+.local/share/sounds
 {{ end }}
 
 # yazi: plugin & flavor code is vendored by `ya pkg install` from the tracked
@@ -186,9 +218,16 @@ Scripts
 # nothing to read the file at all. So this is gated on the hostname rather than on the OS —
 # unlike powerdevilrc, which is inert rather than wrong on a headless Linux host.
 #
+# The hostname list, not a single name: f5cc46d8 (2026-08-15) set the Fedora desktop's static
+# hostname to "daniel-desktop", after this gate was already written against the box's original
+# "fedora". Either name matches this one machine depending on when it last had `hostnamectl`
+# run, and `eq .chezmoi.os "linux"` is explicit because a Windows install can also report
+# "daniel-desktop" as its hostname (see the claude-otel note further down) — without the OS
+# check, that Windows machine would match too.
+#
 # Maintained by modify_private_kwinrulesrc.sh, which asserts only those five rules and passes
 # every other one — including whatever System Settings writes — straight through.
-{{ if ne .chezmoi.hostname "fedora" }}
+{{ if not (and (eq .chezmoi.os "linux") (has .chezmoi.hostname (list "fedora" "daniel-desktop"))) }}
 .config/kwinrulesrc
 {{ end }}
 
@@ -198,8 +237,9 @@ Scripts
 # parameter — it is the script. Elsewhere it would either find no fstab entry and exit, or
 # (worse, on another Linux host with a /mnt/games) reach for ntfsfix against a disk whose
 # health it cannot actually judge. Same reasoning as kwinrulesrc above: meaningless off this
-# host, so gated on the hostname rather than on the OS.
-{{ if ne .chezmoi.hostname "fedora" }}
+# host, so gated on the hostname rather than on the OS — and the same either-name, explicit-OS
+# condition, for the same reason (this machine may report "fedora" or "daniel-desktop").
+{{ if not (and (eq .chezmoi.os "linux") (has .chezmoi.hostname (list "fedora" "daniel-desktop"))) }}
 .local/bin/fix-games-mount
 {{ end }}
 
@@ -245,10 +285,10 @@ Scripts
 #   daniel-pi                   out of telemetry altogether (settings.base.json), so it has
 #                               nothing to export and no reason to carry a stack.
 #
-# otelq is deliberately NOT ignored. On a server it queries localhost:3100/9090, which is
-# not where that stack's Loki and Prometheus answer — but a query tool that returns nothing
-# is a smaller problem than one that is missing when someone reaches for it, and the shape
-# of the server stacks is changing anyway.
+# otelq is deliberately NOT ignored. It tries the node-local hostPort first and falls back to
+# the cluster ClusterIPs (executable_otelq:59-61), so a query from daniel-box or daniel-server
+# actually reaches that stack's Loki and Prometheus rather than querying an empty localhost —
+# and the shape of the server stacks is changing anyway, so the fallback earns its keep.
 {{ if has .chezmoi.hostname (list "daniel-server" "daniel-box" "daniel-desktop" "daniel-pi") }}
 claude-otel
 {{ end }}
@@ -315,6 +355,13 @@ AppData
 {{ else }}
 .warp
 AppData
+{{ if not (includeTemplate "is-desktop-linux" .) }}
+# The user runs Warp on every desktop machine, never on daniel-box or daniel-server — headless
+# hosts have no Warp session to read settings.toml/keybindings.yaml. Nested under the Linux
+# branch above rather than folded into it, so darwin and windows keep their own unconditional
+# paths untouched.
+.config/warp-terminal
+{{ end }}
 {{ end }}
 
 {{ if not .work }}
@@ -328,3 +375,22 @@ AppData
 .claude/hooks/planka-stop.sh
 .local/bin/planka
 {{ end }}
+
+{{ if ne .chezmoi.os "darwin" }}
+# mac-askpass and logi-dev-mgr-kick are macOS-only. mac-askpass's only consumer is
+# dot_zshenv:41, itself guarded by `[ "$(uname)" = Darwin ]`-equivalent Aqua detection, and
+# logi-dev-mgr-kick's only consumer is the launchd plist in scheduled/ (not deployed by
+# chezmoi at all — see this repo's README on scheduled/). Neither has ever run on Linux or
+# Windows; both deployed there anyway because no gate excluded them.
+.local/bin/mac-askpass
+.local/bin/logi-dev-mgr-kick
+{{ end }}
+
+# The 8 home/private_dot_claude/hooks/test_*.py files and _testkit.py deploy to
+# ~/.claude/hooks, where none of them can run: each finds its subject by the SOURCE tree's
+# executable_-prefixed name, which chezmoi strips before deploying. tests/python-suites.test.js
+# already runs every one of them from the repo (git ls-files-derived), never from the deployed
+# copy, so nothing loses coverage. _sandbox_testlib.py is unrelated and stays deployed: it falls
+# back to the deployed name (_sandbox_testlib.py:40-42).
+.claude/hooks/test_*.py
+.claude/hooks/_testkit.py

@@ -92,7 +92,13 @@ test('the tab-config dir template agrees with the symlink it resolves through', 
 test('each machine deploys exactly one of the three settings paths', { skip }, () => {
   // All three are tracked; a machine that deployed two would have a second file that looks
   // authoritative, and a recapture pasted into the wrong one changes nothing at all.
-  const gates = ignored({});
+  //
+  // Pinned to profile=workstation: the Linux path is also gated on is-desktop-linux (Warp has
+  // no session to read it on daniel-box or daniel-server), so this test's own claim — that
+  // exactly one path is live — is true only of a desktop. Unpinned, this test depended on
+  // whichever profile the machine running `node --test` happens to have configured; on a real
+  // server host, all three read as gone rather than exactly one.
+  const gates = ignored({ profile: 'workstation' });
   const live = {
     mac: !gates.has('.warp'),
     xdg: !gates.has('.config/warp-terminal'),
