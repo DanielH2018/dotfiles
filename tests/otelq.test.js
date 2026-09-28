@@ -727,3 +727,30 @@ test('every otelq backend port is published by the compose stack', () => {
   }
 });
 
+// C10: otel-sweep's comment claims its cluster IPs "match otelq's own list", but
+// nothing checked that -- the two are hardcoded independently, three IPs apiece, with
+// no shared constant between them. otel-sweep's own probe is piped to a remote
+// `python3 -` and cannot import otelq as a module, so this pins them by parsing both
+// sources' literals rather than merging the two clients.
+test("otel-sweep's cluster IPs match otelq's own list", () => {
+  const sweepSrc = fs.readFileSync(
+    srcPath('dot_local', 'bin', 'executable_otel-sweep'), 'utf8');
+
+  const otelqIps = Object.fromEntries(
+    [...SRC.matchAll(
+      /^(LOKI|PROM|TEMPO)_BASES = \("http:\/\/127\.0\.0\.1:\d+", "http:\/\/(\d+\.\d+\.\d+\.\d+):\d+"\)/gm,
+    )].map((m) => [{ LOKI: 'loki', PROM: 'prometheus', TEMPO: 'tempo' }[m[1]], m[2]]),
+  );
+  assert.deepStrictEqual(Object.keys(otelqIps).sort(), ['loki', 'prometheus', 'tempo'],
+    'otelq should define exactly the three cluster IPs this test knows about');
+
+  const sweepIps = Object.fromEntries(
+    [...sweepSrc.matchAll(/^\s*"(loki|prometheus|tempo)":\s*"(\d+\.\d+\.\d+\.\d+)"/gm)]
+      .map((m) => [m[1], m[2]]));
+  assert.deepStrictEqual(Object.keys(sweepIps).sort(), ['loki', 'prometheus', 'tempo'],
+    'otel-sweep should define exactly the three cluster IPs this test knows about');
+
+  assert.deepStrictEqual(sweepIps, otelqIps,
+    'otel-sweep\'s CLUSTER_IP table has drifted from otelq\'s own PROM/LOKI/TEMPO_BASES');
+});
+
