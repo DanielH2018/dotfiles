@@ -18,8 +18,9 @@ already know the file and the symbol, just read it, however many calls that take
 
 Beyond that trigger, delegate work that is genuinely independent and sizeable — a wide multi-file
 investigation, a broad gather across distinct sub-topics. Don't spawn a subagent to verify or
-double-check your own work. If one subagent can do the job, use one rather than several, and keep
-spawn counts low.
+double-check your own work. If one subagent can do the job, use one rather than several. Past one,
+scale the count to the work: 2–3 for a standard question, 3–5 for distinct sub-topics or lenses, and
+5–10 for a large gather. The hard cap is 20.
 
 **Cost lever.** Inside a Workflow, reach for `effort` before dropping model tier. Start every stage at
 `medium`, which is the Opus 5.5 default. Use `effort: 'low'` on the inherited model for a gather stage,
