@@ -8,8 +8,8 @@
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
-      "hash": "43178f425881f35561bbb11315bed9109e2c954cbf284fb6daa6e56d054516f1",
-      "landed": "2026-09-28T15:04:00.101Z"
+      "hash": "9282866cbac71e0e59241303f3953d55dd5482f79e80c3c3ceba97d20d359f31",
+      "landed": "2026-09-28T15:26:21.679Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.safe-floor.json",
@@ -178,8 +178,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_protect-secrets.sh",
-      "hash": "bd27fda575ba1550406e7ddb92232c6c099094bd02dc43315881f198ab1e135b",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "0cbb8e32083982c24b576ce6fb6144db9d70bcf0fa6bfa46f3cf53fa4b969201",
+      "landed": "2026-09-28T15:26:21.679Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_prune-artifacts.sh",
