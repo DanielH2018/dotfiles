@@ -194,6 +194,10 @@ case $report in
       logger -t otel-sweep-watch \
         "status=up $(printf '%s' "$report" | tr '\n' ';' | cut -c1-300)"
     fi
+    # Clear the statusline banner (see below): a clean run must make it go away, or the
+    # last finding's banner would outlive the finding it named.
+    state_dir=${XDG_STATE_HOME:-$HOME/.local/state}/otel-sweep-watch
+    rm -f "$state_dir/findings-pending" 2>/dev/null || true
     exit 0
     ;;
 esac
@@ -245,4 +249,19 @@ if [ "$notify" = yes ]; then
   printf '%s %s\n' "$fingerprint" "$now" >"$state_dir/last-notified" 2>/dev/null || true
 fi
 
+# A channel that works on daniel-box, where there is no desktop bus for notify-send: a
+# statusline banner, the same way claude-transcript-scan's leak marker works
+# (private_dot_claude/executable_statusline-command.sh, "Segment: transcript credential
+# leaks"). Written unconditionally, unlike the notify-send/last-notified pair above — the
+# banner is not a notification that repeats, it is a standing "still true" fact, so it is
+# rewritten every down run regardless of the repeat-window, and cleared only by the clean-run
+# branch above.
+mkdir -p "$state_dir" 2>/dev/null || true
+printf '%s\n' "$findings" >"$state_dir/findings-pending" 2>/dev/null || true
+
+# The unit still exits non-zero on findings, on purpose: `systemctl --user --failed` is a
+# second, passive signal that works whether or not anyone is looking at a statusline right
+# now, and removing it once traded away the ONLY signal that fired on 2026-08-23 (see the
+# SuccessExitStatus note in the unit file). The banner adds a channel; it does not replace
+# this one.
 exit 1

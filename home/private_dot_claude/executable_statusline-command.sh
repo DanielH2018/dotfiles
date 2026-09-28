@@ -129,6 +129,19 @@ if [[ -s "$leak_file" ]]; then
   fi
 fi
 
+# Segment: otel-sweep-watch findings (red). Same shape as the transcript-leak segment above —
+# a standing "still true" state file rather than a one-shot notification, so it shows up here
+# on daniel-box, which has no desktop bus for the notify-send otel-sweep-watch also tries.
+# otel-sweep-watch itself clears the file on its next clean run; this segment only reads it.
+otel_findings_file="${XDG_STATE_HOME:-$HOME/.local/state}/otel-sweep-watch/findings-pending"
+if [[ -s "$otel_findings_file" ]]; then
+  otel_count=$(grep -c . "$otel_findings_file" 2>/dev/null)
+  if [[ "${otel_count:-0}" =~ ^[0-9]+$ ]] && (( otel_count > 0 )); then
+    otel_where="${otel_findings_file/#$HOME/\~}"
+    add '\033[38;2;243;139;168m ⚠ %s otel finding(s), see %s \033[0m' "$otel_count" "$otel_where"
+  fi
+fi
+
 # Segment: vim mode (purple) — only shown when vim mode is active
 [[ -n "$vim_mode" ]] && add '\033[38;2;203;166;247m %s \033[0m' "$vim_mode"
 

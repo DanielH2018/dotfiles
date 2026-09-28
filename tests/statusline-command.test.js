@@ -18,10 +18,10 @@ const skip = skipUnless('bash', 'jq');
 // COLUMNS is pinned wide so segment assertions stay on one line regardless of the runner's
 // terminal; the wrapping tests below set it themselves. The leak marker points at a path
 // that does not exist unless a test passes one, so the runner's own marker never renders.
-function run(input, columns = '400', leakPending = '/nonexistent/transcript-leaks-pending') {
+function run(input, columns = '400', leakPending = '/nonexistent/transcript-leaks-pending', extraEnv = {}) {
   const r = spawnSync('bash', [SCRIPT], {
     input: JSON.stringify(input), encoding: 'utf8',
-    env: { ...process.env, COLUMNS: columns, CLAUDE_TRANSCRIPT_LEAK_PENDING: leakPending },
+    env: { ...process.env, COLUMNS: columns, CLAUDE_TRANSCRIPT_LEAK_PENDING: leakPending, ...extraEnv },
   });
   return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
 }
@@ -70,6 +70,40 @@ test('both record types show together, whatever their order', { skip }, () => {
   const out = stripAnsi(run(LEAK_INPUT, '400', f).stdout);
   assert.match(out, /⚠ 1 transcript leak\(s\)/);
   assert.match(out, /could not run 1 time\(s\)/);
+});
+
+// ── The otel-sweep-watch findings segment ─────────────────────────────────────
+//
+// Same shape as the transcript-leak segment above: otel-sweep-watch writes this file
+// because notify-send has no bus to draw on on daniel-box, and clears it on its next
+// clean run. XDG_STATE_HOME is pinned to an empty scratch dir here so the assertion
+// never depends on whatever this real host's own otel-sweep-watch has left behind.
+function otelState(findingsLines) {
+  const dir = scratch(os.tmpdir(), 'statusline-otel-');
+  if (findingsLines !== null) {
+    fs.mkdirSync(path.join(dir, 'otel-sweep-watch'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'otel-sweep-watch', 'findings-pending'), findingsLines.join('\n') + '\n');
+  }
+  return dir;
+}
+
+test('otel-sweep-watch findings show with a count and the state path', { skip }, () => {
+  const state = otelState(['box: Loki unreachable - nothing is being recorded']);
+  const out = stripAnsi(run(LEAK_INPUT, '400', '/nonexistent/transcript-leaks-pending', { XDG_STATE_HOME: state }).stdout);
+  assert.match(out, /⚠ 1 otel finding\(s\), see /);
+  assert.ok(out.includes(path.join(state, 'otel-sweep-watch', 'findings-pending')));
+});
+
+test('an empty findings-pending file shows no otel segment', { skip }, () => {
+  const state = otelState([]);
+  const out = stripAnsi(run(LEAK_INPUT, '400', '/nonexistent/transcript-leaks-pending', { XDG_STATE_HOME: state }).stdout);
+  assert.doesNotMatch(out, /otel finding\(s\)/);
+});
+
+test('no findings-pending file at all means no otel segment', { skip }, () => {
+  const state = otelState(null);
+  const out = stripAnsi(run(LEAK_INPUT, '400', '/nonexistent/transcript-leaks-pending', { XDG_STATE_HOME: state }).stdout);
+  assert.doesNotMatch(out, /otel finding\(s\)/);
 });
 
 test('no marker means no leak segment', { skip }, () => {

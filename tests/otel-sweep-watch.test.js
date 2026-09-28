@@ -432,3 +432,23 @@ test('without a message breakdown every error is still a finding', { skip }, () 
   assert.strictEqual(code, 1, 'unknown must not read as benign');
   assert.match(stdout, /box: 11 api_error events in 24h/);
 });
+
+// --- statusline banner (daniel-box has no desktop bus for notify-send) ----
+
+test('a finding writes the statusline banner state file', { skip }, () => {
+  const state = scratch(DIR, 'banner-down-');
+  const { code } = run(LOKI_DOWN, { XDG_STATE_HOME: state });
+  assert.strictEqual(code, 1);
+  const pending = fs.readFileSync(path.join(state, 'otel-sweep-watch', 'findings-pending'), 'utf8');
+  assert.match(pending, /Loki unreachable/);
+});
+
+test('a clean run clears a banner an earlier down run left behind', { skip }, () => {
+  const state = scratch(DIR, 'banner-clear-');
+  assert.strictEqual(run(LOKI_DOWN, { XDG_STATE_HOME: state }).code, 1);
+  assert.ok(fs.existsSync(path.join(state, 'otel-sweep-watch', 'findings-pending')),
+    'precondition: the down run must have left a banner to clear');
+  assert.strictEqual(run(HEALTHY, { XDG_STATE_HOME: state }).code, 0);
+  assert.ok(!fs.existsSync(path.join(state, 'otel-sweep-watch', 'findings-pending')),
+    'a resolved finding must not leave a stale banner behind');
+});
