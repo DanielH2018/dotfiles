@@ -3,11 +3,15 @@ this machine's account SID and its NetBIOS name baked in, which pins the task to
 publishes the machine SID. Register-ScheduledTask -User overrides the Principal but NOT the
 LogonTrigger's UserId, so the trigger has to be templated for the task to register anywhere
 else. */ -}}
+{{- /* The exe path was hardcoded to C:\Users\daniel\bin\..., which only registers correctly
+for that one account. .chezmoi.homeDir is forward-slashed even on Windows ("C:/Users/name"),
+so it is converted to backslashes to match every other path in this file. */ -}}
+{{- $exe := printf "%s\\bin\\TaskbarAutoHideFix.exe" (.chezmoi.homeDir | replace "/" "\\") -}}
 <?xml version="1.0" encoding="utf-8"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Author>{{ .chezmoi.username }}</Author>
-    <Description>Persistent watcher: every ~2.5s, closes the "only one auto-hide toolbar per side" popup and re-asserts taskbar auto-hide. Works around the Win11/ExplorerPatcher multi-monitor auto-hide app-bar collision that recurs on logon, unlock, resume, and display/power transitions. Companion TaskbarAutoHideFix-Poll is a 3-min backup. Runs C:\Users\daniel\bin\TaskbarAutoHideFix.exe watch (source alongside).</Description>
+    <Description>Persistent watcher: every ~2.5s, closes the "only one auto-hide toolbar per side" popup and re-asserts taskbar auto-hide. Works around the Win11/ExplorerPatcher multi-monitor auto-hide app-bar collision that recurs on logon, unlock, resume, and display/power transitions. Companion TaskbarAutoHideFix-Poll is a 3-min backup. Runs {{ $exe }} watch (source alongside).</Description>
     <URI>\TaskbarAutoHideFix</URI>
   </RegistrationInfo>
   <Principals>
@@ -40,7 +44,7 @@ else. */ -}}
   </Triggers>
   <Actions Context="Author">
     <Exec>
-      <Command>C:\Users\daniel\bin\TaskbarAutoHideFix.exe</Command>
+      <Command>{{ $exe }}</Command>
       <Arguments>watch</Arguments>
     </Exec>
   </Actions>

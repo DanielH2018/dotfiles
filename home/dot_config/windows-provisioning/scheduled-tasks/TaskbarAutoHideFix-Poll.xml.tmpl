@@ -1,3 +1,6 @@
+{{- /* .chezmoi.homeDir is forward-slashed even on Windows ("C:/Users/name"); convert to
+backslashes to match every other path in this file — see TaskbarAutoHideFix.xml.tmpl. */ -}}
+{{- $exe := printf "%s\\bin\\TaskbarAutoHideFix.exe" (.chezmoi.homeDir | replace "/" "\\") -}}
 <?xml version="1.0" encoding="utf-8"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
@@ -32,7 +35,7 @@
   </Triggers>
   <Actions Context="Author">
     <Exec>
-      <Command>C:\Users\daniel\bin\TaskbarAutoHideFix.exe</Command>
+      <Command>{{ $exe }}</Command>
       <Arguments>once</Arguments>
     </Exec>
   </Actions>

@@ -95,3 +95,24 @@ test('the declared encoding matches the bytes on disk', { skip }, () => {
       `${name} declares encoding="${declared}" but is ${isUtf16 ? 'UTF-16' : 'single-byte'} on disk`);
   }
 });
+
+test('a Command path comes from the template, not from the export (D7)', { skip }, () => {
+  // TaskbarAutoHideFix{,-Poll}.xml.tmpl hardcoded C:\Users\daniel\bin\...exe, which only
+  // registers correctly for that one account — checked against the SOURCE, like the
+  // UserId test above, since what a correct render looks like is machine-dependent.
+  for (const name of fs.readdirSync(TASKS).filter((f) => f.endsWith('.xml') || f.endsWith('.xml.tmpl'))) {
+    const src = fs.readFileSync(path.join(TASKS, name), 'utf8');
+    for (const [, value] of src.matchAll(/<Command>([^<]*)<\/Command>/g)) {
+      assert.doesNotMatch(value, /Users\\daniel\\/i, `${name} hardcodes a username in its Command (${value})`);
+    }
+  }
+});
+
+test('a rendered TaskbarAutoHideFix Command derives its path from chezmoi.homeDir', { skip: skipXml }, () => {
+  for (const { name, xml } of definitions().filter((d) => d.name.startsWith('TaskbarAutoHideFix'))) {
+    for (const [, value] of xml.matchAll(/<Command>([^<]*)<\/Command>/g)) {
+      assert.notStrictEqual(value.trim(), '', `${name} rendered an empty Command`);
+      assert.match(value, /\\bin\\TaskbarAutoHideFix\.exe$/, `${name}: ${value}`);
+    }
+  }
+});
