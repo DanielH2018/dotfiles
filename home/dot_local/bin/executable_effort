@@ -1,28 +1,73 @@
 #!/bin/bash
 # Get/set Claude Code's effortLevel in ~/.claude/settings.json without opening a session.
-# effortLevel is a runtime-owned key (see claude-settings-merge's RUNTIME_OWNED_KEYS) that
-# `/effort` writes live and chezmoi carries forward across `apply` — editing it here directly
-# is equivalent, and lets a fresh `claude-sandbox` launch pick it up via resolve-sandbox-settings.sh.
+# Two keys hold an effort level, and this script reports both:
+#   - effortLevel, the top-level key. settings.base.json pins it, and claude-settings-merge
+#     carries a runtime value forward only when the template does not set it.
+#   - modelSettings.<model>.effortLevel, which `/effort` writes on Opus 5.5 instead. It
+#     overrides the top-level key for that model until the next `chezmoi apply` drops it.
+# Editing either here is equivalent to `/effort`, and lets a fresh `claude-sandbox` launch
+# pick it up via resolve-sandbox-settings.sh.
 set -euo pipefail
 
 SETTINGS="$HOME/.claude/settings.json"
 LEVELS=(low medium high xhigh max auto)
 
+# Every per-model effort pin, as `model=level` joined by ", ". Empty when there is none.
+model_pins() {
+  jq -r '[(.modelSettings // {}) | to_entries[]
+           | select((.value | type) == "object" and (.value | has("effortLevel")))
+           | "\(.key)=\(.value.effortLevel)"] | join(", ")' "$SETTINGS"
+}
+
 current() {
-  jq -r '.effortLevel // "unset"' "$SETTINGS"
+  local top pins
+  top="$(jq -r '.effortLevel // "unset"' "$SETTINGS")"
+  pins="$(model_pins)"
+  if [[ -n "$pins" ]]; then
+    echo "$top (overridden per model: $pins)"
+  else
+    echo "$top"
+  fi
+}
+
+# A top-level set does not reach a model that carries its own pin, so say so rather than
+# print a level that is not the one in force (#696).
+warn_if_overridden() {
+  local pins
+  pins="$(model_pins)"
+  if [[ -n "$pins" ]]; then
+    echo "warning: per-model effort still overrides this: $pins" >&2
+    echo "Run \`effort clear-model\` to remove it." >&2
+  fi
+}
+
+write_settings() {
+  local tmp
+  tmp="$(mktemp "${TMPDIR:-/tmp}/effort-settings.XXXXXX")"
+  jq "$@" "$SETTINGS" >"$tmp"
+  mv "$tmp" "$SETTINGS"
 }
 
 # `auto` deletes the key rather than storing a sixth value: an absent effortLevel is what
-# leaves effort unpinned, and settings.base.json's comment treats absence as the intended
-# state. Without this verb the script was a one-way door — it could pin every level and
-# unpin none, so a `/effort medium` typed once was carried forward by claude-settings-merge
-# on every apply and never came back off.
+# leaves effort unpinned. Without this verb the script was a one-way door. It could pin every
+# level and unpin none, so a `/effort medium` typed once was carried forward by
+# claude-settings-merge on every apply and never came back off.
 unset_level() {
-  local tmp
-  tmp="$(mktemp "${TMPDIR:-/tmp}/effort-settings.XXXXXX")"
-  jq 'del(.effortLevel)' "$SETTINGS" >"$tmp"
-  mv "$tmp" "$SETTINGS"
+  write_settings 'del(.effortLevel)'
   echo "effortLevel: unset (auto — the model sizes its own reasoning per turn)"
+  warn_if_overridden
+}
+
+# The way out of a per-model pin. It deletes effortLevel from every modelSettings entry and
+# keeps every other key there. An entry left empty is removed, as is an empty modelSettings.
+clear_model() {
+  write_settings 'if has("modelSettings") then
+      .modelSettings |= (with_entries(
+        if (.value | type) == "object" then .value |= del(.effortLevel) else . end)
+        | with_entries(select(.value != {})))
+      | if .modelSettings == {} then del(.modelSettings) else . end
+    else . end'
+  echo "modelSettings effort: cleared; effortLevel: $(current)"
 }
 
 set_level() {
@@ -32,30 +77,36 @@ set_level() {
   done
   if [[ "$valid" != true ]]; then
     echo "Invalid effort level: $level" >&2
-    echo "Valid options: ${LEVELS[*]}" >&2
+    echo "Valid options: ${LEVELS[*]} clear-model" >&2
     exit 1
   fi
   if [[ "$level" == auto ]]; then
     unset_level
     return
   fi
-  local tmp
-  tmp="$(mktemp "${TMPDIR:-/tmp}/effort-settings.XXXXXX")"
-  jq --arg level "$level" '.effortLevel = $level' "$SETTINGS" >"$tmp"
-  mv "$tmp" "$SETTINGS"
+  write_settings --arg level "$level" '.effortLevel = $level'
   echo "effortLevel: $level"
+  warn_if_overridden
+}
+
+dispatch() {
+  if [[ "$1" == clear-model ]]; then
+    clear_model
+  else
+    set_level "$1"
+  fi
 }
 
 if [[ $# -eq 0 ]]; then
   echo "Current effort level: $(current)"
-  echo "Options: ${LEVELS[*]}"
+  echo "Options: ${LEVELS[*]} clear-model"
   choice=""
   read -rp "Set to: " choice || true
   if [[ -z "$choice" ]]; then
     echo "No value given, leaving unchanged."
     exit 0
   fi
-  set_level "$choice"
+  dispatch "$choice"
 else
-  set_level "$1"
+  dispatch "$1"
 fi

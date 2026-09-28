@@ -25,9 +25,10 @@ investigation, a broad gather across distinct sub-topics. Don't spawn a subagent
 double-check your own work. If one subagent can do the job, use one rather than several, and keep
 spawn counts low.
 
-**Cost lever.** Inside a Workflow, reach for `effort` before dropping model tier: `low` and `medium` hold
-quality at a fraction of the tokens, so a cheap gather stage is usually `effort: 'low'` on the inherited
-model rather than a downgrade — keep `xhigh` for coding and for the hardest judge stages. The Agent tool
+**Cost lever.** Inside a Workflow, reach for `effort` before dropping model tier. Start every stage at
+`medium`, which is the Opus 5.5 default. Use `effort: 'low'` on the inherited model for a gather stage,
+rather than a downgrade: Anthropic's Opus 5.5 guide measured `low` close to `medium` on several coding
+evaluations. Set `xhigh` only on a stage where a measured gain over `high` exists. The Agent tool
 has no effort knob, so there tier is the only lever: `model: 'sonnet'` for bulk context-reading with no
 judgment in it, top tier (Opus/Fable) reserved for your own synthesis. Bump a single subagent up only when
 its subtask genuinely needs the stronger reasoning.

@@ -300,22 +300,26 @@
        The default moved to claude-opus-5-5 on 2026-09-24, at the operator's request, and
        the same no-suffix rule applies to it. */}}
   "model": "claude-opus-5-5",
-  {{/* Pinned to `medium` on 2026-09-24, at the operator's request, which is also the Opus
-       5.5 API default (see the guide note below). The pin applies to every turn, and the
-       template wins over a runtime `/effort` on the next apply (claude-settings-merge
-       RUNTIME_OWNED_KEYS). Remove the key to go back to unpinned. The history of the
-       unpinned default follows.
-       effortLevel was deliberately absent: an absent key (equivalently `/effort auto` or
-       CLAUDE_CODE_EFFORT_LEVEL=auto) leaves effort UNPINNED, so the model sizes its own
-       reasoning per turn. A pin here overrides that for every turn, cheap ones included.
+  {{/* Pinned to `medium` on 2026-09-24, at the operator's request. That is also the Opus
+       5.5 API default (see the guide note below). The pin applies to every turn, cheap
+       ones included.
+       Three settings decide the effort a turn runs at:
+       1. This pin. The template wins over a runtime value on every apply. Removing the key
+          leaves effort unpinned (equivalently `/effort auto` or
+          CLAUDE_CODE_EFFORT_LEVEL=auto), so the model sizes its own reasoning per turn.
+       2. The deployed top-level effortLevel. modify_settings.json.sh.tmpl passes the
+          deployed file to claude-settings-merge, which carries effortLevel forward
+          (RUNTIME_OWNED_KEYS) only when this template does not set it. While the pin
+          stands, the merge replaces a runtime value and prints a warning.
+       3. modelSettings.<model>.effortLevel. On Opus 5.5, `/effort` writes this per-model
+          key instead of the top-level one, and it overrides the pin for that model until
+          the next apply. The merge drops it on apply and prints a warning. `effort` (bin)
+          reports it, and `effort clear-model` removes it.
        Per-turn escalation stays available without touching settings: `ultrathink` in a
        prompt pins higher effort for that turn only and reverts after it; `ultracode`
        additionally turns on the workflow/orchestration posture. Task-shaped routing lives
        in agent frontmatter (model + effort) under private_dot_claude/agents/, not here.
-       Note this file is fully derived — modify_settings.json.sh.tmpl ignores stdin — so a
-       runtime `/effort X` persists into ~/.claude/settings.json only until the next
-       `chezmoi apply`. Reintroduce the key only to pin every turn on purpose.
-       If you ever do pin: Anthropic's Fable 5.1 prompting guide says effort names do not map
+       On choosing a level: Anthropic's Fable 5.1 prompting guide says effort names do not map
        to the same amount of thinking across models, so a sweep run on one model does not
        carry to the next; `medium` on Fable 5.1 roughly matches Fable 5 at lower cost, and
        `xhigh`/`max` make the model draft long deliverables once in thinking and again in

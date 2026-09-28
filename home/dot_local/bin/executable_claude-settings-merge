@@ -265,12 +265,31 @@ const assertShapes = (merged) => {
 };
 
 // Keys the *running harness* writes back into the deployed settings.json at session time
-// (`/effort` writes effortLevel). The templates don't set them, so a plain re-derive drops
-// them on every `chezmoi apply` — the pin silently vanishes mid-session. This list is a
+// (`/effort` writes effortLevel). A template that does not set one would drop it on every
+// `chezmoi apply`, so the pin would silently vanish mid-session. This list is a
 // fixed literal, never inferred from the prior file: carrying forward whatever happens to
 // be in the deployed copy would make an uncommitted local edit into policy, which is the
 // exact property "the file is fully derived" exists to guarantee.
 const RUNTIME_OWNED_KEYS = ['effortLevel'];
+
+// On Opus 5.5, `/effort` writes modelSettings.<model>.effortLevel instead of effortLevel, and
+// the per-model key overrides the template's pin. It is deliberately NOT in the list above:
+// carrying it forward would let one `/effort` outrank the template on every apply. The
+// re-derive drops it, and this prints the same kind of warning a replaced effortLevel gets,
+// so a reverted per-model pin is as visible as a reverted top-level one (#696).
+const warnDroppedModelEffort = (acc, prior) => {
+  if (!isObj(prior.modelSettings)) return;
+  for (const [model, s] of Object.entries(prior.modelSettings)) {
+    if (!isObj(s) || !Object.prototype.hasOwnProperty.call(s, 'effortLevel')) continue;
+    const kept = isObj(acc.modelSettings) && isObj(acc.modelSettings[model])
+      ? acc.modelSettings[model].effortLevel : undefined;
+    if (JSON.stringify(kept) === JSON.stringify(s.effortLevel)) continue;
+    process.stderr.write(
+      `claude-settings-merge: dropping deployed modelSettings.${model}.effortLevel=` +
+        `${JSON.stringify(s.effortLevel)}; effortLevel=${JSON.stringify(acc.effortLevel)} applies\n`,
+    );
+  }
+};
 
 // Data carry-forward only, and only for the keys above. Never permission rules, never hooks,
 // never code — so this does not reopen "settings.json is fully derived" as a general property.
@@ -288,6 +307,7 @@ const carryForward = (acc, priorFile) => {
     return acc;
   }
   if (!isObj(prior)) return acc;
+  warnDroppedModelEffort(acc, prior);
   for (const k of RUNTIME_OWNED_KEYS) {
     if (!Object.prototype.hasOwnProperty.call(prior, k)) continue;
     if (Object.prototype.hasOwnProperty.call(acc, k)) {

@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { srcPath } = require('../lib/paths');
+const { run: runProc } = require('../lib/run');
 
 const BIN = srcPath('dot_local', 'bin', 'executable_claude-settings-merge');
 const tmp = scratch(os.tmpdir(), 'merge-');
@@ -176,6 +177,22 @@ test('carry-forward is scoped to the allowlist and never touches permissions', (
 test('a runtime key absent from the prior file stays absent', () => {
   const out = runWithPrior(w('rt-prior4.json', { model: 'opus' }), w('rt-base4.json', withFloor({ model: 'opus' })));
   assert.ok(!('effortLevel' in out), 'nothing to carry forward means unpinned, not a default');
+});
+
+// `/effort` on Opus 5.5 writes modelSettings.<model>.effortLevel, which overrides the
+// template's pin. The merge drops it on apply, and that drop must be as visible as a
+// replaced top-level effortLevel is (#696). It is warned about, never carried forward.
+test('a dropped per-model effort pin is warned about, not carried', () => {
+  const base = w('rt-base-ms.json', withFloor({ effortLevel: 'medium' }));
+  const prior = w('rt-prior-ms.json', {
+    effortLevel: 'medium',
+    modelSettings: { 'claude-opus-5-5': { effortLevel: 'xhigh' } },
+  });
+  const r = runProc('node', [BIN, base], { env: { ...process.env, CLAUDE_SETTINGS_PRIOR: prior } });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stderr, /modelSettings\.claude-opus-5-5\.effortLevel/);
+  assert.match(r.stderr, /"xhigh"/);
+  assert.ok(!('modelSettings' in JSON.parse(r.stdout)), 'the per-model pin must not survive');
 });
 
 // Losing a UX pin is not worth aborting an apply that would otherwise deploy every other
