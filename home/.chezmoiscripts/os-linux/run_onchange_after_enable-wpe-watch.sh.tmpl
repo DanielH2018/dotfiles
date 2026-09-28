@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
-# Enable the wallpaper display watcher. run_onchange re-runs (and reloads systemd) whenever the
-# unit or the watcher script changes — their hashes are embedded so edits retrigger it.
+# Enable the wallpaper display watcher on a personal, non-WSL Linux desktop; disable it on every
+# other Linux host. run_onchange re-runs (and reloads systemd) whenever the unit, the watcher
+# script, or this gate changes — their hashes are embedded so edits retrigger it, and the gate
+# change itself retriggers it once on every host to clean up.
 #
 # Enabled here rather than by hand because it is the thing that makes the wallpaper survive a KVM
 # flip: the renderer freezes its display list at exec time, so without this the wallpaper is
 # simply missing on every display that was switched away when the service started. `wpe watch
 # disable` is the way off.
+#
+# Ran unconditionally on every Linux host before this gate, including daniel-server, where it had
+# no wallpaper to serve and stayed running for hours. The disable branch cleans that up.
 #
 # Idempotent; a no-op where user systemd isn't running (e.g. a non-lingering headless box), and it
 # swallows failures because a machine with no wallpaper service is not a broken apply.
@@ -14,5 +19,9 @@
 set -eu
 if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
   systemctl --user daemon-reload || true
+{{ if includeTemplate "is-desktop-linux" . -}}
   systemctl --user enable --now wpe-watch.service || true
+{{ else -}}
+  systemctl --user disable --now wpe-watch.service 2>/dev/null || true
+{{ end -}}
 fi

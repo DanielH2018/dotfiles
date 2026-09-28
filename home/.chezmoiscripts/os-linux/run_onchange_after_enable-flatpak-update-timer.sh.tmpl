@@ -1,19 +1,30 @@
 #!/usr/bin/env bash
-# Enable the user-scope Flatpak update timer. Flatpaks were the one update surface here with no
-# automation at all — they moved only when someone opened Discover — so an app could sit months
-# behind while dnf stayed current. run_onchange re-runs (and reloads systemd) whenever the unit
-# files below change; their hashes are embedded so edits retrigger it.
+# Enable the user-scope Flatpak update timer on a personal, non-WSL Linux desktop; disable it on
+# every other Linux host. Flatpaks were the one update surface here with no automation at all —
+# they moved only when someone opened Discover — so an app could sit months behind while dnf
+# stayed current. run_onchange re-runs (and reloads systemd) whenever the unit files or this gate
+# change; their hashes are embedded so edits retrigger it, and the gate change itself retriggers
+# it once on every host to clean up.
+#
+# Ran unconditionally on every Linux host before this gate. Flatpak is rarely installed on a
+# headless server, so the old script's own `command -v flatpak` guard already no-opped there in
+# practice — this makes that explicit and covers the case where flatpak IS present.
 #
 # Turn it off with `systemctl --user mask flatpak-update.timer`; a plain `disable` is undone by
 # the next apply.
 #   service: {{ include "dot_config/systemd/user/flatpak-update.service" | sha256sum }}
 #   timer:   {{ include "dot_config/systemd/user/flatpak-update.timer" | sha256sum }}
 set -eu
-command -v flatpak >/dev/null 2>&1 || exit 0
 if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
   systemctl --user daemon-reload || true
-  # A masked timer is the documented opt-out, so it is the one state this must not undo.
-  if [ "$(systemctl --user is-enabled flatpak-update.timer 2>/dev/null)" != masked ]; then
-    systemctl --user enable --now flatpak-update.timer || true
+{{ if includeTemplate "is-desktop-linux" . -}}
+  if command -v flatpak >/dev/null 2>&1; then
+    # A masked timer is the documented opt-out, so it is the one state this must not undo.
+    if [ "$(systemctl --user is-enabled flatpak-update.timer 2>/dev/null)" != masked ]; then
+      systemctl --user enable --now flatpak-update.timer || true
+    fi
   fi
+{{ else -}}
+  systemctl --user disable --now flatpak-update.timer 2>/dev/null || true
+{{ end -}}
 fi
