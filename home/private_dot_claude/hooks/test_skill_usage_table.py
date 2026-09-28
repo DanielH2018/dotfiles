@@ -69,6 +69,15 @@ with tempfile.TemporaryDirectory() as tmp:
     (
         root / "home" / "private_dot_claude" / "agents" / "never-fired-agent.md"
     ).write_text("---\n")
+    # A project skill fired from inside a worktree logs its directory-scoped name
+    # (".claude/worktrees/<name>:<skill>") -- see the log entry below. It must fold
+    # into this bare skill's count, not sink into "unmatched" or split its own row.
+    (root / "home" / "private_dot_claude" / "skills" / "worktree-skill").mkdir(
+        parents=True
+    )
+    (
+        root / "home" / "private_dot_claude" / "skills" / "worktree-skill" / "SKILL.md"
+    ).write_text("---\n")
 
     claude_dir = Path(tmp) / "claude"
     (claude_dir / "plugins").mkdir(parents=True)
@@ -99,6 +108,17 @@ with tempfile.TemporaryDirectory() as tmp:
                 "ts": "2026-09-01T00:00:00Z",
                 "kind": "skill",
                 "name": "renamed-away-skill",
+                "ok": True,
+            }
+        )
+        + "\n"
+        # A worktree-scoped fire of "worktree-skill" -- must fold into that skill's
+        # bare-name row, not read as unmatched.
+        + json.dumps(
+            {
+                "ts": "2026-09-01T00:00:00Z",
+                "kind": "skill",
+                "name": ".claude/worktrees/some-worktree:worktree-skill",
                 "ok": True,
             }
         )
@@ -169,6 +189,20 @@ with tempfile.TemporaryDirectory() as tmp:
     check(
         "the corrupt line does not corrupt the count for a well-formed entry",
         fired_idx is not None and lines[fired_idx].split()[2] == "1",
+    )
+
+    # ── worktree-prefixed names must fold into the bare skill, not split or vanish ──
+
+    worktree_idx = next(
+        (i for i, line in enumerate(lines) if "worktree-skill" in line), None
+    )
+    check(
+        "a worktree-scoped fire counts against the bare skill name",
+        worktree_idx is not None and lines[worktree_idx].split()[2] == "1",
+    )
+    check(
+        "a worktree-scoped fire is not also reported as unmatched",
+        "some-worktree" not in out,
     )
 
 finish()
