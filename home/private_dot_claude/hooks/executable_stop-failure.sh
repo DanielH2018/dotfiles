@@ -4,8 +4,11 @@
 #   timeout: 5
 #   order: 10
 #   async: true
-# StopFailure hook: log API errors and notify on rate limits.
-# Fires when a turn ends due to an API error rather than normal completion.
+# StopFailure hook: notify on rate limits, via a macOS desktop notification.
+# Fires when a turn ends due to an API error rather than normal completion. osascript is the
+# only thing this hook does, so it is a no-op on Linux and Windows (the `command -v` guard
+# below), not gated by `when:` — gen-hooks refuses a lone conditional entry as an event's
+# first group, and StopFailure has no other hook to carry an unconditional lowest order.
 
 set -u
 
@@ -13,12 +16,6 @@ set -u
 . "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
 hook_read_input
 ERROR_TYPE=$(hook_field '.error_type // "unknown"')
-SESSION_ID=$(hook_field '.session_id // "unknown"')
-
-LOG_DIR="$HOME/.claude/logs"
-mkdir -p "$LOG_DIR"
-
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) session=$SESSION_ID event=stop_failure error_type=$ERROR_TYPE" >> "$LOG_DIR/sessions.log"
 
 # Desktop notification for rate limits so the user knows to wait
 case "$ERROR_TYPE" in
