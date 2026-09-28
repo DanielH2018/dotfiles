@@ -4,9 +4,11 @@
 #   matcher: startup
 #   timeout: 10
 #   order: 20
-# artifacts are working docs, not an archive: drop anything untouched for a week
+# artifacts are working docs, not an archive: drop anything untouched for 30 days
 # SessionStart hook: artifacts are working documents, not an archive. Prune anything
-# untouched for a week so the directory stays a list of what is actually live.
+# untouched for 30 days (CLAUDE_ARTIFACT_RETENTION_DAYS, set in settings.base.json;
+# the fallback below is only for a host that skips that template) so the directory
+# stays a list of what is actually live.
 #
 # The clock runs from the last update, not creation, so a doc that keeps getting
 # refreshed as its slices land never expires — only abandoned ones do.
