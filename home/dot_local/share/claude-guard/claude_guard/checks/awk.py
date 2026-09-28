@@ -1,4 +1,4 @@
-"""awk programs that run a command or write a file, for the local `Bash(awk:*)` allow rule (dotfiles #702).
+"""awk programs that run a command or write a file, for the `Bash(awk:*)` allow rule (#702).
 
 The settings allow awk everywhere and deny only `system(`. awk runs a command three more
 ways, none of which contains `system`:
@@ -47,7 +47,7 @@ program the guard cannot read (`-f`, `--exec`, `@include`) asks, and so does a p
 carries a shell command substitution. So does a program that holds a shell parameter
 expansion (`$VAR`, `${VAR}`, `$1`) outside single quotes (dotfiles #707): the guard reads
 the text before the shell expands it, so the program awk runs is not the one it read.
-`_mark_expansions` marks each one before shlex drops the quoting; `\$` is escaped and
+`_mark_expansions` marks each one before shlex drops the quoting. A backslash-escaped `$`
 stays awk's own `$`.
 """
 
