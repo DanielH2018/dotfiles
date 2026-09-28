@@ -22,7 +22,6 @@
 .claude/sandbox/test_gen_vault_index.py
 .claude/sandbox/test_gh_pr_guard.py
 .claude/skills/config-lint/scripts/config-lint.test.js
-.claude/skills/learning-quiz/scripts/test_cards.sh
 .claude/skills/pr-authoring/references/test_triage.sh
 .claude/skills/security-audit/validate-coverage-ledger.test.cjs
 .claude/skills/security-audit/validate-findings.test.cjs

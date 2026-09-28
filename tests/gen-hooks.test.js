@@ -201,9 +201,9 @@ test('gen-hooks --check fails when the hooks directory gains an executable that 
 // not -- the repo's own "assert an identifier, not the prose" rule turned on its own prose.
 
 // A citation is the BARE filename. The leading path is what tells a hook apart from every
-// other script the docs name: `scripts/test_cards.sh`, `references/triage.sh` and
-// `~/server/.claude/hooks/auto-approve-remote-ssh.sh` all say where they live, and none of
-// them lives in this repo's hooks directory. What is left is the form the issue is about.
+// other script the docs name: `references/triage.sh` and
+// `~/server/.claude/hooks/auto-approve-remote-ssh.sh` both say where they live, and neither
+// lives in this repo's hooks directory. What is left is the form the issue is about.
 const DOCS_DIR = srcPath('private_dot_claude');
 
 const CITATION = /(?:^|[^/A-Za-z0-9_.-])([A-Za-z0-9_][A-Za-z0-9_.-]*\.(?:sh|py))/g;
@@ -216,9 +216,7 @@ const NOT_A_HOOK = {
   'install.sh': 'the work-laptop-config repo\'s installer',
   'land.sh': 'the server repo\'s merge tool, in pr-authoring/SKILL.md',
   'probe.py': 'the server repo\'s diagnostics entry point',
-  'run-skill.sh': 'the launchd runner in ~/.local/bin, not a hook',
   'telemetry-health.sh': 'a script on the homelab server',
-  'test_cards.sh': 'a learning-quiz skill test',
   'triage.sh': 'a pr-authoring skill reference script',
 };
 

@@ -940,10 +940,10 @@
        #622 deleted six of the ten (codebase-design, domain-modeling, grilling, pr-feedback,
        pr-review-prep, skill-router) and folded pr-review-prep's checks into pr-authoring.
        The 2026-09-26 scaffolding pass deleted config-lint (its script stays, run from the
-       homelab repo's scaffolding-delete-pass skill) and reprime. */}}
+       homelab repo's scaffolding-delete-pass skill) and reprime. #688 deleted learning-quiz
+       with the rest of the learning loop. */}}
   "skillOverrides": {
-    "handoff": "off",
-    "learning-quiz": "off"
+    "handoff": "off"
   },
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true,

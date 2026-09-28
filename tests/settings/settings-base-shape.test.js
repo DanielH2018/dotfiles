@@ -314,12 +314,10 @@ function commands(s) {
   return Object.values(s.hooks).flat().flatMap((g) => g.hooks.map((h) => h.command));
 }
 
-// #621: two hooks that started a process per event for nothing. reprime-nudge.sh ran after
-// every tool call; learning-gate.sh ran on every prompt and exited at once unless armed.
-test('reprime-nudge and the unarmed learning-gate are not registered', { skip }, () => {
+// #621: reprime-nudge.sh started a process after every tool call for nothing.
+test('reprime-nudge is not registered', { skip }, () => {
   const cmds = commands(JSON.parse(render()));
   assert.ok(!cmds.includes('~/.claude/hooks/reprime-nudge.sh'), 'reprime-nudge.sh is still registered');
-  assert.ok(!cmds.includes('~/.claude/hooks/learning-gate.sh'), 'learning-gate.sh is still registered');
 });
 
 // #621: the workspace_default join has nothing to connect on a bare host. The negative half

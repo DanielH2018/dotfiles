@@ -94,3 +94,19 @@
 .claude/hooks/watch-paths.sh
 .config/ghostty/shaders
 .claude/vault-tooling/claude-audit-portable
+
+# #688: the learning loop, removed whole on the operator's decision (2026-09-28) rather than
+# repaired: the digest and quiz skills, /quiz, the unregistered explain gate, and the daily
+# quiz-sheet timer. Disable the timer before the apply that deletes its unit files, or
+# timers.target.wants keeps a dangling link.
+.claude/skills/learning-digest
+.claude/skills/learning-quiz
+.claude/commands/quiz.md
+.claude/hooks/learning-gate.sh
+.config/systemd/user/claude-learning-quiz.service
+.config/systemd/user/claude-learning-quiz.timer
+# run-skill.sh's only Linux caller was the digest. Linux only: on a Mac this path is
+# work-laptop-config's symlink, which launchd jobs still run through.
+{{ if eq .chezmoi.os "linux" -}}
+.claude/scheduled/run-skill.sh
+{{ end -}}

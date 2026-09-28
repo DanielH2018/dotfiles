@@ -179,14 +179,10 @@ test('a word ENDING in "date" does not count as the BSD arm', () => {
   }
 });
 
-test('the CURRENT statusline and learning-quiz cards are clean: both carry a BSD date arm', () => {
-  for (const p of [
-    'home/private_dot_claude/executable_statusline-command.sh',
-    'home/private_dot_claude/skills/learning-quiz/scripts/executable_cards.sh',
-  ]) {
-    const r = run([repoPath(p)]);
-    assert.strictEqual(r.status, 0, `${p}\n${r.stdout}`);
-  }
+test('the CURRENT statusline is clean: it carries a BSD date arm', () => {
+  const p = 'home/private_dot_claude/executable_statusline-command.sh';
+  const r = run([repoPath(p)]);
+  assert.strictEqual(r.status, 0, `${p}\n${r.stdout}`);
 });
 
 test('mktemp templates pass when the X\'s are trailing', () => {
