@@ -2,7 +2,7 @@
 name: deep-review
 description: Deep correctness and security review of a diff or branch — logic errors, edge cases, concurrency, error handling, injection and authz gaps, convention drift. Reports every finding with a confidence and severity score, unfiltered. Use before requesting review or merging, or when a change is subtle enough that a fast pass would miss it.
 model: opus
-effort: xhigh
+effort: high
 tools: Read, Grep, Glob, Bash
 ---
 

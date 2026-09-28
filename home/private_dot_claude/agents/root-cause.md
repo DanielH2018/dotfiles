@@ -2,7 +2,7 @@
 name: root-cause
 description: Find why something is actually broken — a failing or flaky test, a race, a heisenbug, behaviour that contradicts the code as read. Use when the symptom is known but the cause is not localized, or when an obvious-looking fix has already failed. Diagnoses only; it does not write the fix.
 model: opus
-effort: xhigh
+effort: high
 tools: Read, Grep, Glob, Bash
 ---
 
