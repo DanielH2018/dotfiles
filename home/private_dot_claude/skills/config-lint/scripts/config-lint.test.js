@@ -65,17 +65,21 @@ test("findDuplicateSkills reports only names in >1 source", () => {
 
 test("enumeratePluginSkills only returns skills for a plugin settings.json actually enables (B6)", () => {
   const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), "config-lint-plugins-"));
-  for (const [plugin, skill] of [["enabled-plugin", "on-skill"], ["superpowers", "systematic-debugging"]]) {
-    const skillDir = path.join(cacheRoot, "claude-plugins-official", plugin, "1.0.0", "skills", skill);
-    fs.mkdirSync(skillDir, { recursive: true });
-    fs.writeFileSync(path.join(skillDir, "SKILL.md"), "---\n");
+  try {
+    for (const [plugin, skill] of [["enabled-plugin", "on-skill"], ["superpowers", "systematic-debugging"]]) {
+      const skillDir = path.join(cacheRoot, "claude-plugins-official", plugin, "1.0.0", "skills", skill);
+      fs.mkdirSync(skillDir, { recursive: true });
+      fs.writeFileSync(path.join(skillDir, "SKILL.md"), "---\n");
+    }
+    const enabledPlugins = {
+      "enabled-plugin@claude-plugins-official": true,
+      "superpowers@claude-plugins-official": false, // installed, but disabled -- like this host's
+    };
+    const bySource = m.enumeratePluginSkills(cacheRoot, enabledPlugins);
+    assert.deepStrictEqual(bySource, { "plugin:enabled-plugin": ["on-skill"] });
+  } finally {
+    fs.rmSync(cacheRoot, { recursive: true, force: true });
   }
-  const enabledPlugins = {
-    "enabled-plugin@claude-plugins-official": true,
-    "superpowers@claude-plugins-official": false, // installed, but disabled -- like this host's
-  };
-  const bySource = m.enumeratePluginSkills(cacheRoot, enabledPlugins);
-  assert.deepStrictEqual(bySource, { "plugin:enabled-plugin": ["on-skill"] });
 });
 
 test("checkBloat flags over-threshold on bytes and lines", () => {
