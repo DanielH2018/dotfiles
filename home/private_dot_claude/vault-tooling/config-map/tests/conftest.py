@@ -168,7 +168,10 @@ def fake_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]
         json.dumps(
             {
                 "mcpServers": {
-                    "grafana": {"command": "grafana-mcp", "token": "sk-should-not-leak"}
+                    "demo-server": {
+                        "command": "demo-mcp-server",
+                        "token": "sk-should-not-leak",
+                    }
                 }
             }
         )

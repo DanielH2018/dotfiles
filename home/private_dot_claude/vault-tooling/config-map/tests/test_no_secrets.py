@@ -30,7 +30,7 @@ def test_mcp_server_and_cache_values_never_leak(fake_env):
     html = render(build_setup_map())
     assert "sk-should-not-leak" not in html
     assert "mcpsrv_secretvalue" not in html
-    assert "grafana-mcp" not in html
-    assert "grafana" in html
+    assert "demo-mcp-server" not in html
+    assert "demo-server" in html
     # needs-auth connectors are hidden now, so the name never renders either
     assert "claude.ai Demo Connector" not in html
