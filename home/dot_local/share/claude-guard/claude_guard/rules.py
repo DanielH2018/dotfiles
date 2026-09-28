@@ -36,7 +36,8 @@ PermissionRequest judge, which only ever turns a prompt into an approval:
   the guard does not do: `find * -delete` must still catch `find . -delete 2>/dev/null`.
 - allow must match AT MOST what Claude Code matches. Exact is exact, a prefix ends only at
   a space, and a wildcard counts only when its sole `*` is a trailing ` *`, where it is
-  the same set as a prefix. Any other allow wildcard, and the `xargs <prefix>` arm, would
+  the same set as a prefix. Any other allow wildcard, a tool-wide `Bash(*)`, and the
+  `xargs <prefix>` arm would
   widen what the judge approves beyond what the guard approved before, and widening is the
   owner's call; they are left unmatched.
 
@@ -122,6 +123,8 @@ class Rule:
     text: str
     _regex: re.Pattern[str] | None = field(default=None, compare=False, repr=False)
     _xargs_regex: re.Pattern[str] | None = field(default=None, compare=False, repr=False)
+    # The two above, also matching when followed by a space and anything: `covers` below.
+    _heads: tuple[re.Pattern[str], ...] = field(default=(), compare=False, repr=False)
 
     @property
     def sole_trailing_space_star(self) -> bool:
@@ -160,20 +163,19 @@ class Rule:
             return any(
                 c == s or c.startswith(s + " ") or c.startswith(s + "/") for s in (t, "xargs " + t)
             )
-        # The command, and each of its leading runs of whole words: `find . -delete` out of
+        # The command, or one of its leading runs of whole words: `find . -delete` out of
         # `find . -delete 2>/dev/null`. Never a cut inside a word, so `rm -rf / *` stays
-        # clear of `rm -rf /home/x`. A regex that matches no leading slice at all
-        # (`r.match`) cannot match a leading run of words, so it is ruled out first.
-        live = [r for r in (self._regex, self._xargs_regex) if r is not None and r.match(c)]
-        if not live:
-            return False
-        heads = [c[:i] for i, ch in enumerate(c) if ch == " "] + [c]
-        return any(r.fullmatch(h) for r in live for h in heads)
+        # clear of a deeper path. One pass: `P(?: .*)?` ends each cut at a space.
+        return any(r.fullmatch(c) for r in self._heads)
 
     def grants(self, cmd: str) -> bool:
         """allow: at most `cc_matches`. See the module docstring for what is left out."""
-        if self.kind == "all" or self.kind == "exact":
-            return self.kind == "all" or cmd == self.text
+        if self.kind == "all":
+            # `Bash` / `Bash(*)` in allow: Claude Code grants every command. The guard grants
+            # none, since that would widen what the judge approves (#719).
+            return False
+        if self.kind == "exact":
+            return cmd == self.text
         c = _collapse(cmd)
         if self.kind == "prefix":
             t = _collapse(self.text)
@@ -194,12 +196,12 @@ def parse_rule(content: str | None) -> Rule:
     if m:
         return Rule("prefix", m.group(1))
     if not content.endswith(":*") and _has_unescaped_star(content):
-        return Rule(
-            "wildcard",
-            content,
-            _wildcard_regex(content),
-            _wildcard_regex("xargs " + content),
+        regex = _wildcard_regex(content)
+        xargs = _wildcard_regex("xargs " + content)
+        heads = tuple(
+            re.compile(f"(?:{r.pattern})(?: .*)?", re.DOTALL) for r in (regex, xargs) if r
         )
+        return Rule("wildcard", content, regex, xargs, heads)
     return Rule("exact", content)
 
 

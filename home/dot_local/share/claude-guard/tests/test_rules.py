@@ -116,8 +116,9 @@ GRAMMAR = [
     ("allow", "git branch", "git branch", True, True),
     ("allow", "git branch", "git branch -D feat", False, False),
     ("deny", "git push -f", "git push -f origin feat", False, True),
-    # `Bash(*)` is every command.
+    # `Bash(*)` is every command. The guard grants none of it in allow (#719).
     ("ask", "*", "anything at all", True, True),
+    ("allow", "*", "anything at all", True, False),
 ]
 
 
