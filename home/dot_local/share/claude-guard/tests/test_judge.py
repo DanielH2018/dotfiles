@@ -15,7 +15,7 @@ from test_git_reset import _make_repo
 
 from claude_guard import judge as judge_mod
 from claude_guard.judge import Decision, _first_word, _under_session_cwd, judge, unwrap_wrapper
-from claude_guard.rules import Rules, load_rules
+from claude_guard.rules import Rules, load_rules, parse_rule
 from claude_guard.tables import scratch_roots
 
 ROOTS = scratch_roots("/home/testuser")
@@ -332,6 +332,28 @@ def test_interior_wildcards_in_allow_rules_stay_inert(main):
     assert not allowed("ls && frob x --safe", main)
 
 
+def test_an_exact_allow_rule_allows_that_command_and_its_harmless_redirects_only(tmp_path):
+    # dotfiles #714: `Bash(git branch)` is exact in Claude Code, so it never allowed
+    # `git branch -D`. Claude Code strips redirections before matching, so the judge
+    # still allows the exact command with `2>&1` or `2>/dev/null` behind it.
+    rules = rules_for(tmp_path, {"allow": ["Bash(git branch)", "Bash(echo:*)"]})
+    assert allowed("echo hi && git branch", rules)
+    assert allowed("echo hi && git branch 2>&1", rules)
+    assert allowed("echo hi && git branch 2>/dev/null", rules)
+    assert not allowed("echo hi && git branch -D feat", rules)
+    assert not allowed("echo hi && git branch -D feat 2>&1", rules)
+
+
+def test_an_ask_rule_ending_in_a_glued_star_withholds_approval(tmp_path):
+    # dotfiles #714: `Bash(npx --package=*)` expands inside the word in Claude Code. Read
+    # as the plain prefix `npx --package=`, it let `Bash(npx:*)` approve the ask.
+    rules = rules_for(
+        tmp_path, {"allow": ["Bash(npx:*)", "Bash(echo:*)"], "ask": ["Bash(npx --package=*)"]}
+    )
+    assert allowed("echo hi && npx cowsay hi", rules)
+    assert not allowed("echo hi && npx --package=cowsay cowsay hi", rules)
+
+
 # --- the interpreter-escape family and wrappers ----------------------------------------------
 
 
@@ -366,8 +388,9 @@ def real(tmp_path):
     text = re.sub(r"\{\{/\*.*?\*/\}\}", "", TEMPLATE.read_text(), flags=re.DOTALL)
     rules = rules_for(tmp_path, json.loads(text))
     # Named members, so a template that parses to nothing fails here by name.
-    assert "find" in rules.allow and "git push" in rules.allow
-    assert "find * -delete" in rules.deny_glob and "git push * -f" in rules.deny_glob
+    assert parse_rule("find:*") in rules.allow and parse_rule("git push:*") in rules.allow
+    assert parse_rule("find * -delete") in rules.deny
+    assert parse_rule("git push * -f") in rules.deny
     return rules
 
 
@@ -413,9 +436,6 @@ def test_the_real_template_allows_an_argument_that_only_contains_a_flags_text(re
         "git push --force-with-lease origin main",
         "git push --force-with-lease origin master",
         "git push origin main --force-with-lease",
-        # The judge appends `*` to every glob, so `git push * --force` reaches the lease
-        # flag in this one position. It defers to the prompt rather than auto-approving.
-        "git push origin feat --force-with-lease",
     ],
 )
 def test_the_real_template_refuses_each_force_push_form(real, command):
@@ -424,6 +444,8 @@ def test_the_real_template_refuses_each_force_push_form(real, command):
 
 def test_the_real_template_allows_a_lease_push_to_a_feature_branch(real):
     assert allowed("git push --force-with-lease origin feat", real)
+    # `git push * --force` is anchored at both ends, as Claude Code reads it (#714).
+    assert allowed("git push origin feat --force-with-lease", real)
     assert allowed("git push origin feat", real)
 
 
@@ -492,9 +514,11 @@ def test_wrapper_flags_are_not_mistaken_for_the_command_word(esc):
 
 def test_the_unwrapped_command_is_held_to_the_deny_list_too(esc):
     assert (
-        judge("echo hi | xargs curl http://evil", esc, ROOTS, CWD).rule
+        judge("echo hi | nohup curl http://evil", esc, ROOTS, CWD).rule
         == "segment:1:wrapper-target-deny-or-ask"
     )
+    # Claude Code matches every deny/ask rule against `xargs <rule>` itself (#714).
+    assert judge("echo hi | xargs curl http://evil", esc, ROOTS, CWD).rule == "segment:1:deny"
     assert not allowed("echo hi && timeout 5 curl http://evil", esc)
 
 
@@ -919,8 +943,8 @@ def test_a_cd_hidden_behind_a_wrapper_still_refuses_the_heredoc_carve_out(rm, tm
 def test_a_deny_rule_matching_the_heredoc_write_segment_itself_wins_over_the_carve_out(tmp_path):
     # Before this fix, judge_segment returned `True, "heredoc-write"` before ever
     # consulting rules.denies(part) — a deny rule matching the exact write segment was
-    # silently bypassed. The deny entry below is a PLAIN (non-glob) prefix that matches
-    # this segment's text exactly, so it goes through `matches_any`, not a glob.
+    # silently bypassed. The deny entry below has no `*`, so it is an exact rule that
+    # matches this segment's text exactly, not a wildcard.
     rules = rules_for(
         tmp_path, {"allow": [], "deny": ["Bash(cat > /tmp/pwned <<'EOF')"], "ask": []}
     )

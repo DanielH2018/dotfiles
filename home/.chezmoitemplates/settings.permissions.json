@@ -540,11 +540,10 @@
            The flag rules spell out the bare command and ` *` rather than `:*`, so that no
            rule here can be read as a prefix of `--force-with-lease`.
 
-           claude_guard's judge appends `*` to every glob, so there `git push * --force` also
-           matches `git push origin feat --force-with-lease`. The judge then does not
-           auto-approve that one spelling, and the prompt decides it. The lease-first
-           spelling `git push --force-with-lease origin feat` has no such overlap and stays
-           allowed. claude_guard's push_main (deny.py) hard-denies every push whose
+           Claude Code anchors a wildcard at both ends, and claude_guard's judge reads these
+           rules with Claude Code's grammar (rules.py, dotfiles #714), so neither reads
+           `git push * --force` as matching `git push origin feat --force-with-lease`.
+           claude_guard's push_main (deny.py) hard-denies every push whose
            destination is main/master, which covers lease spellings the rules below omit. */}}
       "Bash(git push --force)",
       "Bash(git push --force *)",
@@ -570,12 +569,13 @@
            2026-09-26 measurements in dotfiles #680 were its denies of `find` and `awk`
            commands. claude_guard's judge reads them too, from the PermissionRequest hook
            only. There a match withholds the judge's auto-approval and hands the command to
-           the prompt; it never hard-denies. rules.matches_glob / Rules.whole_glob_defer
-           route any pattern with an interior wildcard against the WHOLE command before it
-           is split into segments, as allow-compound-bash.sh did until claude-guard slice 3
-           deleted it. Without these rules, the judge's allow list auto-approves `find
-           . -exec id \;`. The judge appends `*` to every glob, so it anchors a rule on the
-           left only.
+           the prompt; it never hard-denies. Rules.whole_glob_defer tests every wildcard
+           rule against the WHOLE command before it is split into segments, as Claude Code
+           does for deny and ask. Without these rules, the judge's allow list auto-approves
+           `find . -exec id \;`. The judge reads each rule with Claude Code's grammar
+           (rules.py, dotfiles #714), anchored at both ends. It also counts a match on the
+           command's leading whole words, since it does not strip a trailing redirection the
+           way Claude Code does, so `find * -delete` still catches `find . -delete 2>&1`.
 
            The tests below prove the claude_guard side only; nothing here runs Claude Code's
            matcher. Proof both ways in
@@ -598,8 +598,8 @@
       "Bash(* | sh*)",
       "Bash(* | bash*)",
       "Bash(* | zsh*)",
-      {{/* claude_guard.rules strips a trailing wildcard, so every allow rule is a bare
-           command prefix matched on "prefix + space". find/awk/xargs are everyday tools and
+      {{/* claude_guard.rules reads an allow rule as an exact command or as a prefix
+           matched on "prefix + space", never as a wider glob. find/awk/xargs are everyday tools and
            stay allow-listed, but each takes a command as an argument, so the allow rule alone
            auto-approved `find . -exec id \;`, `awk 'BEGIN{system("id")}'` and `xargs sh -c 'id'`
            with no prompt — the payload is an argument, so no other deny rule ever saw it.

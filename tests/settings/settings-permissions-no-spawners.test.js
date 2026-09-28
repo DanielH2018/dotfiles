@@ -46,7 +46,9 @@ const GUARDED = {
 };
 
 function bashPrefixes(block) {
-  // Mirror extract_bash_prefixes: drop the Bash(...) wrapper, then a trailing :*, ` *` or *.
+  // Each rule's command text: drop the Bash(...) wrapper, then a trailing :*, ` *` or *.
+  // Coarser than claude_guard.rules (which reads Claude Code's grammar), and that is enough
+  // here: the check reads only the last word of what is left.
   return [...block.matchAll(/"Bash\(([^"]*)\)"/g)]
     .map((m) => m[1].replace(/:\*$/, '').replace(/ \*$/, '').replace(/\*$/, ''));
 }

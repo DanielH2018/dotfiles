@@ -93,6 +93,19 @@ _DEVNULL_REDIRECT = re.compile(rf"[0-9]*>>?[{WS}]*/dev/null(?=[{WS}]|$)")
 # command. The `WS`-built lookahead closes it the same way H4 closed the DEVNULL case.
 _FD_DUP = re.compile(rf"[0-9]*>&[0-9-](?=[{WS}]|$)")
 
+# dotfiles #714. Claude Code matches an allow rule against the command with its
+# redirections removed (`rve`), so `Bash(node --version)` allows `node --version 2>&1`.
+# By the time the allow list is consulted, judge_segment has refused every redirect except
+# these two harmless shapes, so removing them (and the blank before each) gives the text
+# Claude Code compares, or text that still holds a `<` redirect and matches less.
+_HARMLESS_REDIRECT_WORD = re.compile(
+    rf"[{WS}]+(?:[0-9]*>>?[{WS}]*/dev/null|[0-9]*>&[0-9-])(?=[{WS}]|$)"
+)
+
+
+def _allow_listed(rules: Rules, s: str) -> bool:
+    return rules.allows(s) or rules.allows(_HARMLESS_REDIRECT_WORD.sub("", s).strip())
+
 # server #1898. The stderr redirects the remote-segment arm in judge_segment strips before
 # handing an ssh/hl segment to readonly_remote_safe/trusted_host_safe, whose raw-text
 # scans refuse any `>`. Narrower than the two patterns above on purpose: those feed a
@@ -700,7 +713,7 @@ def judge_segment(
 
     # :365-372. Honour the allow list as written before unwrapping, or a narrowed rule
     # such as `/usr/bin/env bash --version` becomes unreachable.
-    if rules.allows(part):
+    if _allow_listed(rules, part):
         return True, "allow-list"
 
     # :374-378.
@@ -713,7 +726,7 @@ def judge_segment(
     # :380-387. The unwrapped command earns the same deny/ask scrutiny.
     if rules.denies(target) or rules.asks(target):
         return False, "wrapper-target-deny-or-ask"
-    if not rules.allows(target):
+    if not _allow_listed(rules, target):
         return False, "wrapper-target-unlisted"
     return True, f"wrapper:{target}"
 
