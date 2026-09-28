@@ -164,7 +164,6 @@ original pass sat untriaged for a week, which reads the same as "deliberately sk
 | `artifact-design` | cases — self-contained HTML: no external assets, inline CSS |
 | `pr-authoring` | cases — verbalized safety gates in *Measure the diff* (force-with-lease, stop on guard failure) |
 | `gh-stack` | cases — non-interactive flag contract (`view --json`, `submit --auto`) |
-| `handoff` | cases — corrections and error strings must survive verbatim, dead ends kept |
 | `orchestrating-subagents` | cases — agent count lands in the stated band; brief carries objective/format/budget |
 | `homelab` | skip — connection details and an ssh verb allowlist; nothing to exhibit without the server |
 | `distill-scan` | skip — the regex validation loop needs node execution |

@@ -918,18 +918,6 @@
     "command": "bash ~/.claude/statusline-command.sh"
   },
   "footerLinksRegexes": [],
-  {{/* Skills turned off 2026-08-29 by /doctor. Each had zero invocations across 250 session
-       transcripts (2026-08-17 → 08-29) while its name + description sat in the always-resident
-       skill listing, which is budgeted at ~1% of the context window and was over it. Together
-       these are ~824 est. resident tokens per session. Delete an entry to restore the skill.
-       #622 deleted six of the ten (codebase-design, domain-modeling, grilling, pr-feedback,
-       pr-review-prep, skill-router) and folded pr-review-prep's checks into pr-authoring.
-       The 2026-09-26 scaffolding pass deleted config-lint (its script stays, run from the
-       homelab repo's scaffolding-delete-pass skill) and reprime. #688 deleted learning-quiz
-       with the rest of the learning loop. */}}
-  "skillOverrides": {
-    "handoff": "off"
-  },
   "enabledPlugins": {
     {{/* superpowers and remember disabled 2026-09-28 by operator decision (dotfiles #693).
          superpowers ran 27 times in 30 days, 16 of them systematic-debugging, which now lives

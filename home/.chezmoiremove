@@ -143,3 +143,4 @@
 # each of these had its home/ source deleted in this PR, so its deployed copy needs an
 # explicit removal or it survives `chezmoi apply` as an unmanaged leftover.
 .claude/hooks/tq-wrap-tests.sh
+.claude/skills/handoff
