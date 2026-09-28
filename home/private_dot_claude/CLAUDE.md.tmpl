@@ -147,7 +147,7 @@ Delegate a search that would take 3+ exploratory calls, and keep only the findin
 
 `pre-compact.sh` re-injects branch and push state, files modified, test commands run, and the "preserve corrections and error strings verbatim" reminder — all from ground truth, so don't restate them. What the hook *cannot* derive, and you must carry across yourself: test **pass/fail results**, architectural decisions, and next steps. Never paraphrase an error string or a user correction into a summary of it. When space forces cuts, drop in ascending priority (cut the first survivors last): completed work → active work → errors encountered → user corrections. A user correction is the last thing to go.
 
-Don't reach for `/compact` yourself — let the 85% auto-threshold fire.
+Don't reach for `/compact` yourself. Auto-compaction fires at about 600k tokens.
 
 {{ if .work }}
 @~/.claude/CLAUDE.local.md
