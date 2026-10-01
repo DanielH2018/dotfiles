@@ -8,10 +8,9 @@
 # EnterWorktree failed and fell back to "continue in place" must not edit the
 # shared checkout. No-ops outside a background job (CLAUDE_JOB_DIR unset) and
 # inside a .claude/worktrees/ checkout, so this never fires in an ordinary
-# interactive session. Bash writes (sed -i, heredocs, tee) are not covered here
-# -- see isolation-guard.sh's own comment for why extending
-# bash-write-fanout.sh's post-hoc path extraction to a pre-execution deny was
-# left undone.
+# interactive session. Bash writes (sed -i, heredocs, tee) are not covered here:
+# claude-guard's checks/worktree_escape.py denies those on the PreToolUse Bash
+# surface, for any session whose cwd is under .claude/worktrees/ (server#2818).
 # PreToolUse (Edit|Write|NotebookEdit) hook: a background job that failed to isolate
 # must not edit the shared checkout it landed in instead.
 #

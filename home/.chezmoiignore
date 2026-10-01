@@ -392,3 +392,9 @@ AppData
 # back to the deployed name (_sandbox_testlib.py:40-42).
 .claude/hooks/test_*.py
 .claude/hooks/_testkit.py
+
+# A skill's standalone Python suite (memory-consolidation/test_memory_survey.py) is kept
+# out of ~/.claude/skills for the same coverage reason: tests/python-suites.test.js runs
+# it from the repo. A deployed copy would only put a test file in a skill directory that
+# no session reads.
+.claude/skills/*/test_*.py

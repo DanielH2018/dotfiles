@@ -1,0 +1,99 @@
+{
+  "about": "The `# gen-hooks:` block grammar both parsers read: bin/gen-hooks-lib.js here and scripts/dev/gen_hook_settings.py in the server repo (server#2818). Each case is one hook file's text and either the registrations it declares or an error substring. Only the shared subset is here: no `when:` or `command:` (dotfiles-only), no `args:` (each repo renders it into a different command prefix), and only events both EVENT_ORDER lists carry. A registration is compared on event, matcher, timeout, order, async and statusMessage.",
+  "cases": [
+    {
+      "name": "one register block",
+      "text": "#!/bin/bash\n# gen-hooks: register\n#   event: PreToolUse\n#   matcher: Bash\n#   timeout: 10\n#   order: 30\necho hi\n",
+      "registrations": [{"event": "PreToolUse", "matcher": "Bash", "timeout": 10, "order": 30}],
+      "library": null
+    },
+    {
+      "name": "an event with no matcher",
+      "text": "# gen-hooks: register\n#   event: Stop\n#   timeout: 5\n#   order: 1\n",
+      "registrations": [{"event": "Stop", "timeout": 5, "order": 1}],
+      "library": null
+    },
+    {
+      "name": "two register blocks in one file",
+      "text": "# gen-hooks: register\n#   event: SessionStart\n#   matcher: startup\n#   timeout: 10\n#   order: 20\n\n# gen-hooks: register\n#   event: PostToolUse\n#   matcher: Edit|Write\n#   timeout: 30\n#   order: 40\n",
+      "registrations": [
+        {"event": "SessionStart", "matcher": "startup", "timeout": 10, "order": 20},
+        {"event": "PostToolUse", "matcher": "Edit|Write", "timeout": 30, "order": 40}
+      ],
+      "library": null
+    },
+    {
+      "name": "async and statusMessage",
+      "text": "# gen-hooks: register\n#   event: PostToolUse\n#   matcher: Edit\n#   timeout: 15\n#   order: 10\n#   async: true\n#   statusMessage: Formatting...\n",
+      "registrations": [{"event": "PostToolUse", "matcher": "Edit", "timeout": 15, "order": 10, "async": true, "statusMessage": "Formatting..."}],
+      "library": null
+    },
+    {
+      "name": "a library block",
+      "text": "#!/usr/bin/env python3\n# gen-hooks: library\n#   reason: sourced by a sibling\n\"\"\"Docstring.\"\"\"\n",
+      "registrations": [],
+      "library": "sourced by a sibling"
+    },
+    {
+      "name": "a file with no block",
+      "text": "#!/bin/bash\necho hi\n",
+      "registrations": [],
+      "library": null
+    },
+    {
+      "name": "a block ends at the first line that is not a continuation",
+      "text": "# gen-hooks: register\n#   event: Stop\n#   timeout: 5\n# a plain comment\n#   order: 9\n",
+      "error": "is missing order:"
+    },
+    {
+      "name": "an unknown opener",
+      "text": "# gen-hooks: registr\n#   event: Stop\n",
+      "error": "unknown block '# gen-hooks: registr'"
+    },
+    {
+      "name": "an unknown key",
+      "text": "# gen-hooks: register\n#   event: Stop\n#   bogus: x\n",
+      "error": "unknown key 'bogus' in a register block"
+    },
+    {
+      "name": "a duplicate key",
+      "text": "# gen-hooks: register\n#   event: Stop\n#   event: Stop\n",
+      "error": "duplicate key 'event'"
+    },
+    {
+      "name": "a missing timeout",
+      "text": "# gen-hooks: register\n#   event: Stop\n#   order: 1\n",
+      "error": "is missing timeout:"
+    },
+    {
+      "name": "a non-integer order",
+      "text": "# gen-hooks: register\n#   event: Stop\n#   timeout: 5\n#   order: first\n",
+      "error": "order must be a non-negative integer, got 'first'"
+    },
+    {
+      "name": "an unknown event",
+      "text": "# gen-hooks: register\n#   event: PreToolUze\n#   timeout: 5\n#   order: 1\n",
+      "error": "unknown event 'PreToolUze'"
+    },
+    {
+      "name": "async with a value other than true",
+      "text": "# gen-hooks: register\n#   event: Stop\n#   timeout: 5\n#   order: 1\n#   async: false\n",
+      "error": "async: takes only 'true'"
+    },
+    {
+      "name": "a library block with no reason",
+      "text": "# gen-hooks: library\n",
+      "error": "a library block needs a reason: line"
+    },
+    {
+      "name": "two library blocks",
+      "text": "# gen-hooks: library\n#   reason: one\n# gen-hooks: library\n#   reason: two\n",
+      "error": "more than one library block"
+    },
+    {
+      "name": "a library block beside a register block",
+      "text": "# gen-hooks: library\n#   reason: one\n# gen-hooks: register\n#   event: Stop\n#   timeout: 5\n#   order: 1\n",
+      "error": "is marked library but also carries a register block"
+    }
+  ]
+}
