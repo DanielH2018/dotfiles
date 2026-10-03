@@ -18,9 +18,9 @@ and getting it back means finding that directory by hand. This does the finding.
 
 A Remote Control session is one spawned into a `bridge-cse_*` worktree, or one whose
 transcript records a `bridgeSessionId` (a session published with `/remote-control` or
-`remoteControlAtStartup`). The picker and `--list` show only those, and only the ones
-whose directory still exists, since a removed worktree cannot be resumed. `--all` shows
-every transcript. `--list` stops after `--limit` rows (default 30; 0 shows all), and its
+`remoteControlAtStartup`). The picker and `--list` show only those; `--all` shows every
+transcript. A session whose directory was removed is marked `(gone)` and cannot be
+resumed. `--list` stops after `--limit` rows (default 30; 0 shows all), and its
 WORDS must all appear in a row's titles, first prompt, last prompt, ids or cwd.
 
 Each row is labelled by the session's title: the last `customTitle`, else the last
@@ -149,6 +149,24 @@ def first_prompt(data: bytes) -> str | None:
     return None
 
 
+def project_key(cwd: str) -> str:
+    # How Claude Code names a project directory after the cwd it keys.
+    return re.sub(r"[^A-Za-z0-9]", "-", cwd)
+
+
+def resume_dir(path: Path, first: str | None, last: str | None) -> str | None:
+    """The recorded cwd that `claude --resume` finds this transcript from.
+
+    A session that enters a worktree records the new cwd from then on, and Claude Code
+    moves the transcript into that cwd's project directory. The directory holding the
+    file decides, so prefer whichever recorded cwd it is named after.
+    """
+    for cwd in (last, first):
+        if cwd is not None and project_key(cwd) == path.parent.name:
+            return cwd
+    return last or first
+
+
 def read_transcript(path: Path) -> Transcript | None:
     if not UUID_RE.match(path.stem):
         return None  # a subagent transcript or a sidecar file, not a session
@@ -157,15 +175,17 @@ def read_transcript(path: Path) -> Transcript | None:
         mtime = path.stat().st_mtime
     except OSError:
         return None
-    cwd_m = CWD_RE.search(data)
-    cwd = _unescape(cwd_m.group(1)) if cwd_m else None
+    first_m = CWD_RE.search(data)
+    first_cwd = _unescape(first_m.group(1)) if first_m else None
+    cwd = resume_dir(path, first_cwd, _last(b"cwd", data))
     titles = [
         t
         for t in (_last(f, data) for f in (b"customTitle", b"agentName", b"aiTitle"))
         if t
     ]
     bridge_m = BRIDGE_ID_RE.search(data)
-    cwd_bridge = CWD_BRIDGE_RE.search(cwd) if cwd else None
+    # The first cwd: a session that enters a worktree records the new one after it.
+    cwd_bridge = CWD_BRIDGE_RE.search(first_cwd) if first_cwd else None
     bridge_id = (
         bridge_m.group(1).decode()
         if bridge_m
@@ -312,9 +332,7 @@ def show(t: Transcript) -> str:
 
 
 def visible(transcripts: list[Transcript], show_all: bool) -> list[Transcript]:
-    return (
-        transcripts if show_all else [t for t in transcripts if t.is_rc and t.resumable]
-    )
+    return transcripts if show_all else [t for t in transcripts if t.is_rc]
 
 
 def pick(candidates: list[Transcript]) -> str | None:
@@ -415,8 +433,8 @@ def main(argv: list[str] | None = None) -> int:
         filtered = len(hits) - len(found)
         if filtered:
             print(
-                f"{PROG}: {filtered} more are not Remote Control sessions or their"
-                " worktree is gone; --all shows them",
+                f"{PROG}: {filtered} more are not Remote Control sessions;"
+                " --all shows them",
                 file=sys.stderr,
             )
         return 0
