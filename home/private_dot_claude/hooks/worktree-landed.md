@@ -46,7 +46,8 @@ hook is the only place that fires after the merge and before the session goes aw
 `prune-worktrees.py` is the backstop, not the plan. It reaps trees, and it deletes their
 branches with `-d`, plus orphaned session branches. It uses `-D` only on a branch whose
 exact tip GitHub says a merged PR came from. It runs one session late for the tree the
-merging session stands in.
+merging session stands in. Like this hook, it keeps a tree while any live process has its
+cwd inside it, so it does not cut off a detached landing that outlives its session.
 
 ## The two merge shapes need opposite orders
 

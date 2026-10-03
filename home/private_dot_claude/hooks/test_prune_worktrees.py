@@ -133,6 +133,21 @@ check(
     mod.classify(wt(branch=None), merged=True, dirty=False, is_current=False)[0]
     == mod.KEEP,
 )
+check(
+    "a process running from a merged tree keeps it, reported as busy",
+    mod.classify(wt(), merged=True, dirty=False, is_current=False, busy="pid 7")
+    == (mod.KEEP, f"{mod.BUSY_PREFIX} pid 7 runs from inside it"),
+)
+check(
+    "busy is reported only where it is what blocks removal",
+    mod.classify(wt(), merged=False, dirty=False, is_current=False, busy="pid 7")[1]
+    == "b not merged",
+)
+check(
+    "busy_process matches the tree and below it, not a sibling sharing its prefix",
+    mod.busy_process("/w/a", [(1, "/w/ab"), (2, "/w/a/sub")]).startswith("pid 2")
+    and mod.busy_process("/w/a", [(1, "/w/ab")]) == "",
+)
 
 # ── the removal policy: three conditions act, two weaker signals only report ──────
 #
@@ -342,6 +357,38 @@ with tempfile.TemporaryDirectory() as tmp:
     )
     check("never removes the worktree it is running in", (trees / "self").exists())
     check("self run exits 0", self_run.returncode == 0)
+
+    # A merged, clean, unlocked tree a live process still runs from: the detached
+    # land.sh case (dotfiles#755). Skipped where /proc cannot show a cwd.
+    if HAVE_PROC:
+        git(["worktree", "add", "-q", "-b", "wt-busy", str(trees / "busy")], repo)
+        sleeper = subprocess.Popen(["sleep", "60"], cwd=trees / "busy")
+        try:
+            held = subprocess.run(
+                [sys.executable, str(SCRIPT), "--prune"],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            check(
+                "keeps a merged tree a live process runs from",
+                (trees / "busy").exists(),
+            )
+            check(
+                "says why the busy tree was kept",
+                f"pid {sleeper.pid}" in held.stdout and mod.BUSY_PREFIX in held.stdout,
+            )
+        finally:
+            sleeper.kill()
+            sleeper.wait()
+        subprocess.run(
+            [sys.executable, str(SCRIPT), "--prune"],
+            cwd=repo,
+            capture_output=True,
+            env=env,
+        )
+        check("removes it once the process exits", not (trees / "busy").exists())
 
     # Outside a git repo: silent, successful, no-op.
     outside = subprocess.run(

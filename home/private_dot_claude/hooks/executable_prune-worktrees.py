@@ -22,16 +22,27 @@ nothing removed one when its branch merged — Claude Code's exit prompt only co
 session that is still attached when it ends, not a backgrounded or killed one. Merged
 trees therefore pile up next to the live ones and it stops being obvious which is which.
 
-A tree is removable only when all three hold: its branch is an ancestor of the remote's
-default branch, it has no uncommitted changes, and no live session holds its lock.
+A tree is removable only when all four hold: its branch is an ancestor of the remote's
+default branch, it has no uncommitted changes, no live session holds its lock, and no
+live process has its working directory inside it.
 
-Why those three are enough. Once HEAD is an ancestor of `origin/<default>`, every commit
-in the tree is already in the remote by construction — there is nothing recoverable only
-from this directory, so no CI or review gate needs re-checking here. If the merged work
-later turns out to be wrong it is fixed forward on the default branch, never by
-resurrecting the directory. Git-ignored files (a `.venv`, a build dir) do go with the
-directory: `git worktree remove` ignores them and so does `git status --porcelain`. They
-are regenerable, which is why they were ignored.
+The fourth is the one git state cannot see. A detached `land.sh` keeps running from the
+tree after the merge that makes the first three pass: it waits on CI and ticks the
+deployer, and the session that launched it may already be gone, its lock with it.
+Removing the tree under it kills the landing before its verdict, which is what
+worktree-landed.sh guards against in-session (dotfiles#747, #748). This sweeper is that
+hook's documented backstop, so it applies the same test: a tree some process still runs
+from is kept and reported as busy, and goes at a later session start once the process
+exits. Unlike the Stop hook, the sweeper needs no exclusion for its own session's
+processes, because a tree the session stands in is already kept as the current one.
+
+Why the git-state three are enough. Once HEAD is an ancestor of `origin/<default>`,
+every commit in the tree is already in the remote by construction — there is nothing
+recoverable only from this directory, so no CI or review gate needs re-checking here. If
+the merged work later turns out to be wrong it is fixed forward on the default branch,
+never by resurrecting the directory. Git-ignored files (a `.venv`, a build dir) do go
+with the directory: `git worktree remove` ignores them and so does `git status
+--porcelain`. They are regenerable, which is why they were ignored.
 
 The lock is the interesting one. Claude Code locks a session's worktree with a reason
 naming the owning process — `claude session <name> (pid 1285937 start 2164388)` — and
@@ -181,6 +192,10 @@ OWN_PRUNER = Path("scripts") / "dev" / "prune_worktrees.py"
 # which leaves its tree at REVIEW rather than risking the hook's own kill.
 FORGE_BUDGET_S = 6.0
 
+# The reason a merged tree is kept because a process still runs from it. The --prune
+# path prints these, unlike every other KEEP, because each one is a removal deferred.
+BUSY_PREFIX = "busy:"
+
 LOG_PATH = (
     Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
     / "logs"
@@ -196,6 +211,7 @@ def classify(
     equivalent: bool = False,
     contained: bool = False,
     forge: bool = False,
+    busy: str = "",
 ) -> tuple[str, str]:
     """Return (verdict, reason) for one worktree.
 
@@ -211,6 +227,10 @@ def classify(
     merely older than the default branch, a content match can be one later work
     superseded. `forge` settles which: a merged PR whose head is this exact tip makes
     the tree REMOVABLE.
+
+    `busy` names a live process running from inside the tree (see `busy_process`). It
+    is consulted last, only for a tree that would otherwise be removed, so the report
+    names it only where it is the one thing standing between the tree and removal.
     """
     if is_current:
         return KEEP, "this session's own worktree"
@@ -220,6 +240,8 @@ def classify(
         return KEEP, "uncommitted changes"
     if tree.branch is None:
         return KEEP, "detached HEAD — no branch to check"
+    if busy and (merged or forge):
+        return KEEP, f"{BUSY_PREFIX} {busy} runs from inside it"
     if not merged:
         if forge:
             return REMOVABLE, (
@@ -296,6 +318,49 @@ def is_contained(repo: str, branch: str, target: str) -> bool:
     if result.returncode != 0:
         return False
     return merge_tree_says_contained(result.stdout, target_tree)
+
+
+def process_cwds(proc: str = "/proc") -> list[tuple[int, str]]:
+    """(pid, cwd) for every process whose cwd link this user can read.
+
+    The same source worktree-landed.sh reads. A process that exits mid-scan, or one
+    owned by another user, has no readable link and is skipped. Off Linux there is no
+    /proc and the list is empty, so the busy test then protects nothing, as in the Stop
+    hook. The kernel appends " (deleted)" to a cwd whose directory is gone; it is
+    stripped so a process standing in a half-removed tree still counts.
+    """
+    out = []
+    try:
+        entries = os.listdir(proc)
+    except OSError:
+        return out
+    for name in entries:
+        if not name.isdigit():
+            continue
+        try:
+            cwd = os.readlink(f"{proc}/{name}/cwd")
+        except OSError:
+            continue
+        out.append((int(name), cwd.removesuffix(" (deleted)")))
+    return out
+
+
+def busy_process(path: str, cwds: list[tuple[int, str]]) -> str:
+    """Name the first process whose cwd is `path` or below it, or "" when none is.
+
+    `path` is matched both as git reports it and resolved, because /proc reports the
+    real path. A process name, when readable, goes into the report so the operator can
+    tell a landing from a stray shell.
+    """
+    roots = {path.rstrip("/"), str(Path(path).resolve())}
+    for pid, cwd in cwds:
+        if any(cwd == r or cwd.startswith(r + "/") for r in roots):
+            try:
+                comm = Path(f"/proc/{pid}/comm").read_text().strip()
+            except OSError:
+                comm = ""
+            return f"pid {pid} ({comm})" if comm else f"pid {pid}"
+    return ""
 
 
 def _git(args: list[str], cwd: str | None = None) -> str:
@@ -510,7 +575,10 @@ def main() -> int:
     # Trees and branches the forge confirmed, keyed to the head it confirmed, so the
     # branch deletion can re-check that the tip has not moved since.
     confirmed: dict[str, str] = {}
-    removable, review = [], []
+    removable, review, busy = [], [], []
+    # One scan for the whole sweep, taken before the loop runs `git status` inside each
+    # tree, so the sweep's own children never read as a process standing in a tree.
+    cwds = process_cwds()
     for tree in sessions:
         resolved = Path(tree.path).resolve()
         merged = bool(target) and is_merged(repo, tree.head, target)
@@ -539,6 +607,7 @@ def main() -> int:
             is_current=is_current,
             equivalent=equivalent,
             contained=contained,
+            busy=busy_process(tree.path, cwds),
         )
         # Only a tree that would otherwise say "establish which" reaches the network.
         if (
@@ -553,11 +622,16 @@ def main() -> int:
                 dirty=dirty,
                 is_current=is_current,
                 forge=True,
+                busy=busy_process(tree.path, cwds),
             )
         if verdict == REMOVABLE:
             removable.append(tree)
         elif verdict == REVIEW:
             review.append((tree, reason))
+        elif reason.startswith(BUSY_PREFIX):
+            busy.append((tree, reason))
+            if not args.prune:
+                print(f"[{KEEP:9}] {tree.path}\n            {reason}")
         elif not args.prune:
             print(f"[{KEEP:9}] {tree.path}\n            {reason}")
 
@@ -641,6 +715,8 @@ def main() -> int:
         print(f"Deleted {len(branches)} merged branch(es): {', '.join(branches)}")
     for tree, reason in review:
         print(f"Kept {tree.path}: {reason}")
+    for tree, reason in busy:
+        print(f"Kept {tree.path}: {reason}; removed once it exits")
     report_orphans(orphan_review, args.orphans)
     for tree, error in failed:
         print(f"Could not remove {tree.path}: {error}")
