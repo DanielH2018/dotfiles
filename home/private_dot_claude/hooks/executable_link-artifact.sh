@@ -7,10 +7,15 @@
 # PostToolUse (Edit|Write): when a browser-openable artifact is written to /artifacts
 # (sandbox) or ~/.claude/artifacts (host), inject a clickable file:// link into the
 # MODEL's context (additionalContext) so the assistant relays it to the user in its
-# reply. The link opens with Shift+Cmd+click (or Ctrl+click) in Ghostty — NOT plain
-# Cmd+click: since Claude Code v2.1.89 the TUI runs on the alternate screen with mouse
-# reporting, so Ghostty forwards plain Cmd+click into the app and only a Shift/Ctrl
-# modifier reaches the terminal's own link handler. So the message tells the user the gesture.
+# reply. The message also tells the user the gesture, which is Warp's: Warp opens a link
+# on Cmd+click (macOS) or Ctrl+click (Linux, Windows), and holding Shift sends a mouse
+# event to Warp instead of to an app with mouse reporting on. Since Claude Code v2.1.89 the
+# TUI runs on the alternate screen with mouse reporting, so the full gesture is
+# Shift+Cmd+click or Shift+Ctrl+click. Sources: docs.warp.dev/terminal/more-features/
+# files-and-links/ (the modifier) and .../full-screen-apps/ (Shift bypasses mouse reporting).
+# The hook's uname names where Claude Code runs, not where Warp runs: a session on a
+# Linux host is usually reached over SSH from a Mac. So every branch except the local macOS
+# one names both platforms' gestures.
 #
 # Why additionalContext and not systemMessage: in the wrapped/child sandbox session a
 # hook's systemMessage does NOT surface to the user, but additionalContext reliably
@@ -68,9 +73,9 @@ case "$path" in
 esac
 
 # Fallback (the sandbox, and any write outside ~/.claude/artifacts): a file:// link,
-# opened with Shift+Cmd+click. The macOS branch below overrides this for artifacts.
+# opened with Warp's gesture. The macOS branch below overrides this for artifacts.
 url="file://$host"
-msg="An artifact was written. Include this link verbatim as the LAST line of your reply, with nothing after it, and tell the user to open it with Shift+Cmd+click (or Ctrl+click) — plain Cmd+click does NOT work inside the Claude Code TUI, since v2.1.89 the TUI captures the mouse and only a Shift/Ctrl modifier reaches Ghostty's link handler. Link: "
+msg="An artifact was written. Include this link verbatim as the LAST line of your reply, with nothing after it, and tell the user to open it with Shift+Cmd+click on macOS, Shift+Ctrl+click on Linux and Windows — Shift is needed because the Claude Code TUI captures the mouse, and Shift sends the click to Warp's link handler instead. Link: "
 
 # Linux host (WSL / VS Code Remote-SSH): a file:// link resolves on the LOCAL client,
 # which lacks the remote path, so it errors. Emit an http:// link served by
@@ -86,7 +91,7 @@ msg="An artifact was written. Include this link verbatim as the LAST line of you
 # opens). An http:// link sidesteps path resolution entirely and also loads in the
 # app's Browser pane, which refuses file:// even for an in-session file — that pane
 # is the only way an artifact renders inside the app rather than in an external
-# browser. Ghostty is unaffected: it opens either scheme on Shift+Cmd+click.
+# browser. Warp is unaffected: it opens either scheme on Shift+Cmd+click.
 #
 # Both gated to the non-sandbox host (CLAUDE_STATE_HOST_DIR unset) and to
 # ~/.claude/artifacts writes; the sandbox keeps file://.
@@ -103,21 +108,18 @@ if [ -z "${CLAUDE_STATE_HOST_DIR:-}" ] && { [ "$uname_s" = "Linux" ] || [ "$unam
       PORT="${CLAUDE_ARTIFACTS_PORT:-8181}"
       rel="${path#*/.claude/artifacts/}"
       url="http://127.0.0.1:${PORT}/${rel}"
-      # Two modifiers, not one, and the message used to name only the first: Shift is the
-      # xterm bypass-mouse-reporting modifier, needed because the TUI captures the mouse
-      # (alt screen since v2.1.89), and Ctrl is Ghostty's own open-link modifier on Linux
-      # — the counterpart of Cmd in the macOS branch above. Measured on daniel-box
-      # 2026-08-01: Shift+click alone does nothing at all, Shift+Ctrl+click opens Firefox.
-      # VS Code's terminal does not capture the mouse the same way and wants plain Ctrl.
+      # Two modifiers, not one: Shift bypasses mouse reporting, needed because the TUI
+      # captures the mouse (alt screen since v2.1.89), and Cmd or Ctrl is Warp's own
+      # open-link modifier. See the header for the Warp docs that state both.
       if [ "$uname_s" = "Darwin" ]; then
-        # Two surfaces share this host. In Ghostty the gesture is the same Shift+Cmd+click
-        # as the file:// branch above. In the Claude desktop app a plain click opens the
+        # Two surfaces share this host. In Warp the gesture is Shift+Cmd+click, the
+        # macOS half of the file:// branch above. In the Claude desktop app a plain click opens the
         # EXTERNAL browser — the app has no in-app viewer for a clicked link, and its
         # native preview handles only .pdf/.doc(x)/.ppt(x)/.xls(x), never .html. Rendering
         # in-app is a separate action the assistant takes: load the URL in the Browser pane.
-        msg="An artifact was written. Include this link verbatim as the LAST line of your reply, with nothing after it. In the Claude desktop app, ALSO open it in the Browser pane so it renders in-app — a click alone only opens the external browser. In Ghostty, tell the user to open it with Shift+Cmd+click (plain Cmd+click does NOT work inside the TUI). Link: "
+        msg="An artifact was written. Include this link verbatim as the LAST line of your reply, with nothing after it. In the Claude desktop app, ALSO open it in the Browser pane so it renders in-app — a click alone only opens the external browser. In Warp, tell the user to open it with Shift+Cmd+click (Shift is needed because the TUI captures the mouse). Link: "
       else
-        msg="An artifact was written. Include this link verbatim as the LAST line of your reply, with nothing after it, and tell the user to Shift+Ctrl+click it (plain Ctrl+click in a VS Code terminal) — it opens rendered in the browser. Link: "
+        msg="An artifact was written. Include this link verbatim as the LAST line of your reply, with nothing after it, and tell the user to open it with Shift+Cmd+click on macOS, Shift+Ctrl+click on Linux and Windows (Shift is needed because the Claude Code TUI captures the mouse) — it opens rendered in the browser. Link: "
       fi
       ;;
   esac
@@ -143,7 +145,7 @@ if [ -z "${CLAUDE_STATE_HOST_DIR:-}" ] && [ -n "${CLAUDE_ARTIFACTS_BASE_URL:-}" 
       rel="${path#*/.claude/artifacts/}"
       arthost="${CLAUDE_ARTIFACTS_HOST:-$(hostname -s)}"
       url="${CLAUDE_ARTIFACTS_BASE_URL%/}/a/${arthost}/${rel}"
-      msg="An artifact was written. Include this link verbatim as the LAST line of your reply, with nothing after it, and tell the user it opens rendered in the browser (Shift+Ctrl+click, or plain Ctrl+click in a VS Code terminal), behind the usual SSO login. Link: "
+      msg="An artifact was written. Include this link verbatim as the LAST line of your reply, with nothing after it, and tell the user it opens rendered in the browser (Shift+Cmd+click on macOS, Shift+Ctrl+click on Linux and Windows), behind the usual SSO login. Link: "
       ;;
   esac
 fi

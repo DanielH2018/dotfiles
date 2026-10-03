@@ -72,17 +72,19 @@ test('host ~/.claude/artifacts, no sandbox env -> the platform\'s clickable link
   assert.ok(ctx.includes(hostLink('/Users/d/.claude/artifacts/local.html', 'local.html')),
     `host path emitted as the platform's clickable link; got: ${ctx}`);
   if (process.platform === 'linux') {
-    // Both modifiers, or the instruction is unfollowable: Shift bypasses the TUI's mouse
-    // capture, Ctrl is Ghostty's open-link modifier on Linux. Shift alone does nothing.
+    // Both modifiers: Shift bypasses the TUI's mouse capture, Cmd/Ctrl is Warp's open-link
+    // modifier. A Linux host is usually reached from a Mac, so both platforms are named.
     assert.match(ctx, /Shift\+Ctrl\+click/,
-      `linux message names the full Shift+Ctrl+click gesture; got: ${ctx}`);
+      `linux message names Warp's Linux/Windows gesture; got: ${ctx}`);
+    assert.match(ctx, /Shift\+Cmd\+click/,
+      `linux message also names Warp's macOS gesture for an SSH client; got: ${ctx}`);
   }
   if (process.platform === 'darwin') {
-    // Two surfaces, two instructions. Ghostty keeps Shift+Cmd+click; the desktop app needs
+    // Two surfaces, two instructions. Warp takes Shift+Cmd+click; the desktop app needs
     // the Browser pane named, because a click there only reaches the external browser and
     // the app's native preview has no .html handler at all.
     assert.match(ctx, /Shift\+Cmd\+click/,
-      `darwin message keeps the Ghostty gesture; got: ${ctx}`);
+      `darwin message names Warp's macOS gesture; got: ${ctx}`);
     assert.match(ctx, /Browser pane/,
       `darwin message names the Browser pane as the in-app render; got: ${ctx}`);
   }
@@ -101,6 +103,9 @@ test('base URL set -> host-scoped cluster link', () => {
   assert.ok(ctx.includes(`${BASE}/a/daniel-box/plan.html`),
     `emits the cluster URL under the writing host; got: ${ctx}`);
   assert.ok(!ctx.includes('127.0.0.1'), 'the loopback link is replaced, not appended');
+  // The cluster link is opened from a client on any OS, so it names both of Warp's gestures.
+  assert.match(ctx, /Shift\+Cmd\+click.*Shift\+Ctrl\+click/,
+    `cluster message names Warp's gesture for both platforms; got: ${ctx}`);
 });
 
 test('base URL host segment defaults to the short hostname', () => {
