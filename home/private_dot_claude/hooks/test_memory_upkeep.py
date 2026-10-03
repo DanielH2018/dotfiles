@@ -23,6 +23,7 @@ sections, and one section staying quiet never stops the other from running.
 
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -245,7 +246,8 @@ with tempfile.TemporaryDirectory() as tmp:
     subprocess.run(
         ["git", "init", "-q", "-b", "main", "."], cwd=repo, capture_output=True
     )
-    memories = root / "cfg" / "projects" / str(repo).replace("/", "-") / "memory"
+    slug = re.sub(r"[^A-Za-z0-9]", "-", str(repo))
+    memories = root / "cfg" / "projects" / slug / "memory"
     memories.mkdir(parents=True)
     (memories / "MEMORY.md").write_text("- [x](x.md) — `docs/index-only.md`\n")
     (memories / "fine.md").write_text("Nothing here but `docs/kept.md`.\n")
@@ -417,7 +419,8 @@ with tempfile.TemporaryDirectory() as tmp:
     ).stdout.strip()
 
     config_dir = root / "config"
-    memory = config_dir / "projects" / toplevel.replace("/", "-") / "memory"
+    slug = re.sub(r"[^A-Za-z0-9]", "-", toplevel)
+    memory = config_dir / "projects" / slug / "memory"
     memory.mkdir(parents=True)
     index = memory / "MEMORY.md"
 

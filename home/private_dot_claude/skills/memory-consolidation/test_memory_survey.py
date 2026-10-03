@@ -307,6 +307,29 @@ def test_a_tool_result_naming_the_slug_is_not_a_reference():
         assert _survey(d, t)["unreferenced"] == [name]
 
 
+def test_a_citation_in_a_worktree_sessions_transcripts_counts_as_a_reference():
+    # A session in <project>/.claude/worktrees/<name> writes its transcripts under
+    # <slug>--claude-worktrees-<name>, beside the project's own directory. Most
+    # sessions run there, so a scan that skipped those directories read nearly every
+    # entry as unreferenced (#744). A directory that only shares the slug as a prefix
+    # is another project, and its citations must not count.
+    cited, other = "worktree-session-cited-this.md", "another-project-cited-this.md"
+    with _tmp() as tmp_path:
+        d = _mem(tmp_path, "", {cited: "x", other: "y"})
+        projects = tmp_path / "projects"
+        primary = projects / "-home-u-repo"
+        primary.mkdir(parents=True)
+        for name, slug in [
+            ("-home-u-repo--claude-worktrees-fix-thing", "worktree-session-cited-this"),
+            ("-home-u-repo-other", "another-project-cited-this"),
+        ]:
+            (projects / name).mkdir()
+            (projects / name / "s.jsonl").write_text(
+                _assistant(f"per {slug}") + "\n", encoding="utf-8"
+            )
+        assert _survey(d, primary)["unreferenced"] == [other]
+
+
 def test_unreferenced_when_no_transcript_mentions_the_slug():
     with _tmp() as tmp_path:
         d = _mem(

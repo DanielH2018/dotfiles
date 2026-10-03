@@ -32,12 +32,17 @@ function tmpdir(prefix) {
   return fs.realpathSync(scratch(os.tmpdir(), prefix));
 }
 
+// Claude Code's directory name for a project: every character that is not a letter or
+// a digit becomes a dash, so a dot in the path is encoded the same way as a separator.
+function slugOf(repo) {
+  return repo.replace(/[^A-Za-z0-9]/g, '-');
+}
+
 // A repo with `scripts/` and `docs/` populated, plus a memory directory holding one
 // memory. Returns what the hook prints for it.
 //
-// The hook derives the memory directory from the repo path, replacing every separator
-// with a dash — so the fixture has to name the directory the same way rather than
-// picking one.
+// The hook derives the memory directory from the repo path with slugOf()'s encoding, so
+// the fixture has to name the directory the same way rather than picking one.
 function report(memoryText, { files = ['scripts/live.py'], repoDir = null } = {}) {
   const repo = repoDir || tmpdir('memstale-repo-');
   if (!repoDir) {
@@ -48,7 +53,7 @@ function report(memoryText, { files = ['scripts/live.py'], repoDir = null } = {}
     }
   }
   const config = tmpdir('memstale-cfg-');
-  const memories = path.join(config, 'projects', repo.split(path.sep).join('-'), 'memory');
+  const memories = path.join(config, 'projects', slugOf(repo), 'memory');
   fs.mkdirSync(memories, { recursive: true });
   fs.writeFileSync(path.join(memories, 'a-memory.md'), memoryText);
   return execFileSync(python, [HOOK, '--repo', repo], {
@@ -60,6 +65,19 @@ function report(memoryText, { files = ['scripts/live.py'], repoDir = null } = {}
 test('reports a backticked path that is gone, and not one that is present', { skip }, () => {
   assert.match(report('See `scripts/moved.py` for the details.'), /scripts\/moved\.py/);
   assert.strictEqual(report('See `scripts/live.py` for the details.'), '');
+});
+
+// Claude Code encodes a `.` in the project path as a dash, so the dotfiles repo at
+// ~/.local/share/chezmoi keeps its memory under -home-ubuntu--local-share-chezmoi. A hook
+// that encoded only `/` looked for -home-ubuntu-.local-share-chezmoi, found no store, and
+// printed nothing for that repo, which reads exactly like a clean run (#743).
+test('finds the memory store of a repo whose path contains a dot', { skip }, () => {
+  const repo = path.join(tmpdir('memstale-repo-'), '.dotted');
+  execFileSync('git', ['init', '-q', repo], { stdio: 'ignore' });
+  fs.mkdirSync(path.join(repo, 'scripts'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'scripts', 'live.py'), '');
+  assert.match(report('See `scripts/moved.py` for the details.', { repoDir: repo }), /scripts\/moved\.py/);
+  assert.strictEqual(report('See `scripts/live.py` for the details.', { repoDir: repo }), '');
 });
 
 // candidate_paths splits a backticked span on whitespace. Without that, the commonest
@@ -109,7 +127,7 @@ test('a path present only in the main checkout is not reported from a worktree',
 
   const config = tmpdir('memstale-cfg-');
   // The slug comes from the MAIN checkout even when the hook runs in the worktree.
-  const memories = path.join(config, 'projects', repo.split(path.sep).join('-'), 'memory');
+  const memories = path.join(config, 'projects', slugOf(repo), 'memory');
   fs.mkdirSync(memories, { recursive: true });
   const run = (text) => {
     fs.writeFileSync(path.join(memories, 'a-memory.md'), text);
@@ -140,7 +158,7 @@ function reportIndexed(indexLine, memoryText) {
   fs.mkdirSync(path.join(repo, 'tests'), { recursive: true });
   fs.writeFileSync(path.join(repo, 'tests', 'test_thing.py'), 'def test_live():\n    pass\n');
   const config = tmpdir('memstale-cfg-');
-  const memories = path.join(config, 'projects', repo.split(path.sep).join('-'), 'memory');
+  const memories = path.join(config, 'projects', slugOf(repo), 'memory');
   fs.mkdirSync(memories, { recursive: true });
   fs.writeFileSync(path.join(memories, 'MEMORY.md'), `# Index\n\n${indexLine}\n`);
   for (const name of ['a-memory.md', 'b-memory.md', 'c-memory.md']) {
@@ -203,7 +221,7 @@ test('opting out silences the hook entirely', { skip }, () => {
   const repo = tmpdir('memstale-repo-');
   execFileSync('git', ['init', '-q', repo], { stdio: 'ignore' });
   const config = tmpdir('memstale-cfg-');
-  const memories = path.join(config, 'projects', repo.split(path.sep).join('-'), 'memory');
+  const memories = path.join(config, 'projects', slugOf(repo), 'memory');
   fs.mkdirSync(memories, { recursive: true });
   fs.mkdirSync(path.join(repo, 'scripts'), { recursive: true });
   fs.writeFileSync(path.join(memories, 'a-memory.md'), 'See `scripts/moved.py` here.');

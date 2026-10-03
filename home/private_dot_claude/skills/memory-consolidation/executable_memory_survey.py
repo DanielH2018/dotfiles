@@ -256,6 +256,21 @@ def _assistant_text(line: str) -> str:
     return "\n".join(p for p in parts if p)
 
 
+def transcript_dirs(transcript_dir: Path) -> list[Path]:
+    """`transcript_dir` and the transcript directories of the project's worktrees.
+
+    Claude Code names a session's transcript directory after the session's working
+    directory. A session in a linked worktree at `<project>/.claude/worktrees/<name>`
+    writes under `<slug>--claude-worktrees-<name>`, a sibling of the project's own
+    directory. Most sessions on a repo with parallel worktree work run there, so a scan
+    of the project directory alone reads nearly every entry as unreferenced: measured
+    on the homelab store on 2026-10-03, 55 of 62 entries. A worktree session's memory
+    is still keyed to the primary checkout, so only its transcripts need gathering.
+    """
+    worktrees = transcript_dir.parent.glob(f"{transcript_dir.name}--claude-worktrees-*")
+    return [transcript_dir, *sorted(p for p in worktrees if p.is_dir())]
+
+
 def last_referenced(
     files: list[Path], transcript_dir: Path, days: int, now: float | None = None
 ) -> dict[str, str | None]:
@@ -288,8 +303,6 @@ def last_referenced(
     the entry earns its place.
     """
     result: dict[str, str | None] = {f.name: None for f in files}
-    if not transcript_dir.is_dir():
-        return result
 
     if now is None:
         now = _dt.datetime.now(tz=_dt.timezone.utc).timestamp()
@@ -298,7 +311,9 @@ def last_referenced(
 
     transcripts = [
         p
-        for p in transcript_dir.glob("*.jsonl")
+        for d in transcript_dirs(transcript_dir)
+        if d.is_dir()
+        for p in d.glob("*.jsonl")
         if p.is_file() and p.stat().st_mtime >= cutoff
     ]
     # Newest first, so the first hit for a slug is its most recent reference and later
@@ -475,7 +490,9 @@ def survey(
 
     Args:
         memory_dir: directory holding MEMORY.md and its entry files.
-        transcript_dir: directory of session transcripts to scan for citations.
+        transcript_dir: directory of session transcripts to scan for citations. The
+            transcript directories of the project's worktrees are scanned with it; see
+            `transcript_dirs()`.
         transcript_days: how many days back to scan transcripts for citations.
         duplicate_threshold: the similarity ratio above which two entries are flagged
             as near-duplicate candidates.
@@ -647,7 +664,8 @@ def main(argv: list[str] | None = None) -> int:
         "--transcript-dir",
         type=Path,
         help="the session transcripts to scan (default: derived from the project "
-        "path, ~/.claude/projects/<slug>)",
+        "path, ~/.claude/projects/<slug>); its <slug>--claude-worktrees-* siblings "
+        "are scanned with it",
     )
     ap.add_argument(
         "--repo-root",

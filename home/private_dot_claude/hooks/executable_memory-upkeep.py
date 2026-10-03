@@ -206,11 +206,14 @@ def sibling_checkouts(repo: Path, primary: Path) -> list[Path]:
 def memory_dir(config_dir: Path, repo: Path) -> Path | None:
     """Claude Code's per-project memory directory, named after the project path.
 
-    The encoding replaces every separator with a dash, so /home/ubuntu/server becomes
-    -home-ubuntu-server. Derived rather than searched: a search would pick up another
+    The encoding replaces every character that is not a letter or a digit with a dash,
+    so /home/ubuntu/server becomes -home-ubuntu-server and a dotted path such as
+    /home/ubuntu/.local/share/chezmoi becomes -home-ubuntu--local-share-chezmoi. The
+    memory-consolidation skill's memory_survey.py project_slug() uses the same encoding;
+    keep the two in step. Derived rather than searched: a search would pick up another
     project's memories when two are open at once.
     """
-    slug = str(repo).replace("/", "-")
+    slug = re.sub(r"[^A-Za-z0-9]", "-", str(repo))
     candidate = config_dir / "projects" / slug / "memory"
     return candidate if candidate.is_dir() else None
 
