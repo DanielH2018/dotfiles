@@ -58,6 +58,7 @@ test('parseHookFile rejects a malformed block', () => {
     ['unknown event', REG('#   event: OnStop\n#   timeout: 5\n#   order: 10'), /unknown event 'OnStop'/],
     ['non-integer order', REG('#   event: Stop\n#   timeout: 5\n#   order: first'), /order must be a non-negative integer/],
     ['library without reason', '#!/bin/bash\n# gen-hooks: library\n', /needs a reason:/],
+    ['if on a non-tool event', REG('#   event: Stop\n#   timeout: 5\n#   order: 10\n#   if: Bash(git *)'), /if: is evaluated only on .*on Stop the hook would never run/],
     ['library and register in one file', `#!/bin/bash\n# gen-hooks: library\n#   reason: x\n${REG('#   event: Stop\n#   timeout: 5\n#   order: 10')}`, /marked library but also/],
   ];
   for (const [label, text, re] of cases) {
@@ -135,6 +136,13 @@ test('renderHooksBlock carries statusMessage and async through, in the template\
   const block = lib.renderHooksBlock([reg('a.sh', 'Stop', 10, { statusMessage: 'Working...', async: true })], '');
   assert.match(block, /"timeout": 5,\n\s*"statusMessage": "Working...",\n\s*"async": true\n/);
   assert.doesNotThrow(() => JSON.parse(`{${block}}`));
+});
+
+test('an if: field reaches the rendered handler as the harness\'s "if" key', () => {
+  const [r] = lib.parseHookFile('executable_a.sh', REG('#   event: PreToolUse\n#   matcher: Bash\n#   timeout: 5\n#   order: 10\n#   if: Bash(git *)')).registrations;
+  const block = lib.renderHooksBlock([r], '');
+  assert.deepStrictEqual(JSON.parse(`{${block}}`).PreToolUse[0].hooks[0],
+    { type: 'command', command: '~/.claude/hooks/a.sh', timeout: 5, if: 'Bash(git *)' });
 });
 
 // --- lib.injectHooksBlock --------------------------------------------------------------------

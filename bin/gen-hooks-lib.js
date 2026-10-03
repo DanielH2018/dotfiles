@@ -24,6 +24,8 @@
 //   #   when: ne .chezmoi.os "windows"    optional chezmoi condition, emitted verbatim
 //   #   async: true                       optional
 //   #   statusMessage: Formatting...      optional
+//   #   if: Bash(git *)                   optional, tool events only; one permission rule the
+//                                       harness tests before it spawns the hook at all
 //   #   command: {{ if ... }}...{{ end }} optional; replaces the derived command whole, and
 //                                       is written into the template verbatim (no escaping)
 //
@@ -40,8 +42,13 @@ const OPENER_RE = /^# gen-hooks: (\S+)\s*$/;
 const FIELD_RE = /^#   ([a-zA-Z]+): (.*)$/;
 
 const REGISTER_KEYS = new Set([
-  'event', 'matcher', 'timeout', 'order', 'args', 'when', 'async', 'statusMessage', 'command',
+  'event', 'matcher', 'timeout', 'order', 'args', 'when', 'async', 'statusMessage', 'command', 'if',
 ]);
+
+// The events the harness evaluates a handler's `if` on. On any other event a handler that
+// carries `if` never runs, which is the registered-but-fires-nowhere gap this file exists
+// to close, so it is an error here.
+const IF_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PermissionRequest']);
 const LIBRARY_KEYS = new Set(['reason']);
 
 // The order events are written in. It is the order the hand-written block had, kept so the
@@ -141,6 +148,12 @@ function parseHookFile(file, text) {
     if (fields.when) reg.when = fields.when;
     if (fields.async) reg.async = true;
     if (fields.statusMessage) reg.statusMessage = fields.statusMessage;
+    if (fields.if) {
+      if (!IF_EVENTS.has(fields.event)) {
+        throw new Error(`gen-hooks: ${file}: if: is evaluated only on ${[...IF_EVENTS].join(', ')}; on ${fields.event} the hook would never run.`);
+      }
+      reg.if = fields.if;
+    }
     if (fields.command) {
       // Written into the template verbatim, inside the quotes: it may carry `{{ }}` actions,
       // which JSON-escaping would break (`\"windows\"` is not a template operand).
@@ -236,18 +249,20 @@ function jsonString(s) {
 }
 
 function renderHook(r, indent) {
-  const lines = [
-    `${indent}{`,
-    `${indent}  "type": "command",`,
-    `${indent}  "command": ${r.rawCommand ? `"${r.command}"` : jsonString(r.command)},`,
-    `${indent}  "timeout": ${r.timeout}`,
+  const fields = [
+    '"type": "command"',
+    `"command": ${r.rawCommand ? `"${r.command}"` : jsonString(r.command)}`,
+    `"timeout": ${r.timeout}`,
   ];
-  if (r.statusMessage) lines.push(`${indent}  "statusMessage": ${jsonString(r.statusMessage)}`);
-  if (r.async) lines.push(`${indent}  "async": true`);
-  // Every line but the last carries the comma.
-  for (let i = 3; i < lines.length - 1; i += 1) lines[i] += ',';
-  lines.push(`${indent}}`);
-  return lines;
+  if (r.if) fields.push(`"if": ${jsonString(r.if)}`);
+  if (r.statusMessage) fields.push(`"statusMessage": ${jsonString(r.statusMessage)}`);
+  if (r.async) fields.push('"async": true');
+  // Every field but the last carries the comma.
+  return [
+    `${indent}{`,
+    ...fields.map((f, i) => `${indent}  ${f}${i < fields.length - 1 ? ',' : ''}`),
+    `${indent}}`,
+  ];
 }
 
 function renderGroup(g, indent) {

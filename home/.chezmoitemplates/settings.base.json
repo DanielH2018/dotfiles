@@ -422,7 +422,21 @@
          `Bash(kubectl apply *)` approves `apply --prune`. A flag-level guard cannot be written
          at all. The classifier CAN read the whole line, which is the discrimination the rule
          syntax structurally cannot express. Costs a classifier call per shell command that the
-         PermissionRequest hooks don't resolve first. */}}
+         PermissionRequest hooks don't resolve first.
+
+         OTEL does not show this directly. Claude Code logs the classifier's verdicts as
+         `tool_decision source=config`, the same label an allow-rule match gets. On 2026-10-03
+         an auto-mode session logged `accept source=config` for `gh issue comment`, which no
+         allow rule covers. Another auto-mode session logged `reject source=config` for
+         `git fetch; git rev-parse; gh pr view`, whose three segments are all allow-listed,
+         and its transcript reads "the auto mode classifier gave no verdict". So a large
+         `source=config` count is not evidence that the allow tier is live (#734).
+
+         The Bash allow tier in settings.permissions.json stays anyway. It decides for every
+         session outside auto mode: `claude -p` and SDK runs started in default mode, and a
+         session that falls back from auto to default (`permission_mode_changed`,
+         trigger `auto_gate_denied`). Those are mostly headless, so an allow rule is their
+         only way to accept a command without a prompt nobody answers. */}}
     "classifyAllShell": true,
 
     {{/* "$defaults" MUST stay first in every one of these arrays. Omitting it REPLACES the
@@ -652,7 +666,8 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/artifact-commit-track.sh pre",
-            "timeout": 10
+            "timeout": 10,
+            "if": "Bash(git *)"
           },
           {
             "type": "command",
@@ -704,7 +719,8 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/artifact-commit-track.sh post",
-            "timeout": 10
+            "timeout": 10,
+            "if": "Bash(git *)"
           },
           {
             "type": "command",

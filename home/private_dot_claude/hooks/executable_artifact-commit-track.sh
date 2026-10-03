@@ -5,6 +5,7 @@
 #   timeout: 10
 #   order: 10
 #   args: pre
+#   if: Bash(git *)
 # `pre` half of the commit tracker: stamps where HEAD is before a
 # commit-shaped command, so the `post` half can credit THIS session with
 # exactly what that command added. Attribution has to come from a tool
@@ -21,6 +22,7 @@
 #   timeout: 10
 #   order: 10
 #   args: post
+#   if: Bash(git *)
 # `post` half of the commit tracker: credits this session with what the command
 # it brackets added to HEAD. See the PreToolUse entry for the pair.
 # PreToolUse + PostToolUse (Bash), `pre` and `post` mode in $1: record the commits
@@ -56,6 +58,17 @@
 # not look like one (a wrapper script, say) is never recorded and never nudged about.
 # That is the safe direction: a missed nudge costs a stale artifact, a wrong one asserts
 # another session's work as yours in a document.
+#
+# The harness applies a coarser gate first: both registrations carry `if: Bash(git *)`,
+# so Claude Code spawns neither half for a Bash call with no `git` subcommand (#737).
+# Before it, every Bash call paid two hook processes, about 6 ms each, to reach the regex
+# below and exit. The guarantee holds because both halves carry the SAME rule over the
+# same tool input. Either both run, or neither does, and a `post` never measures from a
+# tip its own `pre` skipped. tests/hooks/artifact-refresh.test.js pins that the two rules
+# are identical. The rule has one consequence the script's own filter does not: a bare
+# `bin/land` call no longer reaches this hook. That loses nothing, because land only
+# rebases commits whose subjects their `git commit` already recorded, and the narrowing
+# goes in the safe direction described above.
 #
 # That gate used to be a bare word list tested against the whole command, which put
 # `git show <sha>` and `head -20 bin/land` inside it, and every one of those matches

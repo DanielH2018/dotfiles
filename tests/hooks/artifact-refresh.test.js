@@ -556,6 +556,17 @@ test('a non-commit-shaped command records nothing', () => {
   assert.strictEqual(fs.existsSync(mine), false, 'nothing claimed off an unrelated command');
 });
 
+// The harness's `if` filter keeps the tracker from spawning on most Bash calls (#737). It
+// is only safe while both halves carry the same rule: a `post` whose `pre` was filtered
+// out measures from a stale tip, which is the sibling-adoption window again.
+test('both tracker halves carry the same non-empty harness if: rule', () => {
+  const regs = require('../../bin/gen-hooks-lib.js')
+    .parseHookFile(path.basename(TRACK), fs.readFileSync(TRACK, 'utf8')).registrations;
+  assert.deepStrictEqual(regs.map((r) => r.event).sort(), ['PostToolUse', 'PreToolUse']);
+  assert.ok(regs[0].if, 'the pre half carries an if: rule');
+  assert.strictEqual(regs[0].if, regs[1].if);
+});
+
 // The nudge has to be answerable. Rewriting the artifact clears pending through
 // link-artifact.sh, but the reason text also invites a session to answer in one line and
 // stop when the commits are unrelated, and that path writes no .html. Leaving pending
