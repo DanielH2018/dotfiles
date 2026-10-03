@@ -12,8 +12,10 @@ it to delete its workspace. The quiet cases outnumber the one that must not be q
 import json
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from _testkit import check, finish, git
@@ -162,6 +164,9 @@ def build(root):
         # A second landed tree, so a check that consumes the one-ask stamp on one of
         # them cannot make a later check pass for the wrong reason.
         "landed2": worktree("landed2", commit=True, push=True, land=True),
+        # Landed trees with a process still running in them (#747, #748).
+        "busy": worktree("busy", commit=True, push=True, land=True),
+        "session_busy": worktree("session-busy", commit=True, push=True, land=True),
         "fanout": worktree("fanout", commit=True, push=True, land=True),
         "unmerged": worktree("unmerged", commit=True, push=True, land=False),
         "dirty": worktree("dirty", commit=True, push=True, land=True),
@@ -443,6 +448,56 @@ with tempfile.TemporaryDirectory() as tmp:
     check(
         "a merged PR whose head is this exact tip blocks",
         bool(reused_block) and reused_block.get("decision") == "block",
+    )
+
+    # A detached landing: the shell that started it exits, and the sleeper reparents
+    # away from everything the hook descends from, as `land.sh --detach` does.
+    starter = subprocess.run(
+        ["bash", "-c", "sleep 300 >/dev/null 2>&1 & echo $!"],
+        cwd=t["busy"],
+        capture_output=True,
+        text=True,
+    )
+    landing = int(starter.stdout.strip())
+    check(
+        "a landed tree with a detached process running in it is silent",
+        run(t["busy"]) is None,
+    )
+    os.kill(landing, signal.SIGKILL)
+    deadline = time.monotonic() + 5
+    while Path(f"/proc/{landing}").exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    busy_block = run(t["busy"])
+    check(
+        "the same tree blocks once that process has exited",
+        bool(busy_block) and busy_block.get("decision") == "block",
+    )
+
+    # The session itself, and what it spawns, stand in the tree as well. A wrapper
+    # shell plays the session: its background child must not count, or the hook could
+    # never fire in a real session.
+    wrapped = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'sleep 300 & bash "$1"; rc=$?; kill $!; exit $rc',
+            "_",
+            str(HOOK),
+        ],
+        cwd=t["session_busy"],
+        input=json.dumps({"session_id": "test", "stop_hook_active": False}),
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "HOOK_INPUT_LIB": str(HERE / "hook-input.sh"),
+            "GH_BIN": str(GH_STUB),
+            "STUB_MERGED": str(MERGED_LIST),
+        },
+    )
+    check(
+        "a process the session itself spawned in the tree does not hold the block",
+        '"decision": "block"' in wrapped.stdout,
     )
 
 shutil.rmtree(STUB_DIR, ignore_errors=True)

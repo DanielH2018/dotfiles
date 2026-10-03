@@ -121,6 +121,21 @@ A server fan-out worker gets no block at all. Its orchestrator's `fanout_place.p
 retires the tree once the PR lands, and `status` reads `.fanout/report.json` from the tree
 until then. The hook recognises such a tree by the `.fanout/brief.md` its launcher writes.
 
+## A tree a detached process still runs from
+
+A landed tree can still be in use. A detached `land.sh` keeps running from the tree after the
+merge: it waits on CI, ticks the deployer and runs scripts from the tree. On 2026-10-01 two
+server landings died that way when a session followed the block and removed the tree
+(dotfiles#747, dotfiles#748). So the hook stays silent, and writes no stamp, while any live
+process outside the session has its cwd inside the tree. It asks at a later Stop, once that
+process has exited.
+
+The session's own processes do not count, because the session and its MCP servers stand in
+the tree too. The hook treats as the session's own every process descended from itself or
+from an ancestor whose cwd is inside the tree. A detached landing reparents to init, so it
+is not the session's own. A background job the session started without detaching is, and the
+hook does not protect it: wait for that job before you retire the tree.
+
 ## Why the primary checkout gets a pull, and when it must not
 
 The next session and any deploy read the primary checkout, so a merged tree that never reaches

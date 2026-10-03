@@ -182,6 +182,51 @@ if [ "$REWRITTEN" = "0" ]; then SHAPE=ancestor; else SHAPE=squash; fi
 # that takes <tree> is `git -C <primary> worktree remove <tree>`, which resolves it from there.
 TREE_REL=${TOPLEVEL#"$PRIMARY"/}
 
+# Landed is not idle. A detached `land.sh` keeps running from the tree after the merge that
+# makes every test above pass: it waits on CI, ticks the deployer and runs scripts from the
+# tree. Removing the tree under it kills the landing before its verdict (#747, #748). So a
+# live process whose cwd is inside the tree means "not yet": exit without the stamp, and the
+# hook asks at a later Stop once the process has gone. A tree still busy at session end
+# falls to prune-worktrees.py, the documented backstop.
+#
+# The session's own processes do not count, or the hook would never fire. The session and
+# everything it spawned (MCP servers, background Bash calls) stand in the tree too. "Own"
+# is the hook plus each ancestor whose cwd is still inside the tree, and everything
+# descended from those. A detached landing double-forks and reparents to init or a
+# subreaper, so its parent chain never reaches that set. The cost of this rule is a
+# non-detached background job of the session itself, which counts as the session's own.
+in_tree() {
+  case "${1% (deleted)}" in "$TOPLEVEL" | "$TOPLEVEL"/*) return 0 ;; esac
+  return 1
+}
+ppid_of() {  # field 4 of /proc/<pid>/stat; comm may hold spaces and ")", so cut at the last ")"
+  local stat rest
+  read -r stat <"/proc/$1/stat" 2>/dev/null || return 1
+  rest=${stat##*) }
+  read -r _ PPID_OF _ <<<"$rest"
+}
+OWN=" $$ "
+P=$$
+while ppid_of "$P" && [ "$PPID_OF" -gt 1 ] && in_tree "$(readlink "/proc/$PPID_OF/cwd" 2>/dev/null)"; do
+  OWN="$OWN$PPID_OF "
+  P=$PPID_OF
+done
+# One find lists every cwd link inside the tree; a fork per PID would not fit the timeout on
+# a box with hundreds of processes. -lname matches the link text as a glob, and worktree
+# names carry no glob characters.
+while IFS= read -r LINK; do
+  CAND=${LINK#/proc/}; CAND=${CAND%/cwd}
+  C=$CAND; FOREIGN=1; HOPS=0
+  while [ "$HOPS" -lt 64 ]; do
+    case "$OWN" in *" $C "*) FOREIGN=0; break ;; esac
+    ppid_of "$C" || { FOREIGN=0; break; }  # exited mid-scan: nothing left to protect
+    [ "$PPID_OF" -le 1 ] && break
+    C=$PPID_OF; HOPS=$((HOPS + 1))
+  done
+  [ "$FOREIGN" = 1 ] && exit 0
+done < <(find /proc -mindepth 2 -maxdepth 2 -name cwd \
+           \( -lname "$TOPLEVEL" -o -lname "$TOPLEVEL/*" \) 2>/dev/null)
+
 : >"$STAMP" 2>/dev/null
 
 # "Reply in one line" is not repeated here: the doc's procedure intro says it, and the session
