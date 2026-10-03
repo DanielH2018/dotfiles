@@ -10,6 +10,7 @@ const path = require('node:path');
 const { ptySkip } = require('./pty');
 const { skipUnless } = require('./probe');
 const { REPO, srcPath } = require('./paths');
+const { scratch } = require('./tmp');
 
 const SCRIPTS_DIR = srcPath('.chezmoiscripts');
 
@@ -83,8 +84,8 @@ const skipDesktop = skipWorkstation
 // and the same bare `1 !== 0` symptom the Fedora note above describes.
 const skipTty = skip || ptySkip();
 
-const dirs = [];
-function tmpdir(prefix) { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); dirs.push(d); return d; }
+// Every sandbox is a scratch dir under os.tmpdir(), removed when the process exits.
+function tmpdir(prefix) { return scratch(os.tmpdir(), prefix); }
 
 function realBin(name) {
   return execFileSync('sh', ['-c', `command -v ${name}`], { encoding: 'utf8' }).trim();
@@ -117,9 +118,6 @@ const SUDO_STUB = [
   'exit "${SUDO_EXIT:-0}"',
   '',
 ].join('\n');
-
-// Every sandbox is a mkdtemp under os.tmpdir(); one exit hook removes them all.
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
 
 module.exports = {
   REPO, SCRIPTS_DIR,

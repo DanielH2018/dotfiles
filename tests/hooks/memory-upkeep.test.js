@@ -113,17 +113,22 @@ test('a marker suppresses only within its own sentence', { skip }, () => {
 // deleted. Two of the three real findings on 2026-08-29 were exactly that.
 test('a path present only in the main checkout is not reported from a worktree', { skip }, () => {
   const repo = tmpdir('memstale-repo-');
-  execFileSync('git', ['init', '-q', '-b', 'main', repo], { stdio: 'ignore' });
+  const env = {
+    ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_'))),
+    GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_CONFIG_SYSTEM: '/dev/null',
+  };
+  execFileSync('git', ['init', '-q', '-b', 'main', repo], { stdio: 'ignore', env });
   fs.mkdirSync(path.join(repo, 'docs'), { recursive: true });
   fs.writeFileSync(path.join(repo, 'docs', 'tracked.md'), 'x');
-  execFileSync('git', ['-C', repo, 'add', '-A'], { stdio: 'ignore' });
-  execFileSync('git', ['-C', repo, '-c', 'user.email=t@e', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'init'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', repo, 'add', '-A'], { stdio: 'ignore', env });
+  execFileSync('git', ['-C', repo, '-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-qm', 'init'], { stdio: 'ignore', env });
   // Untracked, so it never reaches the worktree — the shape of a gitignored directory.
   fs.mkdirSync(path.join(repo, 'docs', 'untracked'), { recursive: true });
   fs.writeFileSync(path.join(repo, 'docs', 'untracked', 'page.md'), 'x');
 
   const wt = path.join(repo, 'wt');
-  execFileSync('git', ['-C', repo, 'worktree', 'add', '-q', wt, '-b', 'side'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', repo, 'worktree', 'add', '-q', wt, '-b', 'side'], { stdio: 'ignore', env });
 
   const config = tmpdir('memstale-cfg-');
   // The slug comes from the MAIN checkout even when the hook runs in the worktree.

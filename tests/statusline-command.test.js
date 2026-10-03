@@ -15,13 +15,28 @@ const SCRIPT = srcPath('private_dot_claude', 'executable_statusline-command.sh')
 
 const skip = skipUnless('bash', 'jq');
 
+// Every spawn in this file starts from BASE_ENV, which cuts the script off from each piece
+// of host state it reads: the otel findings file under XDG_STATE_HOME, the learned-window
+// cache under XDG_CACHE_HOME, the transcript-leak marker, and the two compaction overrides.
+// Each of those renders a segment or recolours one, so a test that inherited them asserted
+// against whatever this host had left behind (dotfiles #752: a real findings-pending file
+// failed three tests). A test that wants one of them sets it explicitly on top.
+const BASE_ENV = {
+  ...process.env,
+  XDG_STATE_HOME: scratch(os.tmpdir(), 'statusline-state-'),
+  XDG_CACHE_HOME: scratch(os.tmpdir(), 'statusline-cache-'),
+  CLAUDE_TRANSCRIPT_LEAK_PENDING: '/nonexistent/transcript-leaks-pending',
+};
+delete BASE_ENV.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE;
+delete BASE_ENV.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+
 // COLUMNS is pinned wide so segment assertions stay on one line regardless of the runner's
 // terminal; the wrapping tests below set it themselves. The leak marker points at a path
 // that does not exist unless a test passes one, so the runner's own marker never renders.
 function run(input, columns = '400', leakPending = '/nonexistent/transcript-leaks-pending', extraEnv = {}) {
   const r = spawnSync('bash', [SCRIPT], {
     input: JSON.stringify(input), encoding: 'utf8',
-    env: { ...process.env, COLUMNS: columns, CLAUDE_TRANSCRIPT_LEAK_PENDING: leakPending, ...extraEnv },
+    env: { ...BASE_ENV, COLUMNS: columns, CLAUDE_TRANSCRIPT_LEAK_PENDING: leakPending, ...extraEnv },
   });
   return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
 }
@@ -154,7 +169,7 @@ test('minimal/missing-fields JSON does not crash and falls back sanely', { skip 
 });
 
 test('branch segment appears when cwd is inside a real git repo', { skip }, () => {
-  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'statusline-git-'));
+  const repoDir = scratch(os.tmpdir(), 'statusline-git-');
   try {
     execFileSync('git', ['-C', repoDir, 'init', '-q']);
     const branch = execFileSync('git', ['-C', repoDir, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
@@ -181,9 +196,9 @@ const RED = '\x1b[38;2;243;139;168m';
 // redirected per call for the same reason, and so that the learned-window cache these cases
 // write never touches the developer's real one.
 function runCtx({ model, tokens, size, pctOverride, compactWindow }) {
-  const cacheHome = fs.mkdtempSync(path.join(os.tmpdir(), 'statusline-ctx-'));
+  const cacheHome = scratch(os.tmpdir(), 'statusline-ctx-');
   try {
-    const env = { ...process.env, XDG_CACHE_HOME: cacheHome };
+    const env = { ...BASE_ENV, XDG_CACHE_HOME: cacheHome };
     if (pctOverride === undefined) delete env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE;
     else env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = String(pctOverride);
     if (compactWindow === undefined) delete env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
@@ -287,9 +302,9 @@ test('a compaction window larger than the real one is ignored', { skip }, () => 
 });
 
 test('an unknown model learns its real window from proof, and remembers it', { skip }, () => {
-  const cacheHome = fs.mkdtempSync(path.join(os.tmpdir(), 'statusline-ctx-'));
+  const cacheHome = scratch(os.tmpdir(), 'statusline-ctx-');
   try {
-    const env = { ...process.env, XDG_CACHE_HOME: cacheHome };
+    const env = { ...BASE_ENV, XDG_CACHE_HOME: cacheHome };
     delete env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE;
     const render = (tokens) => {
       const r = spawnSync('bash', [SCRIPT], {
@@ -318,9 +333,9 @@ test('an unknown model learns its real window from proof, and remembers it', { s
 });
 
 test('a genuinely 200k unknown model is not escalated without proof', { skip }, () => {
-  const cacheHome = fs.mkdtempSync(path.join(os.tmpdir(), 'statusline-ctx-'));
+  const cacheHome = scratch(os.tmpdir(), 'statusline-ctx-');
   try {
-    const env = { ...process.env, XDG_CACHE_HOME: cacheHome };
+    const env = { ...BASE_ENV, XDG_CACHE_HOME: cacheHome };
     delete env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE;
     const r = spawnSync('bash', [SCRIPT], {
       input: JSON.stringify({
@@ -398,7 +413,7 @@ test('truncating an over-wide segment never splits a character', { skip }, () =>
     for (const COLUMNS of ['20', '24', '28']) {
       const r = spawnSync('bash', [SCRIPT], {
         input: JSON.stringify({ workspace: { current_dir: deep }, model: { id: 'claude-opus-5' } }),
-        env: { ...process.env, LC_ALL, COLUMNS },
+        env: { ...BASE_ENV, LC_ALL, COLUMNS },
       });
       const row = r.stdout.toString('binary');
       assert.doesNotThrow(() => new TextDecoder('utf-8', { fatal: true }).decode(r.stdout),
@@ -409,7 +424,7 @@ test('truncating an over-wide segment never splits a character', { skip }, () =>
 
 test('an unset or garbage COLUMNS falls back to a sane width instead of one column', { skip }, () => {
   for (const columns of [undefined, '', 'not-a-number', '0']) {
-    const env = { ...process.env };
+    const env = { ...BASE_ENV };
     if (columns === undefined) delete env.COLUMNS; else env.COLUMNS = columns;
     const r = spawnSync('bash', [SCRIPT], { input: JSON.stringify(WIDE_FIXTURE), encoding: 'utf8', env });
     const rows = (r.stdout || '').split('\n').map(stripAnsi);

@@ -37,6 +37,7 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 const { renderFile } = require('../lib/render');
 const { skipUnless } = require('../lib/probe');
 const { srcPath } = require('../lib/paths');
@@ -100,7 +101,7 @@ test('the rendered base template survives claude-settings-merge unchanged', { sk
   // and floor files from the environment, so the location was only ever convenience — and
   // a file that appears in the checkout mid-run is visible to every other session's
   // `git status` and to anything walking this tree in parallel.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'settings-base-shape-'));
+  const dir = scratch(os.tmpdir(), 'settings-base-shape-');
   const tmp = path.join(dir, 'settings.base.json');
   fs.writeFileSync(tmp, render());
   try {

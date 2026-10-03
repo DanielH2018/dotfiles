@@ -69,7 +69,12 @@ test('stop-checks.py git-state: protected-branch block, vault exemption, dead pa
   const home = scratch(os.tmpdir(), 'hookhome-');
   const repo = path.join(home, 'repo');
   fs.mkdirSync(repo, { recursive: true });
-  const git = (...a) => execFileSync('git', ['-C', repo, '-c', 'commit.gpgsign=false', '-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { encoding: 'utf8' });
+  const gitEnv = {
+    ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_'))),
+    GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_CONFIG_SYSTEM: '/dev/null',
+  };
+  const git = (...a) => execFileSync('git', ['-C', repo, '-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { encoding: 'utf8', env: gitEnv });
   git('init', '-q', '-b', 'main');
   fs.writeFileSync(path.join(repo, 'a.txt'), 'one'); git('add', 'a.txt'); git('commit', '-q', '-m', 'init');
   fs.writeFileSync(path.join(repo, 'a.txt'), 'two'); git('add', 'a.txt');           // stage change on main

@@ -26,6 +26,7 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
 const { srcPath } = require('../lib/paths');
 const { dataConfig } = require('../lib/render');
@@ -102,9 +103,9 @@ test('no test file or fixture deploys into the home tree without being on the al
 // between the copy and the real tree, since it reports target paths under the destination dir
 // and does not care where the source lives.
 test('the guard actually catches a newly-added test file', { skip }, () => {
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'managed-drift-'));
+  const dir = scratch(os.tmpdir(), 'managed-drift-');
   try {
-    const copy = path.join(scratch, 'home');
+    const copy = path.join(dir, 'home');
     fs.cpSync(srcPath(), copy, { recursive: true });
     fs.writeFileSync(path.join(copy, 'private_dot_claude', 'test_a13_16_probe.sh'),
       '#!/bin/sh\n# transient fixture for tests/managed-test-drift.test.js\n');
@@ -115,6 +116,6 @@ test('the guard actually catches a newly-added test file', { skip }, () => {
       `the drift check did not notice a new deploying test file. added=${JSON.stringify(added)}`,
     );
   } finally {
-    fs.rmSync(scratch, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });

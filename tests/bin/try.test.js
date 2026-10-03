@@ -20,9 +20,11 @@ const TRY = repoPath('bin', 'try');
 
 const skip = skipUnless('bash', 'git');
 
-const CLEAN_ENV = Object.fromEntries(
-  Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')),
-);
+const CLEAN_ENV = {
+  ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_'))),
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_CONFIG_SYSTEM: '/dev/null',
+};
 
 // Stub chezmoi: records every call, so a test can prove apply was reached — or
 // prove it was not, which is the whole point of --diff and --dry-run. STUB_STATUS
@@ -64,7 +66,6 @@ function makeRepo() {
   git(dir, 'init', '-q', '-b', 'main');
   git(dir, 'config', 'user.email', 't@example.test');
   git(dir, 'config', 'user.name', 'Test');
-  git(dir, 'config', 'commit.gpgsign', 'false');
   fs.writeFileSync(path.join(dir, 'README'), 'x\n');
   git(dir, 'add', '-A');
   git(dir, 'commit', '-qm', 'init');

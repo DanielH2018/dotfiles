@@ -234,14 +234,18 @@ test('an unreadable command falls back rather than passing', { skip: skipParsed 
 // origin/main ref, and only a real ref can prove it counts commits in the right direction.
 // `behind` builds a checkout on main one commit short of origin/main; `current` is the same
 // repository with main fast-forwarded, which is what bin/land-sync leaves.
-const GIT_ENV = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
+const GIT_ENV = {
+  ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_'))),
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_CONFIG_SYSTEM: '/dev/null',
+};
 function sourceRepo(behind) {
   const dir = scratch(os.tmpdir(), 'czag-src-');
   const git = (...a) => execFileSync('git', ['-C', dir, ...a], { env: GIT_ENV, stdio: 'pipe' });
   git('init', '-q', '-b', 'main');
-  git('-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false',
+  git('-c', 'user.email=t@t', '-c', 'user.name=t',
     'commit', '-q', '--allow-empty', '-m', 'one');
-  git('-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false',
+  git('-c', 'user.email=t@t', '-c', 'user.name=t',
     'commit', '-q', '--allow-empty', '-m', 'two');
   git('update-ref', 'refs/remotes/origin/main', 'HEAD');
   if (behind) git('reset', '-q', '--hard', 'HEAD~1');

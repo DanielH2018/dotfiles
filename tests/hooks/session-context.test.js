@@ -15,15 +15,22 @@ const { srcPath } = require('../lib/paths');
 const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_session-context.sh');
 const skip = !have('bash') ? 'bash unavailable' : !have('jq') ? 'jq unavailable' : !have('git') ? 'git unavailable' : false;
 
+// Fixture git runs cut off from the machine's git config (signing, hooksPath) and from any
+// GIT_DIR a surrounding hook run exports.
+const GIT_ENV = {
+  ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_'))),
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_CONFIG_SYSTEM: '/dev/null',
+};
+
 // A git repo that ships an executable bin/install-hook-shim. The shim records that it ran
 // by creating a marker next to itself, and prints a line the hook would relay.
 function repoWithShim() {
   const root = fs.realpathSync(scratch(os.tmpdir(), 'sesctx-'));
-  const git = (...args) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
+  const git = (...args) => execFileSync('git', args, { cwd: root, stdio: 'ignore', env: GIT_ENV });
   git('init', '-q', '-b', 'main');
   git('config', 'user.email', 'test@example.com');
   git('config', 'user.name', 'Test');
-  git('config', 'commit.gpgsign', 'false');
   fs.mkdirSync(path.join(root, 'bin'));
   fs.writeFileSync(path.join(root, 'bin', 'install-hook-shim'), `#!/bin/bash
 touch ${JSON.stringify(path.join(root, 'SHIM_RAN'))}
@@ -31,7 +38,7 @@ echo "shim reinstalled"
 `, { mode: 0o755 });
   fs.writeFileSync(path.join(root, 'README'), 'x\n');
   git('add', '-A');
-  git('-c', 'commit.gpgsign=false', 'commit', '-qm', 'init');
+  git('commit', '-qm', 'init');
   return root;
 }
 
@@ -78,7 +85,7 @@ test('a linked worktree of a trusted repo is still trusted', { skip }, () => {
   // identity check on the toplevel would silently stop repairing the shim in worktrees.
   const root = repoWithShim();
   const wt = path.join(root, 'wt');
-  execFileSync('git', ['worktree', 'add', '-q', '-b', 'side', wt], { cwd: root, stdio: 'ignore' });
+  execFileSync('git', ['worktree', 'add', '-q', '-b', 'side', wt], { cwd: root, stdio: 'ignore', env: GIT_ENV });
   const { code } = runHook(wt, { trusted: root });
   assert.strictEqual(code, 0);
   assert.ok(fs.existsSync(path.join(root, 'SHIM_RAN')), 'the owning repo was resolved from the worktree');
@@ -87,7 +94,7 @@ test('a linked worktree of a trusted repo is still trusted', { skip }, () => {
 test('an untrusted worktree does not get the shim either', { skip }, () => {
   const root = repoWithShim();
   const wt = path.join(root, 'wt2');
-  execFileSync('git', ['worktree', 'add', '-q', '-b', 'side2', wt], { cwd: root, stdio: 'ignore' });
+  execFileSync('git', ['worktree', 'add', '-q', '-b', 'side2', wt], { cwd: root, stdio: 'ignore', env: GIT_ENV });
   const { code } = runHook(wt, { trusted: '/nonexistent/trusted/root' });
   assert.strictEqual(code, 0);
   assert.ok(!fs.existsSync(path.join(root, 'SHIM_RAN')));

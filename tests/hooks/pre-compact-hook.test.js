@@ -18,6 +18,10 @@ const { srcPath } = require('../lib/paths');
 for (const v of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_PREFIX', 'GIT_NAMESPACE']) {
   delete process.env[v];
 }
+// Cut the fixtures off from the machine's git config (signing, hooksPath, identity) rather
+// than patching one setting per repo. The hook inherits this too.
+process.env.GIT_CONFIG_GLOBAL = '/dev/null';
+process.env.GIT_CONFIG_SYSTEM = '/dev/null';
 
 const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_pre-compact.sh');
 
@@ -151,7 +155,6 @@ test('reports push state for an unpushed branch', { skip }, () => {
   git(['init', '-q', '-b', 'main']);
   git(['config', 'user.email', 't@example.com']);
   git(['config', 'user.name', 'T']);
-  git(['config', 'commit.gpgsign', 'false']);
   fs.writeFileSync(path.join(repo, 'f.txt'), 'hi\n');
   git(['add', 'f.txt']);
   git(['commit', '-qm', 'seed']);
@@ -168,7 +171,6 @@ test('flags uncommitted work', { skip }, () => {
   git(['init', '-q', '-b', 'main']);
   git(['config', 'user.email', 't@example.com']);
   git(['config', 'user.name', 'T']);
-  git(['config', 'commit.gpgsign', 'false']);
   fs.writeFileSync(path.join(repo, 'f.txt'), 'hi\n');
   git(['add', 'f.txt']);
   git(['commit', '-qm', 'seed']);

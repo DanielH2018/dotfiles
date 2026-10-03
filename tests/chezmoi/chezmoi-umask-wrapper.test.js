@@ -24,6 +24,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 const { srcPath } = require('../lib/paths');
 
 const ZSHENV = srcPath('dot_zshenv');
@@ -74,7 +75,7 @@ test('dot_bash_profile.tmpl sources env.sh (bash parity)', () => {
 // .config/shell/env.sh for dot_zshenv's `[ -r ... ]` source guard to find anything, mirroring
 // what a real chezmoi apply would have put there.
 test('sourcing dot_zshenv runs chezmoi under umask 0022, and does not leak it', { skip }, () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'czumask-'));
+  const tmp = scratch(os.tmpdir(), 'czumask-');
   try {
     const bin = path.join(tmp, 'bin');
     fs.mkdirSync(bin);

@@ -4,6 +4,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 const { srcPath } = require('../lib/paths');
 
 const HELPER = srcPath('private_dot_claude', 'sandbox', 'executable_resolve-sandbox-settings.sh');
@@ -14,7 +15,7 @@ const MERGE_SRC = srcPath('dot_local', 'bin', 'executable_claude-settings-merge'
 const skip = process.platform === 'win32' ? 'sandbox resolver is Unix-only' : false;
 
 const cleanups = [];
-function tmp(prefix) { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); cleanups.push(d); return d; }
+function tmp(prefix) { return scratch(os.tmpdir(), prefix); }
 function run(args, { home, pathDirs } = {}) {
   const env = { ...process.env };
   if (home) env.HOME = home;

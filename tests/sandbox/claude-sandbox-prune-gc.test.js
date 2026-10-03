@@ -19,6 +19,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
 const { srcPath } = require('../lib/paths');
 const { run } = require('../lib/run');
@@ -218,7 +219,7 @@ gc_worktrees
 // of them through this helper also keeps the suite from writing a state/ dir
 // into the repo, which is what a $PWD-relative default did.
 function runGc(opts, stdin) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sandbox-gc-'));
+  const dir = scratch(os.tmpdir(), 'sandbox-gc-');
   const stateDir = path.join(dir, opts.stateSubdir || 'state');
   const script = GC_HARNESS(opts).replace('__STATE_DIR__', stateDir);
   assert.ok(!script.includes('__STATE_DIR__'), 'STATE_DIR placeholder must be substituted');
@@ -295,7 +296,7 @@ test('gc does not stamp .last-gc when the user cancels', { skip }, () => {
 const DELETE_SRC = skip ? '' : extractFunction('delete_worktree');
 
 function runDelete(keep) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sandbox-del-'));
+  const dir = scratch(os.tmpdir(), 'sandbox-del-');
   const sessions = path.join(dir, 'sessions', 'demo-abc123-alpha');
   fs.mkdirSync(path.join(sessions, '-workspace'), { recursive: true });
   fs.writeFileSync(path.join(sessions, '-workspace', 'c0ffee.jsonl'), '{}\n');

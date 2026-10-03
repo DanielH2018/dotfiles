@@ -36,13 +36,20 @@ function skillMd(description, body = 'Body text.') {
 
 // A repo holding one skill that HAS an eval, committed as the baseline the gate diffs
 // against. `withEval: false` builds a skill with no evals/ dir, which is the opt-out.
+// Fixture git runs cut off from the machine's git config (signing, hooksPath) and from any
+// GIT_DIR a surrounding hook run exports.
+const GIT_ENV = {
+  ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_'))),
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_CONFIG_SYSTEM: '/dev/null',
+};
+
 function repo({ withEval = true } = {}) {
   const root = fs.realpathSync(scratch(os.tmpdir(), 'evalfresh-'));
-  const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' });
+  const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', env: GIT_ENV });
   git('init', '-q', '-b', 'main');
   git('config', 'user.email', 'test@example.com');
   git('config', 'user.name', 'Test');
-  git('config', 'commit.gpgsign', 'false');
 
   write(root, `${SKILLS}/demo/SKILL.md`, skillMd('Use when demoing.'));
   if (withEval) {

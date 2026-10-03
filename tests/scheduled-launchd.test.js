@@ -21,6 +21,7 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('./lib/tmp');
 const { renderTemplate, chezmoiAvailable } = require('./lib/render');
 const { srcPath, repoPath } = require('./lib/paths');
 
@@ -129,7 +130,7 @@ test('every program a definition runs exists in this repo', { skip }, () => {
 // it must reject. Same reason the .pre-commit-config.yaml rules are paired: a check that
 // fires on nothing and a check that is correct look identical from the passing side.
 test('the machine-pinning and Label checks reject a bad plist', { skip }, () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'launchd-guard-'));
+  const dir = scratch(os.tmpdir(), 'launchd-guard-');
   try {
     const bad = [
       '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
