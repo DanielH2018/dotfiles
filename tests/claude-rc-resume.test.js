@@ -26,6 +26,7 @@ const PUBLISHED = '22222222-2222-4333-8444-555555555555';
 const LOCAL = '33333333-2222-4333-8444-555555555555';
 const UNTITLED = '44444444-2222-4333-8444-555555555555';
 const MOVED = '55555555-2222-4333-8444-555555555555';
+const BLANK = '77777777-2222-4333-8444-555555555555';
 const STAYED = '66666666-2222-4333-8444-555555555555';
 const WT_ENTERED = path.join(CFG, 'wt', 'entered-later');
 // How Claude Code names a project directory after a cwd.
@@ -65,9 +66,11 @@ transcript(path.join(CFG, 'projects', 'p-untitled'), UNTITLED, WT_NEW, 1500, [
 // cwd's project directory, and resume must start there. One that was not moved resumes from
 // the directory it was keyed under. Both stay RC by the bridge worktree they started in.
 const entered = (dir, uuid, mtimeSec) =>
-  transcript(dir, uuid, path.join(CFG, 'wt', 'bridge-cse_01ENTERED'), mtimeSec, [{ type: 'user', cwd: WT_ENTERED }]);
+  transcript(dir, uuid, path.join(CFG, 'wt', 'bridge-cse_01ENTERED'), mtimeSec, [{ type: 'user', cwd: WT_ENTERED }, ...named('Entered Later')]);
 entered(path.join(CFG, 'projects', projectKey(WT_ENTERED)), MOVED, 500);
 entered(path.join(CFG, 'projects', projectKey(path.join(CFG, 'wt', 'bridge-cse_01ENTERED'))), STAYED, 400);
+// RC, but with no title and no prompt: nothing a reader could recognise it by
+transcript(path.join(CFG, 'projects', 'p-blank'), BLANK, WT_NEW, 600, []);
 // a subagent sidecar beside a session must never be a candidate
 fs.writeFileSync(path.join(CFG, 'projects', 'p-old', 'agent-abc123.jsonl'), '{"agentName":"Bespoke Code Pass","cwd":"/nowhere"}\n');
 for (const d of [WT_OLD, WT_NEW, WT_PLAIN, WT_ENTERED]) fs.mkdirSync(d, { recursive: true });
@@ -140,19 +143,20 @@ test('a session whose worktree was removed is refused by name', () => {
   assert.match(r.err, /is gone; the worktree was removed/);
 });
 
-test('--list shows Remote Control sessions newest first, titled, and skips sidecars', () => {
+test('--list shows titled Remote Control sessions oldest first, newest last, and skips sidecars', () => {
   const r = run('--list');
   assert.strictEqual(r.code, 0, r.err);
-  assert.deepStrictEqual(ids(r.out), [GONE, PUBLISHED, NEW, UNTITLED, OLD, MOVED, STAYED].map(short));
+  assert.deepStrictEqual(ids(r.out), [STAYED, MOVED, OLD, UNTITLED, NEW, PUBLISHED, GONE].map(short));
   assert.match(r.out, /Renamed In App/);
   assert.match(r.out, /\(gone\)\s+Retired Session/);
-  assert.doesNotMatch(r.out, /nowhere|Local Only/);
-  assert.match(r.err, /1 more are not Remote Control sessions; --all shows them/);
+  assert.doesNotMatch(r.out, /nowhere|Local Only|untitled, no prompt recorded/);
+  assert.match(r.err, /2 more are not Remote Control sessions or have no title or prompt; --all shows them/);
 });
 
-test('--list --all adds the sessions that are not Remote Control', () => {
+test('--list --all adds non-RC sessions and ones with no title or prompt', () => {
   const r = run('--list', '--all');
-  assert.deepStrictEqual(ids(r.out), [GONE, LOCAL, PUBLISHED, NEW, UNTITLED, OLD, MOVED, STAYED].map(short));
+  assert.deepStrictEqual(ids(r.out), [STAYED, MOVED, BLANK, OLD, UNTITLED, NEW, PUBLISHED, LOCAL, GONE].map(short));
+  assert.match(r.out, /untitled, no prompt recorded/);
 });
 
 test('a session that entered a worktree resumes from the directory its transcript is keyed under', () => {
@@ -173,9 +177,9 @@ test('--list WORDS keeps only rows containing every word, prompts included', () 
   assert.deepStrictEqual(ids(run('--list', 'flaky', 'bespoke').out), []);
 });
 
-test('--limit cuts the table and says how many it left out', () => {
+test('--limit keeps the newest rows and says how many older ones it left out', () => {
   const r = run('--list', '--limit', '2');
-  assert.deepStrictEqual(ids(r.out), [GONE, PUBLISHED].map(short));
+  assert.deepStrictEqual(ids(r.out), [PUBLISHED, GONE].map(short));
   assert.match(r.err, /5 older not shown/);
 });
 
