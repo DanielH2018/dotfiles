@@ -7,19 +7,31 @@ from inside `.claude/worktrees/<name>/`, and nowhere from the repository root. W
 phone's connection drops, the spawned session exits, the app reports it disconnected,
 and getting it back means finding that directory by hand. This does the finding.
 
-  claude-rc-resume "Bespoke Code Pass"    # by the name shown in the app
-  claude-rc-resume cse_0121E5wk8EmC...    # by the claude.ai id in the worktree name
-  claude-rc-resume 8f98784d-6083-...      # by the transcript's own uuid
-  claude-rc-resume --list [PATTERN]       # candidates, newest first; run nothing
-  claude-rc-resume --print NAME           # print the command it would run; run nothing
-  claude-rc-resume NAME -- --model opus   # extra arguments go to `claude`
+  claude-rc-resume                       # pick one with fzf, on a terminal
+  claude-rc-resume "Bespoke Code Pass"   # by the name shown in the app
+  claude-rc-resume cse_0121E5wk8EmC...   # by the claude.ai session id
+  claude-rc-resume 8f98784d              # by the transcript uuid, or 8+ of its chars
+  claude-rc-resume --list [WORDS...]     # a table, newest first; run nothing
+  claude-rc-resume --show KEY            # titles, prompts and cwd; run nothing
+  claude-rc-resume --print KEY           # print the command it would run
+  claude-rc-resume KEY -- --model opus   # extra arguments go to `claude`
 
-It matches a transcript's recorded `agentName`, the id in its recorded `cwd`, or its
-file name, under `$CLAUDE_CONFIG_DIR/projects/` (default `~/.claude/projects/`).
-Several transcripts can carry one name — a session resumed into a fresh conversation
-keeps it — so the newest by modification time wins and the others are named on stderr.
-It then changes into the transcript's recorded `cwd` and replaces itself with
-`claude --resume <uuid>`.
+A Remote Control session is one spawned into a `bridge-cse_*` worktree, or one whose
+transcript records a `bridgeSessionId` (a session published with `/remote-control` or
+`remoteControlAtStartup`). The picker and `--list` show only those, and only the ones
+whose directory still exists, since a removed worktree cannot be resumed. `--all` shows
+every transcript. `--list` stops after `--limit` rows (default 30; 0 shows all), and its
+WORDS must all appear in a row's titles, first prompt, last prompt, ids or cwd.
+
+Each row is labelled by the session's title: the last `customTitle`, else the last
+`agentName`, else the last `aiTitle`. An untitled session shows its first prompt in
+quotes.
+
+A KEY matches any of those titles, the `cse_` id, or the uuid, under
+`$CLAUDE_CONFIG_DIR/projects/` (default `~/.claude/projects/`). Several transcripts can
+carry one name — a session resumed into a fresh conversation keeps it — so the newest by
+modification time wins and the others are named on stderr. It then changes into the
+transcript's recorded `cwd` and replaces itself with `claude --resume <uuid>`.
 
 What it does NOT do: reattach to the claude.ai entry the session had. That record is
 held by the host, not the transcript, so the resumed session registers a new entry when
@@ -34,25 +46,57 @@ import argparse
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 PROG = "claude-rc-resume"
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+# A uuid prefix this long is a key; a shorter hex string is too likely to be a name.
+UUID_PREFIX_MIN = 8
 # Only the records that carry what we read. A transcript is megabytes of tool output,
 # and json-decoding every line of every transcript is what makes this too slow to use.
-CWD_RE = re.compile(rb'"cwd":"((?:[^"\\]|\\.)*)"')
-NAME_RE = re.compile(rb'"agentName":"((?:[^"\\]|\\.)*)"')
+_STR = rb'"((?:[^"\\]|\\.)*)"'
+CWD_RE = re.compile(rb'"cwd":' + _STR)
+STRING_VALUE_RE = re.compile(rb":" + _STR)
+BRIDGE_ID_RE = re.compile(rb'"bridgeSessionId":"(cse_[A-Za-z0-9]+)"')
+CWD_BRIDGE_RE = re.compile(r"bridge-(cse_[A-Za-z0-9]+)")
+# The prompt the user typed is the content of a queue enqueue record. Only that record's
+# line gets json-decoded, never the file.
+ENQUEUE_MARK = b'{"type":"queue-operation","operation":"enqueue"'
+# Enqueues the harness makes (task notifications, hook output) open with a tag.
+HARNESS_PROMPT_RE = re.compile(r"^\s*<")
+DEFAULT_LIMIT = 30
+LABEL_CAP = 200
 
 
 @dataclass
 class Transcript:
     path: Path
     uuid: str
-    name: str | None
+    titles: list[
+        str
+    ]  # customTitle, agentName, aiTitle — whichever were recorded, in that order
+    prompt: str | None
+    last_prompt: str | None
+    bridge_id: str | None
     cwd: str | None
     mtime: float
+
+    @property
+    def title(self) -> str | None:
+        return self.titles[0] if self.titles else None
+
+    @property
+    def is_rc(self) -> bool:
+        return self.bridge_id is not None
+
+    @property
+    def resumable(self) -> bool:
+        return self.cwd is not None and Path(self.cwd).is_dir()
 
 
 def config_dir() -> Path:
@@ -64,6 +108,47 @@ def _unescape(raw: bytes) -> str:
     return json.loads(b'"' + raw + b'"')
 
 
+def _last(field: bytes, data: bytes) -> str | None:
+    # The LAST record wins: a rename from the app appends a newer one. rfind on the
+    # literal key, not a findall: across every transcript that is the difference between
+    # a quarter of a second and a full one.
+    key = b'"' + field + b'"'
+    at = data.rfind(key)
+    while at != -1:
+        m = STRING_VALUE_RE.match(data, at + len(key))
+        if m:
+            return _unescape(m.group(1))
+        at = data.rfind(key, 0, at)
+    return None
+
+
+def _content_text(content: object) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            b.get("text", "")
+            for b in content
+            if isinstance(b, dict) and b.get("type") == "text"
+        )
+    return ""
+
+
+def first_prompt(data: bytes) -> str | None:
+    at = data.find(ENQUEUE_MARK)
+    while at != -1:
+        end = data.find(b"\n", at)
+        line = data[at : end if end != -1 else len(data)]
+        try:
+            text = _content_text(json.loads(line).get("content"))
+        except ValueError:
+            text = ""
+        if text.strip() and not HARNESS_PROMPT_RE.match(text):
+            return text
+        at = data.find(ENQUEUE_MARK, at + 1)
+    return None
+
+
 def read_transcript(path: Path) -> Transcript | None:
     if not UUID_RE.match(path.stem):
         return None  # a subagent transcript or a sidecar file, not a session
@@ -73,12 +158,29 @@ def read_transcript(path: Path) -> Transcript | None:
     except OSError:
         return None
     cwd_m = CWD_RE.search(data)
-    names = NAME_RE.findall(data)
+    cwd = _unescape(cwd_m.group(1)) if cwd_m else None
+    titles = [
+        t
+        for t in (_last(f, data) for f in (b"customTitle", b"agentName", b"aiTitle"))
+        if t
+    ]
+    bridge_m = BRIDGE_ID_RE.search(data)
+    cwd_bridge = CWD_BRIDGE_RE.search(cwd) if cwd else None
+    bridge_id = (
+        bridge_m.group(1).decode()
+        if bridge_m
+        else cwd_bridge.group(1)
+        if cwd_bridge
+        else None
+    )
     return Transcript(
         path=path,
         uuid=path.stem,
-        name=_unescape(names[-1]) if names else None,
-        cwd=_unescape(cwd_m.group(1)) if cwd_m else None,
+        titles=list(dict.fromkeys(titles)),
+        prompt=first_prompt(data),
+        last_prompt=_last(b"lastPrompt", data),
+        bridge_id=bridge_id,
+        cwd=cwd,
         mtime=mtime,
     )
 
@@ -94,54 +196,158 @@ def scan(root: Path) -> list[Transcript]:
 
 
 def matches(t: Transcript, key: str) -> bool:
-    if t.uuid == key:
+    folded = key.casefold()
+    if t.uuid == key or (len(key) >= UUID_PREFIX_MIN and t.uuid.startswith(folded)):
         return True
-    if t.name is not None and t.name.casefold() == key.casefold():
+    if any(name.casefold() == folded for name in t.titles):
         return True
-    return key.startswith("cse_") and t.cwd is not None and key in t.cwd
+    if not key.startswith("cse_"):
+        return False
+    return t.bridge_id == key or (t.cwd is not None and key in t.cwd)
+
+
+def search_text(t: Transcript) -> str:
+    fields = [*t.titles, t.prompt, t.last_prompt, t.uuid, t.bridge_id, t.cwd]
+    return "\n".join(f for f in fields if f).casefold()
+
+
+# --- presentation -------------------------------------------------------------------
+
+
+def one_line(text: str, cap: int = LABEL_CAP) -> str:
+    flat = " ".join(text.split())
+    return flat if len(flat) <= cap else flat[: cap - 1] + "…"
+
+
+def label(t: Transcript) -> str:
+    if t.title:
+        return one_line(t.title)
+    prompt = t.prompt or t.last_prompt
+    if prompt:
+        return f'"{one_line(prompt, LABEL_CAP - 2)}"'
+    return "(untitled, no prompt recorded)"
+
+
+def age(mtime: float, now: float) -> str:
+    secs = max(0, int(now - mtime))
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
+        if secs >= size:
+            return f"{secs // size}{unit}"
+    return "now"
+
+
+def where(t: Transcript) -> str:
+    """The session's repository, plus its worktree unless the RC host spawned it."""
+    if t.cwd is None:
+        return "?"
+    parts = Path(t.cwd).parts
+    if ".claude" in parts:
+        i = parts.index(".claude")
+        repo = parts[i - 1] if i else "/"
+        wt = parts[i + 2] if len(parts) > i + 2 and parts[i + 1] == "worktrees" else ""
+        place = repo if not wt or wt.startswith("bridge-cse_") else f"{repo}/{wt}"
+    else:
+        place = parts[-1] if len(parts) > 1 else "/"
+    return place if t.resumable else f"{place} (gone)"
+
+
+class Style:
+    def __init__(self, enabled: bool):
+        self.enabled = enabled
+
+    def __call__(self, code: str, text: str) -> str:
+        return f"\033[{code}m{text}\033[0m" if self.enabled else text
+
+
+def rows(ts: list[Transcript], width: int | None, style: Style) -> list[str]:
+    now = time.time()
+    cells = [
+        (age(t.mtime, now), t.uuid[:UUID_PREFIX_MIN], where(t), label(t)) for t in ts
+    ]
+    w_age = max((len(c[0]) for c in cells), default=0)
+    w_where = min(max((len(c[2]) for c in cells), default=0), 28)
+    out = []
+    for (a, short, place, text), t in zip(cells, ts):
+        place = place if len(place) <= w_where else place[: w_where - 1] + "…"
+        prefix = f"{a:>{w_age}}  {short}  {place:<{w_where}}  "
+        if width is not None and len(prefix) + len(text) > width:
+            text = text[: max(10, width - len(prefix) - 1)] + "…"
+        dim = "2" if t.resumable else "2;9"
+        title_style = "1" if t.title else "3"
+        out.append(
+            style("2", f"{a:>{w_age}}")
+            + "  "
+            + style("36", short)
+            + "  "
+            + style(dim, f"{place:<{w_where}}")
+            + "  "
+            + style(title_style, text)
+        )
+    return out
 
 
 def describe(t: Transcript) -> str:
-    return f"{t.name or '(unnamed)'}  {t.uuid}  {t.cwd or '(no cwd recorded)'}"
+    return f"{t.uuid[:UUID_PREFIX_MIN]}  {where(t)}  {label(t)}"
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog=PROG, description=__doc__.split("\n", 1)[0])
-    parser.add_argument(
-        "key", nargs="?", help="session name, claude.ai session id, or transcript uuid"
+def show(t: Transcript) -> str:
+    when = time.strftime("%Y-%m-%d %H:%M", time.localtime(t.mtime))
+    lines = [
+        f"title:        {' / '.join(t.titles) if t.titles else '(none)'}",
+        f"last active:  {when} ({age(t.mtime, time.time())} ago)",
+        f"uuid:         {t.uuid}",
+        f"claude.ai id: {t.bridge_id or '(not a Remote Control session)'}",
+        f"cwd:          {t.cwd or '(none recorded)'}"
+        + ("" if t.resumable else "  [gone]"),
+        "",
+        "first prompt:",
+        f"  {t.prompt.strip() if t.prompt else '(none recorded)'}",
+    ]
+    if t.last_prompt and t.last_prompt != t.prompt:
+        lines += ["", "last prompt:", f"  {t.last_prompt.strip()}"]
+    return "\n".join(lines)
+
+
+# --- actions ------------------------------------------------------------------------
+
+
+def visible(transcripts: list[Transcript], show_all: bool) -> list[Transcript]:
+    return (
+        transcripts if show_all else [t for t in transcripts if t.is_rc and t.resumable]
     )
-    parser.add_argument(
-        "--list", action="store_true", help="list candidates, newest first, and exit"
+
+
+def pick(candidates: list[Transcript]) -> str | None:
+    """Run fzf over the candidates; return the chosen uuid, or None on cancel."""
+    lines = [
+        f"{t.uuid}\t{r}"
+        for t, r in zip(candidates, rows(candidates, None, Style(True)))
+    ]
+    self_cmd = f"{sys.executable} {Path(__file__).resolve()}"
+    proc = subprocess.run(
+        [
+            "fzf",
+            "--ansi",
+            "--no-sort",
+            "--delimiter=\t",
+            "--with-nth=2",
+            "--header=enter: resume   esc: cancel",
+            f"--preview={self_cmd} --show {{1}}",
+            "--preview-window=down,45%,wrap",
+        ],
+        input="\n".join(lines),
+        stdout=subprocess.PIPE,
+        text=True,
     )
-    parser.add_argument(
-        "--print", action="store_true", help="print the command instead of running it"
-    )
-    parser.add_argument(
-        "extra", nargs=argparse.REMAINDER, help="arguments passed to claude after --"
-    )
-    args = parser.parse_args(argv)
+    chosen = proc.stdout.strip()
+    return chosen.split("\t", 1)[0] if proc.returncode == 0 and chosen else None
 
-    transcripts = scan(config_dir())
 
-    if args.list:
-        pattern = (args.key or "").casefold()
-        for t in transcripts:
-            if pattern in describe(t).casefold():
-                print(describe(t))
-        return 0
-
-    if not args.key:
-        parser.error(
-            "a session name, claude.ai session id or transcript uuid is needed"
-        )
-
-    hits = [t for t in transcripts if matches(t, args.key)]
+def resolve(transcripts: list[Transcript], key: str) -> Transcript | None:
+    hits = [t for t in transcripts if matches(t, key)]
     if not hits:
-        print(
-            f"{PROG}: no transcript matches {args.key!r}; try --list", file=sys.stderr
-        )
-        return 1
-    chosen = hits[0]
+        print(f"{PROG}: no transcript matches {key!r}; try --list", file=sys.stderr)
+        return None
     if len(hits) > 1:
         print(
             f"{PROG}: {len(hits)} transcripts match; taking the newest. Others:",
@@ -149,6 +355,105 @@ def main(argv: list[str] | None = None) -> int:
         )
         for t in hits[1:]:
             print(f"  {describe(t)}", file=sys.stderr)
+    return hits[0]
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog=PROG, description=__doc__.split("\n", 1)[0])
+    parser.add_argument(
+        "key",
+        nargs="?",
+        help="session title, claude.ai session id, or transcript uuid (8+ char prefix)",
+    )
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--list", action="store_true", help="print a table, newest first, and exit"
+    )
+    mode.add_argument(
+        "--show", action="store_true", help="print one session's details and exit"
+    )
+    mode.add_argument(
+        "--print", action="store_true", help="print the command instead of running it"
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="also list non-Remote-Control sessions and ones whose directory is gone",
+    )
+    parser.add_argument(
+        "-n",
+        "--limit",
+        type=int,
+        default=DEFAULT_LIMIT,
+        help=f"--list prints at most this many rows (default {DEFAULT_LIMIT}; 0: all)",
+    )
+    parser.add_argument(
+        "extra",
+        nargs=argparse.REMAINDER,
+        help="--list: more search words; else arguments for claude after --",
+    )
+    args = parser.parse_args(argv)
+
+    transcripts = scan(config_dir())
+
+    if args.list:
+        words = [w.casefold() for w in [args.key or "", *args.extra] if w and w != "--"]
+        hits = [t for t in transcripts if all(w in search_text(t) for w in words)]
+        found = visible(hits, args.all)
+        shown = found[: args.limit] if args.limit > 0 else found
+        tty = sys.stdout.isatty()
+        width = shutil.get_terminal_size().columns if tty else None
+        for line in rows(shown, width, Style(tty and not os.environ.get("NO_COLOR"))):
+            print(line)
+        sys.stdout.flush()  # the notes below follow the table, even through a pipe
+        hidden = len(found) - len(shown)
+        if hidden:
+            print(
+                f"{PROG}: {hidden} older not shown; --limit 0 shows all",
+                file=sys.stderr,
+            )
+        filtered = len(hits) - len(found)
+        if filtered:
+            print(
+                f"{PROG}: {filtered} more are not Remote Control sessions or their"
+                " worktree is gone; --all shows them",
+                file=sys.stderr,
+            )
+        return 0
+
+    if not args.key:
+        interactive = sys.stdin.isatty() and sys.stdout.isatty() and not args.print
+        if not interactive or args.show:
+            parser.error(
+                "a session title, claude.ai session id or transcript uuid is needed"
+            )
+        candidates = visible(transcripts, args.all)
+        if shutil.which("fzf") is None:
+            for line in rows(
+                candidates[:DEFAULT_LIMIT],
+                shutil.get_terminal_size().columns,
+                Style(True),
+            ):
+                print(line)
+            print(
+                f"{PROG}: install fzf to pick one; or pass a title or id",
+                file=sys.stderr,
+            )
+            return 1
+        if not candidates:
+            print(f"{PROG}: no sessions to pick from; try --all", file=sys.stderr)
+            return 1
+        uuid = pick(candidates)
+        if uuid is None:
+            return 130
+        args.key = uuid
+
+    chosen = resolve(transcripts, args.key)
+    if chosen is None:
+        return 1
+    if args.show:
+        print(show(chosen))
+        return 0
     if chosen.cwd is None:
         print(f"{PROG}: {chosen.path} records no cwd", file=sys.stderr)
         return 1
