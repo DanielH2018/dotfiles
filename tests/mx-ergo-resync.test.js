@@ -69,7 +69,7 @@ const DRIFTED = [
 //
 // `refuse` names a setting whose WRITES silently do nothing, reproducing a solaar call that fails
 // without being fatal.
-function run({ state = HEALTHY, reachable = true, refuse = '' } = {}) {
+function run({ state = HEALTHY, reachable = true, refuse = '', script = SCRIPT, controls } = {}) {
   const bin = mkdtemp('mer-bin-');
   const work = mkdtemp('mer-work-');
   const log = path.join(work, 'calls');
@@ -117,14 +117,20 @@ printf 'notify %s\\n' "$*" >> "${log}"
   const home = mkdtemp('mer-home-');
   const shareDir = path.join(home, '.local', 'share', 'mx-ergo');
   fs.mkdirSync(shareDir, { recursive: true });
-  fs.copyFileSync(
-    srcPath('dot_local', 'share', 'mx-ergo', 'controls.sh'),
-    path.join(shareDir, 'controls.sh'),
-  );
+  // `controls` replaces it with a target state of the test's own, which is how the test below
+  // proves that both scripts take their target from this file.
+  if (controls === undefined) {
+    fs.copyFileSync(
+      srcPath('dot_local', 'share', 'mx-ergo', 'controls.sh'),
+      path.join(shareDir, 'controls.sh'),
+    );
+  } else {
+    fs.writeFileSync(path.join(shareDir, 'controls.sh'), controls);
+  }
 
   const res = { status: 0, out: '' };
   try {
-    res.out = execFileSync(BASH, [SCRIPT], {
+    res.out = execFileSync(BASH, [script], {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { PATH: `${bin}:${process.env.PATH}`, HOME: home },
@@ -224,18 +230,36 @@ test('is idempotent -- a second run leaves the healthy state untouched', { skip 
 });
 
 // mx-ergo-resync and mx-ergo-solaar used to each carry their own copy of the diversion/action
-// arrays; this pins that there is now exactly one copy, sourced by both, so the two scripts
-// cannot drift out of sync with each other the way they did before.
-test('resync sources the target state shared with mx-ergo-solaar, not a private copy', () => {
-  const resyncBody = fs.readFileSync(SCRIPT, 'utf8');
-  const solaarBody = fs.readFileSync(
-    srcPath('dot_local', 'bin', 'executable_mx-ergo-solaar'),
-    'utf8',
-  );
-  const sourceLine = '. "${HOME}/.local/share/mx-ergo/controls.sh"';
-  assert.ok(resyncBody.includes(sourceLine), 'resync must source the shared controls file');
-  assert.ok(solaarBody.includes(sourceLine), 'solaar must source the shared controls file');
-  assert.doesNotMatch(resyncBody, /^DIVERSIONS=\(/m, 'resync must not redeclare its own DIVERSIONS array');
-  assert.doesNotMatch(resyncBody, /^ACTIONS=\(/m, 'resync must not redeclare its own ACTIONS array');
+// arrays. Both must now take their target state from the shared controls file, so the two
+// scripts cannot drift apart. Seed a controls file whose target differs from the real one
+// (Back Button Diverted) on a HEALTHY device, so the seed is the only thing that can move Back
+// Button, and check that each script acts on it.
+const SEEDED_CONTROLS = `MX_ERGO_DIVERSIONS=(
+    "Middle Button:Diverted"
+    "Back Button:Diverted"
+    "Forward Button:Regular"
+    "Left Tilt:Regular"
+    "Right Tilt:Regular"
+    "DPI Switch:Regular"
+)
+MX_ERGO_ACTIONS=(
+    "Middle Button:Mouse Middle Button"
+    "DPI Switch:Mouse Middle Button"
+)
+`;
+
+test('resync takes its target state from the shared controls file', { skip }, () => {
+  const { status, state } = run({ state: HEALTHY, controls: SEEDED_CONTROLS });
+  assert.strictEqual(status, 0);
+  assert.match(state, /Back Button:Diverted/, 'resync must apply the target the shared file names');
 });
 
+test('mx-ergo-solaar takes its target state from the shared controls file', { skip }, () => {
+  const { status, calls } = run({
+    state: HEALTHY,
+    controls: SEEDED_CONTROLS,
+    script: srcPath('dot_local', 'bin', 'executable_mx-ergo-solaar'),
+  });
+  assert.strictEqual(status, 0);
+  assert.match(calls, /divert-keys Back Button Diverted$/m, 'solaar must write the target the shared file names');
+});

@@ -13,7 +13,10 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { srcPath } = require('./lib/paths');
+const { scratch } = require('./lib/tmp');
 
 const SWEEP = srcPath('dot_local', 'bin', 'executable_otel-sweep');
 const SRC = fs.readFileSync(SWEEP, 'utf8');
@@ -162,25 +165,73 @@ print(len(calls), len(sleeps), "error" in r2)
   assert.strictEqual(localHadError, 'True', 'a real local failure must still be reported as an error');
 });
 
-test('silent-session detection is skipped when Loki is unreachable', () => {
+// The deep scan, driven for real. PROBE (the program otel-sweep pipes to each machine) runs
+// here with urllib's urlopen replaced by a fake Loki, against a HOME holding fresh
+// transcripts. PROBE comes from importing the module, as the retry test above does.
+function deepScan(home, lokiReachable) {
+  const out = execFileSync(python, ['-c', `
+import importlib.util, io, json, sys, urllib.error, urllib.request
+from importlib.machinery import SourceFileLoader
+loader = SourceFileLoader("sweep", ${JSON.stringify(SWEEP)})
+spec = importlib.util.spec_from_loader("sweep", loader)
+m = importlib.util.module_from_spec(spec)
+loader.exec_module(m)
+
+REACHABLE = ${lokiReachable ? 'True' : 'False'}
+def fake_urlopen(url, timeout=None):
+    if not REACHABLE:
+        raise urllib.error.URLError("connection refused")
+    if url.endswith("/ready"):
+        return io.BytesIO(b"ready")
+    # A reachable Loki that holds no events for any session.
+    return io.BytesIO(json.dumps({"status": "success", "data": {"result": []}}).encode())
+urllib.request.urlopen = fake_urlopen
+sys.argv = ["probe", "deep"]
+exec(compile(m.PROBE, "<probe>", "exec"), {"__name__": "probe"})
+`], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home } });
+  return JSON.parse(out.trim().split('\n').pop());
+}
+
+// n transcripts, each last written a minute ago according to its own content timestamp.
+function homeWithTranscripts(t, n) {
+  const home = scratch(os.tmpdir(), 'otel-sweep-home-', t);
+  const dir = path.join(home, '.claude', 'projects', 'proj');
+  fs.mkdirSync(dir, { recursive: true });
+  const stamp = new Date(Date.now() - 60000).toISOString();
+  const ids = [];
+  for (let i = 0; i < n; i++) {
+    const id = `session-${String(i).padStart(2, '0')}`;
+    fs.writeFileSync(path.join(dir, `${id}.jsonl`), `{"timestamp":"${stamp}"}\n`);
+    ids.push(id);
+  }
+  return { home, ids };
+}
+
+test('silent-session detection is skipped when Loki is unreachable', { skip }, (t) => {
   // The set of known sessions comes from Loki, so an unreachable Loki returns
   // nothing and every recently-written transcript reads as exporting nowhere —
   // one outage manufacturing a finding per session on top of its own.
-  const deep = SRC.slice(SRC.indexOf('if MODE == "deep":'), SRC.indexOf('print(json.dumps(out))'));
-  assert.match(deep, /if BASE\["loki"\]:/, 'the scan must be gated on Loki being reachable');
-  assert.ok(
-    deep.indexOf('if BASE["loki"]:') < deep.indexOf('silent.append'),
-    'the guard must wrap the scan rather than follow it',
-  );
+  const { home, ids } = homeWithTranscripts(t, 3);
+  // Control: against a reachable Loki that knows none of them, the same transcripts DO read
+  // as silent, so the empty list below is the guard at work and not an empty scan.
+  const up = deepScan(home, true);
+  assert.deepStrictEqual(up.silent_sessions.map((s) => s.session).sort(), ids);
+
+  const down = deepScan(home, false);
+  assert.strictEqual(down.backends.loki, 'unreachable');
+  assert.deepStrictEqual(down.silent_sessions, [], 'an unreachable Loki must not condemn every transcript');
+  assert.strictEqual(down.silent_checked, false, 'the payload must say the check did not run');
 });
 
-test('the silent-session payload is uncapped', () => {
+test('the silent-session payload is uncapped', { skip }, (t) => {
   // A `[:10]` slice lived here until 2026-08-31. otel-sweep-watch derives its
   // `silent=N` alert from len() of this list, so the slice under-counted the
   // alert as well as the listing — 24 silent sessions reported as 10, with
   // nothing in either output saying anything had been dropped.
-  const deep = SRC.slice(SRC.indexOf('if MODE == "deep":'), SRC.indexOf('print(json.dumps(out))'));
-  assert.match(deep, /out\["silent_sessions"\] = sorted\(silent, key=lambda s: s\["mb"\], reverse=True\)\n/,
+  const { home, ids } = homeWithTranscripts(t, 12);
+  const result = deepScan(home, true);
+  assert.strictEqual(result.silent_checked, true);
+  assert.deepStrictEqual(result.silent_sessions.map((s) => s.session).sort(), ids,
     'the payload must carry every silent session, uncapped');
 });
 
