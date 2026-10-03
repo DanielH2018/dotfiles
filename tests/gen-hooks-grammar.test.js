@@ -19,6 +19,7 @@ function normalize(reg) {
   if (reg.matcher) out.matcher = reg.matcher;
   if (reg.async) out.async = true;
   if (reg.statusMessage) out.statusMessage = reg.statusMessage;
+  if (reg.if) out.if = reg.if;
   return out;
 }
 
