@@ -13,7 +13,8 @@ Run it when a feature or bugfix is finished and before review. Skip it when the 
 no tests, or when the user has already reviewed the additions.
 
 Scope is **the tests this session added or changed**, nothing else. A test that was already in
-the repo is out of scope however scaffold-shaped it looks.
+the repo is out of scope however scaffold-shaped it looks. The one exception is an older check
+that this session's change obsoleted; *Retire the checks this change obsoleted* below covers it.
 
 ## Step 1 — Find what this session added
 
@@ -90,6 +91,29 @@ suite or an unused import has cost more than it saved.
 
 Report what was removed, what was kept against the subagent's recommendation and why, and the
 suite result.
+
+## Retire the checks this change obsoleted
+
+Checks accumulate unless something retires them. A change that removes a code path or adds a
+broader check can leave an older test watching nothing, and the end of that change is when the
+link is easiest to see. Propose deleting an existing check in the same PR when either of two
+conditions holds:
+
+- **Its subject is gone.** The code path, rule or failure shape the check watches no longer
+  exists. A check over a missing subject still passes: its census comes back empty, and an
+  `all(...)` over nothing is true. A green run is therefore no reason to keep it.
+- **A census or schema check already covers it.** A test that enumerates every member of a
+  class, or a strict schema validation, often subsumes a guard written for a single shape. Name
+  the covering check in the PR body, and name any input the deleted check rejected that the
+  covering check accepts.
+
+Remove the check's `ENFORCED` citation, or any other prose that names its node id, in the same
+PR. A citation left behind points at a test that no longer exists, so the retirement surfaces
+later as a docs failure instead of as the deliberate deletion it was. State in the PR body which
+of the two conditions applied.
+
+Present these candidates alongside the discard list in Step 4. Retiring a check is the user's
+call, the same as removing a new test.
 
 ## Anti-patterns
 
