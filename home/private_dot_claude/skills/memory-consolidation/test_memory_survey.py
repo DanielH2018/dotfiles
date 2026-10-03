@@ -330,6 +330,26 @@ def test_a_citation_in_a_worktree_sessions_transcripts_counts_as_a_reference():
         assert _survey(d, primary)["unreferenced"] == [other]
 
 
+def test_a_citation_in_a_subagents_transcript_counts_as_a_reference():
+    # A subagent writes <session>/subagents/<agent>.jsonl beside its parent's
+    # transcript, in a worktree directory as well as the primary one. A scan of the
+    # top level alone never read them (#759).
+    names = ["primary-subagent-cited-this.md", "worktree-subagent-cited-this.md"]
+    with _tmp() as tmp_path:
+        d = _mem(tmp_path, "", dict.fromkeys(names, "x"))
+        projects = tmp_path / "projects"
+        primary = projects / "-home-u-repo"
+        for project, name in zip(
+            [primary, projects / "-home-u-repo--claude-worktrees-fix-thing"], names
+        ):
+            sub = project / "session-uuid" / "subagents"
+            sub.mkdir(parents=True)
+            (sub / "agent-a1.jsonl").write_text(
+                _assistant(f"per {Path(name).stem}") + "\n", encoding="utf-8"
+            )
+        assert _survey(d, primary)["unreferenced"] == []
+
+
 def test_unreferenced_when_no_transcript_mentions_the_slug():
     with _tmp() as tmp_path:
         d = _mem(

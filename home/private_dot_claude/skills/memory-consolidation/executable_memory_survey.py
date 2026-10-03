@@ -301,6 +301,13 @@ def last_referenced(
     hundred in one blob. This is the difference between "something surfaced this entry"
     and "the index that lists it was pasted in again", and only the first is evidence
     the entry earns its place.
+
+    A subagent's transcript sits at `<session>/subagents/*.jsonl` beside its parent's
+    and is scanned with it; its records have the same shape. A subagent may cite an
+    entry only because its brief named it, and that still counts: the parent passed the
+    brief in a `tool_use` block, which the scan skips, so the subagent's reply is the
+    only scanned trace of the parent's citation. Measured on the homelab store on
+    2026-10-03, including them took the unreferenced count from 54 to 52.
     """
     result: dict[str, str | None] = {f.name: None for f in files}
 
@@ -313,7 +320,8 @@ def last_referenced(
         p
         for d in transcript_dirs(transcript_dir)
         if d.is_dir()
-        for p in d.glob("*.jsonl")
+        for pattern in ("*.jsonl", "*/subagents/*.jsonl")
+        for p in d.glob(pattern)
         if p.is_file() and p.stat().st_mtime >= cutoff
     ]
     # Newest first, so the first hit for a slug is its most recent reference and later
