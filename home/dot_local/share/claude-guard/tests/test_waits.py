@@ -110,3 +110,9 @@ def test_a_command_that_is_not_a_hand_written_wait_passes(command):
 def test_the_same_wait_run_in_the_background_passes():
     assert waits.hand_wait("sleep 30", background=True) is None
     assert waits.hand_wait("gh run watch 123", background=True) is None
+
+
+def test_listing_or_help_is_not_a_wait():
+    """Measured: `cc-wait --list` in a chain was backgrounded, and its output came back late."""
+    for command in ("cc-wait --list", "cc-wait --help", "cc-wait", "true && cc-wait --list"):
+        assert waits.rewrite(call(command), 300, ps_for(BRIDGE)) is None, command

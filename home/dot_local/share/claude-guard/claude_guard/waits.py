@@ -87,6 +87,14 @@ def _program(words: list[str]) -> str:
     return PurePath(words[0]).name if words else ""
 
 
+# `cc-wait --list` and `--help` print and exit at once; only a named source waits.
+_NOT_A_WAIT = frozenset({"--list", "--help", "-h"})
+
+
+def _is_wait(words: list[str]) -> bool:
+    return _program(words) == "cc-wait" and len(words) > 1 and words[1] not in _NOT_A_WAIT
+
+
 # --- the rewrite -------------------------------------------------------------------------------
 
 
@@ -174,12 +182,12 @@ def rewrite(payload: Mapping, start_pid: int, ps: Ps = _ps) -> dict | None:
     if not isinstance(command, str):
         return None
     stages = _stages(command)
-    if not any(_program(words) == "cc-wait" for words in stages):
+    if not any(_is_wait(words) for words in stages):
         return None
     if wakeable(payload, start_pid, ps):
         updated = {**tool_input, "run_in_background": True, "timeout": BACKGROUND_TIMEOUT_MS}
         # cc-wait reads --budget wherever it appears, so appending it reaches the last stage.
-        if _program(stages[-1]) == "cc-wait" and "--budget" not in stages[-1]:
+        if _is_wait(stages[-1]) and "--budget" not in stages[-1]:
             updated["command"] = f"{command.rstrip()} --budget {BACKGROUND_BUDGET_S}"
         return updated
     if (
