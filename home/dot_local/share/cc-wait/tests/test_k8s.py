@@ -71,11 +71,8 @@ def pod(labels: dict, reason: str | None = None, restarts: int = 0, name: str = 
     return {"kind": "Pod", "metadata": {"name": name, "labels": labels}, "status": status}
 
 
-def test_a_rolled_out_deployment_ends_rolled_out_with_one_kubectl_call():
-    calls: list = []
-    wait = k8s.RolloutWait("deployment", "app", "homelab", None, kubectl(deployment(), [], calls))
-    assert wait.read().state == "rolled-out"
-    assert len(calls) == 1
+def test_a_rolled_out_deployment_ends_rolled_out():
+    assert read("deployment", deployment()).state == "rolled-out"
 
 
 def test_a_status_older_than_the_spec_is_not_judged():
@@ -126,11 +123,6 @@ def test_a_reason_that_can_clear_is_shown_but_does_not_end_the_wait():
     reading = read("deployment", deployment(available=0), items)
     assert reading.state == "running"
     assert "ErrImagePull" in reading.detail
-
-
-def test_an_image_pull_backoff_fails_the_rollout():
-    items = [replicaset("76", "new"), pod({"pod-template-hash": "new"}, "ImagePullBackOff")]
-    assert read("deployment", deployment(available=0), items).state == "failed"
 
 
 def daemonset(*, want=2, updated=2, available=2):

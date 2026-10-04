@@ -1,3 +1,4 @@
+import os
 import subprocess
 
 import pytest
@@ -41,7 +42,8 @@ def test_file_a_writer_that_exits_without_the_line_is_a_failure(tmp_path, dead_p
 
 
 def test_file_a_missing_file_with_a_live_writer_is_still_waiting(tmp_path):
-    reading = file_wait(tmp_path / "log", "--match", "^VERDICT:", "--fail", "^Traceback").read()
+    # This process is the live writer, so pid_alive must answer True for the wait to stay open.
+    reading = file_wait(tmp_path / "log", "--match", "^VERDICT:", "--pid", os.getpid()).read()
     assert reading.state == "waiting"
 
 

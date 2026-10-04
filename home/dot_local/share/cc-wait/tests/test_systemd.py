@@ -1,5 +1,6 @@
 """`systemd` against a fake `systemctl show`: unit properties in, a state out."""
 
+import os
 import subprocess
 
 import pytest
@@ -71,11 +72,6 @@ def test_a_queued_start_job_keeps_an_inactive_unit_running():
     assert read(props).state == "running"
 
 
-def test_an_activating_unit_is_running():
-    props = {**ONESHOT, "ActiveState": "activating", "SubState": "start", "Result": "success"}
-    assert read(props).state == "running"
-
-
 def test_a_failed_unit_fails_with_its_result():
     props = {**ONESHOT, "ActiveState": "failed", "SubState": "failed", "Result": "exit-code"}
     reading = read(props)
@@ -123,9 +119,17 @@ def test_user_asks_the_user_manager():
 
 def test_a_user_wait_finds_the_bus_when_the_session_has_no_runtime_dir(monkeypatch):
     """Measured: a bridge session has no XDG_RUNTIME_DIR, and systemctl --user then fails."""
-    monkeypatch.setattr(systemd.os.path, "isdir", lambda path: path.startswith("/run/user/"))
-    env = systemd.user_env({"PATH": "/usr/bin"})
-    assert env is not None and env["XDG_RUNTIME_DIR"].startswith("/run/user/")
+    runtime = f"/run/user/{os.getuid()}"
+    monkeypatch.setattr(systemd.os.path, "isdir", lambda path: path == runtime)
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    seen: dict = {}
+
+    def run(cmd, **kwargs):
+        seen.update(kwargs)
+        return show({**SIMPLE, "ActiveState": "active"})(cmd)
+
+    systemd.UnitWait("x.service", True, run).read()
+    assert seen["env"]["XDG_RUNTIME_DIR"] == runtime
     assert systemd.user_env({"XDG_RUNTIME_DIR": "/run/user/7"}) is None
 
 

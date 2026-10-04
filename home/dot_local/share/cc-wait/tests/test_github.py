@@ -63,11 +63,19 @@ def test_a_cancelled_run_with_no_failure_is_cancelled():
 
 
 def test_pr_mode_reads_the_head_commit_each_time():
+    """A push to the pull request between two reads moves the wait to the new head."""
+    pushed = "2" * 40
     responses = {
         "pr view": {"headRefOid": SHA},
-        f"api repos/o/r/commits/{SHA}/check-runs?per_page=100": runs(("p", "completed", "success")),
+        f"api repos/o/r/commits/{SHA}/check-runs?per_page=100": runs(("p", "completed", "failure")),
+        f"api repos/o/r/commits/{pushed}/check-runs?per_page=100": runs(
+            ("p", "completed", "success")
+        ),
     }
-    assert ci(responses, ref=None, pr="7").state == "passed"
+    wait = github.CiWait("o/r", None, "7", gh(responses))
+    assert wait.read().state == "failed"
+    responses["pr view"] = {"headRefOid": pushed}
+    assert wait.read().state == "passed"
 
 
 def test_gh_failing_is_a_read_error_the_loop_retries():
@@ -83,9 +91,13 @@ def test_a_pull_request_that_left_open_ends_the_wait(state, expected):
 
 
 def test_an_open_pull_request_says_whether_auto_merge_is_armed():
-    data = {"state": "OPEN", "mergeable": "MERGEABLE", "autoMergeRequest": {"x": 1}}
-    reading = github.PrWait("o/r", "7", gh({"pr view": data})).read()
-    assert (reading.state, reading.detail) == ("open", "mergeable mergeable, auto-merge armed")
+    armed = {"state": "OPEN", "mergeable": "MERGEABLE", "autoMergeRequest": {"x": 1}}
+    unarmed = {"state": "OPEN", "mergeable": "MERGEABLE", "autoMergeRequest": None}
+    reading = github.PrWait("o/r", "7", gh({"pr view": armed})).read()
+    assert reading.state == "open"
+    assert "auto-merge armed" in reading.detail
+    reading = github.PrWait("o/r", "7", gh({"pr view": unarmed})).read()
+    assert "auto-merge armed" not in reading.detail
 
 
 def test_the_repo_comes_from_the_origin_remote(tmp_path):

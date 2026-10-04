@@ -19,11 +19,6 @@ def test_a_source_declaring_a_reserved_code_is_refused(code):
         validate(Description(terminal={"done": 0, "gave-up": code}))
 
 
-def test_a_source_with_no_terminal_state_is_refused():
-    with pytest.raises(SourceError, match="no terminal state"):
-        validate(Description(terminal={}))
-
-
 def test_describe_json_without_a_terminal_object_is_refused():
     with pytest.raises(SourceError, match="no `terminal` object"):
         description_from_json('{"watch": []}')

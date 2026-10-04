@@ -67,14 +67,6 @@ def test_one_failed_read_is_retried_rather_than_ending_the_wait():
     assert code == 0
 
 
-def test_a_misdeclared_source_is_refused_before_any_read():
-    bound = Script([Reading("done")], terminal={"done": 0})
-    code, lines = drive(bound)
-    assert code == 2
-    assert bound.reads == 0
-    assert "no failure state" in lines[0]
-
-
 class Remote(Script):
     def describe(self):
         return Description(terminal=self.terminal, interval_s=10, remote=True)

@@ -17,22 +17,26 @@ class Counter:
         return result
 
 
+def written_at(directory) -> float:
+    """The mtime of the one cached result in `directory`, which the window is measured from."""
+    (path,) = directory.glob("*.json")
+    return path.stat().st_mtime
+
+
 def test_a_second_waiter_inside_the_window_reads_the_first_waiter_s_result(tmp_path):
     read = Counter(Reading("running", "1/2"), Reading("passed", "2/2"))
-    now = [1000.0]
-    first = cached_read("k", 27, read, tmp_path, clock=lambda: now[0])
-    now[0] += 10
-    second = cached_read("k", 27, read, tmp_path, clock=lambda: now[0])
+    first = cached_read("k", 27, read, tmp_path)
+    at = written_at(tmp_path)
+    second = cached_read("k", 27, read, tmp_path, clock=lambda: at + 26)
     assert first == second == Reading("running", "1/2")
-    assert read.calls == 1
 
 
 def test_a_waiter_past_the_window_reads_again(tmp_path):
     read = Counter(Reading("running", "1/2"), Reading("passed", "2/2"))
-    cached_read("k", 27, read, tmp_path, clock=lambda: 1000.0)
-    later = cached_read("k", 27, read, tmp_path, clock=lambda: 10_000_000_000.0)
+    cached_read("k", 27, read, tmp_path)
+    at = written_at(tmp_path)
+    later = cached_read("k", 27, read, tmp_path, clock=lambda: at + 28)
     assert later == Reading("passed", "2/2")
-    assert read.calls == 2
 
 
 def test_a_failed_read_is_not_cached(tmp_path):

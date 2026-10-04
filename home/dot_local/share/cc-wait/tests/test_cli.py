@@ -16,8 +16,11 @@ def test_budget_is_taken_out_wherever_it_appears():
 
 
 def test_a_budget_that_is_not_a_positive_number_is_refused():
-    with pytest.raises(SourceError):
+    with pytest.raises(SourceError, match="number of seconds"):
         cli.split_budget(["--budget", "soon", "file"])
+    for raw in ("0", "-5"):
+        with pytest.raises(SourceError, match="must be positive"):
+            cli.split_budget([f"--budget={raw}", "file"])
 
 
 def test_an_unknown_source_names_the_known_ones(tmp_path):

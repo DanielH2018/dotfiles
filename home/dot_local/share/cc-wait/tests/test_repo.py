@@ -5,6 +5,7 @@ import io
 from conftest import write_probe
 
 from cc_wait import cli
+from cc_wait.builtins import BUILTINS
 
 LANDED = """\
 if [ "$1" = --describe ]; then
@@ -58,4 +59,6 @@ def test_list_names_the_built_ins_and_this_repo_s_probes(repo):
     code, lines = run(repo, "--list")
     assert code == 0
     names = [line.split()[0] for line in lines]
-    assert names == ["file", "exit", "gh-pr", "gh-ci", "systemd", "k8s-rollout", "land"]
+    # Built-ins in registry order, then the repo's probes. A copied list of built-in names was
+    # hand-edited each time a source was added.
+    assert names == [*BUILTINS, "land"]
