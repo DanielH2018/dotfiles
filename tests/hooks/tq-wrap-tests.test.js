@@ -87,6 +87,20 @@ test('a bare node --test run is routed through tq', { skip }, () => {
   assert.strictEqual(rewritten('go test ./...'), 'tq go test ./...');
 });
 
+test('a rewrite keeps every other key of the tool input', { skip }, () => {
+  // Claude Code replaces the input with updatedInput instead of merging it, so a
+  // key left out is a key lost: a backgrounded suite ran inline under the 120s
+  // default timeout (#771).
+  const toolInput = {
+    command: 'node --test', run_in_background: true, timeout: 600000, description: 'Run the suite',
+  };
+  const r = runHook(null, { raw: JSON.stringify({ tool_name: 'Bash', tool_input: toolInput }) });
+  assert.strictEqual(r.status, 0, `hook exited ${r.status}: ${r.stderr}`);
+  assert.deepStrictEqual(JSON.parse(r.stdout).hookSpecificOutput.updatedInput, {
+    ...toolInput, command: 'tq node --test',
+  });
+});
+
 test('the lint runners are routed too', { skip }, () => {
   // Proves the hook is asking tq's own detect() rather than a private copy:
   // ruff and shellcheck are only recognised by the tq in this checkout.

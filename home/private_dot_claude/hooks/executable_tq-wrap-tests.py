@@ -167,7 +167,10 @@ def main():
         return
     if payload.get("tool_name") != "Bash":
         return
-    command = (payload.get("tool_input") or {}).get("command") or ""
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict):
+        tool_input = {}
+    command = tool_input.get("command") or ""
     try:
         updated = rewrite(command, payload.get("cwd") or "")
     except Exception:  # noqa: BLE001
@@ -179,11 +182,15 @@ def main():
         return
     if not updated:
         return
+    # Claude Code replaces the tool input with updatedInput rather than merging
+    # it, so every other key rides along. Sending the command alone dropped
+    # run_in_background and timeout: a backgrounded suite ran in the foreground
+    # under the 120s default (#771).
     json.dump(
         {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
-                "updatedInput": {"command": updated},
+                "updatedInput": {**tool_input, "command": updated},
             }
         },
         sys.stdout,
