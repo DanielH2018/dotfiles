@@ -20,8 +20,10 @@ agreement record both shadows produced is in the spec's Rollout table, rows 2 an
 """
 
 import json
+import os
 from collections.abc import Mapping
 
+from claude_guard import waits
 from claude_guard.checks import git_conventions, worktree_escape
 from claude_guard.checks.awk import awk_risk
 from claude_guard.deny import Verdict, deny
@@ -101,27 +103,52 @@ ASK_REASON = (
 )
 
 
-def pre_tool_use_json(v: Verdict, nudge_text: str | None = None) -> str | None:
+def pre_tool_use_json(
+    v: Verdict, nudge_text: str | None = None, updated_input: dict | None = None
+) -> str | None:
     """The PreToolUse stdout the bash prints: deny (:601-611), ask (hook-input.sh:83, :69),
-    or allow (the read-only classifier). None for no decision. Nothing here rewrites the
-    command: the bash's `updatedInput` --force upgrade was retired for a deny (dotfiles #701).
+    or allow (the read-only classifier). None for no decision. The bash's `updatedInput`
+    --force upgrade was retired for a deny (dotfiles #701); the one rewrite left is a
+    `cc-wait` call's (claude_guard.waits), which changes how the call runs, not what it runs.
 
     `nudge_text` (claude_guard.nudges) rides along as additionalContext on any verdict but
-    a deny, and on its own when there is no decision."""
+    a deny, and on its own when there is no decision. `updated_input` rides along the same
+    way: the harness drops a rewrite beside a deny, so none is printed there."""
     if v.kind == "deny":
         nudge_text = None
-    if v.kind == "none":
-        if not nudge_text:
-            return None
-        return json.dumps(
-            {"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": nudge_text}}
-        )
-    out: dict = {"hookEventName": "PreToolUse", "permissionDecision": v.kind}
-    if v.kind != "allow":
-        out["permissionDecisionReason"] = v.reason
+        updated_input = None
+    out: dict = {"hookEventName": "PreToolUse"}
+    if v.kind != "none":
+        out["permissionDecision"] = v.kind
+        if v.kind != "allow":
+            out["permissionDecisionReason"] = v.reason
     if nudge_text:
         out["additionalContext"] = nudge_text
+    if updated_input:
+        out["updatedInput"] = updated_input
+    if len(out) == 1:
+        return None
     return json.dumps({"hookSpecificOutput": out})
+
+
+def wait_rewrite(stdin_text: str) -> dict | None:
+    """The `cc-wait` rewrite for this call, or None. Never raises: like a nudge, the rewrite
+    is an improvement, and a failure in it must leave the call as typed rather than ask."""
+    try:
+        data = json.loads(stdin_text)
+        return waits.rewrite(data, os.getpid()) if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def run_in_background(stdin_text: str) -> bool:
+    """Whether the caller asked for this Bash call to run in the background."""
+    try:
+        data = json.loads(stdin_text)
+        tool_input = data.get("tool_input") if isinstance(data, dict) else None
+        return bool(isinstance(tool_input, dict) and tool_input.get("run_in_background"))
+    except ValueError:
+        return False
 
 
 def nudge_for(command: str, stdin_text: str) -> str | None:
@@ -218,12 +245,13 @@ def pre_tool_use(stdin_text: str, env: Mapping[str, str]) -> str | None:
     try:
         rules = merge(merge(deny(command, "", env), footgun(command)), awk_verdict(command))
         rules = merge(rules, escape_verdict(command, cwd))
+        rules = merge(rules, waits.hand_wait(command, run_in_background(stdin_text)))
     except Exception:
         return ASK_JSON
     verdict = _combine(rules, conventions(command, cwd))
     if verdict.kind == "none":
         verdict = readonly(command, cwd, env) or verdict
-    return pre_tool_use_json(verdict, nudge_for(command, stdin_text))
+    return pre_tool_use_json(verdict, nudge_for(command, stdin_text), wait_rewrite(stdin_text))
 
 
 _RANK = {"deny": 3, "ask": 2, "allow": 1, "none": 0}

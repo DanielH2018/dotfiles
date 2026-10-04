@@ -285,6 +285,34 @@ def test_ask_json_is_the_ask_shape():
     assert "could not be evaluated" in out["permissionDecisionReason"]
 
 
+def test_a_rewrite_alone_prints_updated_input_with_no_decision():
+    """No permissionDecision: the cc-wait rewrite changes how a call runs, never approves it."""
+    updated = {"command": "cc-wait land 1", "run_in_background": True}
+    out = json.loads(pre_tool_use_json(NONE, None, updated))["hookSpecificOutput"]
+    assert out == {"hookEventName": "PreToolUse", "updatedInput": updated}
+
+
+def test_a_deny_prints_no_rewrite():
+    out = json.loads(pre_tool_use_json(Verdict("deny", "x", "Blocked: x"), None, {"command": "y"}))
+    assert "updatedInput" not in out["hookSpecificOutput"]
+
+
+def wait_call(command: str) -> str:
+    return json.dumps({"tool_name": "Bash", "tool_input": {"command": command}})
+
+
+def test_live_mode_backgrounds_a_cc_wait_call_in_a_wakeable_session(tmp_path, monkeypatch):
+    monkeypatch.setattr(hook.waits, "claude_argv", lambda _pid, _ps: ["claude"])
+    out = json.loads(pre_tool_use(wait_call("cc-wait land 1"), denv(home_with(tmp_path))))
+    assert out["hookSpecificOutput"]["updatedInput"]["run_in_background"] is True
+
+
+def test_live_mode_denies_a_foreground_sleep(tmp_path):
+    out = json.loads(pre_tool_use(wait_call("sleep 30"), denv(home_with(tmp_path))))
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "cc-wait" in out["hookSpecificOutput"]["permissionDecisionReason"]
+
+
 # --- live mode ---------------------------------------------------------------------------------
 
 

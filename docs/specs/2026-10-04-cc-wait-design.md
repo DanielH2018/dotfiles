@@ -77,7 +77,10 @@ A repo probe is a git-tracked executable at `.claude/wait-sources/<name>`, in an
 
 ## Trust
 
-`cc-wait` is allowlisted. A repo probe gets the same trust as that repo's `.claude/hooks/`,
+`cc-wait` carries no allow entry: the auto-mode classifier approved every call during the
+2026-10-04 rollout. `claude-guard`'s read-only classifier does not approve it, because a
+repo probe is code it cannot prove read-only. A repo probe gets the same trust as that
+repo's `.claude/hooks/`,
 which already run without a prompt on every tool call, so probes add no trust boundary.
 Probes must be read-only. This document states the rule, and nothing can check it. The one
 mechanical condition is that git tracks the probe.
@@ -92,7 +95,10 @@ wrapper does. A missing interpreter exits 2.
 
 A `claude-guard` PreToolUse arm rewrites a Bash call that runs `cc-wait`:
 
-- **A session that can be woken** gets `run_in_background: true`.
+- **A session that can be woken** gets `run_in_background: true` and a 30-minute Bash timeout.
+  When `cc-wait` is the command's last stage, the rewrite also appends `--budget 1740`, which
+  `cc-wait` reads wherever it appears. A landing of up to 29 minutes then wakes the session
+  once, not every 570s.
 - **One that cannot** stays in the foreground with `timeout: 600000`. The 120s default would
   cut off a 570s budget.
 - **The rewrite copies the whole tool input.** The harness replaces the input with
@@ -112,23 +118,26 @@ A `claude-guard` PreToolUse arm rewrites a Bash call that runs `cc-wait`:
 | Cannot tell | no `claude` ancestor | foreground, 600s |
 
 The same rule denies hand-written waits in the foreground: `sleep` of 10s or more,
-`until`/`while … sleep` loops, `timeout N tail -f`, `gh run watch`, `gh pr checks --watch`
-and `kubectl … -w`. Each denial names its `cc-wait` replacement.
+`until`/`while … sleep` loops, `tail -f` (alone or under `timeout`), `gh run watch`,
+`gh pr checks --watch` and `kubectl … -w`. Each denial names `cc-wait` or
+`run_in_background: true` as the replacement. The same commands run in the background pass.
 
-Two checks must pass before slice 3 merges:
+Both checks that gated slice 3 passed on 2026-10-04. Each ran a headless `claude -p` (2.1.289)
+with a scratch PreToolUse hook added through `--settings`:
 
-- A captured subagent stdin carries `agent_id`. The 2.1.289 bundle's base hook input spreads
-  `agent_id:s?.agentId`, but that comes from reading the code.
-- A hook that sets `run_in_background: true` is honoured, and the notification still arrives.
+- A subagent's Bash call carried `agent_id` and `agent_type: general-purpose`. The main
+  agent's calls carried neither.
+- The scratch hook set `run_in_background: true` on one Bash call. That call returned
+  `Command running in background with ID: b0kjmt8p0`.
 
 ## Rollout
 
 | Slice | Repo | What | Status |
 |---|---|---|---|
 | 0 | both | Hook rewrites keep the whole tool input | done: server #3503, dotfiles #772 |
-| 1 | dotfiles | `cc-wait` core: contract, `file`, `exit`, probe discovery | this PR |
-| 2 | server | `land` probe; retire `--await-verdict` | planned |
-| 3 | dotfiles | the `claude-guard` binding | planned |
+| 1 | dotfiles | `cc-wait` core: contract, `file`, `exit`, probe discovery | done: dotfiles #773 |
+| 2 | server | `land` probe; retire `--await-verdict` | done: server #3511 |
+| 3 | dotfiles | the `claude-guard` binding | this PR |
 | 4 | both | `gh-pr`, `gh-ci`, the shared cache; the homelab `ci` probe | planned |
 | 5 | server | the `fanout` probe | planned |
 | 6 | both | `systemd`, `k8s-rollout`, `http`; the homelab `tick` probe | planned |
@@ -136,6 +145,3 @@ Two checks must pass before slice 3 merges:
 ## Open questions
 
 - Whether the work laptop has `fswatch`. Polling covers it either way.
-- Whether a backgrounded wait should default to a longer budget (`CC_WAIT_BUDGET=1740`), so a
-  20-minute landing does not wake the session twice before its verdict. This is decided in
-  slice 3.

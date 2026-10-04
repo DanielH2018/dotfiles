@@ -150,6 +150,13 @@ applies only when the session cwd is `$HOME` itself or inside `~/server` or
 `~/.local/share/chezmoi`, because git reads a repo's own config and that config can run
 code. A failure inside it is no decision, never the `ask` above: it can only remove a prompt.
 
+`waits.py` is the `cc-wait` binding (docs/specs/2026-10-04-cc-wait-design.md). Beside the
+rules above it denies a hand-written wait in the foreground: `sleep` of 10s or more, a loop
+around `sleep`, `tail -f`, `gh run watch`, `gh pr checks --watch` and `kubectl … --watch`. A
+call that runs `cc-wait` gets an `updatedInput` and no decision. Where a task notification can
+wake the session, that is `run_in_background: true`; where one cannot, it is a 600s foreground
+timeout. A failure inside the rewrite leaves the call as typed.
+
 The oracle for the rules is `tests/test_deny.py` against
 `tests/fixtures/block-dangerous-bash-vectors.json` (32 deny / 27 allow groups, 281 commands),
 plus `tests/test_deny_normalization.py`'s generated property corpus. The bash they were ported
