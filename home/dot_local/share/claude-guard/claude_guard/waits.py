@@ -53,7 +53,8 @@ SLEEP_THRESHOLD_S = 10
 MAX_ANCESTRY = 40
 
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-_LOOP_AROUND_SLEEP = re.compile(r"\b(?:until|while)\b.*?\bdo\b.*?\bsleep\b", re.DOTALL)
+_POLL_LOOPS = frozenset({"until", "while"})
+_LOOPS = _POLL_LOOPS | {"for", "select"}
 _DURATION = re.compile(r"^(\d+(?:\.\d+)?)([smhd]?)$")
 _UNIT_S = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
 
@@ -267,13 +268,37 @@ def _stage_verdict(words: list[str]) -> Verdict | None:
     return None
 
 
+def _loop_around_sleep(stages: list[list[str]]) -> bool:
+    """Whether a `sleep` runs inside an `until` or `while` loop's body.
+
+    Read from the parsed stages, not the command text: a loop quoted inside an argument (a
+    `git grep -e 'until …; do sleep'` pattern) or written into a heredoc body is not a loop,
+    and a regex over the raw text denied both. The parser splits a real loop into
+    `until …` / `do sleep 5` / `done` stages. `for` and `select` count only for nesting, so
+    the `done` of a `for` inside a `while` does not end the `while`.
+    """
+    open_loops: list[str] = []
+    for words in stages:
+        if words[0] in _LOOPS:
+            open_loops.append(words[0])
+        elif words[0] == "done":
+            if open_loops:
+                open_loops.pop()
+        elif _POLL_LOOPS & set(open_loops):
+            body = words[1:] if words[0] == "do" else words
+            if _program(body) == "sleep":
+                return True
+    return False
+
+
 def hand_wait(command: str, background: bool) -> Verdict | None:
     """A deny for a hand-written wait run in the foreground, or None."""
     if background:
         return None
-    if _LOOP_AROUND_SLEEP.search(command):
+    stages = _stages(command)
+    if _loop_around_sleep(stages):
         return Verdict("deny", "hand-wait-loop", LOOP_REASON)
-    for words in _stages(command):
+    for words in stages:
         verdict = _stage_verdict(words)
         if verdict:
             return verdict

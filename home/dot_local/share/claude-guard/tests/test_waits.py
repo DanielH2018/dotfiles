@@ -76,6 +76,9 @@ def test_a_call_the_caller_already_backgrounded_is_left_alone():
         "sleep 1m",
         "until test -f /tmp/done; do sleep 5; done",
         "while ! curl -sf x; do sleep 2; done",
+        "x && until curl -s y; do sleep 3; done && z",
+        "while true; do curl -s x; sleep 5; done",
+        "while true; do for h in a b; do ping -c1 $h; done; sleep 30; done",
         "timeout 1200 tail -f -n +1 land.log | grep -m1 '^VERDICT:'",
         "tail -F /var/log/syslog",
         "gh run watch 123",
@@ -101,6 +104,11 @@ def test_a_hand_written_wait_in_the_foreground_is_denied_and_names_cc_wait_or_ba
         "kubectl rollout status deploy/x",
         "echo 'sleep 30'",
         "git log --since='30 seconds ago'",
+        # Measured: this search for leftover poll loops was denied as one.
+        "git grep -n -e 'until [^;]*; do sleep' -- docs",
+        'rg "while true; do sleep 1; done" docs',
+        "cat <<'EOF' > loop.sh\nwhile true; do sleep 1; done\nEOF",
+        "for f in a b; do sleep 30; done",
     ],
 )
 def test_a_command_that_is_not_a_hand_written_wait_passes(command):
