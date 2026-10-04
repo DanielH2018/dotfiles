@@ -36,10 +36,27 @@ def test_a_oneshot_that_ran_cleanly_succeeded_and_says_when():
         "SubState": "dead",
         "Result": "success",
         "StateChangeTimestamp": "Sun 2026-10-04 17:40:01 UTC",
+        "ExecMainStartTimestamp": "Sun 2026-10-04 17:39:12 UTC",
+        "ExecMainExitTimestamp": "Sun 2026-10-04 17:40:01 UTC",
     }
     reading = read(props)
     assert reading.state == "succeeded"
     assert "17:40:01" in reading.detail
+
+
+def test_a_oneshot_that_never_ran_is_not_a_clean_run():
+    """Measured on apt-daily-upgrade.service: loaded, never run, Result=success."""
+    props = {
+        **ONESHOT,
+        "ActiveState": "inactive",
+        "SubState": "dead",
+        "Result": "success",
+        "StateChangeTimestamp": "Sun 2026-10-04 15:51:10 UTC",
+        "ExecMainStartTimestamp": "",
+    }
+    reading = read(props)
+    assert reading.state == "stopped"
+    assert "has not run" in reading.detail
 
 
 def test_a_queued_start_job_keeps_an_inactive_unit_running():

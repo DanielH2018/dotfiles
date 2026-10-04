@@ -143,7 +143,7 @@ with a scratch PreToolUse hook added through `--settings`:
 | 3 | dotfiles | the `claude-guard` binding | done: dotfiles #774 |
 | 4 | dotfiles | `gh-pr`, `gh-ci`, the shared cache | done: dotfiles #775 |
 | 5 | server | the `fanout` probe | done: server #3522 |
-| 6 | dotfiles | `systemd`, `k8s-rollout`; `cc-wait --list` stays in the foreground | this PR; the binding fix landed alone as dotfiles #776 |
+| 6 | dotfiles | `systemd`, `k8s-rollout`; `cc-wait --list` stays in the foreground | done: dotfiles #776, #777 |
 
 ## Open questions
 

@@ -5,7 +5,8 @@
     active      0   the unit is up (any type but a plain oneshot)
     succeeded   0   a oneshot without RemainAfterExit ran and exited cleanly
     failed      1   ActiveState is `failed`, or the last Result is not `success`
-    stopped     1   a unit that should stay up is inactive with nothing queued
+    stopped     1   a unit that should stay up is inactive with nothing queued, or a oneshot
+                    that has not run since it was loaded and has nothing queued
 
 A unit with a queued job, or one activating, deactivating or reloading, is still running.
 The queued job matters: right after `systemctl start --no-block`, the unit still reads
@@ -18,6 +19,9 @@ its state, and the caller judges whether that is the run it meant.
 
 A unit systemd has not loaded (not-found, masked, a bad unit file) cannot be waited on. A
 missing unit reads `inactive` with `Result=success`, which would otherwise pass for a clean run.
+So does a oneshot that is loaded but has never run, such as a timer's unit before the timer
+first fires. Only its empty `ExecMainStartTimestamp` tells it apart, so the source reads that
+before it reports `succeeded`.
 """
 
 import os
@@ -38,6 +42,8 @@ PROPERTIES = (
     "RemainAfterExit",
     "Job",
     "StateChangeTimestamp",
+    "ExecMainStartTimestamp",
+    "ExecMainExitTimestamp",
 )
 TRANSITIONAL = frozenset({"activating", "deactivating", "reloading", "refreshing", "maintenance"})
 SYSTEMCTL_TIMEOUT_S = 10
@@ -108,7 +114,14 @@ class UnitWait:
             return Reading("active", f"{state} since {since}")
         oneshot = props.get("Type") == "oneshot" and props.get("RemainAfterExit") != "yes"
         if active == "inactive" and oneshot:
-            return Reading("succeeded", f"last run ended {since}")
+            # Measured: apt-daily-upgrade.service, loaded and never run, read inactive with
+            # Result=success and a StateChangeTimestamp from when it was loaded.
+            if not props.get("ExecMainStartTimestamp"):
+                return Reading(
+                    "stopped", f"{state}: has not run since it was loaded, nothing queued"
+                )
+            ended = props.get("ExecMainExitTimestamp") or since
+            return Reading("succeeded", f"last run ended {ended}")
         return Reading("stopped", f"{state} since {since}, nothing queued")
 
 
