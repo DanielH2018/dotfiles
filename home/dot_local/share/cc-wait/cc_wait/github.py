@@ -10,7 +10,6 @@ wait passes only when every run has completed without one. An empty list of chec
 commit whose workflows have not registered yet, so it reads as pending, never as passed.
 """
 
-import argparse
 import json
 import re
 import subprocess
@@ -18,7 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from cc_wait.source import Description, ReadError, Reading, SourceError
+from cc_wait.source import ArgParser, Description, ReadError, Reading, SourceError
 
 INTERVAL_S = 30.0
 GH_TIMEOUT_S = 30
@@ -31,11 +30,6 @@ _GITHUB_REMOTE = re.compile(r"github\.com[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?$")
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 Runner = Callable[..., subprocess.CompletedProcess]
-
-
-class _Parser(argparse.ArgumentParser):
-    def error(self, message):
-        raise SourceError(f"{self.prog}: {message}\n{self.format_usage().strip()}")
 
 
 def repo_for(explicit: str | None, cwd: Path, run: Runner = subprocess.run) -> str:
@@ -97,7 +91,7 @@ class PrSource:
     summary = "a pull request is merged (0) or closed unmerged (1)"
 
     def bind(self, args: list[str], cwd: Path | None = None) -> PrWait:
-        parser = _Parser(prog="cc-wait gh-pr", add_help=False)
+        parser = ArgParser(prog="cc-wait gh-pr", add_help=False)
         parser.add_argument("number")
         parser.add_argument("--repo")
         ns = parser.parse_args(args)
@@ -161,7 +155,7 @@ class CiSource:
     summary = "a commit's (or a PR head's) GitHub check runs all pass (0), or one fails (1)"
 
     def bind(self, args: list[str], cwd: Path | None = None) -> CiWait:
-        parser = _Parser(prog="cc-wait gh-ci", add_help=False)
+        parser = ArgParser(prog="cc-wait gh-ci", add_help=False)
         parser.add_argument("ref", nargs="?", help="a commit SHA")
         parser.add_argument("--pr", help="follow this pull request's head commit instead")
         parser.add_argument("--repo")

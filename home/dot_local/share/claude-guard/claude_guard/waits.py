@@ -221,9 +221,9 @@ WATCH_REASON = (
     "and `cc-wait gh-pr <n>` for the merge."
 )
 KUBECTL_REASON = (
-    "Blocked: `kubectl ... --watch` never exits on its own. Wait on a rollout with "
-    "`kubectl rollout status` and `run_in_background: true`, or stream the watch under a "
-    "Monitor."
+    "Blocked: `kubectl ... --watch` never exits on its own. Wait on a rollout or a Job with "
+    "`cc-wait k8s-rollout <kind>/<name> -n <namespace>`, which also fails at once on a new pod "
+    "that cannot run; or stream the watch under a Monitor."
 )
 
 

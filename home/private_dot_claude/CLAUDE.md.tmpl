@@ -128,7 +128,7 @@ Finishing the whole thing has two failure modes that look finished. **Reverse st
 A long session runs out of context from many medium tool calls, not from one big one. Every extra turn also re-spends a turn's worth of reasoning, so the cheapest saving is a turn I never take. Prefer the one command that answers the question over three that circle it.
 
 - `jsonq` is installed and allowlisted for JSON work that shell tools can't express, where `python3 -c` costs a prompt. It has no attribute access; `jsonq --functions` lists what it can call.
-- To wait on anything (a landing, CI, a file, a process), run `cc-wait <source>`; `cc-wait --list` names the sources. `claude-guard` runs the call in the background where a task notification can wake you and in the foreground where one cannot, and it denies a hand-written `sleep`, `tail -f` or `--watch` wait. On exit 75 the wait is still open: re-run the command it prints.
+- To wait on anything (a landing, CI, a file, a process, a systemd unit, a k8s rollout), run `cc-wait <source>`; `cc-wait --list` names the sources. `claude-guard` runs the call in the background where a task notification can wake you and in the foreground where one cannot, and it denies a hand-written `sleep`, `tail -f` or `--watch` wait. On exit 75 the wait is still open: re-run the command it prints.
 
 ## Delegating to subagents
 

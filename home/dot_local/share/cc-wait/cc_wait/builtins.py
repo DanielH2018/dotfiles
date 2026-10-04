@@ -1,25 +1,18 @@
-"""The sources every repo gets: `file` and `exit`.
+"""The sources every repo gets: `file` and `exit` here, and those of `cc_wait.github`,
+`cc_wait.systemd` and `cc_wait.k8s`, all registered in BUILTINS.
 
-Both require a way to see failure, not only success. `file` takes `--fail` or `--pid`, and
-`exit` reads a recorded exit code, so neither can wait out its whole budget on a writer that
-already died.
+`file` and `exit` require a way to see failure, not only success. `file` takes `--fail` or
+`--pid`, and `exit` reads a recorded exit code, so neither can wait out its whole budget on a
+writer that already died.
 """
 
-import argparse
 import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from cc_wait import github
-from cc_wait.source import Description, ReadError, Reading, SourceError
-
-
-class _Parser(argparse.ArgumentParser):
-    """An argument parser that raises SourceError instead of exiting the process."""
-
-    def error(self, message):
-        raise SourceError(f"{self.prog}: {message}\n{self.format_usage().strip()}")
+from cc_wait import github, k8s, systemd
+from cc_wait.source import ArgParser, Description, ReadError, Reading, SourceError
 
 
 def pid_alive(pid: int) -> bool:
@@ -82,7 +75,7 @@ class FileSource:
     summary = "a path appears, or a line matching --match is written to it"
 
     def bind(self, args: list[str]) -> FileWait:
-        parser = _Parser(prog="cc-wait file", add_help=False)
+        parser = ArgParser(prog="cc-wait file", add_help=False)
         parser.add_argument("path")
         parser.add_argument("--match", help="success: a line matching this regex")
         parser.add_argument("--fail", help="failure: a line matching this regex")
@@ -136,7 +129,7 @@ class ExitSource:
     )
 
     def bind(self, args: list[str]) -> ExitWait:
-        parser = _Parser(prog="cc-wait exit", add_help=False)
+        parser = ArgParser(prog="cc-wait exit", add_help=False)
         parser.add_argument("--rc-file", required=True)
         parser.add_argument("--pid", type=int, help="the process that writes --rc-file")
         ns = parser.parse_args(args)
@@ -145,5 +138,12 @@ class ExitSource:
 
 BUILTINS = {
     source.name: source
-    for source in (FileSource(), ExitSource(), github.PrSource(), github.CiSource())
+    for source in (
+        FileSource(),
+        ExitSource(),
+        github.PrSource(),
+        github.CiSource(),
+        systemd.UnitSource(),
+        k8s.RolloutSource(),
+    )
 }

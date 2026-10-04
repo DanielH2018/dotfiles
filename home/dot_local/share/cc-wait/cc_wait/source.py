@@ -7,6 +7,7 @@ code each ends it with, which paths to watch for a change, and how often to look
 source carries a loop of its own.
 """
 
+import argparse
 import json
 import math
 from dataclasses import dataclass
@@ -26,6 +27,13 @@ class SourceError(Exception):
 
 class ReadError(Exception):
     """One read of a source's state failed. The loop retries it."""
+
+
+class ArgParser(argparse.ArgumentParser):
+    """A source's argument parser: it raises SourceError where argparse would exit."""
+
+    def error(self, message):
+        raise SourceError(f"{self.prog}: {message}\n{self.format_usage().strip()}")
 
 
 @dataclass(frozen=True)

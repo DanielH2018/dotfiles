@@ -141,9 +141,9 @@ with a scratch PreToolUse hook added through `--settings`:
 | 1 | dotfiles | `cc-wait` core: contract, `file`, `exit`, probe discovery | done: dotfiles #773 |
 | 2 | server | `land` probe; retire `--await-verdict` | done: server #3511 |
 | 3 | dotfiles | the `claude-guard` binding | done: dotfiles #774 |
-| 4 | dotfiles | `gh-pr`, `gh-ci`, the shared cache | this PR |
-| 5 | server | the `fanout` probe | planned |
-| 6 | both | `systemd`, `k8s-rollout`, `http`; the homelab `tick` probe | planned |
+| 4 | dotfiles | `gh-pr`, `gh-ci`, the shared cache | done: dotfiles #775 |
+| 5 | server | the `fanout` probe | done: server #3522 |
+| 6 | dotfiles | `systemd`, `k8s-rollout`; `cc-wait --list` stays in the foreground | this PR; the binding fix landed alone as dotfiles #776 |
 
 ## Open questions
 
@@ -158,3 +158,24 @@ with a scratch PreToolUse hook added through `--settings`:
 - **A standalone `sleep` is also blocked by Claude Code itself,** before any hook, with its
   own message suggesting a Monitor loop. `claude-guard` adds the chained forms the built-in
   check lets through, such as `x && sleep 15 && y`.
+- **Slice 6 builds only `systemd` and `k8s-rollout`.** The Kubernetes waits written by hand
+  were a Deployment becoming ready (tdarr, home-assistant) and a Job finishing
+  (kuma-maintenance-sync). The systemd wait was a script waiting for `gitops-deploy.service`
+  to stop activating. Most other transcript matches for these commands were heredoc text, not
+  loops.
+- **No `http` source.** An HTTP status has no failure state of its own: a 502 during a rollout
+  is the normal path to a 200, so the source could only wait for success and time out. The
+  rollout and unit sources end on the failure an HTTP poll stands in for.
+- **No homelab `tick` probe.** The 31 tick-state checks ask whether the running tick has
+  finished, and `cc-wait systemd gitops-deploy.service` answers that. `gitops_tick.sh` keeps
+  its own bounded wait. It runs inside `land.py`, whose landing `cc-wait land` already
+  follows, and its join and contention verdicts belong to the deployer.
+- **`k8s-rollout` fails on a new pod only for a reason that cannot clear on its own.**
+  ImagePullBackOff, InvalidImageName, and CrashLoopBackOff after 3 restarts end the wait.
+  ErrImagePull and CreateContainerConfigError can clear once the image or Secret arrives, so
+  they appear in the detail and the wait continues. The homelab had no pod-reason set to
+  reuse: it detects crash loops by restart count after the rollout
+  (`ansible/post_tasks/k8s_stabilise_gate.yml`).
+- **A `systemd` wait on a finished oneshot reports that run at once,** with the time it
+  ended. A baseline taken when the wait starts would be lost when the wait is re-run, so the
+  caller reads the timestamp instead.
