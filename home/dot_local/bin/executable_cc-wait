@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# cc-wait — one command for every wait a Claude Code session makes. Usage: cc-wait --help.
+#
+# The package is 3.14-only and runs under uv's managed interpreter, found the same way as
+# claude-guard's (see that wrapper for why each `uv python find` flag is there). A missing
+# interpreter exits 2, cc-wait's "could not wait" code, so a caller never reads it as a
+# terminal state of the source.
+set -eu
+SHARE="${CC_WAIT_HOME:-$HOME/.local/share/cc-wait}"
+if ! PY=$(uv python find --no-project --managed-python --system 3.14 2>/dev/null); then
+  echo "WAIT: error cc-wait: no uv-managed Python 3.14 found; run: uv python install 3.14"
+  exit 2
+fi
+PYTHONPATH="$SHARE" exec "$PY" -S -m cc_wait.cli "$@"
