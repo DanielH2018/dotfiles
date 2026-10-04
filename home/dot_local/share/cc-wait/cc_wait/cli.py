@@ -19,6 +19,7 @@ from pathlib import Path
 
 from cc_wait import loop, repo
 from cc_wait.builtins import BUILTINS
+from cc_wait.cache import cache_dir
 from cc_wait.source import COULD_NOT_WAIT, Source, SourceError
 
 DEFAULT_BUDGET_S = 570.0
@@ -106,7 +107,8 @@ def main(argv: list[str] | None = None, out=None, cwd: Path | None = None, env=N
         print(f"WAIT: error {exc}", file=out, flush=True)
         return COULD_NOT_WAIT
     resume = shlex.join(["cc-wait", *argv])
-    return loop.run(bound, budget or default_budget(env), resume, out=out)
+    budget_s = budget or default_budget(env)
+    return loop.run(bound, budget_s, resume, out=out, cache=cache_dir(env))
 
 
 if __name__ == "__main__":

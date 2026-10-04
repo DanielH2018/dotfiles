@@ -58,4 +58,4 @@ def test_list_names_the_built_ins_and_this_repo_s_probes(repo):
     code, lines = run(repo, "--list")
     assert code == 0
     names = [line.split()[0] for line in lines]
-    assert names == ["file", "exit", "land"]
+    assert names == ["file", "exit", "gh-pr", "gh-ci", "land"]

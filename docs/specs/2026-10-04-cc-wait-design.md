@@ -73,7 +73,10 @@ A repo probe is a git-tracked executable at `.claude/wait-sources/<name>`, in an
   (Linux) or `fswatch` (macOS), and at its interval as a backstop. Without either tool it is
   polled. Both are optional.
 - Remote sources share one cache per host, so ten sessions waiting on one PR make one API
-  call per interval. This arrives with the GitHub sources in slice 4.
+  call per interval. The cache is keyed on the bound source's `repr`, and a failed read is
+  never cached.
+- The GitHub sources call the `gh` CLI, so a wait spends the session's authenticated quota
+  and never the anonymous 60 requests an hour a host shares with its deployer.
 
 ## Trust
 
@@ -137,11 +140,21 @@ with a scratch PreToolUse hook added through `--settings`:
 | 0 | both | Hook rewrites keep the whole tool input | done: server #3503, dotfiles #772 |
 | 1 | dotfiles | `cc-wait` core: contract, `file`, `exit`, probe discovery | done: dotfiles #773 |
 | 2 | server | `land` probe; retire `--await-verdict` | done: server #3511 |
-| 3 | dotfiles | the `claude-guard` binding | this PR |
-| 4 | both | `gh-pr`, `gh-ci`, the shared cache; the homelab `ci` probe | planned |
+| 3 | dotfiles | the `claude-guard` binding | done: dotfiles #774 |
+| 4 | dotfiles | `gh-pr`, `gh-ci`, the shared cache | this PR |
 | 5 | server | the `fanout` probe | planned |
 | 6 | both | `systemd`, `k8s-rollout`, `http`; the homelab `tick` probe | planned |
 
 ## Open questions
 
 - Whether the work laptop has `fswatch`. Polling covers it either way.
+
+## Decisions made during the rollout
+
+- **No homelab `ci` probe.** The hand-polling the transcripts measured was `gh pr checks` and
+  `gh run view/watch` on a PR before its merge, which `gh-ci --pr` covers. Master CI after a
+  merge is `land.sh`'s job, through `await_ci.wait` inside the landing, so a session-level
+  probe for it would serve a wait almost nobody makes.
+- **A standalone `sleep` is also blocked by Claude Code itself,** before any hook, with its
+  own message suggesting a Monitor loop. `claude-guard` adds the chained forms the built-in
+  check lets through, such as `x && sleep 15 && y`.

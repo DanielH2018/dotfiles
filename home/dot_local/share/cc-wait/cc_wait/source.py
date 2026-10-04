@@ -54,7 +54,12 @@ class Reading:
 
 
 class Bound(Protocol):
-    """A source bound to its arguments."""
+    """A source bound to its arguments.
+
+    Its repr must name the source and its arguments and nothing process-specific: cc-wait keys
+    the cache a remote source's reads are shared through on it (`cc_wait.cache`). A frozen
+    dataclass with no callable in its repr meets that.
+    """
 
     def describe(self) -> Description: ...
 

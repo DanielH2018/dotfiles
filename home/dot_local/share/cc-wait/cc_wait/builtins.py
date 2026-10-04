@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from cc_wait import github
 from cc_wait.source import Description, ReadError, Reading, SourceError
 
 
@@ -142,4 +143,7 @@ class ExitSource:
         return ExitWait(Path(ns.rc_file), ns.pid)
 
 
-BUILTINS = {source.name: source for source in (FileSource(), ExitSource())}
+BUILTINS = {
+    source.name: source
+    for source in (FileSource(), ExitSource(), github.PrSource(), github.CiSource())
+}

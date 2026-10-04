@@ -208,8 +208,9 @@ TAIL_REASON = (
     "`cc-wait file <log> --match '<line>' --fail '<failure line>'`."
 )
 WATCH_REASON = (
-    "Blocked: `{what}` in the foreground holds the call until it ends. Run it with "
-    "`run_in_background: true` so its task notification wakes you."
+    "Blocked: `{what}` in the foreground holds the call until the checks end. Wait with "
+    "`cc-wait gh-ci <sha>` or `cc-wait gh-ci --pr <n>`, which ends on the first failed check, "
+    "and `cc-wait gh-pr <n>` for the merge."
 )
 KUBECTL_REASON = (
     "Blocked: `kubectl ... --watch` never exits on its own. Wait on a rollout with "

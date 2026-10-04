@@ -14,8 +14,10 @@ Output, one line each, flushed so a Monitor sees it at once:
 import sys
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import TextIO
 
+from cc_wait.cache import cached_read
 from cc_wait.source import (
     BUDGET_ELAPSED,
     COULD_NOT_WAIT,
@@ -44,6 +46,7 @@ def run(
     clock: Callable[[], float] = time.monotonic,
     wait_change: Callable[[tuple[str, ...], float], None] = wait_for_change,
     stamp: Callable[[], str] = lambda: time.strftime("%H:%M:%S"),
+    cache: Path | None = None,
 ) -> int:
     """Wait on `bound` and return the exit code the process should end with.
 
@@ -53,18 +56,25 @@ def run(
       resume: the command that resumes this wait, printed when the budget elapses.
       out: where the event lines go.
       clock, wait_change, stamp: injected so the tests need no real time or real files.
+      cache: the directory a remote source's reads are shared through; None reads directly.
     """
     try:
         desc = validate(bound.describe())
     except SourceError as exc:
         _say(out, f"WAIT: error cc-wait refuses this source: {exc}")
         return COULD_NOT_WAIT
+    read = bound.read
+    if desc.remote and cache is not None:
+        # Keyed on the bound source's repr, which names the source and its arguments. A little
+        # under the interval, so a waiter's next read is never its own previous write.
+        key, max_age = repr(bound), desc.interval_s * 0.9
+        read = lambda: cached_read(key, max_age, bound.read, cache)  # noqa: E731
     deadline = clock() + budget_s
     last: Reading | None = None
     failures = 0
     while True:
         try:
-            reading = bound.read()
+            reading = read()
         except ReadError as exc:
             failures += 1
             if failures >= MAX_READ_FAILURES:

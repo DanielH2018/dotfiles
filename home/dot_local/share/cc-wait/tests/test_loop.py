@@ -73,3 +73,26 @@ def test_a_misdeclared_source_is_refused_before_any_read():
     assert code == 2
     assert bound.reads == 0
     assert "no failure state" in lines[0]
+
+
+class Remote(Script):
+    def describe(self):
+        return Description(terminal=self.terminal, interval_s=10, remote=True)
+
+    def __repr__(self):  # The cache key; every real bound source is a dataclass with one.
+        return "Remote()"
+
+
+def test_two_waits_on_one_remote_source_share_a_read(tmp_path):
+    """The second waiter inside the interval reads the first one's result, not the API."""
+    first, second = Remote([Reading("done", "ok")]), Remote([Reading("done", "ok")])
+    for bound in (first, second):
+        assert loop.run(bound, 100, "r", out=io.StringIO(), cache=tmp_path) == 0
+    assert (first.reads, second.reads) == (1, 0)
+
+
+def test_a_local_source_never_reads_through_the_cache(tmp_path):
+    first, second = Script([Reading("done", "ok")]), Script([Reading("done", "ok")])
+    for bound in (first, second):
+        loop.run(bound, 100, "r", out=io.StringIO(), cache=tmp_path)
+    assert (first.reads, second.reads) == (1, 1)
