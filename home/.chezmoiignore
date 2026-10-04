@@ -17,6 +17,10 @@ Brewfile
 .local/share/pr-dash/package-lock.json
 .local/share/pr-dash/tsconfig.json
 
+# cc-wait's suite runs from the repo (tests/python-suites.test.js), never from $HOME, so a
+# deployed copy would be a test directory nothing reads.
+.local/share/cc-wait/tests
+
 # The Windows fastfetch logo generator. A run_onchange script runs it from the source tree
 # at apply time (.chezmoiscripts/os-windows/run_onchange_after_fastfetch-trim-logos.sh.tmpl),
 # so no machine needs a deployed copy.
