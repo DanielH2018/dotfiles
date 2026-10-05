@@ -1,4 +1,11 @@
 danielh.2018@gmail.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDA7LulgtoUwepzoMDD4UgAS1OD09qi4WvvJnDOUNkou
+{{- /* The same key dot_gitconfig.tmpl signs with: id_ed25519, else Windows' github-signing. */ -}}
+{{- $key := "" }}
 {{- if stat (printf "%s/.ssh/id_ed25519.pub" .chezmoi.homeDir) }}
-danielh.2018@gmail.com {{ output "cut" "-d" " " "-f1-2" (printf "%s/.ssh/id_ed25519.pub" .chezmoi.homeDir) | trim }}
+{{-   $key = printf "%s/.ssh/id_ed25519.pub" .chezmoi.homeDir }}
+{{- else if stat (printf "%s/.ssh/github-signing.pub" .chezmoi.homeDir) }}
+{{-   $key = printf "%s/.ssh/github-signing.pub" .chezmoi.homeDir }}
+{{- end }}
+{{- if $key }}
+danielh.2018@gmail.com {{ output "cut" "-d" " " "-f1-2" $key | trim }}
 {{- end }}

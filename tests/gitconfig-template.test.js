@@ -110,3 +110,30 @@ test('always points at an allowed_signers file', { skip }, () => {
   assert.match(render(home), new RegExp(`allowedSignersFile = ${home}/\\.config/git/allowed_signers`));
 });
 
+// allowed_signers has to list the key the gitconfig above signs with, or every local
+// `git log --show-signature` reports "No principal matched" -- which is what Windows did:
+// this template only ever read id_ed25519.pub, and Windows signs with github-signing.pub.
+const SIGNERS = srcPath('dot_config', 'git', 'allowed_signers.tmpl');
+function renderSigners(pubs) {
+  const home = fakeHome();
+  for (const [name, key] of Object.entries(pubs)) {
+    fs.writeFileSync(path.join(home, '.ssh', name), `ssh-ed25519 ${key} a comment\n`);
+  }
+  return renderFile(SIGNERS, { source: srcPath(), env: { ...process.env, HOME: home, USERPROFILE: home } });
+}
+
+test('allowed_signers lists the Windows signing key', { skip }, () => {
+  const out = renderSigners({ 'github-signing.pub': 'WINDOWSKEY' });
+  assert.match(out, /^danielh\.2018@gmail\.com ssh-ed25519 WINDOWSKEY$/m);
+});
+
+test('allowed_signers prefers id_ed25519, like the gitconfig', { skip }, () => {
+  const out = renderSigners({ 'id_ed25519.pub': 'LINUXKEY', 'github-signing.pub': 'WINDOWSKEY' });
+  assert.match(out, /^danielh\.2018@gmail\.com ssh-ed25519 LINUXKEY$/m);
+  assert.doesNotMatch(out, /WINDOWSKEY/);
+});
+
+test('allowed_signers keeps only the 1Password key without a local one', { skip }, () => {
+  assert.strictEqual(renderSigners({}).trim().split('\n').length, 1);
+});
+
