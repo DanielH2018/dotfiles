@@ -24,7 +24,8 @@ pwsh -File $HOME\.config\windows-provisioning\elevated-setup.ps1
 ```
 
 Sets the power scheme (AC never-sleep + 30-min hibernate — the Elgato 4K60 Pro breaks on
-S3), and registers the TaskbarAutoHideFix + StreamDeck Watcher scheduled tasks.
+S3), and registers the TaskbarAutoHideFix, StreamDeck Watcher and Sonar Routing Watcher
+scheduled tasks.
 
 ## 3. Winaero Tweaker (one GUI import)
 

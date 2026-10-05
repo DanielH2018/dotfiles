@@ -29,13 +29,17 @@ foreach ($t in @('TaskbarAutoHideFix','TaskbarAutoHideFix-Poll','WSL-ClockSync')
 }
 Start-ScheduledTask -TaskName 'TaskbarAutoHideFix' -ErrorAction SilentlyContinue
 
-# --- StreamDeck Watcher: restarts Elgato Stream Deck when the device re-appears
-#     (KVM switch / hibernate / boot). Its own installer registers + starts the task. ---
-$sd = Join-Path $env:USERPROFILE 'Scripts\streamdeck-watcher\install.ps1'
-if (Test-Path $sd) {
-    & $sd
-} else {
-    Write-Warning "missing $sd"
+# --- Logon watchers: StreamDeck Watcher restarts Elgato Stream Deck when the device
+#     re-appears (KVM switch / hibernate / boot); Sonar Routing Watcher re-pins Sonar's
+#     playback routing after the KVM re-enumerates. Each installer registers + starts its
+#     task. The WSL Interop Reaper is not here: its WSL run_onchange script installs it. ---
+foreach ($w in @('streamdeck-watcher','sonar-routing-watcher')) {
+    $installer = Join-Path $env:USERPROFILE "Scripts\$w\install.ps1"
+    if (Test-Path $installer) {
+        & $installer
+    } else {
+        Write-Warning "missing $installer"
+    }
 }
 
 Write-Host 'Elevated setup done. Restart File Explorer to finish applying ExplorerPatcher.'

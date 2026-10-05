@@ -21,8 +21,9 @@
 #
 # Re-runs whenever any payload changes:
 #   reaper:  {{ include "Scripts/wslhost-interop-reaper/wslhost-interop-reaper.ps1" | sha256sum }}
-#   vbs:     {{ include "Scripts/wslhost-interop-reaper/wslhost-interop-reaper-hidden.vbs" | sha256sum }}
-#   install: {{ include "Scripts/wslhost-interop-reaper/install.ps1" | sha256sum }}
+#   install:  {{ include "Scripts/wslhost-interop-reaper/install.ps1" | sha256sum }}
+#   register: {{ include "Scripts/logon-watcher/register.ps1" | sha256sum }}
+#   launcher: {{ include "Scripts/logon-watcher/run-hidden.vbs" | sha256sum }}
 set -u
 
 PS=/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
@@ -39,15 +40,25 @@ if [ -z "$win_profile" ]; then
   exit 1
 fi
 
-dest=$(wslpath -u "$win_profile")/Scripts/wslhost-interop-reaper
-mkdir -p "$dest"
+scripts=$(wslpath -u "$win_profile")/Scripts
+dest=$scripts/wslhost-interop-reaper
+shared=$scripts/logon-watcher
+mkdir -p "$dest" "$shared"
+# The reaper's own launcher, retired for the shared one (#731).
+rm -f "$dest/wslhost-interop-reaper-hidden.vbs"
 
 cat > "$dest/wslhost-interop-reaper.ps1" <<'REAPER_EOF'
 {{ include "Scripts/wslhost-interop-reaper/wslhost-interop-reaper.ps1" | trimSuffix "\n" }}
 REAPER_EOF
 
-cat > "$dest/wslhost-interop-reaper-hidden.vbs" <<'VBS_EOF'
-{{ include "Scripts/wslhost-interop-reaper/wslhost-interop-reaper-hidden.vbs" | trimSuffix "\n" }}
+# install.ps1 hands registration to the shared logon-watcher helper at ..\logon-watcher\
+# relative to itself -- the same layout Scripts/ deploys on Windows.
+cat > "$shared/register.ps1" <<'REGISTER_EOF'
+{{ include "Scripts/logon-watcher/register.ps1" | trimSuffix "\n" }}
+REGISTER_EOF
+
+cat > "$shared/run-hidden.vbs" <<'VBS_EOF'
+{{ include "Scripts/logon-watcher/run-hidden.vbs" | trimSuffix "\n" }}
 VBS_EOF
 
 cat > "$dest/install.ps1" <<'INSTALL_EOF'
