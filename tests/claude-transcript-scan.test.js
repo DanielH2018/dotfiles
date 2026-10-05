@@ -562,6 +562,21 @@ test('a finding leaves a durable marker, not just a log line', { skip }, () => {
   assert.strictEqual(log, sb.log, 'the row points at the log holding the detail');
 });
 
+test('a finding re-found by a later scan is not counted again', { skip }, () => {
+  // Loki is machine-wide, so every SessionEnd scan in its window re-finds the same event.
+  // Three sessions ending a second apart wrote three count-1 rows for one leak, and the
+  // statusline summed them into "3 transcript leak(s)" (dotfiles #785).
+  const sb = sandbox();
+  const dirty = path.join(sb.projects, 'dirty.jsonl');
+  run(['--session', dirty], sb);
+  const r = run(['--session', dirty], sb);
+  assert.strictEqual(r.status, 1, 'the finding is still unbaselined, so the verdict stays 1');
+  const rows = fs.readFileSync(sb.pending, 'utf8').trim().split('\n');
+  assert.strictEqual(rows.length, 1, `a repeat finding must not add a row, got: ${rows.join(' | ')}`);
+  const [, count, , fps] = rows[0].split('\t');
+  assert.strictEqual(fps.split(',').length, Number(count), 'the count is the number of fingerprints held');
+});
+
 test('a clean transcript writes no marker', { skip }, () => {
   const sb = sandbox();
   const r = run(['--session', path.join(sb.projects, 'clean.jsonl')], sb);

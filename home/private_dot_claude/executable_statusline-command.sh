@@ -109,7 +109,8 @@ add() { put "$@"; end_seg; }
 # it (#693). A leak is a fact about the machine, so this reads it in any directory.
 #
 # Two record types share the file, both `ts \t count \t detail`. A positive count is a
-# finding. A zero count is a scan that could not run, which needs saying separately:
+# number of distinct findings: the scanner writes their fingerprints in a fourth column
+# and never counts one twice, so the sum below is a distinct total. A zero count is a scan that could not run, which needs saying separately:
 # silence from a detector that never ran looks exactly like a clean result. The segment
 # names the marker file, whose third column says where the details are. `-s` comes
 # first, so the common case costs no fork.

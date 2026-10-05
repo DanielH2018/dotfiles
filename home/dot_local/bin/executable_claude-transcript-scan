@@ -219,7 +219,9 @@ WORK=$(mktemp) || { echo "claude-transcript-scan: mktemp failed — did not scan
 chmod 600 "$WORK"
 SEEN=$(mktemp) || { echo "claude-transcript-scan: mktemp failed — did not scan" >&2; exit 3; }
 chmod 600 "$SEEN"
-trap 'rm -f "$WORK" "$SEEN"' EXIT INT TERM
+# This run's unbaselined fingerprints, one per line, for the pending marker's dedupe below.
+NEWFP=$(mktemp) || { echo "claude-transcript-scan: mktemp failed — did not scan" >&2; exit 3; }
+trap 'rm -f "$WORK" "$SEEN" "$NEWFP"' EXIT INT TERM
 
 # Both stores scan the same way once their text is in $WORK, so the gitleaks call, the
 # fingerprint and the report live here rather than being written twice. $1 is what the log
@@ -269,6 +271,7 @@ scan_work() {
       continue
     fi
     FOUND=$((FOUND + 1))
+    printf '%s\n' "$fp" >> "$NEWFP"
     # Rule id, line, source and fingerprint only. Enough to find it and to name what to
     # rotate, and to accept it later; never enough to re-leak it.
     # Two audiences, two formats. The JSONL record is what --accept-baseline and any
@@ -421,9 +424,28 @@ if [ "$FOUND" -gt 0 ]; then
   echo "  Full records: $LOG"
   echo "  Rotate the named credential: uv run python scripts/secrets_mgmt/secret_rotation.py rotate <name>" >&2
 
+  # One finding, one count. Loki is machine-wide, so every session's SessionEnd scan
+  # re-finds the same unbaselined event inside its window, and a row per scan made the
+  # statusline sum one leak into "3 transcript leak(s)" (dotfiles #785). So each row
+  # carries its fingerprints in a fourth column, and a run records only the ones no row
+  # already holds. The statusline still sums column 2, which is now a distinct count.
+  # FILENAME, not NR==FNR: an absent marker reads as /dev/null, and an empty first file
+  # makes NR==FNR true for the second one too.
+  _pending_in=$PENDING
+  [ -f "$_pending_in" ] || _pending_in=/dev/null
+  _fresh=$(awk -F'\t' -v pend="$_pending_in" '
+    FILENAME == pend { n = split($4, a, ","); for (i = 1; i <= n; i++) held[a[i]] = 1; next }
+    !($0 in held) && !dup[$0]++
+  ' "$_pending_in" "$NEWFP" | paste -sd, -)
+  if [ -z "$_fresh" ]; then
+    echo "  Already in the pending marker from an earlier scan: $PENDING"
+    exit 1
+  fi
+  _fresh_n=$(printf '%s\n' "$_fresh" | tr ',' '\n' | grep -c .)
+
   # The durable half. Written before either banner is attempted, so a machine with no
   # notification path at all still records the finding rather than losing it.
-  printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$FOUND" "$LOG" >> "$PENDING"
+  printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_fresh_n" "$LOG" "$_fresh" >> "$PENDING"
 
   # The immediate half, best-effort. Same platform order as hooks/notify.sh: osascript is
   # the Mac's only working path, notify-send the Linux desktop's, and a headless host
