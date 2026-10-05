@@ -336,6 +336,35 @@ if MODE == "deep":
         # The stamps are UTC ("...Z"), so calendar.timegm, not time.mktime.
         return calendar.timegm(parsed)
 
+    def is_hermetic_eval(path, head=65536):
+        """True when this transcript is a hermetic agent-eval run.
+
+        evals/lib/claude-cli.mjs runs `claude -p --agent <name> --setting-sources
+        project`, which skips the user settings that carry the OTEL env, so these
+        sessions never export by design. On 2026-10-03 one eval fan-out wrote 203
+        of them and they buried the real silent sessions for two days (dotfiles
+        #784). The signature is both halves: an `agent-setting` record (only
+        `--agent` writes one, and no other headless launcher passes it) and an
+        `sdk-cli` entrypoint on the first user record. `entrypoint` alone is too
+        broad — every fan-out agent and cron run is sdk-cli and does export.
+        """
+        agent = False
+        try:
+            with open(path, "rb") as fh:
+                lines = fh.read(head).splitlines()
+        except OSError:
+            return False
+        for line in lines:
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if rec.get("type") == "agent-setting":
+                agent = True
+            elif rec.get("type") == "user":
+                return agent and rec.get("entrypoint") == "sdk-cli"
+        return False
+
     # A session whose transcript is being written while Loki has none of its
     # events is exporting nowhere. That is the failure this tool exists for.
     #
@@ -347,6 +376,7 @@ if MODE == "deep":
     # Skip the check instead of reporting all of it.
     silent = []
     candidates = []
+    evals = 0
     checked = False
     if BASE["loki"]:
         cutoff = time.time() - 48 * 3600
@@ -355,8 +385,13 @@ if MODE == "deep":
                 st = path.stat()
             except OSError:
                 continue
-            if last_activity(path, st) >= cutoff:
-                candidates.append((path.stem, st))
+            if last_activity(path, st) < cutoff:
+                continue
+            # Counted, not dropped: a skipped transcript stays visible as a number.
+            if is_hermetic_eval(path):
+                evals += 1
+                continue
+            candidates.append((path.stem, st))
 
         # Ask only about the sessions in hand. `sum by (session_id)` over every
         # session in 720h trips Loki's 500-series ceiling once the history is a
@@ -405,6 +440,7 @@ if MODE == "deep":
     out["silent_sessions"] = sorted(silent, key=lambda s: s["mb"], reverse=True)
     out["silent_checked"] = checked
     out["sessions_on_disk_48h"] = len(candidates)
+    out["eval_sessions_skipped_48h"] = evals
 
 print(json.dumps(out))
 '''
@@ -499,6 +535,8 @@ def render_rows(results):
         # otel-sweep-watch prints its own count unconditionally.
         if data.get("silent_checked"):
             summary += f" silent={len(silent)}"
+            if data.get("eval_sessions_skipped_48h"):
+                summary += f" evals-skipped={data['eval_sessions_skipped_48h']}"
         print(summary)
         for bad, n in sorted(data.get("errors_24h", {}).items()):
             print(f"         {bad}={n}")

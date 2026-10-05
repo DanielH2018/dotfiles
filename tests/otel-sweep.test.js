@@ -235,6 +235,25 @@ test('the silent-session payload is uncapped', { skip }, (t) => {
     'the payload must carry every silent session, uncapped');
 });
 
+test('hermetic agent-eval transcripts are counted apart, not reported silent', { skip }, (t) => {
+  // An eval fan-out on 2026-10-03 left 203 `claude -p --agent` transcripts that skip
+  // the user settings carrying the OTEL env, and they read as 203 silent sessions
+  // (dotfiles #784). The control is a fan-out agent: sdk-cli too, but no
+  // agent-setting record, and it is expected to export — so it must stay silent here.
+  const { home } = homeWithTranscripts(t, 0);
+  const dir = path.join(home, '.claude', 'projects', 'proj');
+  const stamp = new Date(Date.now() - 60000).toISOString();
+  const user = `{"type":"user","entrypoint":"sdk-cli","timestamp":"${stamp}"}\n`;
+  fs.writeFileSync(path.join(dir, 'eval-run.jsonl'),
+    `{"type":"agent-setting","agentSetting":"judge","sessionId":"eval-run"}\n${user}`);
+  fs.writeFileSync(path.join(dir, 'fanout-agent.jsonl'), user);
+
+  const result = deepScan(home, true);
+  assert.deepStrictEqual(result.silent_sessions.map((s) => s.session), ['fanout-agent'],
+    'a headless session without --agent must still be checked');
+  assert.strictEqual(result.eval_sessions_skipped_48h, 1, 'the skipped eval stays visible as a count');
+});
+
 test('--rows names the silent count and says when it truncated', () => {
   // The rejecting half: a cap in the compact view is fine, a cap that looks
   // like the whole set is the defect. Both the total and the notice must exist.
