@@ -63,8 +63,21 @@ def test_a_call_that_is_not_a_wait_is_left_alone():
     assert waits.rewrite(call("ls"), 300, ps_for(BRIDGE)) is None
 
 
-def test_a_call_the_caller_already_backgrounded_is_left_alone():
-    payload = call("cc-wait land 1", run_in_background=True)
+@pytest.mark.parametrize("claude_args", [BRIDGE, FANOUT])
+def test_a_call_the_caller_already_backgrounded_gets_the_background_budget(claude_args):
+    """Measured: a backgrounded `cc-wait land` kept the 570s budget and woke the session early."""
+    payload = call("cc-wait land 1", run_in_background=True, timeout=120_000)
+    assert waits.rewrite(payload, 300, ps_for(claude_args)) == {
+        "command": "cc-wait land 1 --budget 1740",
+        "run_in_background": True,
+        "timeout": waits.BACKGROUND_TIMEOUT_MS,
+    }
+
+
+def test_a_backgrounded_call_that_already_has_its_budget_is_left_alone():
+    payload = call(
+        "cc-wait land 1 --budget 600", run_in_background=True, timeout=waits.BACKGROUND_TIMEOUT_MS
+    )
     assert waits.rewrite(payload, 300, ps_for(BRIDGE)) is None
 
 

@@ -102,6 +102,9 @@ A `claude-guard` PreToolUse arm rewrites a Bash call that runs `cc-wait`:
   When `cc-wait` is the command's last stage, the rewrite also appends `--budget 1740`, which
   `cc-wait` reads wherever it appears. A landing of up to 29 minutes then wakes the session
   once, not every 570s.
+- **A call the caller already backgrounded** gets the same 30-minute timeout and `--budget
+  1740`, whatever the session. Left alone, it kept the 570s budget and woke the session every
+  570s (dotfiles #781).
 - **One that cannot** stays in the foreground with `timeout: 600000`. The 120s default would
   cut off a 570s budget.
 - **The rewrite copies the whole tool input.** The harness replaces the input with
