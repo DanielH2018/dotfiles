@@ -33,7 +33,7 @@ const hostLink = (absPath, rel) =>
 const STATE_DIR = scratch(os.tmpdir(), 'la-state-');
 // Runs the hook with a Write payload for `filePath`; returns the emitted
 // additionalContext string ('' when the hook no-ops / exits without output).
-function run(filePath, env = {}) {
+function run(filePath, env = {}, cwd = undefined) {
   const input = JSON.stringify({ tool_input: { file_path: filePath } });
   const e = { ...process.env };
   // Start from a clean slate for every var the hook keys off of. CLAUDE_ARTIFACTS_BASE_URL
@@ -46,7 +46,7 @@ function run(filePath, env = {}) {
   delete e.CLAUDE_ARTIFACTS_HOST;
   e.CLAUDE_ARTIFACT_STATE_DIR = STATE_DIR;
   Object.assign(e, env);
-  const r = spawnSync('bash', [HOOK], { input, env: e, encoding: 'utf8' });
+  const r = spawnSync('bash', [HOOK], { input, env: e, cwd, encoding: 'utf8' });
   assert.strictEqual(r.status, 0, `hook exits 0 (stderr: ${r.stderr})`);
   const out = (r.stdout || '').trim();
   if (!out) return '';
@@ -222,5 +222,32 @@ test('registration is confined to the test state dir', () => {
   const written = fs.readdirSync(STATE_DIR);
   assert.ok(written.some((f) => f.endsWith('.current')),
     `registration landed in the test state dir; got: ${JSON.stringify(written)}`);
+});
+
+// The artifact browser's repository filter reads this file. A session's repository is the
+// primary checkout's name, so a worktree of `myrepo` records `myrepo`, not the worktree's dir.
+test('records the session repository once per artifact, worktrees under the primary name', () => {
+  const repos = path.join(STATE_DIR, 'repos.tsv');
+  const base = scratch(os.tmpdir(), 'la-repo-');
+  const primary = path.join(base, 'myrepo');
+  const git = (args, cwd) => spawnSync('git', args, { cwd, encoding: 'utf8' });
+  fs.mkdirSync(primary);
+  git(['init', '-q'], primary);
+  git(['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false',
+    'commit', '-q', '--allow-empty', '-m', 'init'], primary);
+  const wt = path.join(base, 'wt-elsewhere');
+  git(['worktree', 'add', '-q', '--detach', wt], primary);
+  const lines = () => (fs.existsSync(repos) ? fs.readFileSync(repos, 'utf8') : '')
+    .split('\n').filter((l) => l.startsWith('repo-test/'));
+
+  const art = '/Users/d/.claude/artifacts/repo-test/plan.html';
+  run(art, {}, wt);
+  run(art, {}, wt);
+  assert.deepStrictEqual(lines(), ['repo-test/plan.html\tmyrepo'],
+    'one line, named for the primary checkout, however often the file is rewritten');
+
+  run('/Users/d/.claude/artifacts/repo-test/scratch.html', {}, base);
+  assert.deepStrictEqual(lines(), ['repo-test/plan.html\tmyrepo'],
+    'a session outside any repository records nothing');
 });
 

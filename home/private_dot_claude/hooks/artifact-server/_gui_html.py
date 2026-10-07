@@ -40,7 +40,7 @@ border-radius:8px;padding:14px 16px;margin-bottom:10px;text-decoration:none;colo
 .meta{color:var(--overlay0);font-size:12px;display:flex;gap:14px;flex-wrap:wrap}
 .chip{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600;
 color:var(--crust)}
-.chip-host{background:var(--mauve)}.chip-done{background:var(--green)}
+.chip-host{background:var(--mauve)}.chip-repo{background:transparent;color:var(--text);border:1px solid var(--mauve)}.chip-done{background:var(--green)}
 .chip-active{background:var(--yellow)}.chip-planned{background:var(--overlay0)}
 .chip-cat{background:var(--blue)}.chip-svc{background:var(--surface1);color:var(--text)}
 .chip-tag{background:transparent;color:var(--subtext0);border:1px solid var(--surface1)}
@@ -57,11 +57,13 @@ footer{color:var(--overlay0);font-size:12px;padding:0 24px 30px;max-width:1100px
   <div class="controls">
     <input type="search" id="q" placeholder="Search titles, summaries and body text..." autofocus>
     <select id="host"><option value="">All hosts</option></select>
+    <select id="repo"><option value="">All repositories</option></select>
     <select id="category"><option value="">All categories</option></select>
     <select id="status"><option value="">Any status</option></select>
     <select id="sort">
       <option value="mtime">Newest first</option>
       <option value="title">Title A-Z</option>
+      <option value="repo">Repository</option>
       <option value="host">Host</option>
     </select>
     <label class="chk"><input type="checkbox" id="dupes"> show .md duplicates</label>
@@ -90,7 +92,7 @@ function fmtSize(n) {
 // finds the artifact whether those words are its tags, its category, or just its prose.
 function matches(a, terms) {
   if (!terms.length) return true;
-  const hay = [a.title, a.summary, a.name, a.host, a.text, a.category, a.status,
+  const hay = [a.title, a.summary, a.name, a.host, a.repo, a.text, a.category, a.status,
                (a.services || []).join(" "), (a.tags || []).join(" ")]
     .join(" ").toLowerCase();
   return terms.every(t => hay.includes(t));
@@ -107,15 +109,18 @@ function highlight(text, terms) {
 function render() {
   const terms = $("q").value.toLowerCase().split(/\s+/).filter(Boolean);
   const host = $("host").value;
+  const repo = $("repo").value;
   const category = $("category").value;
   const status = $("status").value;
   const sort = $("sort").value;
   const dupes = $("dupes").checked;
   let items = DATA.artifacts.filter(a =>
-    (!host || a.host === host) && (!category || a.category === category) &&
+    (!host || a.host === host) && (!repo || a.repo === repo) &&
+    (!category || a.category === category) &&
     (!status || a.status === status) &&
     (dupes || !a.companion_html) && matches(a, terms));
   items.sort((x, y) => sort === "title" ? x.title.localeCompare(y.title)
+           : sort === "repo" ? ((x.repo || "\uffff") + x.title).localeCompare((y.repo || "\uffff") + y.title)
            : sort === "host" ? (x.host + x.title).localeCompare(y.host + y.title)
            : y.mtime.localeCompare(x.mtime));
   $("count").textContent = items.length + " of " + DATA.artifacts.length + " artifacts";
@@ -139,6 +144,7 @@ function render() {
       ${a.summary ? `<p>${highlight(a.summary, terms)}</p>` : ""}
       <div class="meta">
         <span class="chip chip-host">${esc(a.host)}</span>
+        ${a.repo ? `<span class="chip chip-repo">${esc(a.repo)}</span>` : ""}
         ${cat}${stat}
         <span>${esc(a.name)}</span>
         <span>${fmtDate(a.updated || a.mtime)}</span>
@@ -156,13 +162,14 @@ async function load() {
       (values || []).map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join("");
   };
   fill("host", "All hosts", DATA.hosts);
+  fill("repo", "All repositories", DATA.repos);
   fill("category", "All categories", DATA.categories);
   fill("status", "Any status", DATA.statuses);
   $("foot").textContent = "Indexed " + fmtDate(DATA.generated) +
     " - artifacts are pruned 7 days after their last update.";
   render();
 }
-["q", "host", "category", "status", "sort", "dupes"].forEach(
+["q", "host", "repo", "category", "status", "sort", "dupes"].forEach(
   id => $(id).addEventListener("input", render));
 load();
 </script>

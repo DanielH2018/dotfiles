@@ -22,15 +22,18 @@ on request cannot. ~50 files parse in single-digit milliseconds.
 Two siblings ship beside this one in the same ConfigMap: `artifact_meta.py` holds the
 taxonomy and the metadata parsers, and `_gui_html.py` holds the page served at `/`.
 
-Local copy: vendored from DanielH2018/Server ansible/roles/k8s/artifacts/files/ and started by
-serve-artifacts.sh on each workstation. It differs from upstream in three places:
+Local copy: vendored from DanielH2018/Server ansible/roles/k8s/artifacts/files/ at 977d9bf3ab41
+and started by serve-artifacts.sh on each workstation. It differs from upstream in four places:
 
 - It binds ARTIFACTS_BIND, default 127.0.0.1. Upstream binds 0.0.0.0 inside a pod; a laptop
   must never serve these documents to the LAN.
 - ARTIFACTS_LOCAL_HOST names the one host tree that also answers a bare /<relpath>.
   link-artifact.sh emits http://127.0.0.1:<port>/<relpath>, which `http.server` served before
   this did, and every link already in a transcript keeps working.
-- The two multi-except clauses are parenthesised, because macOS's /usr/bin/python3 is 3.9.
+- The multi-except clauses are parenthesised, and artifact_meta.py defers annotations, because
+  macOS's /usr/bin/python3 is 3.9.
+- Each local artifact carries the repository its session worked in, read from
+  ARTIFACTS_REPOS_FILE, and the GUI filters and sorts on it. Upstream has no such field.
 """
 
 from __future__ import annotations
@@ -60,6 +63,30 @@ ROOT = Path(os.environ.get("ARTIFACTS_ROOT", "/srv/artifacts"))
 PORT = int(os.environ.get("ARTIFACTS_PORT", "8080"))
 BIND = os.environ.get("ARTIFACTS_BIND", "127.0.0.1")
 LOCAL_HOST = os.environ.get("ARTIFACTS_LOCAL_HOST", "")
+# link-artifact.sh appends `<relpath>\t<repo>` here each time a session writes an artifact,
+# naming the repository the session was working in. Unset or absent means no repo facet.
+REPOS_FILE = os.environ.get("ARTIFACTS_REPOS_FILE", "")
+
+
+def load_repos(path: str = REPOS_FILE) -> dict[str, str]:
+    """Map each artifact's relpath to the repository that last wrote it.
+
+    The file is append-only, so a later line for the same relpath wins: an artifact
+    rewritten from a second repository moves to it.
+    """
+    repos: dict[str, str] = {}
+    if not path:
+        return repos
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return repos
+    for line in text.splitlines():
+        rel, sep, repo = line.partition("\t")
+        if sep and rel and repo.strip():
+            repos[rel] = repo.strip()
+    return repos
+
 
 INDEXABLE = {
     ".html",
@@ -108,7 +135,11 @@ def scan(root: Path) -> list[tuple[str, Path, os.stat_result]]:
     return found
 
 
-def build_index(root: Path, known_services: list[str] | None = None) -> dict:
+def build_index(
+    root: Path,
+    known_services: list[str] | None = None,
+    repos: dict[str, str] | None = None,
+) -> dict:
     """Scans `root` and builds the searchable index of every artifact under it.
 
     Parses each HTML/Markdown file for title, summary, and metadata (matched against
@@ -119,12 +150,15 @@ def build_index(root: Path, known_services: list[str] | None = None) -> dict:
         root: Directory containing one subdirectory per host.
         known_services: Service names to match against metadata; loaded via
             load_known_services() when None.
+        repos: Relpath to repository name for LOCAL_HOST's artifacts; loaded via
+            load_repos() when None.
 
     Returns:
-        The index dict, with keys `generated`, `count`, `hosts`, `categories`, `statuses`
-        and `artifacts`.
+        The index dict, with keys `generated`, `count`, `hosts`, `repos`, `categories`,
+        `statuses` and `artifacts`.
     """
     known = load_known_services() if known_services is None else known_services
+    repos = load_repos() if repos is None else repos
     entries = []
     for host, path, st in scan(root):
         rel = path.relative_to(root / host).as_posix()
@@ -138,6 +172,8 @@ def build_index(root: Path, known_services: list[str] | None = None) -> dict:
             "size": st.st_size,
             "mtime": datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat(),
         }
+        if host == LOCAL_HOST and rel in repos:
+            entry["repo"] = repos[rel]
         if suffix in PARSEABLE:
             try:
                 body = path.read_text(encoding="utf-8", errors="replace")
@@ -150,13 +186,16 @@ def build_index(root: Path, known_services: list[str] | None = None) -> dict:
             apply_metadata(entry, body, suffix == ".md", known)
         # An .md alongside an .html of the same stem is the same document — the skill writes
         # both. Flagged so the GUI can fold the Markdown copy away by default.
-        entry["companion_html"] = suffix == ".md" and (path.parent / (path.stem + ".html")).exists()
+        entry["companion_html"] = (
+            suffix == ".md" and (path.parent / (path.stem + ".html")).exists()
+        )
         entries.append(entry)
     entries.sort(key=lambda e: e["mtime"], reverse=True)
     return {
         "generated": datetime.now(timezone.utc).isoformat(),
         "count": len(entries),
         "hosts": sorted({e["host"] for e in entries}),
+        "repos": sorted({e["repo"] for e in entries if e.get("repo")}),
         # Facet values come from what the corpus actually holds, not a fixed vocabulary, so a
         # category nothing uses never appears as a dead dropdown entry.
         "categories": sorted({e["category"] for e in entries if e.get("category")}),
@@ -174,9 +213,16 @@ class IndexCache:
         self._index: dict | None = None
 
     def signature(self) -> tuple:
-        return tuple(
-            (host, str(path), st.st_mtime_ns, st.st_size) for host, path, st in scan(self.root)
+        files = tuple(
+            (host, str(path), st.st_mtime_ns, st.st_size)
+            for host, path, st in scan(self.root)
         )
+        # The repo map changes without any artifact changing when a backfill rewrites it.
+        try:
+            st = os.stat(REPOS_FILE) if REPOS_FILE else None
+        except OSError:
+            st = None
+        return files, (st.st_mtime_ns, st.st_size) if st else None
 
     def get(self) -> dict:
         sig = self.signature()
@@ -235,7 +281,9 @@ class Handler(BaseHTTPRequestHandler):
         # here rather than BaseHTTPRequestHandler's stderr format.
         print(f"{self.address_string()} {format % args}", flush=True)
 
-    def _send(self, status: int, body: bytes, ctype: str, extra: dict | None = None) -> None:
+    def _send(
+        self, status: int, body: bytes, ctype: str, extra: dict | None = None
+    ) -> None:
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
@@ -300,7 +348,9 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     Handler.cache = IndexCache(ROOT)
     server = ThreadingHTTPServer((BIND, PORT), Handler)
-    print(f"serving {ROOT} on :{PORT} at {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+    print(
+        f"serving {ROOT} on :{PORT} at {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True
+    )
     server.serve_forever()
 
 

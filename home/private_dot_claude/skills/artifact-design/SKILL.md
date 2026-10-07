@@ -119,8 +119,13 @@ picks it — you never construct the URL yourself. Take the link that hook hands
 | Where the session runs | The link | Served by |
 |---|---|---|
 | daniel-box / daniel-server | `https://artifacts.daniel-hunter.com/a/<host>/<file>` | the cluster, behind Authelia |
-| Any other Linux host | `http://127.0.0.1:8181/<file>` | `serve-artifacts.sh`, a loopback server |
-| macOS | `file://<abs path>` | the filesystem |
+| Any other Linux or macOS host | `http://127.0.0.1:8181/<file>` | `serve-artifacts.sh`, a loopback server |
+| The sandbox | `file://<abs path>` | the filesystem |
+
+The loopback server runs the cluster's own artifact browser (`hooks/artifact-server/`), so
+`http://127.0.0.1:8181/` is the same searchable index, filterable by host, repository,
+category and status. The repository comes from the directory the writing session worked
+in, which `link-artifact.sh` records on every write.
 
 That hostname is the **public** name, not `artifacts.local.daniel-hunter.com`. A link is the
 only way anyone reaches an artifact, so it has to work from wherever the reader is, not only

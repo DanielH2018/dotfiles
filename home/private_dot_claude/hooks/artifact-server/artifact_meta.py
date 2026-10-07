@@ -14,9 +14,8 @@ defaulting to the constants below, so a test bounds them by argument rather than
 this module's globals.
 """
 
-# Vendored from DanielH2018/Server ansible/roles/k8s/artifacts/files/. The local copy runs
-# under macOS's /usr/bin/python3 (3.9), so annotations are deferred and multi-except is
-# parenthesised; upstream targets python:latest and needs neither.
+# Local copy: the server runs under macOS's /usr/bin/python3 (3.9), so annotations are
+# deferred and the multi-except is parenthesised. See artifact_server.py's docstring.
 from __future__ import annotations
 
 import html
@@ -32,7 +31,9 @@ EXCERPT_CHARS = int(os.environ.get("ARTIFACTS_EXCERPT_CHARS", "2000"))
 # The service names artifacts are matched against, rendered by Ansible from both hosts'
 # containers_list plus the retired names older documents still discuss. Absent in a unit test,
 # where the fixtures pass their own list.
-SERVICES_FILE = Path(os.environ.get("ARTIFACTS_SERVICES_FILE", "/app/known_services.json"))
+SERVICES_FILE = Path(
+    os.environ.get("ARTIFACTS_SERVICES_FILE", "/app/known_services.json")
+)
 
 # A service name is only tagged on a WORD match, never a substring: `nut` occurs inside
 # "minute" and "minutes", which appear in nearly every document here — measured 2026-08-19,
@@ -234,7 +235,11 @@ def load_known_services(path: Path | None = None) -> list[str]:
 
 def split_list(value: str) -> list[str]:
     """Parse a comma- or space-separated metadata value into a clean list."""
-    return [part.strip().lower() for part in re.split(r"[,\s]+", value or "") if part.strip()]
+    return [
+        part.strip().lower()
+        for part in re.split(r"[,\s]+", value or "")
+        if part.strip()
+    ]
 
 
 def declared_metadata(body: str, is_markdown: bool = False) -> dict:
@@ -267,7 +272,9 @@ def declared_metadata(body: str, is_markdown: bool = False) -> dict:
     return meta
 
 
-def derive_services(text: str, known: list[str], max_services: int = MAX_SERVICES) -> list[str]:
+def derive_services(
+    text: str, known: list[str], max_services: int = MAX_SERVICES
+) -> list[str]:
     """Service names the document is about.
 
     Word match only, and a name that is also an ordinary English noun needs two mentions —
@@ -350,7 +357,9 @@ def apply_metadata(entry: dict, body: str, is_markdown: bool, known: list[str]) 
         ("status", lambda: derive_status(entry.get("slices"))),
         (
             "services",
-            lambda: derive_services(f"{entry.get('title', '')} {entry.get('text', '')}", known),
+            lambda: derive_services(
+                f"{entry.get('title', '')} {entry.get('text', '')}", known
+            ),
         ),
     ):
         if declared.get(field):

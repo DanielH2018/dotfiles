@@ -46,11 +46,17 @@ def main():
         f.write("# Notes\n")
     with open(os.path.join(tmp, "secret.txt"), "w") as f:
         f.write("outside the tree")
+    # Shaped the way link-artifact.sh appends it: plan.html moved from one repo to
+    # another.
+    repos_file = os.path.join(tmp, "repos.tsv")
+    with open(repos_file, "w") as f:
+        f.write("plan.html\told-repo\nplan.html\tmyrepo\n")
 
     # The module reads its configuration at import time, as it does under the hook.
     os.environ.pop("ARTIFACTS_BIND", None)
     os.environ["ARTIFACTS_ROOT"] = root
     os.environ["ARTIFACTS_LOCAL_HOST"] = HOST
+    os.environ["ARTIFACTS_REPOS_FILE"] = repos_file
     sys.dont_write_bytecode = True
     sys.path.insert(0, os.path.join(HERE, "artifact-server"))
     import artifact_server
@@ -104,6 +110,19 @@ def main():
             names == ["notes.md", "plan.html"],
         )
         check("the index names the host from the symlink", index.get("hosts") == [HOST])
+
+        by_name = {a["name"]: a for a in index.get("artifacts", [])}
+        check(
+            "an artifact carries the repo its latest line names",
+            by_name.get("plan.html", {}).get("repo") == "myrepo",
+        )
+        check(
+            "an artifact with no recorded repo carries none",
+            "repo" not in by_name.get("notes.md", {}),
+        )
+        check(
+            "the repos facet lists only repos in use", index.get("repos") == ["myrepo"]
+        )
     finally:
         server.shutdown()
         shutil.rmtree(tmp, ignore_errors=True)

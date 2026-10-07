@@ -72,6 +72,28 @@ case "$path" in
     exit 0 ;;
 esac
 
+# Record which repository this session was working in, so the artifact browser
+# (artifact-server/, started by serve-artifacts.sh) can filter and sort by it. The hook runs
+# in the session's working directory, and a worktree's common git dir is the primary
+# checkout's, so every worktree of a repo records the primary checkout's name. A session
+# outside any repo records nothing. A line is appended only when the repo differs from the
+# last one recorded for that file, so repeated edits do not grow the file.
+if common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && [ -n "$common" ]; then
+  repo_name=$(basename "${common%/.git}")
+  repo_name="${repo_name%.git}"
+  case "$path" in
+    /artifacts/*) art_rel="${path#/artifacts/}" ;;
+    *) art_rel="${path#*/.claude/artifacts/}" ;;
+  esac
+  repos_file="${CLAUDE_ARTIFACT_STATE_DIR:-$HOME/.claude/logs/artifact-state}/repos.tsv"
+  if mkdir -p "${repos_file%/*}" 2>/dev/null; then
+    last=$(awk -F'\t' -v r="$art_rel" '$1 == r { last = $2 } END { print last }' "$repos_file" 2>/dev/null)
+    if [ "$last" != "$repo_name" ]; then
+      printf '%s\t%s\n' "$art_rel" "$repo_name" >> "$repos_file" 2>/dev/null
+    fi
+  fi
+fi
+
 # Fallback (the sandbox, and any write outside ~/.claude/artifacts): a file:// link,
 # opened with Warp's gesture. The macOS branch below overrides this for artifacts.
 url="file://$host"

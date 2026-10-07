@@ -39,9 +39,18 @@ LOG="$HOME/.claude/.artifacts-server.log"
 # The server reads one subdirectory per host under its root, because upstream mounts every
 # host's tree side by side. A workstation has one tree, so the root holds one symlink to it.
 ROOT="$HOME/.claude/.artifacts-root"
-HOST=$(hostname -s 2>/dev/null || echo local)
+# The same label link-artifact.sh puts in /a/<host>/ links. On macOS, `hostname` can follow a
+# DHCP-supplied name, so it prefers LocalHostName, which only changes when someone renames
+# the machine.
+if [[ -z "${CLAUDE_ARTIFACTS_HOST:-}" && "$(uname -s)" == Darwin ]]; then
+  HOST=$(scutil --get LocalHostName 2>/dev/null)
+fi
+HOST="${CLAUDE_ARTIFACTS_HOST:-${HOST:-$(hostname -s 2>/dev/null || echo local)}}"
+REPOS_FILE="${CLAUDE_ARTIFACT_STATE_DIR:-$HOME/.claude/logs/artifact-state}/repos.tsv"
 
 mkdir -p "$DIR" "$ROOT"
+# A link left under an older label would list every artifact twice, once per label.
+find "$ROOT" -mindepth 1 -maxdepth 1 -type l ! -name "$HOST" -delete 2>/dev/null
 ln -sfn "$DIR" "$ROOT/$HOST"
 
 # Already serving? -> nothing to do. Match on the deployed script's full path, never the bare
@@ -77,7 +86,7 @@ fi
 
 # Bind to loopback only: reachable through the SSH tunnel / forwarded port, never the LAN.
 ARTIFACTS_ROOT="$ROOT" ARTIFACTS_PORT="$PORT" ARTIFACTS_BIND=127.0.0.1 \
-  ARTIFACTS_LOCAL_HOST="$HOST" PYTHONDONTWRITEBYTECODE=1 \
+  ARTIFACTS_LOCAL_HOST="$HOST" ARTIFACTS_REPOS_FILE="$REPOS_FILE" PYTHONDONTWRITEBYTECODE=1 \
   detach python3 "$SERVER" >"$LOG" 2>&1 </dev/null &
 disown 2>/dev/null || true
 exit 0

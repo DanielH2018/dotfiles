@@ -253,7 +253,7 @@
          that runs its OWN artifact server on 8181 (the SessionStart hook is gated on
          linux, and WSL is linux). With both on 8181 the client-side `ssh -L` can't
          bind, fails with "Address already in use", and the browser silently reaches
-         the local server instead — a directory listing that renders but 404s every
+         the local server instead — which renders, but 404s every
          file written here.
 
          ~/.ssh/config no longer forwards it. CLAUDE_ARTIFACTS_BASE_URL above wins in

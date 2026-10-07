@@ -1,14 +1,20 @@
-# These modules are vendored from DanielH2018/Server, which formats at 100 columns. Keeping
-# upstream's width keeps a diff against upstream down to the local changes.
-line-length = 100
+# These modules are vendored from DanielH2018/Server. Upstream's formatter wraps at 88 columns
+# and its width lint allows 100; matching both keeps a diff against upstream down to the local
+# changes.
+line-length = 88
 # serve-artifacts.sh runs these under macOS's /usr/bin/python3, which is 3.9. Without this pin
-# the autofix rewrites timezone.utc to datetime.UTC (3.11+) and the server dies at import.
+# the autofix rewrites timezone.utc to datetime.UTC (3.11+), the formatter strips the parens
+# from a multi-except (3.14+), and the server dies at import.
 target-version = "py39"
 
 [lint]
 # Upstream keeps the shebang; chezmoi deploys the file without the executable bit because
-# serve-artifacts.sh starts it as `python3 artifact_server.py`.
+# serve-artifacts.sh starts it as `python3 artifact_server.py`. Upstream also writes the short
+# re.I / re.S flag aliases.
 ignore = ["EXE001", "FURB167"]
+
+[lint.pycodestyle]
+max-line-length = 100
 
 [lint.per-file-ignores]
 # The page is JavaScript and CSS inside one Python string; ruff's width rule has nothing to say
