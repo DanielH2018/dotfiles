@@ -10,6 +10,7 @@ disk, not just my replies.
 
 - No emojis unless I ask. Reference code as `file:line`.
 - Paths to things I'll open (specs, plans, HTML reports, sandbox artifacts) go as short clickable markdown links, never raw. A raw path wraps in a terminal session and stops being clickable once it crosses a line boundary. Which form depends on the surface: a terminal session takes `[label](file:///abs/path)`; the Claude desktop app rejects `file://` outright and resolves a bare path against the session's granted folders, so there it is a path relative to the working directory, or the `http://127.0.0.1` URL for anything under `~/.claude/artifacts` (which the app will never grant, being inside its own config tree).
+- Every reference to something with a URL is a markdown link: a ticket, a PR, an issue, a Slack thread, a doc page, a dashboard, an incident, a web source. Write `[PROC-1234](https://…/browse/PROC-1234)`, never a bare `PROC-1234`. Build the URL from a known pattern when the ID alone determines it. Leave the reference unlinked only when no URL can be derived, rather than guessing one.
 - Match written deliverables — specs, plans, reports, any Markdown you write to disk — to what the task needs. Cover the substance without padding it out.
 
 ### Sentence-level clarity
