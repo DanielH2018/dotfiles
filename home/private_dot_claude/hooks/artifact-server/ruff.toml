@@ -1,0 +1,16 @@
+# These modules are vendored from DanielH2018/Server, which formats at 100 columns. Keeping
+# upstream's width keeps a diff against upstream down to the local changes.
+line-length = 100
+# serve-artifacts.sh runs these under macOS's /usr/bin/python3, which is 3.9. Without this pin
+# the autofix rewrites timezone.utc to datetime.UTC (3.11+) and the server dies at import.
+target-version = "py39"
+
+[lint]
+# Upstream keeps the shebang; chezmoi deploys the file without the executable bit because
+# serve-artifacts.sh starts it as `python3 artifact_server.py`.
+ignore = ["EXE001", "FURB167"]
+
+[lint.per-file-ignores]
+# The page is JavaScript and CSS inside one Python string; ruff's width rule has nothing to say
+# about it.
+"_gui_html.py" = ["E501"]
