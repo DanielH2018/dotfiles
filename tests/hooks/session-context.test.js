@@ -42,6 +42,11 @@ echo "shim reinstalled"
   return root;
 }
 
+// A 10s bound for the tests that assert a trusted shim RAN: under the full parallel suite,
+// starting bash can take longer than the hook's 1s shim default, and the hook then correctly
+// skips the shim. The hang tests keep the defaults, which they check.
+const ROOMY = { SESSION_CONTEXT_TIMEOUT_S: '10' };
+
 function runHook(cwd, { trusted, source = 'startup', pending, extraEnv = {} } = {}) {
   const env = { ...process.env, HOME: fs.realpathSync(scratch(os.tmpdir(), 'sesctx-')), ...extraEnv };
   if (trusted !== undefined) env.CLAUDE_SHIM_TRUSTED_ROOTS = trusted;
@@ -67,7 +72,7 @@ test('does not run bin/install-hook-shim from an untrusted repo', { skip }, () =
 
 test('runs the shim for a repo on the trust list', { skip }, () => {
   const root = repoWithShim();
-  const { out, code } = runHook(root, { trusted: root });
+  const { out, code } = runHook(root, { trusted: root, extraEnv: ROOMY });
   assert.strictEqual(code, 0);
   assert.ok(fs.existsSync(path.join(root, 'SHIM_RAN')), 'the trusted repo\'s shim ran');
   assert.match(out, /shim reinstalled/, 'its output is relayed');
@@ -75,7 +80,7 @@ test('runs the shim for a repo on the trust list', { skip }, () => {
 
 test('honours a multi-entry trust list', { skip }, () => {
   const root = repoWithShim();
-  const { code } = runHook(root, { trusted: `/nonexistent/a:${root}:/nonexistent/b` });
+  const { code } = runHook(root, { trusted: `/nonexistent/a:${root}:/nonexistent/b`, extraEnv: ROOMY });
   assert.strictEqual(code, 0);
   assert.ok(fs.existsSync(path.join(root, 'SHIM_RAN')), 'matched a non-first entry');
 });
@@ -86,7 +91,7 @@ test('a linked worktree of a trusted repo is still trusted', { skip }, () => {
   const root = repoWithShim();
   const wt = path.join(root, 'wt');
   execFileSync('git', ['worktree', 'add', '-q', '-b', 'side', wt], { cwd: root, stdio: 'ignore', env: GIT_ENV });
-  const { code } = runHook(wt, { trusted: root });
+  const { code } = runHook(wt, { trusted: root, extraEnv: ROOMY });
   assert.strictEqual(code, 0);
   assert.ok(fs.existsSync(path.join(root, 'SHIM_RAN')), 'the owning repo was resolved from the worktree');
 });

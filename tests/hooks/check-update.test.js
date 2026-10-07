@@ -34,9 +34,12 @@ function run(env = {}) {
 }
 
 test('a version change since the last session is announced', { skip }, () => {
+  // A 10s bound, not the 1s the hung case uses: under the full parallel suite, spawning bash
+  // and the stub claude can take longer than 1s, and the hook then correctly prints nothing.
+  const roomy = { CHECK_UPDATE_TIMEOUT_S: '10' };
   fs.rmSync(path.join(DIR, '.claude'), { recursive: true, force: true });
-  assert.strictEqual(run({ STUB_CLAUDE_VERSION: '2.0.0' }).stdout, '');
-  assert.match(run({ STUB_CLAUDE_VERSION: '2.0.1' }).stdout, /updated from v2\.0\.0 to v2\.0\.1/);
+  assert.strictEqual(run({ ...roomy, STUB_CLAUDE_VERSION: '2.0.0' }).stdout, '');
+  assert.match(run({ ...roomy, STUB_CLAUDE_VERSION: '2.0.1' }).stdout, /updated from v2\.0\.0 to v2\.0\.1/);
 });
 
 test('a hung claude --version is cut off and named', { skip }, () => {
