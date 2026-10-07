@@ -30,7 +30,11 @@ if [[ -d "$DIR" ]]; then
   # Executables are tools, not reports — nvidia-install.sh and usb-early-stop.sh both
   # live here alongside the docs. They are not regenerable from a conversation the way
   # a findings page is, so the sweep leaves anything with the user-execute bit alone.
-  find "$DIR" -type f ! -perm -u+x -mtime "+$DAYS" -delete 2>/dev/null
+  # pinned/ holds reference pages kept on purpose, such as an architecture map. Those
+  # change rarely, so mtime says nothing about whether they are still wanted.
+  # The exclusion is a -path test, not -prune: -delete implies -depth, under which
+  # find ignores -prune.
+  find "$DIR" -type f ! -path "$DIR/pinned/*" ! -perm -u+x -mtime "+$DAYS" -delete 2>/dev/null
   # Sweeping files out of a subdirectory leaves the directory behind; drop the empties
   # so the artifacts dir does not silently fill with husks.
   find "$DIR" -mindepth 1 -type d -empty -delete 2>/dev/null

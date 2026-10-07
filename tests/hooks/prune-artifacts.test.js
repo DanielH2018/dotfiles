@@ -85,6 +85,19 @@ test('an executable inside a subdirectory keeps that directory alive', () => {
   assert.ok(fs.existsSync(path.join(s.art, 'mx-ergo')), 'dir is not empty, so it survives the -empty sweep');
 });
 
+test('files under pinned/ are kept however old, at any depth', () => {
+  const s = sandbox();
+  write(path.join(s.art, 'pinned', 'architecture.html'), 60);
+  write(path.join(s.art, 'pinned', 'maps', 'network.html'), 60);
+  write(path.join(s.art, 'unpinned', 'pinned.html'), 60);
+  run(s);
+
+  assert.ok(fs.existsSync(path.join(s.art, 'pinned', 'architecture.html')), 'pinned page survives');
+  assert.ok(fs.existsSync(path.join(s.art, 'pinned', 'maps', 'network.html')), 'nested pinned page survives');
+  assert.ok(!fs.existsSync(path.join(s.art, 'unpinned', 'pinned.html')),
+    'only the top-level pinned/ dir is exempt, not the word in a path');
+});
+
 test('a refreshed artifact survives regardless of when it was created', () => {
   const s = sandbox();
   // Created long ago, rewritten yesterday as a slice landed — mtime is what counts.
