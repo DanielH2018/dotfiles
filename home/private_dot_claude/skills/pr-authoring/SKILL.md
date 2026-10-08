@@ -74,7 +74,7 @@ The questions worth a heading, in rough order of how often they earn one:
 |---|---|
 | What is actually wrong | Any bug fix. Put the evidence here, not the theory. |
 | What did you rule out, and why | Whenever an obvious cheaper fix exists. See below. |
-| What changed | Whenever the diff is not self-evident. A before/after table beats prose for a swap of values. |
+| What changed | Whenever the diff is not self-evident. A before/after table beats prose for a swap of values. A `diff` of the call tree or file tree beats prose for a structural change, and GitHub renders Mermaid when a sequence needs it. |
 | What proves it can fail | Any new check, guard, probe or validator. |
 | What did you run | Always — see *Verification*. |
 | What must happen after merge | Whenever merging is not shipping. |

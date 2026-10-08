@@ -1,17 +1,17 @@
 ---
 name: artifact-design
-description: Use when producing an implementation plan, spec, or design document for review — render it as a clean, self-contained local HTML artifact alongside the written version. Local by default (~/.claude/artifacts/); never publishes to claude.ai unless explicitly asked.
+description: Use when producing a document Daniel will sit down and read — an implementation plan, spec, design doc, findings or review write-up, audit, or explainer — render it as a clean, self-contained local HTML artifact alongside the written version. Local by default (~/.claude/artifacts/); never publishes to claude.ai unless explicitly asked.
 ---
 
 # artifact-design
 
-Render plans / specs / design docs as a readable, self-contained HTML file **in addition to** the written version, not instead of it.
+Render a document Daniel will sit down and read as a readable, self-contained HTML file **in addition to** the written version, not instead of it.
 
 ## When to use
 
-- Use when a plan/spec/design doc is about to go to Daniel for review, in plan mode or normal chat.
-- Load it before you write the plan, not after — the artifact and the chat message go out together. (Loading early, emitting the link last: see Output rules.)
-- Only render when the deliverable is a plan or spec for review. A status update, a quick answer, or a single-file diff isn't a plan and doesn't need one.
+- Use when a plan, spec, design doc, findings or review write-up, audit, or explainer is about to go to Daniel, in plan mode or normal chat. This is CLAUDE.md's trigger: "a document I'm going to sit down and read".
+- Load it before you write the document, not after — the artifact and the chat message go out together. (Loading early, emitting the link last: see Output rules.)
+- A status update, a quick answer, or a single-file diff is not such a document and doesn't need one.
 - Skip when the plan is trivial (a one-liner or single obvious step), or when Daniel said not to.
 
 ## Slice status — required whenever the doc has phases
@@ -30,6 +30,7 @@ Mark every slice on its container element:
 ```
 
 - `data-status` is one of `planned`, `active`, `done`. The visible chip must agree with it.
+- Each slice shows the `diff` of the call tree or file tree it adds, so its shape is agreed before code exists.
 - A `done` slice carries its PR number and short SHA — that's the evidence it shipped.
 - Chip colors from the palette below: `planned` overlay0, `active` yellow, `done` green.
   Chip text is crust `#11111b`, never white.
@@ -179,6 +180,7 @@ green `#40a02b`, yellow `#df8e1d`, red `#d20f39`, mauve `#8839ef`) rather than i
 
 - System font stack; generous line-height.
 - Lead with a one-line summary and any at-a-glance stats, then the detail — prefer tables over walls of prose.
+- Draw a diagram as inline SVG or HTML/CSS, or as a tree in a `<pre>`. Never load Mermaid from a CDN; the file must render offline.
 - Use `code` styling for file paths, commands, and identifiers.
 - Keep it skimmable: headers, tables, and severity/priority cues where relevant.
 - Avoid emojis unless Daniel asks for them.
