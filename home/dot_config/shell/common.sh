@@ -62,6 +62,24 @@ claude() {
   command claude "$@"
 }
 
+# claude-agents — start `claude agents` as the dedicated `claude` UNIX user (daniel-box moves
+# new interactive sessions there; see server/docs/claude-agent-user.md). It is a separate name
+# on purpose: plain `claude` above still starts a session as this user, which is where the
+# sessions that predate the move stay. Defined only where that user exists, so every other
+# machine gets no function and no failing sudo. The `id` test keeps it out of the claude
+# user's own shells, where it would sudo to itself.
+#
+# `machinectl shell` opens a real login session for the target user (own cgroup and runtime
+# dir), which `sudo -u` does not. The script is single-quoted so `~` expands in THAT shell,
+# and the caller's arguments ride as "$@" after the $0 placeholder, so no argument is ever
+# re-parsed by a shell. Plain sudo: it prompts, and nothing here widens the sudo or polkit
+# policy.
+if getent passwd claude >/dev/null 2>&1 && [ "$(id -un)" != claude ]; then
+  claude-agents() {
+    sudo machinectl shell claude@ /bin/bash -lc 'cd ~/server && exec claude agents "$@"' claude-agents "$@"
+  }
+fi
+
 # --- Vault (LLM Wiki) location for /lint, /healthcheck, /rebuild ---
 # The vault lives on the Windows side under WSL; other machines don't have it. Export the var
 # only when a candidate path exists, so this is a clean no-op elsewhere (the vault skills skip
