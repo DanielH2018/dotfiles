@@ -1,9 +1,23 @@
 ---
 name: otel-review
-description: Use when reviewing, auditing or debugging Claude Code OTEL telemetry across the machines — this PC, daniel-box, daniel-server. Covers pipeline health, sessions that export nowhere, api_error rates, hook failures, MCP connection churn, and compaction cost. Triggers on "review the OTEL logs", "check telemetry", "is anything not exporting", "why is Loki empty".
+description: Use when reviewing, auditing or debugging Claude Code OTEL telemetry across the machines — this PC, daniel-box, daniel-server. Covers pipeline health, sessions that export nowhere, then — unprompted, once the pipeline is healthy — analysis of the data itself: spend, cache efficiency, api_error and tool-failure rates, hook failures, MCP connection churn, compaction, and the tooling-rule savings. Triggers on "review the OTEL logs", "check telemetry", "analyse the telemetry", "is anything not exporting", "why is Loki empty".
 ---
 
 # otel-review
+
+A run has two phases, and the second follows the first without asking:
+
+```
+1. Health   — otel-sweep --deep --rows; is every machine exporting?
+     │
+     ├─ any fault ──► report the faults (## Report). Offer the analysis in one line.
+     │
+     └─ all healthy ─► 2. Analyse — run every step in ## Analyse the data, then report both.
+```
+
+The user asking for a review is the ask for the analysis. Do not stop after a clean health
+check to ask whether to look at the data. A health report that says "all three healthy" and
+nothing else is an unfinished run.
 
 ## Gather
 
@@ -40,9 +54,10 @@ is that there is no attribute access: `items(d)` not `d.items()`, `get(d, k, def
 There is no unprompted ad-hoc query path to the other two machines, and that is deliberate —
 see the grant comment in `settings.permissions.json`.
 
-Start with `--rows`. Escalate to `--deep` when the fast pass shows a machine with events
-but you are asked whether anything is missing — silent sessions are invisible to the fast
-pass by construction.
+Run `--deep` for the health phase. Silent sessions are invisible to the fast pass by
+construction, so a clean `--rows` pass cannot clear the gate into the analysis. Use the fast
+pass alone only when the question is narrower than a review, such as "is daniel-box
+exporting".
 
 ## The three machines are not alike
 
@@ -173,12 +188,86 @@ Judge each machine against what it should look like, then report only what depar
 - k3s embeds containerd. `command -v docker podman` finding nothing does not mean a machine
   runs no containers.
 
+## Analyse the data
+
+The health gate is clear when every machine is reachable, `otelq ready` succeeds, `--deep`
+lists no silent session, and every node's `os_version` holds a non-zero share. Then run every
+step below. The window is `7d`. Re-run a step at `24h` only when its 7d figure looks off, to
+tell a standing pattern from a recent change.
+
+Every query here was checked against live data on 2026-10-09. The event and field names still
+change between releases, so a step that returns nothing gets the enumerate query from
+*Writing the query* before it is reported as zero.
+
+1. **Savings headlines.** The tooling rules have their own analyser; start there.
+
+   ```bash
+   otelq savings all --rows
+   otelq savings failures --rows        # the retry tax
+   otelq savings bytes --rows           # where context goes
+   otelq savings subst --rows           # is the substitution rule holding
+   otelq savings prompts --since 24h --rows
+   otelq savings subagents --rows
+   ```
+
+   `reduction` and `trend` read local files, so run them on each machine being measured
+   rather than over ssh (see *Writing the query*).
+
+2. **Spend and cache efficiency.** Cost is a Prometheus counter, labelled by `model`. Tokens
+   carry `type` = `input`, `output`, `cacheRead`, `cacheCreation`.
+
+   ```
+   sum by (model) (increase(claude_code_cost_usage_USD_total[7d]))
+   sum by (type)  (increase(claude_code_token_usage_tokens_total[7d]))
+   ```
+
+   Report the cache-read share, `cacheRead / (cacheRead + cacheCreation + input)`. A falling
+   share means sessions are re-paying for their prefix. Name the model that dominates spend.
+
+3. **API errors.** Count `api_error`, `api_retries_exhausted` and `internal_error` against
+   `api_request` in the event enumeration. Report the rate, not the count. For a non-zero
+   count, pull the events with `--stream --limit 5` and quote the error field.
+
+4. **Tool failures.** `tool_result` carries `success` and `tool_name`:
+
+   ```
+   sum by (tool_name) (count_over_time({service_name="claude-code"} | event_name="tool_result" | success="false" [7d]))
+   ```
+
+   Compare each tool's failures against its total. A tool failing at several times the
+   overall rate is the finding. A raw count only says which tool is used most.
+
+5. **Hook failures.** Group by `hook_event`, then pull an example of the worst one:
+
+   ```
+   sum by (hook_event) (count_over_time({service_name="claude-code"} | event_name="hook_execution_complete" | num_non_blocking_error!="0" [7d]))
+   ```
+
+   The event says how many hooks failed, never which. Name the hook event, and then read the
+   hooks registered for it to find the candidate.
+
+6. **MCP churn.** Group `mcp_server_connection` by `status` and `app_entrypoint`. Apply the
+   `sdk-cli` rule from *Reading the result* before reporting. A `failed` status is always
+   worth a line.
+
+7. **Compaction.** Group `compaction` by `trigger`, and apply the `precompute_reuse` rule
+   from *Reading the result*.
+
+Rank the analysis findings by what they cost: dollars first, then interruptions, then context
+bytes. A step with nothing unusual gets one line saying so, with its number. It does not get
+its own section.
+
 ## Report
 
 Lead with the machine that has a problem, or say plainly that all three are healthy. For each
 finding give the evidence field it came from and the exact command that fixes it — this skill
 does not mutate anything, so the user runs the fix.
 
+When the gate cleared, the analysis follows the health line in the same report. Each
+analysis finding carries its number, what it is compared against, and the change that would
+move it, such as a hook to fix or a rule to tighten.
+
 Done when every machine is either accounted for as healthy or carries a named finding with a
 command attached, and any machine the sweep could not reach is called out as unknown rather
-than silently dropped.
+than silently dropped. When the gate cleared, every step in *Analyse the data* also has
+either a finding or a one-line all-clear.
