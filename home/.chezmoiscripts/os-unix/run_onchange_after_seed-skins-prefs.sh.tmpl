@@ -1,0 +1,35 @@
+#!/bin/sh
+# Seeds the skins plugin's prefs on a host that has never run it: the built-in catppuccin
+# skin (Catppuccin Mocha, the palette every terminal here uses) with the band above the
+# prompt switched off. The band's context and 5h/7d meters duplicate statusline-command.sh,
+# and its compact nudge fires at a fixed 70% that ignores the ~600k auto-compact point
+# settings.base.json pins, so the status line stays the one place those numbers show.
+#
+# The plugin owns this file and rewrites it on every `/skin` change, so this only writes
+# when the file is absent. A chezmoi-managed target would overwrite `/skin` changes on
+# the next apply, and its parent ~/.claude/plugins is mode 770, which no chezmoi source
+# attribute reproduces. To change the seeded prefs on a host that already has the file,
+# run `/skin` there; to re-seed, delete the file and re-apply.
+#
+# The store file is named <plugin>_<marketplace>-<first 12 hex of sha256("skins@hellosverre-mods")>,
+# so the name is the same on every host.
+# seed version: 1
+store="$HOME/.claude/plugins/store"
+file="$store/skins_hellosverre-mods-8037c34839ba.json"
+[ -e "$file" ] && exit 0
+mkdir -p "$store"
+umask 077
+cat > "$file" <<'EOF'
+{
+  "custom": {},
+  "prefs": {
+    "skin": "catppuccin",
+    "icons": "unicode",
+    "rail": true,
+    "tables": true,
+    "shimmer": true,
+    "band": false,
+    "clipOutput": false
+  }
+}
+EOF

@@ -19,6 +19,11 @@
          never expires. `find -mtime +30` truncates the day count, so a file is deleted once
          it is 31 full days old. Set to 0 to disable the sweep entirely. */}}
     "CLAUDE_ARTIFACT_RETENTION_DAYS": "30",
+    {{/* The skins plugin draws its light palette unless something says the terminal is
+         dark. Its `auto` theme reads COLORFGBG, which no terminal here sets, then GNOME's
+         color-scheme, which reads 'default' (light) on the headless hosts. Every terminal
+         here runs Catppuccin Mocha, so pin it. */}}
+    "SKINS_THEME": "dark",
 {{ if has .chezmoi.hostname (list "daniel-box" "daniel-server" "daniel-pi") }}
     {{/* sudo run from a `!` command has no terminal to prompt on, so without an askpass
          helper it just refuses. ~/.zshenv sets this too, but that only reaches shells that
@@ -930,7 +935,11 @@
          the reader and its skill, nothing that writes. Needs telemetry reaching a Loki that
          holds claude-code events; hosts without one get a skill that reports it cannot
          connect, not a broken session. */}}
-    "claude-permission-audit@daniel-tools": true
+    "claude-permission-audit@daniel-tools": true,
+    {{/* Restyles the transcript: tool rail, table cards, spinner, turn footer. Its prefs
+         (skin, band off) live in the plugin store, which
+         .chezmoiscripts/os-unix/run_onchange_after_seed-skins-prefs.sh.tmpl seeds. */}}
+    "skins@hellosverre-mods": true
   },
   "extraKnownMarketplaces": {
     "daniel-tools": {
@@ -939,6 +948,12 @@
         "repo": "DanielH2018/claude-permission-audit"
       },
       "autoUpdate": true
+    },
+    "hellosverre-mods": {
+      "source": {
+        "source": "github",
+        "repo": "hellosverre/claude-skins"
+      }
     }
   },
   "sandbox": {{/* macOS-only: the block below is macOS-tuned (1Password agent socket, /System, allowUnixSockets) and Linux lacks bwrap/socat, so an enabled sandbox there just runs unsandboxed and warns about glob Read/Edit rules it can't enforce */}}{{ if eq .chezmoi.os "darwin" }}{
