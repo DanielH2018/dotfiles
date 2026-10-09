@@ -57,14 +57,14 @@ function leakFile(lines) {
 }
 const LEAK_INPUT = { workspace: { current_dir: os.tmpdir() }, model: { id: 'claude-opus-5-5' } };
 
-test('untriaged credential findings show, summed across runs, with the marker path', { skip }, () => {
+test('untriaged credential findings show, summed across runs, without the marker path', { skip }, () => {
   const f = leakFile([
     ['2026-08-29T16:02:09Z', '2', '/home/u/.claude/logs/transcript-leaks.jsonl'],
     ['2026-08-29T16:45:03Z', '3', '/home/u/.claude/logs/transcript-leaks.jsonl'],
   ]);
   const out = stripAnsi(run(LEAK_INPUT, '400', f).stdout);
-  assert.match(out, /⚠ 5 transcript leak\(s\), see /, 'counts are summed, not the last run alone');
-  assert.ok(out.includes(f), 'the segment names the file that says where the details are');
+  assert.match(out, /⚠ 5 transcript leak\(s\)/, 'counts are summed, not the last run alone');
+  assert.ok(!out.includes(path.dirname(f)), 'the path costs a row of width; the count is the alert');
 });
 
 test('a scan that could not run shows as such, not as a finding', { skip }, () => {
@@ -102,11 +102,11 @@ function otelState(findingsLines) {
   return dir;
 }
 
-test('otel-sweep-watch findings show with a count and the state path', { skip }, () => {
+test('otel-sweep-watch findings show with a count and no state path', { skip }, () => {
   const state = otelState(['box: Loki unreachable - nothing is being recorded']);
   const out = stripAnsi(run(LEAK_INPUT, '400', '/nonexistent/transcript-leaks-pending', { XDG_STATE_HOME: state }).stdout);
-  assert.match(out, /⚠ 1 otel finding\(s\), see /);
-  assert.ok(out.includes(path.join(state, 'otel-sweep-watch', 'findings-pending')));
+  assert.match(out, /⚠ 1 otel finding\(s\)/);
+  assert.ok(!out.includes(state), 'the state path is not rendered');
 });
 
 test('an empty findings-pending file shows no otel segment', { skip }, () => {
@@ -386,11 +386,22 @@ test('wrapping preserves every segment and splits only between them', { skip }, 
 
   const narrow = run(WIDE_FIXTURE, '40').stdout;
   assert.ok(narrow.includes('\n'), 'a narrow terminal wraps onto more than one row');
-  assert.strictEqual(stripAnsi(narrow).split('\n').join(''), wide,
+  assert.strictEqual(stripAnsi(narrow).split('\n').join(' '), wide,
     'joined rows reproduce the unwrapped line exactly — nothing dropped or reordered');
   // A break inside a segment would leave an orphaned SGR sequence on the next row.
   for (const line of narrow.split('\n')) {
     assert.ok(!line.startsWith('\x1b[0m'), `row starts mid-segment: ${JSON.stringify(line)}`);
+  }
+});
+
+test('segments are separated by exactly one space, with none at a row edge', { skip }, () => {
+  // Each segment used to pad itself on both sides, so neighbours rendered two spaces apart.
+  const leak = leakFile([['2026-08-29T16:45:03Z', '1', '/home/u/leaks.jsonl']]);
+  for (const columns of ['400', '40']) {
+    for (const row of stripAnsi(run(WIDE_FIXTURE, columns, leak).stdout).split('\n')) {
+      assert.doesNotMatch(row, / {2}/, `double space in row: ${JSON.stringify(row)}`);
+      assert.strictEqual(row, row.trim(), `padded row edge: ${JSON.stringify(row)}`);
+    }
   }
 });
 

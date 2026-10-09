@@ -112,8 +112,9 @@ add() { put "$@"; end_seg; }
 # number of distinct findings: the scanner writes their fingerprints in a fourth column
 # and never counts one twice, so the sum below is a distinct total. A zero count is a scan that could not run, which needs saying separately:
 # silence from a detector that never ran looks exactly like a clean result. The segment
-# names the marker file, whose third column says where the details are. `-s` comes
-# first, so the common case costs no fork.
+# shows only the counts; the marker file is $CLAUDE_TRANSCRIPT_LEAK_PENDING or the default
+# below, and its third column says where the details are. `-s` comes first, so the common
+# case costs no fork.
 leak_file="${CLAUDE_TRANSCRIPT_LEAK_PENDING:-$HOME/.claude/logs/transcript-leaks-pending}"
 if [[ -s "$leak_file" ]]; then
   read -r leak_found leak_down < <(awk -F'\t' '
@@ -121,12 +122,11 @@ if [[ -s "$leak_file" ]]; then
     { down += 1 }
     END { printf "%d %d\n", found, down }
   ' "$leak_file" 2>/dev/null)
-  leak_where="${leak_file/#$HOME/\~}"
   if [[ "${leak_found:-0}" =~ ^[0-9]+$ ]] && (( leak_found > 0 )); then
-    add '\033[38;2;243;139;168m ⚠ %s transcript leak(s), see %s \033[0m' "$leak_found" "$leak_where"
+    add '\033[38;2;243;139;168m⚠ %s transcript leak(s)\033[0m' "$leak_found"
   fi
   if [[ "${leak_down:-0}" =~ ^[0-9]+$ ]] && (( leak_down > 0 )); then
-    add '\033[38;2;243;139;168m ⚠ transcript scan could not run %s time(s), see %s \033[0m' "$leak_down" "$leak_where"
+    add '\033[38;2;243;139;168m⚠ transcript scan could not run %s time(s)\033[0m' "$leak_down"
   fi
 fi
 
@@ -138,22 +138,21 @@ otel_findings_file="${XDG_STATE_HOME:-$HOME/.local/state}/otel-sweep-watch/findi
 if [[ -s "$otel_findings_file" ]]; then
   otel_count=$(grep -c . "$otel_findings_file" 2>/dev/null)
   if [[ "${otel_count:-0}" =~ ^[0-9]+$ ]] && (( otel_count > 0 )); then
-    otel_where="${otel_findings_file/#$HOME/\~}"
-    add '\033[38;2;243;139;168m ⚠ %s otel finding(s), see %s \033[0m' "$otel_count" "$otel_where"
+    add '\033[38;2;243;139;168m⚠ %s otel finding(s)\033[0m' "$otel_count"
   fi
 fi
 
 # Segment: vim mode (purple) — only shown when vim mode is active
-[[ -n "$vim_mode" ]] && add '\033[38;2;203;166;247m %s \033[0m' "$vim_mode"
+[[ -n "$vim_mode" ]] && add '\033[38;2;203;166;247m%s\033[0m' "$vim_mode"
 
 # Segment: session name (orange) — only shown when renamed
-[[ -n "$session_name" ]] && add '\033[38;2;250;179;135m %s \033[0m' "$session_name"
+[[ -n "$session_name" ]] && add '\033[38;2;250;179;135m%s\033[0m' "$session_name"
 
 # Segment: directory (yellow)
-add '\033[38;2;249;226;175m %s \033[0m' "$short_cwd"
+add '\033[38;2;249;226;175m%s\033[0m' "$short_cwd"
 
 # Segment: worktree name (purple) — only shown in linked worktrees
-[[ -n "$worktree_name" ]] && add '\033[38;2;203;166;247m ⎇ %s \033[0m' "$worktree_name"
+[[ -n "$worktree_name" ]] && add '\033[38;2;203;166;247m⎇ %s\033[0m' "$worktree_name"
 
 # Segment: git branch (aqua) + dirty indicator + ahead/behind
 # Cache git status for 3 seconds to avoid repeated forks on rapid redraws
@@ -172,19 +171,18 @@ if [[ -n "$git_branch" ]]; then
   else
     read -r dirty_count ahead behind < "$_git_cache"
   fi
-  put '\033[38;2;166;227;161m  %s\033[0m' "$git_branch"
+  put '\033[38;2;166;227;161m%s\033[0m' "$git_branch"
   (( dirty_count > 0 )) && put '\033[38;2;250;179;135m *%d\033[0m' "$dirty_count"
   (( ahead > 0 )) && put '\033[38;2;166;227;161m +%d\033[0m' "$ahead"
   (( behind > 0 )) && put '\033[38;2;243;139;168m -%d\033[0m' "$behind"
-  put ' '
   end_seg
 fi
 
 # Segment: model (blue) — compact label
-add '\033[38;2;137;180;250m %s \033[0m' "$model_label"
+add '\033[38;2;137;180;250m%s\033[0m' "$model_label"
 
 # Segment: effort level (dim grey) — only shown when set and non-default (medium)
-[[ -n "$effort_level" && "$effort_level" != "medium" ]] && add '\033[38;2;108;112;134m %s \033[0m' "$effort_level"
+[[ -n "$effort_level" && "$effort_level" != "medium" ]] && add '\033[38;2;108;112;134m%s\033[0m' "$effort_level"
 
 # Segment: context usage
 #
@@ -260,11 +258,11 @@ if [[ -n "$used_int" ]]; then
     compact_pct=$(( compact_at * 100 / ctx_window ))
   fi
   if (( used_int >= compact_pct )); then
-    add '\033[38;2;243;139;168mctx:%d%% \033[0m' "$used_int"
+    add '\033[38;2;243;139;168mctx:%d%%\033[0m' "$used_int"
   elif (( used_int >= compact_pct * 85 / 100 )); then
-    add '\033[38;2;249;226;175mctx:%d%% \033[0m' "$used_int"
+    add '\033[38;2;249;226;175mctx:%d%%\033[0m' "$used_int"
   else
-    add '\033[38;2;166;227;161mctx:%d%% \033[0m' "$used_int"
+    add '\033[38;2;166;227;161mctx:%d%%\033[0m' "$used_int"
   fi
 fi
 
@@ -307,7 +305,7 @@ if [[ -n "$tp" && -r "$tp" ]]; then
         if (( remain >= 60 )); then cstr=$(printf '%dm%ds' $((remain/60)) $((remain%60)))
         else cstr=$(printf '%ds' "$remain"); fi
         (( remain < 60 )) && ccol='249;226;175' || ccol='166;227;161'
-        add '\033[38;2;%sm cache %s \033[0m' "$ccol" "$cstr"
+        add '\033[38;2;%smcache %s\033[0m' "$ccol" "$cstr"
       fi
     fi
   fi
@@ -331,25 +329,25 @@ if [[ -n "$week_pct" ]]; then
     rate_out="${rate_out}\033[38;2;249;226;175m7d:${week_int}%\033[0m "
   fi
 fi
-[[ -n "$rate_out" ]] && add '%b' "$rate_out"
+[[ -n "$rate_out" ]] && add '%b' "${rate_out% }"
 
 # Segment: session cost (grey, yellow >$5, red >$15)
 if [[ -n "$total_cost" ]]; then
   cost_fmt=$(printf '$%.2f' "$total_cost")
   cost_cents=$(printf '%.0f' "$(echo "$total_cost * 100" | bc 2>/dev/null || echo 0)")
   if (( cost_cents >= 1500 )); then
-    add '\033[38;2;243;139;168m%s \033[0m' "$cost_fmt"
+    add '\033[38;2;243;139;168m%s\033[0m' "$cost_fmt"
   elif (( cost_cents >= 500 )); then
-    add '\033[38;2;249;226;175m%s \033[0m' "$cost_fmt"
+    add '\033[38;2;249;226;175m%s\033[0m' "$cost_fmt"
   else
-    add '\033[38;2;108;112;134m%s \033[0m' "$cost_fmt"
+    add '\033[38;2;108;112;134m%s\033[0m' "$cost_fmt"
   fi
 fi
 
 # Segment: lines changed (+added aqua / -removed red) — only when non-zero
 la=${lines_added:-0}; lr=${lines_removed:-0}
 if (( la > 0 || lr > 0 )); then
-  add '\033[38;2;166;227;161m+%d\033[0m/\033[38;2;243;139;168m-%d\033[0m ' "$la" "$lr"
+  add '\033[38;2;166;227;161m+%d\033[0m/\033[38;2;243;139;168m-%d\033[0m' "$la" "$lr"
 fi
 
 # Segment: session duration (dim grey)
@@ -358,7 +356,7 @@ if [[ -n "$dur_ms" ]]; then
   if   (( dur_s >= 3600 )); then dstr=$(printf '%dh%dm' $((dur_s/3600)) $(((dur_s%3600)/60)))
   elif (( dur_s >= 60 ));   then dstr=$(printf '%dm' $((dur_s/60)))
   else dstr=$(printf '%ds' "$dur_s"); fi
-  add '\033[38;2;108;112;134m%s \033[0m' "$dstr"
+  add '\033[38;2;108;112;134m%s\033[0m' "$dstr"
 fi
 
 # Segment: Planka card (blue) — `planka status` reads the sidecar only, so this costs no
@@ -366,7 +364,7 @@ fi
 # with no work overlay, which is every machine but this one.
 if command -v planka >/dev/null 2>&1; then
   planka_card="$(planka status 2>/dev/null | awk -F'\t' '$2 ~ /^card /{sub(/^card /, "", $2); print $2}')"
-  [[ -n "$planka_card" ]] && add '\033[38;2;137;180;250m▤ %s \033[0m' "$planka_card"
+  [[ -n "$planka_card" ]] && add '\033[38;2;137;180;250m▤ %s\033[0m' "$planka_card"
 fi
 
 # Pack the buffered segments into terminal-width rows. Claude Code renders every line a status
@@ -382,10 +380,16 @@ line=""
 line_width=0
 for i in "${!segs[@]}"; do
   seg_width="${seg_widths[i]}"
-  if (( line_width > 0 && line_width + seg_width > width )); then
+  if (( line_width > 0 && line_width + 1 + seg_width > width )); then
     printf '%s\n' "$line"
     line=""
     line_width=0
+  fi
+  # Segments carry no padding of their own; this is the one space between neighbours on a row.
+  # Per-segment padding on both sides used to double up into two.
+  if (( line_width > 0 )); then
+    line+=" "
+    line_width=$(( line_width + 1 ))
   fi
   if (( seg_width > width )); then
     # One segment wider than the whole terminal — a deep path or a long branch name. Nothing to
