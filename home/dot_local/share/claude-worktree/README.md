@@ -16,7 +16,7 @@ removes; the server script removes it after asking the forge which head it merge
 `git cherry` output oppositely, and a wrong default would delete a fresh worktree.
 
 Callers reach the deployed copy at `~/.local/share/claude-worktree`, or wherever
-`CLAUDE_WORKTREE_HOME` points. The server repo carries a byte-identical stand-in for its
-CI, which has no dotfiles deploy, and a deployed-host test that fails when the two drift.
+`CLAUDE_WORKTREE_HOME` points. The server repo's CI has no dotfiles deploy, so it checks
+out this repo at a pinned SHA and links the package into place (server#2812).
 
     PYTHONPATH=. uv run --no-project --with pytest pytest    # from this directory

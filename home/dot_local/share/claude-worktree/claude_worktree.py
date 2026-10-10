@@ -238,7 +238,7 @@ def forge_says_merged(repo: str, branch: str, head: str, timeout: float = 10.0) 
 
 # The `how` of a hold whose path is unknown. Such a process holds every tree; see
 # `_foreign_in_my_slice`.
-FOREIGN_UID = "unreadable, another uid in this uid's login slice"
+FOREIGN_UID = "uid, another one inside this uid's login slice (unreadable)"
 
 
 def process_holds(

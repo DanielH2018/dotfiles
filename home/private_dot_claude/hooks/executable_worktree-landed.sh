@@ -206,7 +206,9 @@ TREE_REL=${TOPLEVEL#"$PRIMARY"/}
 # still carries it as CLAUDE_PROJECT_DIR. A detached landing double-forks and reparents to
 # init or a subreaper, so its parent chain never reaches that set. The cost of this rule is
 # a non-detached background job of the session itself, which counts as the session's own.
-run_bounded 5 1048576 -- python3 "$CW_HOME/claude_worktree.py" holders "$TOPLEVEL"
+# 2s against a measured 84 ms on a box with ~1,000 processes, so the scan and the forge
+# lookup's 5s both fit inside the hook's 10s timeout, kill grace included.
+run_bounded 2 1048576 -- python3 "$CW_HOME/claude_worktree.py" holders "$TOPLEVEL"
 if [ "$RB_STATUS" != ok ] || [ "$RB_EXIT" -ne 0 ]; then exit 0; fi
 HOLDERS=" "
 TAB=$'\t'
