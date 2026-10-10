@@ -35,6 +35,13 @@ exists, and every use here is a boolean search.
 One rule is not the bash's. The bash upgraded a `--force`/`-f` push to a feature branch into
 `--force-with-lease` and allowed it; `force_push_flag` denies it instead (dotfiles #701), so
 this hook and the settings deny rules state one intent.
+
+Two rules have changed since the bash in ways that reach their messages. `pipe_to_shell`
+judges each pipeline stage rather than the whole string, so a `|sh` quoted in an argument
+that no stage runs as shell is allowed, and its message names an alternative (dotfiles
+#801). `secret_readers` drops exclude arguments before it matches, and both secret-read
+denials name the words that matched, with the exclude arguments for a recursive search
+(dotfiles #802).
 """
 
 import re
@@ -697,9 +704,9 @@ def secret_readers(sc: Scan, target: str) -> Verdict | None:
             reason = SECRET_READ_MSG + _naming(secrets)
             if args := _exclude_args(words, secrets):
                 reason += (
-                    " To search a tree that holds them, drop those words from the command "
-                    f"and add {' '.join(args)}. The guard does not count an exclude "
-                    "argument as a read."
+                    " To search a tree that holds them, replace each of those words with its "
+                    f"parent directory and add {' '.join(args)}. The guard does not count an "
+                    "exclude argument as a read."
                 )
             return Verdict("deny", "secret-read", reason)
     return None
