@@ -24,7 +24,7 @@ trees therefore pile up next to the live ones and it stops being obvious which i
 
 A tree is removable only when all four hold: its branch is an ancestor of the remote's
 default branch, it has no uncommitted changes, no live session holds its lock, and no
-live process has its working directory inside it.
+live process holds it, either as its working directory or as its `CLAUDE_PROJECT_DIR`.
 
 The fourth is the one git state cannot see. A detached `land.sh` keeps running from the
 tree after the merge that makes the first three pass: it waits on CI and ticks the
@@ -35,6 +35,13 @@ hook's documented backstop, so it applies the same test: a tree some process sti
 from is kept and reported as busy, and goes at a later session start once the process
 exits. Unlike the Stop hook, the sweeper needs no exclusion for its own session's
 processes, because a tree the session stands in is already kept as the current one.
+
+A session's project dir counts the same way as a cwd. Claude Code runs every repo
+hook from `CLAUDE_PROJECT_DIR`, so deleting that tree breaks the session even when its
+cwd has moved elsewhere (server#3887). The server repo's remover refuses on the same
+two holds (server#3910). The scan runs once before classifying and again right before
+each removal, because a session can start in a tree while the sweep runs git in the
+others.
 
 Why the git-state three are enough. Once HEAD is an ancestor of `origin/<default>`,
 every commit in the tree is already in the remote by construction — there is nothing
@@ -228,7 +235,7 @@ def classify(
     superseded. `forge` settles which: a merged PR whose head is this exact tip makes
     the tree REMOVABLE.
 
-    `busy` names a live process running from inside the tree (see `busy_process`). It
+    `busy` names a live process that holds the tree (see `busy_process`). It
     is consulted last, only for a tree that would otherwise be removed, so the report
     names it only where it is the one thing standing between the tree and removal.
     """
@@ -241,7 +248,7 @@ def classify(
     if tree.branch is None:
         return KEEP, "detached HEAD — no branch to check"
     if busy and (merged or forge):
-        return KEEP, f"{BUSY_PREFIX} {busy} runs from inside it"
+        return KEEP, f"{BUSY_PREFIX} {busy} uses it"
     if not merged:
         if forge:
             return REMOVABLE, (
@@ -320,14 +327,26 @@ def is_contained(repo: str, branch: str, target: str) -> bool:
     return merge_tree_says_contained(result.stdout, target_tree)
 
 
-def process_cwds(proc: str = "/proc") -> list[tuple[int, str]]:
-    """(pid, cwd) for every process whose cwd link this user can read.
+def process_holds(proc: str = "/proc") -> list[tuple[int, str, str]]:
+    """(pid, path, how) for each directory a live process holds that is readable.
+
+    A process holds two paths: its cwd, and the `CLAUDE_PROJECT_DIR` in its
+    environment. The second is the one a cwd scan misses. A Claude session whose
+    project dir is a worktree loses every repo hook once that tree is deleted, and the
+    session's cwd can be elsewhere by then (server#3887). The variable is read from
+    every process, not only `claude` ones: the binary's command name is its version
+    string, so a name match finds nothing, and each hook or tool shell a session spawns
+    carries the variable too.
 
     The same source worktree-landed.sh reads. A process that exits mid-scan, or one
-    owned by another user, has no readable link and is skipped. Off Linux there is no
-    /proc and the list is empty, so the busy test then protects nothing, as in the Stop
-    hook. The kernel appends " (deleted)" to a cwd whose directory is gone; it is
-    stripped so a process standing in a half-removed tree still counts.
+    owned by another user, has no readable link or environment and is skipped. Off
+    Linux there is no /proc and the list is empty, so the busy test then protects
+    nothing, as in the Stop hook. The kernel appends " (deleted)" to a cwd whose
+    directory is gone; it is stripped so a process standing in a half-removed tree
+    still counts.
+
+    Returns:
+        One entry per held path; `how` is "cwd" or "CLAUDE_PROJECT_DIR".
     """
     out = []
     try:
@@ -337,29 +356,42 @@ def process_cwds(proc: str = "/proc") -> list[tuple[int, str]]:
     for name in entries:
         if not name.isdigit():
             continue
+        pid = int(name)
         try:
             cwd = os.readlink(f"{proc}/{name}/cwd")
+            out.append((pid, cwd.removesuffix(" (deleted)"), "cwd"))
+        except OSError:
+            pass
+        try:
+            environ = Path(f"{proc}/{name}/environ").read_bytes()
         except OSError:
             continue
-        out.append((int(name), cwd.removesuffix(" (deleted)")))
+        for var in environ.split(b"\0"):
+            if var.startswith(b"CLAUDE_PROJECT_DIR="):
+                held = var.partition(b"=")[2].decode(errors="replace")
+                if held:
+                    # Unlike a cwd link, the variable is whatever string was exported.
+                    out.append((pid, os.path.realpath(held), "CLAUDE_PROJECT_DIR"))
+                break
     return out
 
 
-def busy_process(path: str, cwds: list[tuple[int, str]]) -> str:
-    """Name the first process whose cwd is `path` or below it, or "" when none is.
+def busy_process(path: str, holds: list[tuple[int, str, str]]) -> str:
+    """Name the first process holding `path` or a path below it, or "" when none does.
 
     `path` is matched both as git reports it and resolved, because /proc reports the
     real path. A process name, when readable, goes into the report so the operator can
-    tell a landing from a stray shell.
+    tell a landing from a stray shell, and so does which of the two holds matched.
     """
     roots = {path.rstrip("/"), str(Path(path).resolve())}
-    for pid, cwd in cwds:
-        if any(cwd == r or cwd.startswith(r + "/") for r in roots):
+    for pid, held, how in holds:
+        if any(held == r or held.startswith(r + "/") for r in roots):
             try:
                 comm = Path(f"/proc/{pid}/comm").read_text().strip()
             except OSError:
                 comm = ""
-            return f"pid {pid} ({comm})" if comm else f"pid {pid}"
+            who = f"pid {pid} ({comm})" if comm else f"pid {pid}"
+            return f"{who} by its {how}"
     return ""
 
 
@@ -417,7 +449,16 @@ def log(message: str) -> None:
 
 
 def remove(repo: str, tree: Worktree) -> tuple[bool, str]:
-    """Unlock if needed, then remove. Never --force: git's own check is the backstop."""
+    """Refuse while a process holds the tree; otherwise unlock if needed, then remove.
+
+    The sweep's own scan is taken before the classification loop, which runs git in
+    every tree and can ask the forge, so a session can start in a tree after that scan.
+    This re-scan runs right before the unlock, so a refusal leaves the lock as it was.
+    Never --force: git's own check is the backstop.
+    """
+    busy = busy_process(tree.path, process_holds())
+    if busy:
+        return False, f"{busy} uses it"
     if tree.locked:
         subprocess.run(
             ["git", "worktree", "unlock", tree.path],
@@ -578,7 +619,7 @@ def main() -> int:
     removable, review, busy = [], [], []
     # One scan for the whole sweep, taken before the loop runs `git status` inside each
     # tree, so the sweep's own children never read as a process standing in a tree.
-    cwds = process_cwds()
+    holds = process_holds()
     for tree in sessions:
         resolved = Path(tree.path).resolve()
         merged = bool(target) and is_merged(repo, tree.head, target)
@@ -607,7 +648,7 @@ def main() -> int:
             is_current=is_current,
             equivalent=equivalent,
             contained=contained,
-            busy=busy_process(tree.path, cwds),
+            busy=busy_process(tree.path, holds),
         )
         # Only a tree that would otherwise say "establish which" reaches the network.
         if (
@@ -622,7 +663,7 @@ def main() -> int:
                 dirty=dirty,
                 is_current=is_current,
                 forge=True,
-                busy=busy_process(tree.path, cwds),
+                busy=busy_process(tree.path, holds),
             )
         if verdict == REMOVABLE:
             removable.append(tree)

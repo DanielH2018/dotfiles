@@ -136,7 +136,7 @@ check(
 check(
     "a process running from a merged tree keeps it, reported as busy",
     mod.classify(wt(), merged=True, dirty=False, is_current=False, busy="pid 7")
-    == (mod.KEEP, f"{mod.BUSY_PREFIX} pid 7 runs from inside it"),
+    == (mod.KEEP, f"{mod.BUSY_PREFIX} pid 7 uses it"),
 )
 check(
     "busy is reported only where it is what blocks removal",
@@ -145,9 +145,45 @@ check(
 )
 check(
     "busy_process matches the tree and below it, not a sibling sharing its prefix",
-    mod.busy_process("/w/a", [(1, "/w/ab"), (2, "/w/a/sub")]).startswith("pid 2")
-    and mod.busy_process("/w/a", [(1, "/w/ab")]) == "",
+    mod.busy_process("/w/a", [(1, "/w/ab", "cwd"), (2, "/w/a/sub", "cwd")]).startswith(
+        "pid 2"
+    )
+    and mod.busy_process("/w/a", [(1, "/w/ab", "cwd")]) == "",
 )
+check(
+    "busy_process names which hold matched",
+    mod.busy_process("/w/a", [(3, "/w/a", "CLAUDE_PROJECT_DIR")]).endswith(
+        "by its CLAUDE_PROJECT_DIR"
+    ),
+)
+
+
+def fake_proc(root: Path, pid: int, cwd: str | None, environ: bytes | None) -> None:
+    """One /proc/<pid> entry with a cwd link and an environ file, either one omitted."""
+    entry = root / str(pid)
+    entry.mkdir()
+    if cwd is not None:
+        (entry / "cwd").symlink_to(cwd)
+    if environ is not None:
+        (entry / "environ").write_bytes(environ)
+
+
+with tempfile.TemporaryDirectory() as _proc:
+    _proc = Path(_proc)
+    fake_proc(_proc, 10, "/w/a", b"HOME=/h\0CLAUDE_PROJECT_DIR=/w/b\0")
+    fake_proc(_proc, 11, None, b"CLAUDE_PROJECT_DIR=\0")
+    fake_proc(_proc, 12, "/w/c (deleted)", None)
+    (_proc / "self").mkdir()
+    holds = mod.process_holds(str(_proc))
+    check(
+        "process_holds reads the cwd and CLAUDE_PROJECT_DIR, skipping an empty one",
+        sorted(holds)
+        == [
+            (10, "/w/a", "cwd"),
+            (10, os.path.realpath("/w/b"), "CLAUDE_PROJECT_DIR"),
+            (12, "/w/c", "cwd"),
+        ],
+    )
 
 # ── the removal policy: three conditions act, two weaker signals only report ──────
 #
@@ -389,6 +425,49 @@ with tempfile.TemporaryDirectory() as tmp:
             env=env,
         )
         check("removes it once the process exits", not (trees / "busy").exists())
+
+        # A session whose project dir is the tree while its cwd is elsewhere: deleting
+        # the tree would break every repo hook it runs (server#3887).
+        git(["worktree", "add", "-q", "-b", "wt-project", str(trees / "project")], repo)
+        session = subprocess.Popen(
+            ["sleep", "60"],
+            cwd=tmp,
+            env={**env, "CLAUDE_PROJECT_DIR": str(trees / "project")},
+        )
+        try:
+            held = subprocess.run(
+                [sys.executable, str(SCRIPT), "--prune"],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            check(
+                "keeps a merged tree a live process names as CLAUDE_PROJECT_DIR",
+                (trees / "project").exists()
+                and "by its CLAUDE_PROJECT_DIR" in held.stdout,
+            )
+            # The removal itself re-scans, so a hold that appears after the sweep's
+            # first scan still stops it.
+            tree = next(
+                t
+                for t in mod.parse_worktree_list(
+                    git(["worktree", "list", "--porcelain"], repo).stdout
+                )
+                if t.branch == "wt-project"
+            )
+            ok, error = mod.remove(str(repo), tree)
+            check(
+                "remove() refuses a tree a live process holds",
+                not ok
+                and f"pid {session.pid}" in error
+                and (trees / "project").exists(),
+            )
+        finally:
+            session.kill()
+            session.wait()
+        ok, _ = mod.remove(str(repo), tree)
+        check("remove() removes it once the process exits", ok)
 
     # Outside a git repo: silent, successful, no-op.
     outside = subprocess.run(
