@@ -1,0 +1,12 @@
+{{- if eq .chezmoi.hostname "daniel-box" }}
+# agent-flow, the /flow subagent-tree mod, on trial on daniel-box only (dotfiles #794).
+# Pinned twice: the URL names the commit whose full source was audited on 2026-10-10, and the
+# checksum refuses any other bytes. To move the pin, audit the new commit's source, then change
+# both values together. settings.base.json enables the plugin from this directory.
+[".local/share/claude-agent-flow"]
+    type = "archive"
+    url = "https://github.com/Charlie0113-T/claude-agent-flow/archive/76ef8fb2db36136f08ecaf142f920bf4d3843537.tar.gz"
+    checksum.sha256 = "8037ed876b676cf7703898d482b419c3b1ff30f8d01daf2686dd4f31ea1dc933"
+    stripComponents = 1
+    exact = true
+{{- end }}

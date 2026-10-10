@@ -958,6 +958,15 @@
          (skin, band off) live in the plugin store, which
          .chezmoiscripts/os-unix/run_onchange_after_seed-skins-prefs.sh.tmpl seeds. */}}
     "skins@hellosverre-mods": true
+{{- if eq .chezmoi.hostname "daniel-box" }},
+    {{/* Two-week trial on daniel-box only (dotfiles #794): /flow draws the session's
+         subagents as a live tree. The marketplace below reads a copy that .chezmoiexternal
+         pins to one audited commit. If the pane is unused two weeks after install, end the
+         trial: set this to false, drop the marketplace entry and the external, and list
+         .local/share/claude-agent-flow in .chezmoiremove, because chezmoi leaves a
+         dropped external's files in place. */}}
+    "agent-flow@claude-agent-flow": true
+{{- end }}
   },
   "extraKnownMarketplaces": {
     "daniel-tools": {
@@ -973,6 +982,16 @@
         "repo": "hellosverre/claude-skins"
       }
     }
+{{- if eq .chezmoi.hostname "daniel-box" }},
+    {{/* A local directory, not a github source: a github marketplace follows a branch,
+         and the trial's condition (dotfiles #794) is a pin to the audited commit. */}}
+    "claude-agent-flow": {
+      "source": {
+        "source": "directory",
+        "path": "{{ .chezmoi.homeDir }}/.local/share/claude-agent-flow"
+      }
+    }
+{{- end }}
   },
   "sandbox": {{/* macOS-only: the block below is macOS-tuned (1Password agent socket, /System, allowUnixSockets) and Linux lacks bwrap/socat, so an enabled sandbox there just runs unsandboxed and warns about glob Read/Edit rules it can't enforce */}}{{ if eq .chezmoi.os "darwin" }}{
     "enabled": true,
