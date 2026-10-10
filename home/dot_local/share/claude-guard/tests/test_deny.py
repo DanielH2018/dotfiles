@@ -577,6 +577,55 @@ def test_reading_an_ordinary_path_is_allowed():
     assert "deny" not in kinds(SECRET_ALLOW)
 
 
+# dotfiles #802: (denied search, the exclude argument its denial gives, the search rewritten
+# with it). The rewrite is what the agent's retry runs, so it must pass.
+EXCLUDE_ROUND_TRIPS = [
+    (
+        "grep -rn TOKEN roles/ /etc/app/config.env",
+        "--exclude='config.env'",
+        "grep -rn TOKEN roles/ /etc/app --exclude='config.env'",
+    ),
+    (
+        "grep -rl TOKEN ~/.ssh/",
+        "--exclude-dir='.ssh'",
+        "grep -rl TOKEN ~ --exclude-dir='.ssh'",
+    ),
+    (
+        "rg TOKEN roles/ roles/app/files/.env",
+        "--glob '!.env'",
+        "rg TOKEN roles/ --glob '!.env'",
+    ),
+    (
+        "git grep -n TOKEN -- roles/app/secrets/",
+        "':(exclude,glob)**/secrets/**'",
+        "git grep -n TOKEN -- roles/ ':(exclude,glob)**/secrets/**'",
+    ),
+]
+
+
+def test_a_denied_search_names_the_secret_and_the_exclude_that_lets_it_through():
+    for denied, arg, rewritten in EXCLUDE_ROUND_TRIPS:
+        v = d.deny(denied, "", ENV)
+        assert (v.rule, arg in v.reason) == ("secret-read", True), denied
+        assert d.deny(rewritten, "", ENV).kind == "none", rewritten
+    assert "`/etc/app/config.env`" in d.deny(EXCLUDE_ROUND_TRIPS[0][0], "", ENV).reason
+
+
+def test_an_exclude_argument_naming_a_secret_is_not_a_read():
+    allowed = [
+        "tar czf out.tgz --exclude=.env .",
+        "rsync -a --exclude .env src/ dst/",
+        "grep -r --exclude-dir=.ssh TOKEN ~",
+    ]
+    assert "deny" not in kinds(allowed)
+
+
+def test_a_read_that_is_not_a_search_names_the_secret_without_an_exclude():
+    reasons = [d.deny(c, "", ENV).reason for c in ["cat .env", "python3 -c \"open('.env')\""]]
+    assert ["`.env`" in reasons[0], "`open(.env)`" in reasons[1]] == [True, True]
+    assert "exclude" not in reasons[0]
+
+
 def test_env_dump_confirmation_is_skipped_when_the_parse_refused():
     # :919-921: with no quote-aware segments the confirmation is skipped, not ANDed against
     # SCAN — a whole-string subject can never match an end-anchored pattern.

@@ -604,14 +604,75 @@ ENV_DUMP_MSG = (
     "Blocked: a bare environment dump prints every exported credential. Name the variable "
     "you need, e.g. `printenv PATH`."
 )
+# An argument that keeps a path OUT of a search or copy reads nothing, so a secret path
+# named in one is not a read (dotfiles #802): `--exclude=`, `--exclude-dir=`, rg's
+# `--glob '!…'`, git's `:!…`, `:^…` and `:(exclude)…` pathspecs. Quotes are gone by now.
+_EXCLUDE_WORD = re.compile(r"^(--exclude(-dir)?=|--i?glob=!|:(!|\^|\([^)]*exclude))")
+_EXCLUDE_OPTS = frozenset({"--exclude", "--exclude-dir"})
+_GLOB_OPTS = frozenset({"-g", "--glob", "--iglob"})
+_RECURSIVE_GREP = re.compile(r"^(-[A-Za-z]*[rR][A-Za-z]*|--recursive|--dereference-recursive)$")
+
+
+def _drop_excludes(words: list[str]) -> list[str]:
+    out: list[str] = []
+    i = 0
+    while i < len(words):
+        w = words[i]
+        nxt = words[i + 1] if i + 1 < len(words) else ""
+        if _EXCLUDE_WORD.match(w):
+            i += 1
+        elif (w in _EXCLUDE_OPTS and nxt) or (w in _GLOB_OPTS and nxt.startswith("!")):
+            i += 2
+        else:
+            out.append(w)
+            i += 1
+    return out
+
+
+def _secret_words(words: list[str]) -> list[str]:
+    """The words that match SECRET_PATHS, deduplicated, at most five."""
+    p = _pattern(SECRET_PATHS, False)
+    return list(dict.fromkeys(w for w in words if p.search(w)))[:5]
+
+
+def _exclude_args(words: list[str], secrets: list[str]) -> list[str]:
+    """The exclude arguments that keep each of `secrets` out of the search `words` runs:
+    a recursive grep, rg or git grep. Empty for any other command."""
+    head = words[0].rsplit("/", 1)[-1]
+    if head in {"grep", "egrep", "fgrep"} and any(map(_RECURSIVE_GREP.match, words[1:])):
+        tool = "grep"
+    elif head == "rg":
+        tool = "rg"
+    elif head == "git" and "grep" in words[1:]:
+        tool = "git"
+    else:
+        return []
+    args: list[str] = []
+    for w in secrets:
+        # `--include=*.env` names the glob after the `=`.
+        name = w.split("=", 1)[1] if w.startswith("-") and "=" in w else w
+        is_dir = name.endswith("/")
+        name = name.rstrip("/").rsplit("/", 1)[-1] or name
+        if tool == "grep":
+            args.append(f"--exclude{'-dir' if is_dir else ''}='{name}'")
+        elif tool == "rg":
+            args.append(f"--glob '!{name}'")
+        else:
+            args.append(f"':(exclude,glob)**/{name}{'/**' if is_dir else ''}'")
+    return args
+
+
+def _naming(secrets: list[str]) -> str:
+    return f" The command names {', '.join(f'`{w}`' for w in secrets)}." if secrets else ""
 
 
 def secret_readers(sc: Scan, target: str) -> Verdict | None:
     """:893-944. SCAN split on every `;&|` character (a NAIVE split, deliberately: it is what
     catches a read hidden behind quoting), each piece word-split. The env-dump arm fires
     when the piece matches AND — if the parse succeeded — some quote-aware segment matches
-    too (:911-921). For a filter command the pattern argument is dropped before the
-    readers arm (:931-938)."""
+    too (:911-921). Exclude arguments are dropped, then for a filter command the pattern
+    argument (:931-938), before the readers arm. The denial names the words that matched,
+    and for a recursive search the exclude arguments that would let it through (#802)."""
     for piece in re.split(r"[;&|]", sc.scan):
         words = piece.split()
         if not words:
@@ -623,6 +684,8 @@ def secret_readers(sc: Scan, target: str) -> Verdict | None:
             and (not sc.parsed or bdb_re(sc.segset, ENV_DUMP))
         ):
             return Verdict("deny", "env-dump", ENV_DUMP_MSG)
+        words = [words[0], *_drop_excludes(words[1:])]
+        piece = " ".join(words)
         if head in _FILTERS:
             rest = words[1:]
             while rest:
@@ -630,21 +693,27 @@ def secret_readers(sc: Scan, target: str) -> Verdict | None:
                     break
             piece = f"{words[0]} {' '.join(rest)}"
         if bdb_re(piece, rf"\b{READERS}\b.*{SECRET_PATHS}"):
-            return Verdict("deny", "secret-read", SECRET_READ_MSG)
+            secrets = _secret_words(piece.split()[1:])
+            reason = SECRET_READ_MSG + _naming(secrets)
+            if args := _exclude_args(words, secrets):
+                reason += (
+                    " To search a tree that holds them, drop those words from the command "
+                    f"and add {' '.join(args)}. The guard does not count an exclude "
+                    "argument as a read."
+                )
+            return Verdict("deny", "secret-read", reason)
     return None
 
 
 def secret_interpreter(sc: Scan, target: str) -> Verdict | None:
-    """:945-949."""
-    if bdb_re(
-        sc.scan,
-        rf"\b(python[0-9.]*|node|deno|bun|perl|ruby|php|Rscript|osascript)\b.*{SECRET_PATHS}",
-    ):
+    """:945-949. The denial names the words that matched SECRET_PATHS (#802)."""
+    interpreter = r"\b(python[0-9.]*|node|deno|bun|perl|ruby|php|Rscript|osascript)\b"
+    if bdb_re(sc.scan, rf"{interpreter}.*{SECRET_PATHS}"):
         return Verdict(
             "deny",
             "secret-read-interpreter",
             "Blocked: reading a secrets file via an interpreter. Ask the user to share the "
-            "specific value needed.",
+            f"specific value needed.{_naming(_secret_words(sc.scan.split()))}",
         )
     return None
 
