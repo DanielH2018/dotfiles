@@ -46,8 +46,9 @@ hook is the only place that fires after the merge and before the session goes aw
 `prune-worktrees.py` is the backstop, not the plan. It reaps trees, and it deletes their
 branches with `-d`, plus orphaned session branches. It uses `-D` only on a branch whose
 exact tip GitHub says a merged PR came from. It runs one session late for the tree the
-merging session stands in. Like this hook, it keeps a tree while any live process has its
-cwd inside it, so it does not cut off a detached landing that outlives its session.
+merging session stands in. Like this hook, it keeps a tree while any live process holds
+it, so it does not cut off a detached landing that outlives its session. Both run the same
+scan, `claude_worktree.process_holds`.
 
 ## The two merge shapes need opposite orders
 
@@ -128,13 +129,26 @@ A landed tree can still be in use. A detached `land.sh` keeps running from the t
 merge: it waits on CI, ticks the deployer and runs scripts from the tree. On 2026-10-01 two
 server landings died that way when a session followed the block and removed the tree
 (dotfiles#747, dotfiles#748). So the hook stays silent, and writes no stamp, while any live
-process outside the session has its cwd inside the tree. It asks at a later Stop, once that
-process has exited.
+process outside the session holds the tree. It asks at a later Stop, once that process has
+exited.
 
-The session's own processes do not count, because the session and its MCP servers stand in
-the tree too. The hook treats as the session's own every process descended from itself or
-from an ancestor whose cwd is inside the tree. A detached landing reparents to init, so it
-is not the session's own. A background job the session started without detaching is, and the
+A process holds the tree in one of three ways:
+
+- Its cwd is inside the tree.
+- Its `CLAUDE_PROJECT_DIR` names the tree. Claude Code runs every repo hook from that
+  directory, so another session loses its hooks when the tree goes, wherever its cwd is
+  (server#3887, dotfiles#814).
+- It runs as another non-root uid inside this uid's login slice, with a cwd and
+  environment this uid cannot read. `sudo -u` from inside a worktree leaves such a
+  process. Its path is unknown, so it holds every tree (server#3994).
+
+The scan is `claude_worktree.py holders <tree>`. When the package is missing, or the scan
+fails or times out, the hook stays silent.
+
+The session's own processes do not count, because the session and its MCP servers hold the
+tree too. The hook treats as the session's own every process descended from itself or from
+an ancestor that itself holds the tree. A detached landing reparents to init, so it is not
+the session's own. A background job the session started without detaching is, and the
 hook does not protect it: wait for that job before you retire the tree.
 
 ## Why the primary checkout gets a pull, and when it must not

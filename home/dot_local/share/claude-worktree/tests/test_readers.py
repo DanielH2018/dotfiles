@@ -1,7 +1,8 @@
 """Tests for the shared worktree readers.
 
 Each reader takes text and returns a verdict, so nothing here needs a fixture repository
-except `default_ref`, which runs a single read-only git query.
+except `default_ref`, which runs a single read-only git query. `process_holds` reads a
+fake /proc built in a temp dir.
 
 Run: PYTHONPATH=. uv run --no-project --with pytest pytest
 """
@@ -15,13 +16,16 @@ from pathlib import Path
 import claude_worktree
 import pytest
 from claude_worktree import (
+    FOREIGN_UID,
     Worktree,
     cherry_says_landed,
     default_ref,
     forge_says_merged,
+    holds_tree,
     merge_tree_says_contained,
     parse_worktree_list,
     pr_head_says_merged,
+    process_holds,
     session_is_alive,
 )
 
@@ -319,3 +323,97 @@ def test_forge_merged_command_exits_zero_only_on_a_match(gh_stub, tmp_path):
     assert run("forge-merged", "worktree-x", "aaaa111") == 0
     assert run("forge-merged", "worktree-x", "bbbb222") == 1
     assert run("forge-merged") == 2
+
+
+# --- process_holds ------------------------------------------------------------------
+
+ME = 1000
+OTHER = 1001
+MY_SLICE = f"0::/user.slice/user-{ME}.slice/session-3.scope\n"
+
+
+def fake_proc(
+    root: Path,
+    pid: int,
+    *,
+    cwd: str | None = None,
+    environ: bytes | None = None,
+    uid: int = ME,
+    cgroup: str = MY_SLICE,
+) -> None:
+    """One /proc/<pid> entry. A missing `environ` is one this uid cannot read."""
+    entry = root / str(pid)
+    entry.mkdir()
+    if cwd is not None:
+        (entry / "cwd").symlink_to(cwd)
+    if environ is not None:
+        (entry / "environ").write_bytes(environ)
+    (entry / "status").write_text(f"Name:\tx\nUid:\t{uid}\t{uid}\t{uid}\t{uid}\n")
+    (entry / "cgroup").write_text(cgroup)
+
+
+def test_process_holds_reads_the_cwd_and_project_dir_skipping_an_empty_one(tmp_path):
+    fake_proc(tmp_path, 10, cwd="/w/a", environ=b"HOME=/h\0CLAUDE_PROJECT_DIR=/w/b\0")
+    fake_proc(tmp_path, 11, environ=b"CLAUDE_PROJECT_DIR=\0")
+    fake_proc(tmp_path, 12, cwd="/w/c (deleted)", environ=b"")
+    (tmp_path / "self").mkdir()
+    assert sorted(process_holds(str(tmp_path), uid=ME)) == [
+        (10, "/w/a", "cwd"),
+        (10, os.path.realpath("/w/b"), "CLAUDE_PROJECT_DIR"),
+        (12, "/w/c", "cwd"),
+    ]
+
+
+def test_another_uid_unreadable_inside_my_slice_holds_every_tree(tmp_path):
+    fake_proc(tmp_path, 20, uid=OTHER)
+    holds = process_holds(str(tmp_path), uid=ME)
+    assert holds == [(20, "", FOREIGN_UID)]
+    assert holds_tree(holds[0][1], {"/any/tree"})
+
+
+@pytest.mark.parametrize(
+    ("uid", "cgroup"),
+    [
+        (0, MY_SLICE),
+        (ME, f"0::/user.slice/user-{ME}.slice/user@{ME}.service/init.scope\n"),
+        (OTHER, f"0::/user.slice/user-{OTHER}.slice/session-9.scope\n"),
+        (OTHER, "0::/system.slice/claude-rc.service\n"),
+    ],
+    ids=["root", "my-own-uid", "other-uid-own-slice", "other-uid-system-unit"],
+)
+def test_an_unreadable_process_outside_the_foreign_uid_rule_is_skipped(
+    tmp_path, uid, cgroup
+):
+    fake_proc(tmp_path, 30, uid=uid, cgroup=cgroup)
+    assert process_holds(str(tmp_path), uid=ME) == []
+
+
+def test_the_scanning_process_holds_nothing(tmp_path):
+    fake_proc(tmp_path, os.getpid(), cwd="/w/a", environ=b"")
+    assert process_holds(str(tmp_path), uid=ME) == []
+
+
+def test_holds_tree_matches_the_tree_and_below_but_not_a_prefix_sibling():
+    assert holds_tree("/w/a", {"/w/a"})
+    assert holds_tree("/w/a/sub", {"/w/a"})
+    assert not holds_tree("/w/ab", {"/w/a"})
+
+
+@linux_only
+def test_holders_command_names_a_process_by_its_project_dir(tmp_path, monkeypatch):
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tree))
+    sleeper = subprocess.Popen(["sleep", "30"], cwd="/")
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR")
+    try:
+        out = subprocess.run(
+            [sys.executable, claude_worktree.__file__, "holders", str(tree)],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    finally:
+        sleeper.kill()
+        sleeper.wait()
+    assert f"{sleeper.pid}\tCLAUDE_PROJECT_DIR" in out.splitlines()

@@ -9,11 +9,13 @@ squash-merge match and never removes it, the server script removes it and asks t
 first. This module is the shared reading; each caller keeps its own delete authority.
 
 Every function here takes text and returns a verdict, or runs a single read-only
-query: git, or one `gh pr list` for `forge_says_merged`. None of them removes anything.
+query: git, one `gh pr list` for `forge_says_merged`, or one pass over /proc for
+`process_holds`. None of them removes anything.
 A caller that needs the deployed copy imports it from `~/.local/share/claude-worktree`
 (`CLAUDE_WORKTREE_HOME` overrides the path), the way `claude_guard` is reached from
 `~/.local/share/claude-guard`. The `worktree-landed.sh` Stop hook is bash, so it runs
-this file as a script: `python3 claude_worktree.py forge-merged <branch> <head>`.
+this file as a script: `python3 claude_worktree.py forge-merged <branch> <head>`, and
+`python3 claude_worktree.py holders <tree>` for the process scan.
 
 Python 3.10 is the floor, not 3.14: the SessionStart hook runs under the system
 interpreter, so nothing here may use syntax the system python3 lacks.
@@ -234,16 +236,148 @@ def forge_says_merged(repo: str, branch: str, head: str, timeout: float = 10.0) 
     return verdict
 
 
-def main(argv: list[str]) -> int:
-    """`forge-merged <branch> <head>`: exit 0 when the forge merged that head, else 1.
+# The `how` of a hold whose path is unknown. Such a process holds every tree; see
+# `_foreign_in_my_slice`.
+FOREIGN_UID = "unreadable, another uid in this uid's login slice"
 
-    The entry point for the bash Stop hook, so both hooks and the server pruner share
-    one lookup. It runs from the current directory, which the hook sets to the worktree.
+
+def process_holds(
+    proc: str = "/proc", uid: int | None = None
+) -> list[tuple[int, str, str]]:
+    """(pid, path, how) for each directory a live process holds.
+
+    A process holds two paths: its cwd, and the `CLAUDE_PROJECT_DIR` in its
+    environment. The second is the one a cwd scan misses. A Claude session whose
+    project dir is a worktree loses every repo hook once that tree is deleted, and the
+    session's cwd can be elsewhere by then (server#3887). The variable is read from
+    every process, not only `claude` ones: the binary's command name is its version
+    string, so a name match finds nothing, and each hook or tool shell a session spawns
+    carries the variable too.
+
+    Another user's process has no readable cwd link or environment. It is skipped,
+    except when `_foreign_in_my_slice` counts it; that hold has an empty path and
+    `how` FOREIGN_UID, and `holds_tree` matches it against every tree. A process that
+    exits mid-scan is skipped, and so is the scanning process itself. Off Linux there
+    is no /proc and the list is empty. The kernel appends " (deleted)" to a cwd whose
+    directory is gone; it is stripped so a process standing in a half-removed tree
+    still counts.
+
+    This is the scan the dotfiles `prune-worktrees.py` hook and the
+    `worktree-landed.sh` Stop hook both run. It ports the server repo's
+    `lib.worktrees.processes_using`, minus that repo's root helper.
+
+    Args:
+        proc: the procfs root to scan.
+        uid: the uid whose login slice the foreign-uid rule looks in; this process's
+            uid when None.
+
+    Returns:
+        One entry per held path; `how` is "cwd", "CLAUDE_PROJECT_DIR" or FOREIGN_UID.
     """
-    if len(argv) != 3 or argv[0] != "forge-merged":
-        print("usage: claude_worktree.py forge-merged <branch> <head>", file=sys.stderr)
-        return 2
-    return 0 if forge_says_merged(os.getcwd(), argv[1], argv[2]) else 1
+    uid = os.getuid() if uid is None else uid
+    me = os.getpid()
+    out = []
+    try:
+        entries = os.listdir(proc)
+    except OSError:
+        return out
+    for name in entries:
+        if not name.isdigit() or int(name) == me:
+            continue
+        pid = int(name)
+        entry = Path(proc, name)
+        try:
+            cwd = os.readlink(entry / "cwd")
+            out.append((pid, cwd.removesuffix(" (deleted)"), "cwd"))
+        except OSError:
+            pass
+        try:
+            environ = (entry / "environ").read_bytes()
+        except OSError:
+            if _foreign_in_my_slice(entry, uid):
+                out.append((pid, "", FOREIGN_UID))
+            continue
+        for var in environ.split(b"\0"):
+            if var.startswith(b"CLAUDE_PROJECT_DIR="):
+                held = var.partition(b"=")[2].decode(errors="replace")
+                if held:
+                    # Unlike a cwd link, the variable is whatever string was exported.
+                    out.append((pid, os.path.realpath(held), "CLAUDE_PROJECT_DIR"))
+                break
+    return out
+
+
+def _foreign_in_my_slice(entry: Path, uid: int) -> bool:
+    """Whether an unreadable process runs as another non-root uid inside `uid`'s slice.
+
+    `status` and `cgroup` stay world-readable when `cwd` and `environ` do not, so this
+    reads only those two.
+    """
+    # Ported from the server repo's lib.worktrees, where the rule is decided (#3994).
+    # The kernel checks search permission when a path is resolved, not on a cwd a
+    # process inherits, so `sudo -u claude` run from inside a worktree leaves a process
+    # holding a cwd this uid cannot read. sudo's PAM stack carries no pam_systemd, so
+    # that process stays in the caller's slice. Any wider rule keeps every tree: root's
+    # daemons, another user's own sessions and this uid's non-dumpable agents are
+    # always alive and always unreadable. A launch that opens a new logind session
+    # (`su`, `machinectl shell`) or a unit (`systemd-run --uid`) lands in the target's
+    # slice and is not seen.
+    try:
+        status = (entry / "status").read_text()
+        cgroup = (entry / "cgroup").read_text()
+    except OSError:
+        return False
+    uid_line = next(
+        (line for line in status.splitlines() if line.startswith("Uid:")), ""
+    )
+    fields = uid_line.split()
+    if len(fields) < 3 or int(fields[2]) in (0, uid):
+        return False
+    return f"/user.slice/user-{uid}.slice/" in cgroup
+
+
+def holds_tree(held: str, roots: set[str]) -> bool:
+    """Whether a hold from `process_holds` is one of `roots` or below one.
+
+    An empty `held` is a FOREIGN_UID hold, whose path is unknown, so it holds every
+    tree. A sibling that only shares a prefix, `/w/ab` against `/w/a`, does not match.
+    """
+    if not held:
+        return True
+    return any(held == r or held.startswith(r + "/") for r in roots)
+
+
+def tree_roots(path: str) -> set[str]:
+    """`path` as given and resolved, the two forms a hold is compared against.
+
+    git reports a worktree's path as it was created, and /proc reports the real one.
+    """
+    return {path.rstrip("/"), str(Path(path).resolve())}
+
+
+def main(argv: list[str]) -> int:
+    """The entry points for the bash Stop hook, so it shares the Python readers.
+
+    `forge-merged <branch> <head>` exits 0 when the forge merged that head, else 1. It
+    runs from the current directory, which the hook sets to the worktree.
+
+    `holders <tree>` prints one line per process holding the tree or a path below it,
+    the pid and the `how` separated by a tab, and exits 0 whether or not it printed any.
+    """
+    if len(argv) == 3 and argv[0] == "forge-merged":
+        return 0 if forge_says_merged(os.getcwd(), argv[1], argv[2]) else 1
+    if len(argv) == 2 and argv[0] == "holders":
+        roots = tree_roots(argv[1])
+        for pid, held, how in process_holds():
+            if holds_tree(held, roots):
+                print(f"{pid}\t{how}")
+        return 0
+    print(
+        "usage: claude_worktree.py forge-merged <branch> <head>\n"
+        "       claude_worktree.py holders <tree>",
+        file=sys.stderr,
+    )
+    return 2
 
 
 if __name__ == "__main__":

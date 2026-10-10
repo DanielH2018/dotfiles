@@ -39,9 +39,11 @@ processes, because a tree the session stands in is already kept as the current o
 A session's project dir counts the same way as a cwd. Claude Code runs every repo
 hook from `CLAUDE_PROJECT_DIR`, so deleting that tree breaks the session even when its
 cwd has moved elsewhere (server#3887). The server repo's remover refuses on the same
-two holds (server#3910). The scan runs once before classifying and again right before
-each removal, because a session can start in a tree while the sweep runs git in the
-others.
+two holds (server#3910). So does an unreadable process of another non-root uid
+inside this uid's login slice, which `claude_worktree.process_holds` counts as
+holding every tree (server#3994). The scan runs once before classifying and again
+right before each removal, because a session can start in a tree while the sweep runs
+git in the others.
 
 Why the git-state three are enough. Once HEAD is an ancestor of `origin/<default>`,
 every commit in the tree is already in the remote by construction — there is nothing
@@ -144,13 +146,14 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-# The readers this hook shares with the server repo's pruner — the porcelain parser, the
-# lock-liveness check, the cherry and merge-tree verdicts, the default-ref lookup — live
-# in the claude-worktree package (`home/dot_local/share/claude-worktree/`), deployed
-# beside claude-guard. There is no fallback copy here: a hook that cannot import its
-# readers keeps every tree, which is the direction this script fails in anyway. The
-# standalone test points CLAUDE_WORKTREE_HOME at the source tree; a session has the
-# deployed path.
+# The readers this hook shares with the server repo's pruner — the porcelain parser,
+# the lock-liveness check, the cherry and merge-tree verdicts, the default-ref lookup,
+# and the /proc scan for processes holding a tree, which worktree-landed.sh runs too —
+# live in the claude-worktree package (`home/dot_local/share/claude-worktree/`),
+# deployed beside claude-guard. There is no fallback copy here: a hook that cannot
+# import its readers keeps every tree, which is the direction this script fails in
+# anyway. The standalone test points CLAUDE_WORKTREE_HOME at the source tree; a session
+# has the deployed path.
 _CLAUDE_WORKTREE_HOME = Path(
     os.environ.get("CLAUDE_WORKTREE_HOME", Path.home() / ".local/share/claude-worktree")
 )
@@ -162,9 +165,12 @@ try:
         cherry_says_landed,
         default_ref,
         forge_says_merged,
+        holds_tree,
         merge_tree_says_contained,
         parse_worktree_list,
+        process_holds,
         session_is_alive,
+        tree_roots,
     )
 except ImportError as exc:
     # Imported by its test: fail loudly. Run as the hook: say why nothing was pruned and
@@ -327,65 +333,16 @@ def is_contained(repo: str, branch: str, target: str) -> bool:
     return merge_tree_says_contained(result.stdout, target_tree)
 
 
-def process_holds(proc: str = "/proc") -> list[tuple[int, str, str]]:
-    """(pid, path, how) for each directory a live process holds that is readable.
-
-    A process holds two paths: its cwd, and the `CLAUDE_PROJECT_DIR` in its
-    environment. The second is the one a cwd scan misses. A Claude session whose
-    project dir is a worktree loses every repo hook once that tree is deleted, and the
-    session's cwd can be elsewhere by then (server#3887). The variable is read from
-    every process, not only `claude` ones: the binary's command name is its version
-    string, so a name match finds nothing, and each hook or tool shell a session spawns
-    carries the variable too.
-
-    The same source worktree-landed.sh reads. A process that exits mid-scan, or one
-    owned by another user, has no readable link or environment and is skipped. Off
-    Linux there is no /proc and the list is empty, so the busy test then protects
-    nothing, as in the Stop hook. The kernel appends " (deleted)" to a cwd whose
-    directory is gone; it is stripped so a process standing in a half-removed tree
-    still counts.
-
-    Returns:
-        One entry per held path; `how` is "cwd" or "CLAUDE_PROJECT_DIR".
-    """
-    out = []
-    try:
-        entries = os.listdir(proc)
-    except OSError:
-        return out
-    for name in entries:
-        if not name.isdigit():
-            continue
-        pid = int(name)
-        try:
-            cwd = os.readlink(f"{proc}/{name}/cwd")
-            out.append((pid, cwd.removesuffix(" (deleted)"), "cwd"))
-        except OSError:
-            pass
-        try:
-            environ = Path(f"{proc}/{name}/environ").read_bytes()
-        except OSError:
-            continue
-        for var in environ.split(b"\0"):
-            if var.startswith(b"CLAUDE_PROJECT_DIR="):
-                held = var.partition(b"=")[2].decode(errors="replace")
-                if held:
-                    # Unlike a cwd link, the variable is whatever string was exported.
-                    out.append((pid, os.path.realpath(held), "CLAUDE_PROJECT_DIR"))
-                break
-    return out
-
-
 def busy_process(path: str, holds: list[tuple[int, str, str]]) -> str:
     """Name the first process holding `path` or a path below it, or "" when none does.
 
     `path` is matched both as git reports it and resolved, because /proc reports the
     real path. A process name, when readable, goes into the report so the operator can
-    tell a landing from a stray shell, and so does which of the two holds matched.
+    tell a landing from a stray shell, and so does which hold matched.
     """
-    roots = {path.rstrip("/"), str(Path(path).resolve())}
+    roots = tree_roots(path)
     for pid, held, how in holds:
-        if any(held == r or held.startswith(r + "/") for r in roots):
+        if holds_tree(held, roots):
             try:
                 comm = Path(f"/proc/{pid}/comm").read_text().strip()
             except OSError:

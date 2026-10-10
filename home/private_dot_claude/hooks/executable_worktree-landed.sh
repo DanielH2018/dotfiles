@@ -131,6 +131,12 @@ if [ -z "$DEFAULT" ]; then
 fi
 [ -z "$DEFAULT" ] && exit 0
 
+# Both Python readers below, the forge lookup and the process scan, come from the
+# claude-worktree package. Without it neither can say yes, so the hook stays silent.
+CW_HOME="${CLAUDE_WORKTREE_HOME:-$HOME/.local/share/claude-worktree}"
+[ -f "$CW_HOME/claude_worktree.py" ] || exit 0
+command -v python3 >/dev/null 2>&1 || exit 0
+
 # Landed: every commit here is already in the default branch, so nothing is recoverable
 # only from this directory.
 REWRITTEN=0
@@ -152,9 +158,6 @@ if ! git merge-base --is-ancestor HEAD "$DEFAULT" 2>/dev/null; then
   # branch deletion `@{upstream}` no longer resolves, so nothing is left to disagree with.
   # `forge_says_merged` compares SHAs, and its docstring has the rest. GH_BIN reaches it
   # through the environment.
-  CW_HOME="${CLAUDE_WORKTREE_HOME:-$HOME/.local/share/claude-worktree}"
-  [ -f "$CW_HOME/claude_worktree.py" ] || exit 0
-  command -v python3 >/dev/null 2>&1 || exit 0
   HEAD_SHA=$(git rev-parse HEAD 2>/dev/null) || exit 0
   [ -n "$HEAD_SHA" ] || exit 0
   # Exit 0 is a confirmed merge. Every other status falls through to silence, as the
@@ -184,21 +187,37 @@ TREE_REL=${TOPLEVEL#"$PRIMARY"/}
 
 # Landed is not idle. A detached `land.sh` keeps running from the tree after the merge that
 # makes every test above pass: it waits on CI, ticks the deployer and runs scripts from the
-# tree. Removing the tree under it kills the landing before its verdict (#747, #748). So a
-# live process whose cwd is inside the tree means "not yet": exit without the stamp, and the
-# hook asks at a later Stop once the process has gone. A tree still busy at session end
-# falls to prune-worktrees.py, the documented backstop.
+# tree. Removing the tree under it kills the landing before its verdict (#747, #748). A
+# second session whose CLAUDE_PROJECT_DIR is this tree loses every repo hook when it goes,
+# wherever its cwd is (server#3887, dotfiles#814). So a live process holding the tree means
+# "not yet": exit without the stamp, and the hook asks at a later Stop once the process has
+# gone. A tree still busy at session end falls to prune-worktrees.py, the documented backstop.
+#
+# Which processes hold the tree is `claude_worktree.process_holds`, the scan
+# prune-worktrees.py runs too, so a fix to it reaches both (dotfiles#815). A process holds
+# the tree by its cwd, by its CLAUDE_PROJECT_DIR, or as an unreadable process of another
+# non-root uid inside this uid's login slice, which holds every tree (server#3994). A scan
+# that fails, times out or prints anything but `<pid><TAB><how>` lines reads as busy.
 #
 # The session's own processes do not count, or the hook would never fire. The session and
-# everything it spawned (MCP servers, background Bash calls) stand in the tree too. "Own"
-# is the hook plus each ancestor whose cwd is still inside the tree, and everything
-# descended from those. A detached landing double-forks and reparents to init or a
-# subreaper, so its parent chain never reaches that set. The cost of this rule is a
-# non-detached background job of the session itself, which counts as the session's own.
-in_tree() {
-  case "${1% (deleted)}" in "$TOPLEVEL" | "$TOPLEVEL"/*) return 0 ;; esac
-  return 1
-}
+# everything it spawned (MCP servers, background Bash calls) hold the tree too. "Own" is the
+# hook plus each ancestor that itself holds the tree, and everything descended from those.
+# The ancestor test is a hold, not a cwd, because a session whose cwd has left the tree
+# still carries it as CLAUDE_PROJECT_DIR. A detached landing double-forks and reparents to
+# init or a subreaper, so its parent chain never reaches that set. The cost of this rule is
+# a non-detached background job of the session itself, which counts as the session's own.
+run_bounded 5 1048576 -- python3 "$CW_HOME/claude_worktree.py" holders "$TOPLEVEL"
+if [ "$RB_STATUS" != ok ] || [ "$RB_EXIT" -ne 0 ]; then exit 0; fi
+HOLDERS=" "
+TAB=$'\t'
+while IFS= read -r LINE; do
+  [ -n "$LINE" ] || continue
+  HOLDER=${LINE%%"$TAB"*}
+  case "$HOLDER" in "" | *[!0-9]*) exit 0 ;; esac
+  [ "$HOLDER" != "$LINE" ] && [ -n "${LINE#*"$TAB"}" ] || exit 0
+  HOLDERS="$HOLDERS$HOLDER "
+done <<<"$RB_OUT"
+
 ppid_of() {  # field 4 of /proc/<pid>/stat; comm may hold spaces and ")", so cut at the last ")"
   local stat rest
   read -r stat <"/proc/$1/stat" 2>/dev/null || return 1
@@ -207,15 +226,12 @@ ppid_of() {  # field 4 of /proc/<pid>/stat; comm may hold spaces and ")", so cut
 }
 OWN=" $$ "
 P=$$
-while ppid_of "$P" && [ "$PPID_OF" -gt 1 ] && in_tree "$(readlink "/proc/$PPID_OF/cwd" 2>/dev/null)"; do
+while ppid_of "$P" && [ "$PPID_OF" -gt 1 ]; do
+  case "$HOLDERS" in *" $PPID_OF "*) ;; *) break ;; esac
   OWN="$OWN$PPID_OF "
   P=$PPID_OF
 done
-# One find lists every cwd link inside the tree; a fork per PID would not fit the timeout on
-# a box with hundreds of processes. -lname matches the link text as a glob, and worktree
-# names carry no glob characters.
-while IFS= read -r LINK; do
-  CAND=${LINK#/proc/}; CAND=${CAND%/cwd}
+for CAND in $HOLDERS; do
   C=$CAND; FOREIGN=1; HOPS=0
   while [ "$HOPS" -lt 64 ]; do
     case "$OWN" in *" $C "*) FOREIGN=0; break ;; esac
@@ -224,8 +240,7 @@ while IFS= read -r LINK; do
     C=$PPID_OF; HOPS=$((HOPS + 1))
   done
   [ "$FOREIGN" = 1 ] && exit 0
-done < <(find /proc -mindepth 2 -maxdepth 2 -name cwd \
-           \( -lname "$TOPLEVEL" -o -lname "$TOPLEVEL/*" \) 2>/dev/null)
+done
 
 : >"$STAMP" 2>/dev/null
 

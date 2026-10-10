@@ -167,6 +167,9 @@ def build(root):
         # Landed trees with a process still running in them (#747, #748).
         "busy": worktree("busy", commit=True, push=True, land=True),
         "session_busy": worktree("session-busy", commit=True, push=True, land=True),
+        # Held by CLAUDE_PROJECT_DIR alone, from a cwd elsewhere (dotfiles#814).
+        "project_busy": worktree("project-busy", commit=True, push=True, land=True),
+        "session_away": worktree("session-away", commit=True, push=True, land=True),
         "fanout": worktree("fanout", commit=True, push=True, land=True),
         "unmerged": worktree("unmerged", commit=True, push=True, land=False),
         "dirty": worktree("dirty", commit=True, push=True, land=True),
@@ -498,6 +501,59 @@ with tempfile.TemporaryDirectory() as tmp:
     check(
         "a process the session itself spawned in the tree does not hold the block",
         '"decision": "block"' in wrapped.stdout,
+    )
+
+    # Another session whose project dir is the tree, standing somewhere else: it loses
+    # every repo hook if the tree goes (dotfiles#814).
+    starter = subprocess.run(
+        ["bash", "-c", "sleep 300 >/dev/null 2>&1 & echo $!"],
+        cwd="/",
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CLAUDE_PROJECT_DIR": str(t["project_busy"])},
+    )
+    holder = int(starter.stdout.strip())
+    check(
+        "a process holding the tree only as CLAUDE_PROJECT_DIR keeps the hook silent",
+        run(t["project_busy"]) is None,
+    )
+    os.kill(holder, signal.SIGKILL)
+    deadline = time.monotonic() + 5
+    while Path(f"/proc/{holder}").exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    project_block = run(t["project_busy"])
+    check(
+        "the same tree blocks once that process has exited",
+        bool(project_block) and project_block.get("decision") == "block",
+    )
+
+    # The session's own process can have left the tree while its project dir still
+    # names it. It and its children are still the session's own, so they must not
+    # hold the block.
+    away = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'sleep 300 & (cd "$2" && bash "$1"); rc=$?; kill $!; exit $rc',
+            "_",
+            str(HOOK),
+            str(t["session_away"]),
+        ],
+        cwd="/",
+        input=json.dumps({"session_id": "test", "stop_hook_active": False}),
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "CLAUDE_PROJECT_DIR": str(t["session_away"]),
+            "HOOK_INPUT_LIB": str(HERE / "hook-input.sh"),
+            "GH_BIN": str(GH_STUB),
+            "STUB_MERGED": str(MERGED_LIST),
+        },
+    )
+    check(
+        "a session whose cwd left the tree still counts its own children as its own",
+        '"decision": "block"' in away.stdout,
     )
 
 shutil.rmtree(STUB_DIR, ignore_errors=True)

@@ -6,7 +6,9 @@ dotfiles `prune-worktrees.py` SessionStart hook and the server repo's
 scripts carrying ten function names in common, three of them byte-identical.
 
 What is shared is the READING — `Worktree`, `parse_worktree_list`, `session_is_alive`,
-`cherry_says_landed`, `merge_tree_says_contained`, `default_ref`. What stays per-repo is
+`cherry_says_landed`, `merge_tree_says_contained`, `default_ref`, and `process_holds`,
+the /proc scan for processes still holding a tree. The `worktree-landed.sh` Stop hook
+runs that scan as `claude_worktree.py holders <tree>`. What stays per-repo is
 the delete authority: the hook reports a squash or rebase match as REVIEW and never
 removes; the server script removes it after asking the forge which head it merged.
 

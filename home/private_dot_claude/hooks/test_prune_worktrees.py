@@ -156,34 +156,11 @@ check(
         "by its CLAUDE_PROJECT_DIR"
     ),
 )
-
-
-def fake_proc(root: Path, pid: int, cwd: str | None, environ: bytes | None) -> None:
-    """One /proc/<pid> entry with a cwd link and an environ file, either one omitted."""
-    entry = root / str(pid)
-    entry.mkdir()
-    if cwd is not None:
-        (entry / "cwd").symlink_to(cwd)
-    if environ is not None:
-        (entry / "environ").write_bytes(environ)
-
-
-with tempfile.TemporaryDirectory() as _proc:
-    _proc = Path(_proc)
-    fake_proc(_proc, 10, "/w/a", b"HOME=/h\0CLAUDE_PROJECT_DIR=/w/b\0")
-    fake_proc(_proc, 11, None, b"CLAUDE_PROJECT_DIR=\0")
-    fake_proc(_proc, 12, "/w/c (deleted)", None)
-    (_proc / "self").mkdir()
-    holds = mod.process_holds(str(_proc))
-    check(
-        "process_holds reads the cwd and CLAUDE_PROJECT_DIR, skipping an empty one",
-        sorted(holds)
-        == [
-            (10, "/w/a", "cwd"),
-            (10, os.path.realpath("/w/b"), "CLAUDE_PROJECT_DIR"),
-            (12, "/w/c", "cwd"),
-        ],
-    )
+# The scan itself is claude_worktree.process_holds, tested in that package.
+check(
+    "busy_process counts another uid's unreadable process against any tree",
+    mod.busy_process("/w/a", [(4, "", "another uid")]).startswith("pid 4"),
+)
 
 # ── the removal policy: three conditions act, two weaker signals only report ──────
 #
