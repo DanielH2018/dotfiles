@@ -46,10 +46,16 @@ refreshes: touch only what the request or the new status requires and leave the 
 the file byte-identical. A small requested change (a number, a line, one section) isn't
 license to also rewrite phrasing, resize headers, or "improve" parts nobody asked about.
 
-Artifacts are pruned after 7 days without an update, so a doc that keeps getting
-refreshed as work lands stays put and an abandoned one clears itself out. Executable
+`prune-artifacts.sh` deletes an artifact once it goes `CLAUDE_ARTIFACT_RETENTION_DAYS`
+without an update. `settings.base.json` sets that to 30 days. A doc that keeps getting
+refreshed as work lands stays put, and an abandoned one clears itself out. Executable
 files in the artifacts directory are never pruned — a generated script is a tool, not
 a report. If you write one there, `chmod +x` it or it will age out with the docs.
+
+An artifact is a rendering, never the record. Artifacts are not in git and not in the
+break-glass bundle, so pruning destroys the only copy of anything that lives only there.
+When an artifact records a decision or a plan that outlives the session, move its
+substance into the repo's docs in the same PR that acts on it.
 
 ## Output rules
 
