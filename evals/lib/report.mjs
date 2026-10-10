@@ -19,7 +19,16 @@ export function aggregateCase(caseDef, runs) {
   if (healthy < Math.ceil(k / 2)) status = 'INCONCLUSIVE';
   else status = thresholdMet ? 'PASS' : 'FAIL';
 
-  return { id: caseDef.id, k, healthy, passes, passRate, allPass, thresholdMet, status };
+  // Every run is billed, infra errors included, so cost sums over all runs, not healthy ones.
+  const costUsd = runs.reduce((sum, r) => sum + (r.costUsd ?? 0), 0);
+
+  return { id: caseDef.id, k, healthy, passes, passRate, allPass, thresholdMet, status, costUsd };
+}
+
+// The sweep's total. The --json report stays a bare array of case reports, so a consumer
+// recomputes this same sum from each entry's costUsd.
+export function sweepCostUsd(caseReports) {
+  return caseReports.reduce((sum, r) => sum + (r.costUsd ?? 0), 0);
 }
 
 export function overallExitCode(caseReports) {
@@ -28,6 +37,6 @@ export function overallExitCode(caseReports) {
 
 export function formatReport(caseReports) {
   const line = r =>
-    `${r.status.padEnd(12)} ${r.id}  (${r.passes}/${r.healthy} healthy pass, rate ${(r.passRate * 100).toFixed(0)}%)`;
+    `${r.status.padEnd(12)} ${r.id}  (${r.passes}/${r.healthy} healthy pass, rate ${(r.passRate * 100).toFixed(0)}%, $${r.costUsd.toFixed(4)})`;
   return caseReports.map(line).join('\n');
 }

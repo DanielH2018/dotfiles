@@ -106,6 +106,12 @@ cases is realistically single-digit-to-low-tens of dollars. Every `claude` call 
 `--max-budget-usd`; use `--smoke` and `--agent`/`--case` filters while iterating. Re-measure and
 update this note if models or case sizes change.
 
+The runner records what it spent. `classifyRun` keeps each call's `total_cost_usd`, retries
+included, and each run's `costUsd` adds the judge call to the agent call. Each case report in
+`--json` carries its `costUsd`, and the summary ends with the sweep's total, which is the sum of
+those. This is the only record of a hermetic sweep's cost: `--bare` skips `settings.json`, where
+the OTEL exporter config lives, so those calls export no telemetry.
+
 ## The agents
 
 Case *files* exist for all nine agents, but only five of them can be measured on a personal

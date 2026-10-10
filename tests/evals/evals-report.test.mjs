@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { parseThreshold, aggregateCase, overallExitCode } from '../../evals/lib/report.mjs';
+import { parseThreshold, aggregateCase, overallExitCode, sweepCostUsd } from '../../evals/lib/report.mjs';
 
 const ok = (pass) => ({ status: 'ok', pass });
 const infra = () => ({ status: 'infra_error' });
@@ -42,4 +42,14 @@ test('overallExitCode is 1 if any case is not PASS', () => {
   assert.strictEqual(overallExitCode([{ status: 'PASS' }, { status: 'PASS' }]), 0);
   assert.strictEqual(overallExitCode([{ status: 'PASS' }, { status: 'FAIL' }]), 1);
   assert.strictEqual(overallExitCode([{ status: 'INCONCLUSIVE' }]), 1);
+});
+
+test('case costUsd sums every run, infra errors included', () => {
+  const c = { id: 'x', k: 3, threshold: 'all' };
+  const r = aggregateCase(c, [{ ...ok(true), costUsd: 0.25 }, { ...infra(), costUsd: 0.5 }, ok(true)]);
+  assert.strictEqual(r.costUsd, 0.75);
+});
+
+test('sweepCostUsd sums the case reports', () => {
+  assert.strictEqual(sweepCostUsd([{ costUsd: 0.25 }, { costUsd: 0.5 }]), 0.75);
 });

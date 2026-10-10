@@ -10,7 +10,7 @@ import { invokeAgent } from './lib/invoke-agent.mjs';
 import { checkAssertions } from './lib/assertions.mjs';
 import { judge } from './lib/judge.mjs';
 import { gradeFromParts } from './lib/grade.mjs';
-import { aggregateCase, overallExitCode, formatReport } from './lib/report.mjs';
+import { aggregateCase, overallExitCode, formatReport, sweepCostUsd } from './lib/report.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..');
@@ -28,15 +28,17 @@ async function gradeRun(caseDef, agentsFlagCache) {
     agentsFlagCache[caseDef.agent] = r.flag;
   }
   const invocation = await invokeAgent({ agentsFlag: agentsFlagCache[caseDef.agent], name: caseDef.agent, input: caseDef.input });
-  if (invocation.status !== 'ok') return gradeFromParts({ invocation });
+  // Each run's costUsd covers the agent under test plus the judge, when one ran.
+  const priced = (grade, judgeCost = 0) => ({ ...grade, costUsd: invocation.costUsd + judgeCost });
+  if (invocation.status !== 'ok') return priced(gradeFromParts({ invocation }));
   const assertion = checkAssertions(invocation.text, caseDef.assert);
-  if (!assertion.pass) return gradeFromParts({ invocation, assertion });
+  if (!assertion.pass) return priced(gradeFromParts({ invocation, assertion }));
   // A case with no `rubric` is fully regex-gradable (see grade.mjs's needsJudge) — skip
   // the live judge call entirely rather than spend an API call re-deciding what the
   // assertion already decided.
-  if (!caseDef.rubric) return gradeFromParts({ invocation, assertion, needsJudge: false });
+  if (!caseDef.rubric) return priced(gradeFromParts({ invocation, assertion, needsJudge: false }));
   const judgeResult = await judge({ rubric: caseDef.rubric, output: invocation.text });
-  return gradeFromParts({ invocation, assertion, judgeResult });
+  return priced(gradeFromParts({ invocation, assertion, judgeResult }), judgeResult.costUsd);
 }
 
 async function pool(items, n, fn) {
@@ -60,13 +62,14 @@ async function main() {
     const report = aggregateCase({ ...c, k }, runs);
     report._runs = runs;
     reports.push(report);
-    console.log(`${report.status.padEnd(12)} ${c.id}  (${report.passes}/${report.healthy} pass)`);
+    console.log(`${report.status.padEnd(12)} ${c.id}  (${report.passes}/${report.healthy} pass, $${report.costUsd.toFixed(4)})`);
     for (const r of runs) {
       if (r.status === 'infra_error') console.log(`    infra: ${r.reason}`);
       else if (r.pass === false) console.log(`    fail:  ${r.failures ? r.failures.join('; ') : r.judgeReason}`);
     }
   }
   console.log('\n' + formatReport(reports));
+  console.log(`\nsweep cost: $${sweepCostUsd(reports).toFixed(4)} (sum of each case's costUsd in --json)`);
   if (opts.json) writeFileSync(opts.json, JSON.stringify(reports, null, 2));
   process.exit(overallExitCode(reports));
 }
