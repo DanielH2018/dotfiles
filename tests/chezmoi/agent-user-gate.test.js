@@ -43,17 +43,23 @@ const AGENT_IGNORED = [
   '.config/systemd/user/retention-sweep.*',
 ];
 
-const ignored = (agent) =>
-  new Set(renderFile(IGNORE, { data: { agent, profile: 'server', work: false } })
-    .split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')));
+// The hostname is not data, so a render that needs daniel-box sets it the way
+// cleanup-host-gated-files.test.js does. The agent exists only there, and several rules in
+// the file gate on the hostname, so an unpinned render answers for whatever host runs the test.
+const BOX = '{{ $_ := set .chezmoi "hostname" "daniel-box" }}{{ $_ := set .chezmoi "os" "linux" }}';
+
+const parse = (text) =>
+  new Set(text.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')));
+const ignored = (agent) => parse(renderTemplate(BOX + fs.readFileSync(IGNORE, 'utf8'),
+  { data: { agent, profile: 'server', work: false } }));
+// As `chezmoi managed` sees this host, unpinned.
+const ignoredHere = () => parse(renderFile(IGNORE, { data: { agent: false, profile: 'server', work: false } }));
 
 const settings = (agent) => JSON.parse(renderTemplate('{{ includeTemplate "settings.base.json" . }}',
   { data: { agent, profile: 'server', work: false } }));
 
-// The hostname is not data, so a render that needs daniel-box sets it the way
-// cleanup-host-gated-files.test.js does.
 const onBox = (file, agent) => renderTemplate(
-  `{{ $_ := set .chezmoi "hostname" "daniel-box" }}{{ $_ := set .chezmoi "os" "linux" }}${fs.readFileSync(file, 'utf8')}`,
+  `${BOX}${fs.readFileSync(file, 'utf8')}`,
   { data: { agent, profile: 'server', work: false } },
 );
 
@@ -82,8 +88,11 @@ test('every agent-ignored path names a target the operator deploys', { skip }, (
   const config = dataConfig({ agent: false, profile: 'server', work: false });
   const managed = execFileSync('chezmoi', ['--config', config, '--source', SOURCE, '--destination', '/nonexistent-home',
     'managed', '--include', 'files,dirs'], { encoding: 'utf8' }).split('\n');
+  // `managed` cannot pin the hostname, so a path this host already ignores for its own reason
+  // (the sudo shim deploys to the homelab hosts only) is checked on those hosts instead.
+  const here = ignoredHere();
   for (const p of AGENT_IGNORED) {
-    if (p === '.ssh') continue;
+    if (p === '.ssh' || here.has(p)) continue;
     const prefix = p.replace(/\*$/, '');
     assert.ok(managed.some((m) => m.startsWith(prefix)), `${p} matches no managed target`);
   }
