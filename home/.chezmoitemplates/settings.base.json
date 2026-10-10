@@ -81,6 +81,29 @@
          here. It is scoped to the two k3s nodes so CI and the desktop keep full width. */}}
     "PYTEST_XDIST_AUTO_NUM_WORKERS": "4",
 {{ end }}
+{{ if and (has .chezmoi.hostname (list "daniel-box" "daniel-server")) (not (includeTemplate "is-agent" .)) }}
+    {{/* Loads the server repo's deck mod (/deck: landing blockers, runs in flight, other
+         worktrees; server #3676) in every session, not only one started with --plugin-dir.
+         A project's .claude/settings.json cannot name a plugin folder, so the server repo
+         cannot do this for itself (dotfiles #797). The path is the primary checkout, which
+         the GitOps deployer fast-forwards, so the loaded mod follows master.
+
+         Claude Code splits the value on ':' and skips any entry that is not an absolute path
+         or a ~/ path. It drops this key from user settings when
+         CLAUDE_CODE_RESTRICT_PERSONAL_CONFIG is on, so check that first if /deck goes missing.
+
+         Headless sessions load it too. The mod starts its 60 s probe timer only when the
+         session's checkout carries scripts/diagnostics/probe.py, so a session in this repo or
+         any other pays nothing. A fan-out session in a server worktree runs the probe once a
+         minute and reads the landing-blocked section the mod adds to the system prompt. This
+         file cannot tell a headless session from an interactive one, so excluding fan-outs
+         would be the launcher's job, for example by passing
+         `--settings '{"env":{"CLAUDE_CODE_PLUGIN_DIRS":""}}'`.
+
+         Not for an agent user: the server repo's Ansible builds that user's home, and nothing
+         here knows whether it keeps a ~/server checkout. */}}
+    "CLAUDE_CODE_PLUGIN_DIRS": "{{ .chezmoi.homeDir }}/server/.claude/plugins/deck",
+{{ end }}
     {{/* claude-guard LIVE (docs/specs/2026-09-06-claude-guard-design.md, Rollout row 3).
          guard-permission-request.sh is the decision for Bash PermissionRequest: it computes
          judge()'s verdict and either allows or leaves the prompt standing. It is always live
