@@ -64,7 +64,7 @@ answering questions happen in place as usual, and a session already inside
 ## Git conventions
 
 - Commits are signed{{ if eq .chezmoi.os "darwin" }} via the 1Password SSH agent (work laptop only){{ else }} via an OpenSSH signing key{{ end }} — `bin/check-push-signatures` (the pre-push gate) rejects anything that reaches origin unsigned, however it got that way; `--no-verify` itself is denied at the permission layer.
-- Default branch is `main`. Prefer rebase over merge. Create a new commit rather than amending unless I ask for an amend.
+- The default branch is whatever `origin/HEAD` names, so read it with `git symbolic-ref --short refs/remotes/origin/HEAD` rather than assuming one. The dotfiles repo uses `main`; the homelab repo (`DanielH2018/server`) uses `master`. Prefer rebase over merge. Create a new commit rather than amending unless I ask for an amend.
 - Write commit messages that explain *why*, not just what changed:
   ```
   Fix race condition in settlement processor on concurrent retries
