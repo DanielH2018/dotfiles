@@ -1,3 +1,4 @@
+{{ if not (includeTemplate "is-agent" .) -}}
 #!/bin/sh
 # Install the node-based LSP servers the nvim config enables (vtsls/bashls/yamlls/
 # jsonls come from system fnm node, not mason — see dot_config/nvim/lua/plugins/lsp.lua).
@@ -21,3 +22,4 @@ command -v npm >/dev/null 2>&1 || { echo "install-node-lsps: npm not on PATH aft
 npm install -g --allow-scripts=core-js \
 {{ range $i, $p := .node_lsps }}{{ if $i }} \
 {{ end }}  '{{ $p.name }}@{{ $p.version }}'{{ end }}
+{{ end -}}

@@ -11,7 +11,7 @@
 set -eu
 if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
   systemctl --user daemon-reload || true
-{{ if eq .chezmoi.hostname "daniel-box" -}}
+{{ if and (eq .chezmoi.hostname "daniel-box") (not (includeTemplate "is-agent" .)) -}}
   systemctl --user enable --now retention-sweep.timer || true
 {{ else -}}
   systemctl --user disable --now retention-sweep.timer 2>/dev/null || true

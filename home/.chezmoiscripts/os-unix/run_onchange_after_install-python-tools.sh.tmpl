@@ -1,4 +1,4 @@
-{{ if and (ne .chezmoi.os "windows") (ne .profile "minimal") -}}
+{{ if and (ne .chezmoi.os "windows") (ne .profile "minimal") (not (includeTemplate "is-agent" .)) -}}
 #!/bin/sh
 # Installs uv (Astral's Python package/project manager) plus the two Python CLIs that are
 # machine-global rather than per-project:

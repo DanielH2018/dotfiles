@@ -4,7 +4,7 @@
 #   matcher: startup|resume|clear
 #   timeout: 5
 #   order: 120
-#   when: or (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin")
+#   when: and (or (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin")) (not (includeTemplate "is-agent" .))
 # Serve ~/.claude/artifacts on 127.0.0.1:8181 so artifact links are click-to-render.
 # Linux: file:// can't cross the VS Code Remote-SSH boundary — it resolves on the client.
 # darwin: the Claude desktop app refuses to grant any path under its own ~/.claude tree,

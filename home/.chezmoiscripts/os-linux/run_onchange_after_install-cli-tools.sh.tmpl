@@ -1,4 +1,4 @@
-{{ if and (eq .chezmoi.os "linux") (ne .profile "minimal") -}}
+{{ if and (eq .chezmoi.os "linux") (ne .profile "minimal") (not (includeTemplate "is-agent" .)) -}}
 #!/bin/sh
 # Installs the shell-experience CLI tools on a Linux workstation/server (Debian/Ubuntu or
 # Fedora, amd64 or arm64), mirroring the macOS Brewfile for Linux. The distro package manager

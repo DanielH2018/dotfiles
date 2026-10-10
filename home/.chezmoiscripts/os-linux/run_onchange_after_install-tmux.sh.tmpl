@@ -1,4 +1,4 @@
-{{ if and (eq .chezmoi.os "linux") (ne .profile "minimal") -}}
+{{ if and (eq .chezmoi.os "linux") (ne .profile "minimal") (not (includeTemplate "is-agent" .)) -}}
 #!/bin/sh
 # Builds tmux from the release tarball into ~/.local, shadowing the older distro tmux (Ubuntu
 # ships 3.6a) because ~/.local/bin is ahead of /usr/bin on PATH. Needed because Claude Code's

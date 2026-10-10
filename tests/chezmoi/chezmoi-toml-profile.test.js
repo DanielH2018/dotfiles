@@ -31,15 +31,17 @@ const skip = !have('chezmoi') ? 'chezmoi unavailable' : false;
 
 const WORK_PROMPT = 'Is this a work machine';
 const PROFILE_PROMPT = 'Machine profile (workstation/server/minimal)';
+const AGENT_PROMPT = 'Is this a Claude agent user (no sudo, its own git identity)';
 
 const isolatedConfigDir = scratch(os.tmpdir(), 'chezmoi-toml-');
 const isolatedConfig = path.join(isolatedConfigDir, 'nonexistent-chezmoi.toml');
 
-function render(profile) {
+function render(profile, agent = false) {
   return execFileSync('chezmoi', [
     'execute-template', '--init',
     '--config', isolatedConfig,
     '--promptBool', `${WORK_PROMPT}=false`,
+    '--promptBool', `${AGENT_PROMPT}=${agent}`,
     '--promptString', `${PROFILE_PROMPT}=${profile}`,
   ], { input: fs.readFileSync(TMPL, 'utf8'), encoding: 'utf8', stdio: 'pipe' });
 }
@@ -55,6 +57,13 @@ for (const profile of ['workstation', 'server', 'minimal']) {
     assert.match(out, new RegExp(`^\\s*profile = "${profile}"$`, 'm'));
   });
 }
+
+// The server repo's Ansible seeds `agent = true` for its Claude agent user; every other host
+// answers false. The data key must render as a bare TOML boolean, or is-agent reads a string.
+test('renders the agent answer as a boolean data key', { skip }, () => {
+  assert.match(render('server', true), /^\s*agent = true$/m);
+  assert.match(render('server'), /^\s*agent = false$/m);
+});
 
 test('rejects an unrecognised profile value', { skip }, () => {
   const result = renderFail('bogus');

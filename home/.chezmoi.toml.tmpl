@@ -1,5 +1,6 @@
 {{- $work := promptBoolOnce . "work" "Is this a work machine" false -}}
 {{- $profile := promptStringOnce . "profile" "Machine profile (workstation/server/minimal)" "workstation" -}}
+{{- $agent := promptBoolOnce . "agent" "Is this a Claude agent user (no sudo, its own git identity)" false -}}
 {{- if not (has $profile (list "workstation" "server" "minimal")) -}}
 {{-   fail (printf "chezmoi: invalid profile %q (must be one of: workstation, server, minimal)" $profile) -}}
 {{- end -}}
@@ -12,6 +13,10 @@ umask = 0o022
     # workstation|server = full tooling; minimal = resource-constrained host (e.g. the Pi),
     # opts out of the heavy Linux CLI-tool install. Any value other than "minimal" gets tools.
     profile = {{ $profile | quote }}
+    # true only for a locked-down Claude agent user that the server repo's Ansible builds
+    # (its claude_code role). It owns that user's shell profile, git identity and ssh, and the
+    # agent runs no host-wide timer, so .chezmoitemplates/is-agent gates those off.
+    agent = {{ $agent }}
 # Run the /bin/sh modify_ script through bash on every OS. The source is named
 # modify_settings.json.sh.tmpl so chezmoi strips the .sh extension (the target
 # stays settings.json) and runs it via this interpreter. Windows has no shebang

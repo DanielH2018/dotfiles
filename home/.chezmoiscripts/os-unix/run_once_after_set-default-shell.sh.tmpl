@@ -1,4 +1,4 @@
-{{ if ne .chezmoi.os "windows" -}}
+{{ if and (ne .chezmoi.os "windows") (not (includeTemplate "is-agent" .)) -}}
 #!/bin/sh
 # Make zsh the default login shell on every non-Windows machine (macOS, Linux, WSL).
 # The zsh config is chezmoi-managed (~/.zshrc, ~/.zshenv) and shares ~/.config/shell/common.sh

@@ -1,3 +1,4 @@
+{{ if not (includeTemplate "is-agent" .) -}}
 #!/bin/sh
 # Install oxlint, the JavaScript linter the chezmoi repo's prek hook and pre-push gate run.
 #
@@ -25,3 +26,4 @@ command -v fnm >/dev/null 2>&1 || { echo "install-js-lint: fnm not on PATH; skip
 eval "$(fnm env --shell bash)" 2>/dev/null || true
 command -v npm >/dev/null 2>&1 || { echo "install-js-lint: npm not on PATH after 'fnm env'; skipping" >&2; exit 0; }
 npm install -g 'oxlint@{{ .toolchain.oxlint }}'
+{{ end -}}

@@ -1,0 +1,10 @@
+{{/* Renders "true" when this apply renders config for a Claude agent user, "" otherwise --
+callers write {{ if includeTemplate "is-agent" . }}. The server repo's Ansible (its claude_code
+role) builds such a user with no sudo, no group of the operator's and its own GitHub account,
+and seeds `agent = true` under [data] before it runs `chezmoi init`. Ansible owns that user's
+shell profile, git identity and ssh, so this apply leaves them alone, and it skips the timers a
+host runs once under the operator's user. `hasKey` first: a host whose chezmoi.toml predates the
+key renders it as missing, and chezmoi's missingkey=error would fail a bare `.agent`. */ -}}
+{{- if and (hasKey . "agent") .agent -}}
+true
+{{- end -}}

@@ -24,7 +24,7 @@
          color-scheme, which reads 'default' (light) on the headless hosts. Every terminal
          here runs Catppuccin Mocha, so pin it. */}}
     "SKINS_THEME": "dark",
-{{ if has .chezmoi.hostname (list "daniel-box" "daniel-server" "daniel-pi") }}
+{{ if and (has .chezmoi.hostname (list "daniel-box" "daniel-server" "daniel-pi")) (not (includeTemplate "is-agent" .)) }}
     {{/* sudo run from a `!` command has no terminal to prompt on, so without an askpass
          helper it just refuses. ~/.zshenv sets this too, but that only reaches shells that
          read it: the Bash tool spawns its own shell per command and sudo saw nothing there
@@ -52,7 +52,9 @@
          public portal (auth.<domain>) rather than auth.local.<domain>, which is what a
          client with no route to the LAN portal needs. */}}
     "CLAUDE_ARTIFACTS_BASE_URL": "https://artifacts.daniel-hunter.com",
-    "CLAUDE_ARTIFACTS_HOST": "{{ .chezmoi.hostname }}",
+    {{/* An agent user's tree mounts beside the operator's as <host>-<user> (server repo,
+         ansible/roles/k8s/artifacts), so its links name that segment. */}}
+    "CLAUDE_ARTIFACTS_HOST": "{{ .chezmoi.hostname }}{{ if includeTemplate "is-agent" . }}-{{ .chezmoi.username }}{{ end }}",
 {{ end }}
 {{ if has .chezmoi.hostname (list "daniel-box" "daniel-server") }}
     {{/* Bound the pytest fan-out for a Claude session started outside claude-rc.service —
@@ -217,6 +219,12 @@
          Collector fans these to Tempo; see home/claude-otel/tempo-config.yaml. */}}
     "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1",
     "OTEL_TRACES_EXPORTER": "otlp",
+{{ if includeTemplate "is-agent" . }}
+    {{/* An agent user exports to the same collector under the same claude.ai account as the
+         operator. The collector turns this resource attribute into the metric label
+         process_owner, the one thing that tells the two apart in Grafana. */}}
+    "OTEL_RESOURCE_ATTRIBUTES": "process.owner={{ .chezmoi.username }}",
+{{ end }}
     {{/* app_entrypoint as a metric label: splits cost and tokens by how the session was
          started (interactive REPL vs SDK vs background job vs hook), which is the axis
          that says whether spend is me typing or automation running. Cheap — it is a
@@ -641,7 +649,7 @@
             "timeout": 5
           }
         ]
-      }{{ if or (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin") }},
+      }{{ if and (or (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin")) (not (includeTemplate "is-agent" .)) }},
       {
         "matcher": "startup|resume|clear",
         "hooks": [
@@ -754,13 +762,23 @@
             "command": "~/.claude/hooks/lint-after-edit.sh",
             "timeout": 300,
             "statusMessage": "Running lint checks..."
-          },
+          }
+        ]
+      }{{ if not (includeTemplate "is-agent" .) }},
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
           {
             "type": "command",
             "command": "~/.claude/hooks/chezmoi-guard.sh",
             "timeout": 15,
             "statusMessage": "Syncing chezmoi source..."
-          },
+          }
+        ]
+      }{{ end }},
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
           {
             "type": "command",
             "command": "~/.claude/hooks/link-artifact.sh",

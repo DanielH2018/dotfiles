@@ -390,3 +390,37 @@ AppData
 # it from the repo. A deployed copy would only put a test file in a skill directory that
 # no session reads.
 .claude/skills/*/test_*.py
+
+# A Claude agent user (see .chezmoitemplates/is-agent). The server repo's Ansible owns its login
+# profile, its git identity and signers, its ssh directory and its own user CLAUDE.md, which
+# imports this repo's copy from a subdirectory. It has no sudo, so the sudo shim and the askpass
+# helper do nothing for it. The changelog, telemetry-sweep, savings-rollup and retention timers
+# run once per host under the operator, and the RC resume, sandbox and PR dashboard tools are
+# the operator's own.
+{{ if includeTemplate "is-agent" . }}
+.profile
+.bash_profile
+.gitconfig
+.config/git/allowed_signers
+.ssh
+.claude/CLAUDE.md
+.local/bin/sudo
+.local/bin/tmux-askpass
+.local/bin/claude-changelog-watch
+.local/bin/otel-sweep
+.local/bin/otel-sweep-watch
+.local/bin/otel-savings-rollup
+.local/bin/retention-sweep
+.local/bin/claude-rc-resume
+.local/bin/pr-dash
+.local/bin/ct
+.local/bin/cts
+.local/bin/ctw
+.local/share/pr-dash
+.config/systemd/user/claude-changelog-watch.*
+.config/systemd/user/otel-sweep-watch.*
+.config/systemd/user/otel-savings-rollup.*
+.config/systemd/user/retention-sweep.*
+{{ else }}
+.claude/operator
+{{ end }}
