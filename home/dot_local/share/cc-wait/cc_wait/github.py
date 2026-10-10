@@ -8,19 +8,29 @@ arguments on this host (`cc_wait.cache`).
 `gh-ci` judges every check run on the commit: any failed run fails the wait at once, and the
 wait passes only when every run has completed without one. An empty list of check runs is a
 commit whose workflows have not registered yet, so it reads as pending, never as passed.
+
+A complete list of check runs is not yet a pass. After a push, a fast app such as GitGuardian
+can finish its one run seconds before GitHub Actions registers the rest, so a pass also needs
+the commit's check suites to agree: none still running with check runs in it, and none younger
+than `SETTLE_S`. A suite with no check runs that stays queued past `SETTLE_S` belongs to an app
+that never runs on the commit (Renovate's does this) and is ignored.
 """
 
 import json
 import re
 import subprocess
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from cc_wait.source import ArgParser, Description, ReadError, Reading, SourceError
 
 INTERVAL_S = 30.0
 GH_TIMEOUT_S = 30
+# How long after a check suite appears before its app has registered its check runs.
+SETTLE_S = 30.0
 
 # A check run that completed with one of these failed. `cancelled` is its own state: the run
 # will not finish, but it did not fail either, and the caller decides what that means.
@@ -106,6 +116,7 @@ class CiWait:
     ref: str | None
     pr: str | None
     run: Runner = field(default=subprocess.run, compare=False, repr=False)
+    now: Callable[[], float] = field(default=time.time, compare=False, repr=False)
 
     def describe(self) -> Description:
         return Description(
@@ -143,11 +154,37 @@ class CiWait:
         done = [r for r in runs if r.get("status") == "completed"]
         if len(done) < len(runs):
             return Reading("running", f"{sha[:8]}: {len(done)}/{len(runs)} check runs complete")
+        unsettled = self._unsettled_suites(sha)
+        if unsettled:
+            return Reading("running", f"{sha[:8]}: {len(runs)} check runs complete; {unsettled}")
         cancelled = [r for r in runs if r.get("conclusion") == "cancelled"]
         if cancelled:
             names = ", ".join(sorted(str(r.get("name")) for r in cancelled)[:3])
             return Reading("cancelled", f"{sha[:8]}: {len(cancelled)} cancelled: {names}")
         return Reading("passed", f"{sha[:8]}: {len(runs)} check runs passed")
+
+    def _unsettled_suites(self, sha: str) -> str:
+        """Why the check suites on `sha` may still add check runs, or "" when they cannot."""
+        data = gh_json(
+            ["api", f"repos/{self.repo}/commits/{sha}/check-suites?per_page=100"], self.run
+        )
+        suites = data.get("check_suites") if isinstance(data, dict) else None
+        if not isinstance(suites, list):
+            raise ReadError(f"no check_suites list for {sha[:8]}")
+        now = self.now()
+        young = busy = 0
+        for suite in suites:
+            try:
+                created = datetime.fromisoformat(str(suite.get("created_at"))).timestamp()
+            except ValueError as exc:
+                raise ReadError(f"a check suite on {sha[:8]} has no created_at") from exc
+            if now - created < SETTLE_S:
+                young += 1
+            elif suite.get("status") != "completed" and suite.get("latest_check_runs_count"):
+                busy += 1
+        parts = [f"{young} check suites under {SETTLE_S:.0f}s old"] if young else []
+        parts += [f"{busy} check suites still running"] if busy else []
+        return ", ".join(parts)
 
 
 class CiSource:
