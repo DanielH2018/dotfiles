@@ -376,7 +376,7 @@ AppData
 .local/bin/logi-dev-mgr-kick
 {{ end }}
 
-# The 8 home/private_dot_claude/hooks/test_*.py files and _testkit.py deploy to
+# The home/private_dot_claude/hooks/test_*.py files and _testkit.py deploy to
 # ~/.claude/hooks, where none of them can run: each finds its subject by the SOURCE tree's
 # executable_-prefixed name, which chezmoi strips before deploying. tests/python-suites.test.js
 # already runs every one of them from the repo (git ls-files-derived), never from the deployed

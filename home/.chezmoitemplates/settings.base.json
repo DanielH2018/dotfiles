@@ -746,6 +746,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/memory-nearest.py",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PostToolUse": [
