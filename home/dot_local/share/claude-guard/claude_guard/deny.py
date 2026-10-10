@@ -430,13 +430,76 @@ def substitution_download(sc: Scan, target: str) -> Verdict | None:
     return None
 
 
+# Words that make a segment run its own quoted text as shell: `bash -c '… | sh'`,
+# `ssh host '… | sh'`, awk's `print | "sh"`. `_REPARSE` is wider (python, xargs, `<<`), and
+# reading it here denied `grep -E '(foo|sh)' f | xargs ls` (dotfiles #801).
+_SHELL_REPARSE = re.compile(
+    _ere(
+        r"(^|[^[:alnum:]_])(sh|bash|zsh|ksh|dash|csh|tcsh|fish|ash|mksh|pdksh|yash|osh|eval|"
+        r"ssh|hl|su|watch|parallel|awk|gawk|mawk|busybox)([^[:alnum:]_]|$)"
+    )
+)
+
+
+def _unquoted(s: str) -> str | None:
+    """`s` with every quoted character blanked to a space, or None on an unbalanced quote.
+    Escapes follow `_drop_quoted_separators`."""
+    out: list[str] = []
+    q = ""
+    i = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+        step = (1 if q == "'" else 2) if c == "\\" else 1
+        if c in "\"'":
+            if q == "":
+                q = c
+            elif q == c:
+                q = ""
+            out.append(" ")
+        else:
+            out.append(" " * len(s[i : i + step]) if q else s[i : i + step])
+        i += step
+    return None if q else "".join(out)
+
+
+# `segment.parse` returns a substitution body cut at its pipes, so a segment holding one is
+# matched whole, as before #801.
+_SUBSTITUTION = re.compile(r"\$\(|`|<\(|>\(")
+
+
+def _pipes_to_shell(command: str) -> bool:
+    """Whether some pipeline stage of `command` is a shell. A stage is matched on its own
+    normalised text, so a `|sh` quoted inside another stage's argument is not a pipe. A
+    segment that re-parses its quoted text (`_SHELL_REPARSE`) or holds a substitution is
+    matched whole, with its heredoc bodies; a heredoc fed to anything else is data. A command
+    the parse refuses falls back to the whole-string match."""
+    p = parse(command)
+    if not p.ok:
+        return bdb_re(normalize(command), PIPE_TO_SHELL)
+    after_pipe = False
+    for seg in p.segments:
+        text = normalize(seg.text)
+        if after_pipe and bdb_re("|" + text, PIPE_TO_SHELL):
+            return True
+        bare = _unquoted(seg.text)
+        whole = bare is None or _SHELL_REPARSE.search(bare) or _SUBSTITUTION.search(seg.text)
+        if whole and (bdb_re(text, PIPE_TO_SHELL) or any(map(_pipes_to_shell, seg.heredocs))):
+            return True
+        after_pipe = seg.sep == "|"
+    return False
+
+
 def pipe_to_shell(sc: Scan, target: str) -> Verdict | None:
-    """:849-852. The generic arm, after the kill rules, as in the bash."""
-    if bdb_re(sc.scan, PIPE_TO_SHELL):
+    """:849-852. The generic arm, after the kill rules, as in the bash. The whole-string match
+    is a cheap gate; `_pipes_to_shell` then drops a quoted `|sh` that no stage runs (#801)."""
+    if bdb_re(sc.scan, PIPE_TO_SHELL) and _pipes_to_shell(sc.command):
         return Verdict(
             "deny",
             "pipe-to-shell",
-            f"Blocked: piping output to a shell interpreter. {DOWNLOAD_MSG}",
+            f"Blocked: piping output to a shell interpreter. {DOWNLOAD_MSG} If the `|` and "
+            "the shell name are only text inside a shell -c, ssh or awk argument, run the "
+            "search with the Grep or Read tool, or from a tracked script, instead.",
         )
     return None
 

@@ -393,6 +393,36 @@ def test_local_pipes_and_data_processing_are_allowed():
     assert "deny" not in kinds(PIPE_ALLOW)
 
 
+# dotfiles #801: a `|sh` quoted inside an argument no stage runs as shell is not a pipe.
+QUOTED_PIPE_TEXT = [
+    "grep -E '(foo|sh)' notes.md",
+    "grep -E '(bash|sh)' notes.md",
+    "grep -E '(foo|sh)' notes.md | awk '{print $1}'",
+    "grep -oE '[a-z/]+[.](py|sh)' doc.md | sort -u | xargs ls",
+    "python3 - <<'EOF'\ns = 'a <code>|sh)</code> inside'\nEOF",
+    "uv run python findings.py open --title 'quoted |sh in a title'",
+]
+# The re-parsing stages still run their quoted text, and a real stage is still a stage.
+REAL_PIPE_TO_SHELL = [
+    "echo x | sh",
+    "find . -name x | xargs bash",
+    "bash -c 'cat f | sh'",
+    "ssh homelab 'cat f | sh'",
+    "awk '{print | \"sh\"}' f",
+    "bash <<'EOF'\ncat f | sh\nEOF",
+    'echo "$(cat f | sh)"',
+]
+
+
+def test_a_quoted_pipe_to_a_shell_that_no_stage_runs_is_allowed():
+    assert kinds(QUOTED_PIPE_TEXT) == ["none"] * len(QUOTED_PIPE_TEXT)
+
+
+def test_a_pipe_to_a_shell_in_a_stage_or_a_re_parsed_argument_is_denied():
+    assert rules(REAL_PIPE_TO_SHELL) == ["pipe-to-shell"] * len(REAL_PIPE_TO_SHELL)
+    assert "Grep or Read tool" in d.deny("echo x | sh", "", ENV).reason
+
+
 # --- protected writes and the fork bomb (:808-816) ------------------------------------------
 
 
