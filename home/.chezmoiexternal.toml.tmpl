@@ -9,4 +9,7 @@
     checksum.sha256 = "8037ed876b676cf7703898d482b419c3b1ff30f8d01daf2686dd4f31ea1dc933"
     stripComponents = 1
     exact = true
+    # The upstream test suite and its type stub run under `bun test` from a checkout, never from
+    # $HOME, so they stay out of the deploy. With `exact`, apply also deletes copies already there.
+    exclude = ["*/tests", "*/tests/**", "*/bun/bun-test.d.ts"]
 {{- end }}
