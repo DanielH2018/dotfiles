@@ -55,8 +55,23 @@ const readAllowlist = () => fs.readFileSync(ALLOWLIST, 'utf8')
 // ~/.config/chezmoi/chezmoi.toml, which would otherwise make every sandbox test path on the
 // allowlist read as "removed (listed but no longer deploying)" whenever someone runs
 // `node --test` directly on one of them.
+//
+// `--override-data` pins `.chezmoi.hostname` to "daniel-box" for the same reason, and only
+// that flag can: `--config` data cannot replace a `.chezmoi.*` key. home/.chezmoiexternal.toml.tmpl
+// renders the agent-flow external only on daniel-box, so without the pin CI never listed that
+// external's paths, and drift in it failed `bin/gate` on daniel-box alone (#816, #823, #825).
+// daniel-box is the host to pin because it is the one that renders host-gated externals. On
+// 2026-10-10 the matched list was identical under daniel-box, daniel-server, daniel-desktop,
+// daniel-pi, MacBook-Pro-2 and an unknown hostname, so the pin hides no other host's paths.
+// Listing an archive external downloads it into chezmoi's cache, which costs CI one fetch.
+const HOSTNAME = 'daniel-box';
+
 function managedMatches(source = srcPath()) {
-  const r = spawnSync('chezmoi', ['--config', dataConfig({ profile: 'workstation' }), 'managed', '--source', source, '--exclude', 'remove'], { encoding: 'utf8' });
+  const r = spawnSync('chezmoi', [
+    '--config', dataConfig({ profile: 'workstation' }),
+    '--override-data', JSON.stringify({ chezmoi: { hostname: HOSTNAME } }),
+    'managed', '--source', source, '--exclude', 'remove',
+  ], { encoding: 'utf8' });
   assert.strictEqual(r.status, 0, `chezmoi managed failed: ${r.stderr}`);
   return r.stdout.split('\n').map((l) => l.trim()).filter((l) => l && PATTERN.test(l)).sort();
 }
@@ -114,6 +129,32 @@ test('the guard actually catches a newly-added test file', { skip }, () => {
     assert.ok(
       added.some((p) => p.endsWith('test_a13_16_probe.sh')),
       `the drift check did not notice a new deploying test file. added=${JSON.stringify(added)}`,
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// The hostname pin is only worth something if an external's paths reach the check on every
+// host. This drops the `exclude` that keeps agent-flow's upstream test suite out of the deploy,
+// in a copy of the tree as above, and proves the suite then reads as drift. When the agent-flow
+// trial ends and its external goes, point this test at whichever host-gated external remains,
+// or delete it if none does.
+test('the guard sees test files that a host-gated external deploys', { skip }, () => {
+  const dir = scratch(os.tmpdir(), 'managed-drift-');
+  try {
+    const copy = path.join(dir, 'home');
+    fs.cpSync(srcPath(), copy, { recursive: true });
+    const external = path.join(copy, '.chezmoiexternal.toml.tmpl');
+    const body = fs.readFileSync(external, 'utf8');
+    const stripped = body.replace(/^\s*exclude = \[.*\]\n/m, '');
+    assert.notStrictEqual(stripped, body, 'the agent-flow external no longer carries an exclude line');
+    fs.writeFileSync(external, stripped);
+
+    const added = managedMatches(copy).filter((p) => !readAllowlist().includes(p));
+    assert.ok(
+      added.some((p) => p.startsWith('.local/share/claude-agent-flow/') && p.includes('/tests/')),
+      `the drift check did not notice the external's test suite. added=${JSON.stringify(added)}`,
     );
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
