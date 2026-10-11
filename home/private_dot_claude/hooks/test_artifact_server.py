@@ -174,11 +174,13 @@ def main():
             "a read-only store refuses to unstar",
             post_star(base, {**star, "starred": False}) == 403,
         )
+        # By name, not position: the index sorts newest first, and the two fixtures
+        # can be written within one mtime tick, so either may come first.
         index = json.loads(get(base, "/api/index.json")[1])
+        by_name = {a["name"]: a for a in index["artifacts"]}
         check(
             "a read-only store still shows the star, without a toggle",
-            index["artifacts"][0]["starred"] is True
-            and index["star_writable"] is False,
+            by_name["plan.html"]["starred"] is True and index["star_writable"] is False,
         )
     finally:
         server.shutdown()
