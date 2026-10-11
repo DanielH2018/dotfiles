@@ -182,6 +182,22 @@ if [ "$LOKI" = 1 ]; then
   }
 fi
 
+# gitleaks exits 1 both for "leaks found" and for a ruleset it cannot load, and only the
+# first writes a report. scan_work accepts 1 and counts the report's entries, so a broken
+# ruleset read as a clean scan of every source. A targetRules entry naming a rule that
+# gitleaks no longer ships is enough to break one. So each ruleset is loaded once against
+# empty input before any source is scanned: empty input exits 0, and any other exit there
+# can only come from the config.
+check_ruleset() { # check_ruleset <flags> <label>
+  # shellcheck disable=SC2086  # $1 is a flag pair or empty; word-splitting is the point
+  printf '' | "$GITLEAKS" stdin --no-banner $1 --report-format json --report-path /dev/null >/dev/null 2>&1 && return 0
+  echo "claude-transcript-scan: gitleaks could not load the $2 ruleset (${1:-default set}) — did not scan" >&2
+  mark_unavailable "gitleaks could not load the $2 ruleset"
+  exit 3
+}
+check_ruleset "$GL_RULES" transcript
+[ "$LOKI" = 1 ] && check_ruleset "$GL_LOKI_RULES" loki
+
 case $MODE in
   one)
     [ -f "$ONE" ] || { echo "claude-transcript-scan: no such transcript: $ONE" >&2; exit 2; }

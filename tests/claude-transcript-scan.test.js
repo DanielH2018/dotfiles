@@ -269,6 +269,18 @@ test('a missing ruleset falls back to the full set rather than refusing', { skip
   assert.match(r.stderr, /falling back to gitleaks' full set/);
 });
 
+test('a ruleset gitleaks cannot load is could-not-evaluate, never clean', { skip }, () => {
+  // gitleaks exits 1 for a ruleset it cannot load, the same code as "leaks found", and
+  // writes no report, so the scanner used to count zero findings and print clean. A
+  // targetRules entry naming a rule that gitleaks no longer ships is enough to break one.
+  // dirty.jsonl carries a token, so a scan that silently skipped it would exit 0.
+  const sb = sandbox();
+  fs.writeFileSync(sb.glConfig, '[extend]\nuseDefault = true\n[[allowlists]]\ntargetRules = ["no-such-rule"]\nregexes = ["x"]\n');
+  const r = run(['--session', path.join(sb.projects, 'dirty.jsonl')], sb);
+  assert.strictEqual(r.status, 3, `expected could-not-evaluate, got ${r.status}: ${r.stdout}${r.stderr}`);
+  assert.match(r.stderr, /could not load the transcript ruleset/);
+});
+
 // The SHIPPED ruleset, not a sandbox copy. A fixture token in a committed file PROPAGATES:
 // any session that reads this very file copies the token into its own transcript, and the
 // next sweep flags it there. Measured 2026-08-29 — six github-pat findings in a different
