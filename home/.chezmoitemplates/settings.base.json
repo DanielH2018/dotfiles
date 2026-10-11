@@ -764,6 +764,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "EnterWorktree",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/enterworktree-name-guard.py",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUse": [
