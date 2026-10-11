@@ -54,3 +54,34 @@ regexes = [
   "ghp_9tQz3XbW7kR2mYvL8pJdN4sH6cF1aE0uG5iT",
   "ghp_4kM8vB2nQ7wR5xT9zY1cD3fH6jL0pS8uA2eG",
 ]
+
+# Two vendor rules, each allowlisted for the one public-text shape that was triaged on it.
+# Both raised the statusline alert in October 2026, and neither held anything to rotate:
+#
+#   cloudflare-ddns.json: "<40 hex>"                 a git commit SHA keyed by a role's file name
+#   '<name>_discord_webhook', '<snake_case name>'    a SOPS key NAME beside another key name
+#
+# Each rule matches a vendor word, a separator, then ANY run of the right length, so an
+# identifier of that length fits as readily as a credential does. targetRules scopes each
+# allowlist to the rule that fired, because the same shape can be a real credential under a
+# different rule: GitHub's legacy OAuth tokens were 40 lowercase hex characters.
+#
+# Neither pattern can hide a real secret of its own rule. A Cloudflare API token is 40
+# characters and a Discord client secret is 32, both drawn from a mixed-case alphabet. A
+# random draw that lands entirely in lowercase hex has odds near 2^-80. A draw that lands in
+# lowercase snake_case, with no uppercase character, has odds near 10^-8.
+#
+# Mirrored in transcript-scan-loki.toml, because both rules are live in the Loki arm too.
+[[allowlists]]
+description = "a git commit SHA beside the word cloudflare — not a Cloudflare API token"
+targetRules = ["cloudflare-api-key"]
+regexes = [
+  "^[0-9a-f]{40}$",
+]
+
+[[allowlists]]
+description = "a lowercase snake_case key name beside the word discord — not a Discord client secret"
+targetRules = ["discord-client-secret"]
+regexes = [
+  "^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$",
+]

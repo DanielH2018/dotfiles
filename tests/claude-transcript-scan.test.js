@@ -39,8 +39,11 @@ const { srcPath } = require('./lib/paths');
 // gitleaks discards low-entropy candidates, which is how a `ghp_AAAA…` fixture once reported
 // clean against a working scanner — and a random draw at this length clears it with margin.
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+function draw(n) {
+  return Array.from(crypto.randomBytes(n), (b) => ALPHABET[b % ALPHABET.length]).join('');
+}
 function syntheticPat() {
-  return 'ghp_' + Array.from(crypto.randomBytes(36), (b) => ALPHABET[b % ALPHABET.length]).join('');
+  return 'ghp_' + draw(36);
 }
 
 const SCANNER = srcPath('dot_local', 'bin', 'executable_claude-transcript-scan');
@@ -435,6 +438,84 @@ test('the same shape in a TRANSCRIPT still goes unflagged, which is why the arm 
     `${JSON.stringify({ type: 'user', message: { content: ENTROPY_ONLY } })}\n`);
   const r = run(['--session', path.join(sb.projects, 'arr.jsonl')], sb);
   assert.strictEqual(r.status, 0, `expected the narrowed ruleset to MISS it, got ${r.status}`);
+});
+
+// --- allowlists scoped to one rule -------------------------------------------------------
+// Three shapes triaged from the statusline alert on 2026-10-11, none of them a credential:
+// a commit SHA beside the word cloudflare, a SOPS key name beside the word discord, and a
+// snake_case variable quoted in prose. Each fixture is assembled at runtime. Written out
+// literally, each line would trip this repo's own pre-commit gitleaks, which runs the bare
+// default set.
+const COMMIT_SHA = crypto.createHash('sha1').update('claude-transcript-scan fixture commit').digest('hex');
+const SHA_BESIDE_CLOUDFLARE = `cloudflare-ddns.json: "${COMMIT_SHA}"`;
+const KEY_NAME_BESIDE_DISCORD = `('gitops_deploy_discord_webhook', '${['healthchecks', 'discord', 'webhook', 'url'].join('_')}')`;
+const SNAKE_IN_PROSE = `the inventory key, \`${['k3s', 'longhorn', 'r2', 'volumes'].join('_')}\`, names the R2 tier`;
+
+function writeTranscript(sb, name, text) {
+  const p = path.join(sb.projects, name);
+  fs.writeFileSync(p, JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text }] } }) + '\n');
+  return p;
+}
+
+// The two vendor-rule allowlists are mirrored in both shipped rulesets, so these tests run
+// each ruleset through the transcript arm. The arm only decides which file gitleaks reads,
+// and what is under test is the file.
+test('a commit SHA and a key name beside a vendor word read clean under both shipped rulesets', { skip }, () => {
+  for (const cfg of [SHIPPED, SHIPPED_LOKI]) {
+    const sb = sandbox();
+    const p = writeTranscript(sb, 'ids.jsonl', `${SHA_BESIDE_CLOUDFLARE}\n${KEY_NAME_BESIDE_DISCORD}`);
+    const r = run(['--session', p], sb, { CLAUDE_TRANSCRIPT_GITLEAKS_CONFIG: cfg });
+    assert.strictEqual(r.status, 0, `${path.basename(cfg)} must not read identifiers as leaks: ${r.stdout}${r.stderr}`);
+  }
+});
+
+test('the bare rules DO flag both, so the targeted allowlists are doing the work', { skip }, () => {
+  const sb = sandbox();
+  fs.writeFileSync(sb.glConfig, NARROW);
+  const p = writeTranscript(sb, 'ids.jsonl', `${SHA_BESIDE_CLOUDFLARE}\n${KEY_NAME_BESIDE_DISCORD}`);
+  const r = run(['--session', p], sb);
+  assert.strictEqual(r.status, 1, `expected the bare rules to flag both: ${r.stdout}${r.stderr}`);
+  const log = fs.readFileSync(sb.log, 'utf8');
+  assert.match(log, /"rule":"cloudflare-api-key"/);
+  assert.match(log, /"rule":"discord-client-secret"/);
+});
+
+test('both shipped rulesets still flag a real-shaped Cloudflare token and Discord secret', { skip }, () => {
+  // Generated per run, for the reason syntheticPat is. The leading Q is uppercase, which
+  // neither targeted pattern admits, so a finding here cannot depend on a lucky draw.
+  for (const cfg of [SHIPPED, SHIPPED_LOKI]) {
+    const sb = sandbox();
+    const p = writeTranscript(sb, 'real.jsonl', `CLOUDFLARE_API_TOKEN=Q${draw(39)}\nDISCORD_CLIENT_SECRET=Q${draw(31)}`);
+    const r = run(['--session', p], sb, { CLAUDE_TRANSCRIPT_GITLEAKS_CONFIG: cfg });
+    assert.strictEqual(r.status, 1, `${path.basename(cfg)} must still flag real shapes: ${r.stdout}${r.stderr}`);
+    const log = fs.readFileSync(sb.log, 'utf8');
+    assert.match(log, /"rule":"cloudflare-api-key"/);
+    assert.match(log, /"rule":"discord-client-secret"/);
+  }
+});
+
+test('the shipped Loki ruleset drops a snake_case identifier quoted in prose', { skip }, () => {
+  const sb = sandbox();
+  const env = stubOtelq(sb, lokiPayload({ tool_input: JSON.stringify({ file_path: '/x/y.md', old_string: SNAKE_IN_PROSE }) }));
+  const r = run(['--loki', '--since', '1'], sb, { ...env, CLAUDE_TRANSCRIPT_GITLEAKS_LOKI_CONFIG: SHIPPED_LOKI });
+  assert.strictEqual(r.status, 0, `a variable name must not read as a leak: ${r.stdout}${r.stderr}`);
+});
+
+test('the bare default set flags that identifier, so the allowlist is doing the work', { skip }, () => {
+  const sb = sandbox();
+  const env = stubOtelq(sb, lokiPayload({ tool_input: JSON.stringify({ file_path: '/x/y.md', old_string: SNAKE_IN_PROSE }) }));
+  const r = run(['--loki', '--since', '1'], sb, env);
+  assert.strictEqual(r.status, 1, `expected the bare set to flag it: ${r.stdout}${r.stderr}`);
+  assert.match(fs.readFileSync(sb.log, 'utf8'), /"rule":"generic-api-key"/);
+});
+
+test('the snake_case allowlist does not reach a mixed-case token in the same framing', { skip }, () => {
+  // The rejecting half for the class itself. If the class ever admits uppercase, this fails.
+  const sb = sandbox();
+  const env = stubOtelq(sb, lokiPayload({ prompt: `the key, \`Q${draw(15)}_${draw(16)}\`, goes in the vault` }));
+  const r = run(['--loki', '--since', '1'], sb, { ...env, CLAUDE_TRANSCRIPT_GITLEAKS_LOKI_CONFIG: SHIPPED_LOKI });
+  assert.strictEqual(r.status, 1, `expected a finding: ${r.stdout}${r.stderr}`);
+  assert.match(fs.readFileSync(sb.log, 'utf8'), /"rule":"generic-api-key"/);
 });
 
 test('a slice at the entry cap is a failure, never a clean scan', { skip }, () => {

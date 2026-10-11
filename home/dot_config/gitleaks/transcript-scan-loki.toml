@@ -40,6 +40,39 @@ regexes = [
   "`[a-z0-9-]*[g-z][a-z0-9-]*`",
 ]
 
+# The same framing with underscores: a snake_case variable or inventory key named in prose.
+# Triaged 2026-10-11: "key, `<23-character snake_case variable>`" in an Edit's text, a name
+# that appears in a dozen committed files of the homelab repo. Nobody had baselined it, so
+# the finding was logged again on every run for 24 hours. It is a separate entry, not a
+# wider class in the entry above, because that entry is global and its argument rests on
+# the absence of an underscore. This one is scoped to generic-api-key, the only rule that
+# has fired on the shape, so no named rule loses coverage. It keeps the [g-z] requirement
+# and still admits no uppercase, `+` or `/`.
+[[allowlists]]
+description = "backtick-quoted snake_case identifier in prose, for generic-api-key only"
+targetRules = ["generic-api-key"]
+regexTarget = "match"
+regexes = [
+  "`[a-z0-9_-]*[g-z][a-z0-9_-]*`",
+]
+
+# Mirrored from transcript-scan.toml, which has the triage and the odds: a commit SHA beside
+# the word cloudflare, and a snake_case key name beside the word discord. Both rules are live
+# here, and a command line that reaches Loki can carry either shape.
+[[allowlists]]
+description = "a git commit SHA beside the word cloudflare -- not a Cloudflare API token"
+targetRules = ["cloudflare-api-key"]
+regexes = [
+  "^[0-9a-f]{40}$",
+]
+
+[[allowlists]]
+description = "a lowercase snake_case key name beside the word discord -- not a Discord client secret"
+targetRules = ["discord-client-secret"]
+regexes = [
+  "^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$",
+]
+
 # The suite's own fixtures, mirrored from transcript-scan.toml. A committed fixture
 # propagates into every transcript that reads the test file, and from there onto command
 # lines that reach Loki.
