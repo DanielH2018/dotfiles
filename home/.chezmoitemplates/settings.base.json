@@ -503,7 +503,7 @@
            infer it: the classifier's Git Push Destination exception explicitly blesses pushes to
            the default branch whatever it is named, and its production carve-out only fires on
            names like production/release/gh-pages. Here `master` IS the deploy trigger. */}}
-      "Sensitive remote targets: pushing or merging to `master` in DanielH2018/server is a PRODUCTION DEPLOY — a systemd timer pulls origin/master every 10 minutes and applies it to the live homelab with Ansible. Also any namespace, host or container carrying `prod`/`production` as a whole word, and Longhorn PVCs plus their B2 backups, which are destructive-risk targets despite not being prod-named",
+      "Sensitive remote targets: pushing or merging to `master` in DanielH2018/server is a PRODUCTION DEPLOY — a systemd timer pulls origin/master every 10 minutes and applies it to the live homelab with Ansible. Arming GitHub auto-merge (`gh pr merge --auto`) on a PR the user asked to ship is allowed; the repo's CLAUDE.md then has the session run land.sh to deploy it. Also any namespace, host or container carrying `prod`/`production` as a whole word, and Longhorn PVCs plus their B2 backups, which are destructive-risk targets despite not being prod-named",
       "Protected deployment namespaces / environments: the `homelab` and `longhorn-system` k8s namespaces",
       "Protected IaC scopes: IAM/RBAC, networking, quota and node-pool resources; anything named or tagged prod/production; the k3s read-only ServiceAccount RBAC boundary (ansible/roles/setup/k3s); and CrowdSec/Traefik/Authelia auth-plane config",
       {{/* Without this, a PUBLIC repo plus a sensitive-path entry makes every routine commit that
@@ -565,8 +565,8 @@
          so stating this in environment or soft_deny reads as protection while doing nothing.
          hard_deny is the only tier the built-in exception cannot override.
 
-         Scoped to a DIRECT push. `gh pr merge` is not a push and stays reachable; it is
-         ask-listed as the intended human checkpoint. The real enforcement is server-side
+         Scoped to a DIRECT push. `gh pr merge` is not a push and stays reachable: arming
+         `gh pr merge --auto` is allow-listed, and a plain merge is left to the classifier. The real enforcement is server-side
          anyway — the `master CI gate` ruleset on GitHub requires a green
          `prek (lint + validate + tests + secrets)` and has no bypass actors — so this is
          defence in depth, and the place the agent is told why. */}}

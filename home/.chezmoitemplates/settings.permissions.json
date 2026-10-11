@@ -357,9 +357,13 @@
            worktree job, so leaving `gh pr create` in the ask list contradicted the instruction it had
            already been given; the prompt audit measured 45 invocations, every one of the shape
            `cd <worktree> && gh pr create --draft`. These verbs are all reversible from the GitHub UI.
-           `gh pr merge` stays in the ask list below — merging is the irreversible step. */}}
+           A plain `gh pr merge` is listed nowhere, so it still prompts outside auto mode.
+           `gh pr merge --auto` is allowed: since 2026-10-11 the operator wants PRs from their
+           account and from DanielClaudeBot to auto-merge on DanielH2018/server once CI is
+           green. That repo's `master CI gate` ruleset still requires green CI and a PR. */}}
       "Bash(gh pr create:*)",
       "Bash(gh pr ready:*)",
+      "Bash(gh pr merge --auto:*)",
       "Bash(gh pr comment:*)",
       "Bash(gh pr edit:*)",
       "Bash(gh pr close:*)",
@@ -737,10 +741,8 @@
       "Bash(git stash pop:*)",
       "Bash(git stash drop:*)",
       "Bash(git stash clear)",
-      {{/* Merging is what triggers the deploy: the gitops timer pulls origin/master every 30
-           min and applies it with Ansible. Kept as the one intentional human checkpoint, now
-           that the `master CI gate` ruleset enforces the correctness half. */}}
-      "Bash(gh pr merge:*)",
+      {{/* `gh pr merge` left this list on 2026-10-11. An ask entry beats every allow entry, so
+           it would have kept `gh pr merge --auto` prompting too. See the allow entry above. */}}
       "Bash(gh api *-X POST*)",
       "Bash(gh api *-X PUT*)",
       "Bash(gh api *-X PATCH*)",
