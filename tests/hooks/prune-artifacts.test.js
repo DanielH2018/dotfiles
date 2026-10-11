@@ -38,9 +38,18 @@ function run({ art, state }, env = {}) {
   // window tests below rely on.
   const inherited = { ...process.env };
   delete inherited.CLAUDE_ARTIFACT_RETENTION_DAYS;
+  // The same goes for the star list and the host label: daniel-box's settings point the
+  // list at the cluster's real one, which must not decide what a fixture keeps.
   const r = spawnSync('bash', [HOOK], {
     input: '{}', encoding: 'utf8',
-    env: { ...inherited, CLAUDE_ARTIFACTS_DIR: art, CLAUDE_ARTIFACT_STATE_DIR: state, ...env },
+    env: {
+      ...inherited,
+      CLAUDE_ARTIFACTS_DIR: art,
+      CLAUDE_ARTIFACT_STATE_DIR: state,
+      CLAUDE_ARTIFACT_STARS_FILE: path.join(state, '..', 'stars.txt'),
+      CLAUDE_ARTIFACTS_HOST: 'testhost',
+      ...env,
+    },
   });
   assert.strictEqual(r.status, 0, `hook exits 0 (stderr: ${r.stderr})`);
   return r;
@@ -97,6 +106,54 @@ test('files under pinned/ are kept however old, at any depth', () => {
   assert.ok(!fs.existsSync(path.join(s.art, 'unpinned', 'pinned.html')),
     'only the top-level pinned/ dir is exempt, not the word in a path');
 });
+
+test('a starred artifact is kept however old, and only this host\'s lines count', () => {
+  const s = sandbox();
+  fs.writeFileSync(path.join(s.root, 'stars.txt'),
+    'testhost/starred.html\ntesthost/sub/deep.html\nother-host/elsewhere.html\n');
+  write(path.join(s.art, 'starred.html'), 60);
+  write(path.join(s.art, 'sub', 'deep.html'), 60);
+  write(path.join(s.art, 'elsewhere.html'), 60);
+  run(s);
+
+  assert.ok(fs.existsSync(path.join(s.art, 'starred.html')), 'starred page survives');
+  assert.ok(fs.existsSync(path.join(s.art, 'sub', 'deep.html')), 'a nested star names its relpath');
+  assert.ok(!fs.existsSync(path.join(s.art, 'elsewhere.html')),
+    'a star for the same name on another host does not keep this one');
+});
+
+test('a star matches its whole relpath literally, not as a prefix or a pattern', () => {
+  const s = sandbox();
+  fs.writeFileSync(path.join(s.root, 'stars.txt'), 'testhost/[ab].html\ntesthost/plan\n');
+  write(path.join(s.art, '[ab].html'), 60);
+  write(path.join(s.art, 'a.html'), 60);
+  write(path.join(s.art, 'plan.html'), 60);
+  run(s);
+
+  assert.ok(fs.existsSync(path.join(s.art, '[ab].html')), 'the literal name is kept');
+  assert.ok(!fs.existsSync(path.join(s.art, 'a.html')), 'a glob match is not a star');
+  assert.ok(!fs.existsSync(path.join(s.art, 'plan.html')), 'a prefix is not a star');
+});
+
+test('an unreadable star list skips the artifact sweep rather than unstarring everything',
+  { skip: process.getuid && process.getuid() === 0 ? 'root reads a 0000 file' : false }, () => {
+    const s = sandbox();
+    const stars = path.join(s.root, 'stars.txt');
+    fs.writeFileSync(stars, 'testhost/starred.html\n');
+    fs.chmodSync(stars, 0o000);
+    write(path.join(s.art, 'starred.html'), 60);
+    write(path.join(s.art, 'stale.html'), 60);
+    write(path.join(s.state, 'abc123.current'), 60);
+    try {
+      run(s);
+    } finally {
+      fs.chmodSync(stars, 0o644);
+    }
+
+    assert.ok(fs.existsSync(path.join(s.art, 'starred.html')), 'the starred page survives');
+    assert.ok(fs.existsSync(path.join(s.art, 'stale.html')), 'the whole artifact sweep waits');
+    assert.ok(!fs.existsSync(path.join(s.state, 'abc123.current')), 'the registry sweep still runs');
+  });
 
 test('a refreshed artifact survives regardless of when it was created', () => {
   const s = sandbox();

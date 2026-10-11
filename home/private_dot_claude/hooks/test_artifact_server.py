@@ -6,7 +6,9 @@ Run: python3 test_artifact_server.py
 Upstream (DanielH2018/Server) tests the index, metadata and /a/<host>/ routing.
 This covers only what the local copy adds: the bare /<relpath> route that keeps
 link-artifact.sh's URLs working, a root laid out the way serve-artifacts.sh lays
-it out (one symlink per host), and the loopback default bind.
+it out (one symlink per host), the loopback default bind, and the star list's
+read-only mode. One star round trip also runs here, because the port to 3.9 is
+local and upstream's tests never execute it.
 """
 
 import json
@@ -31,6 +33,21 @@ def get(base, path):
             return resp.status, resp.read()
     except urllib.error.HTTPError as err:
         return err.code, b""
+
+
+def post_star(base, payload, ctype="application/json"):
+    """Return the status of a POST /api/star, without raising on an HTTP error."""
+    req = urllib.request.Request(
+        base + "/api/star",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": ctype},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return resp.status
+    except urllib.error.HTTPError as err:
+        return err.code
 
 
 def main():
@@ -122,6 +139,46 @@ def main():
         )
         check(
             "the repos facet lists only repos in use", index.get("repos") == ["myrepo"]
+        )
+
+        stars_file = os.path.join(tmp, "stars.txt")
+        stars = artifact_server.StarStore(artifact_server.Path(stars_file))
+        artifact_server.Handler.stars = stars
+        artifact_server.Handler.cache = artifact_server.IndexCache(
+            artifact_server.ROOT, stars
+        )
+        star = {"host": HOST, "path": "plan.html", "starred": True}
+        check("a star posts through the symlinked root", post_star(base, star) == 200)
+        with open(stars_file) as f:
+            check(
+                "the star is keyed by the symlink's label",
+                f.read() == f"{HOST}/plan.html\n",
+            )
+        by_name = {
+            a["name"]: a
+            for a in json.loads(get(base, "/api/index.json")[1])["artifacts"]
+        }
+        check("the index shows the star", by_name["plan.html"]["starred"] is True)
+        check(
+            "a text/plain star is refused",
+            post_star(base, {**star, "starred": False}, ctype="text/plain") == 415,
+        )
+
+        artifact_server.Handler.stars = artifact_server.StarStore(
+            artifact_server.Path(stars_file), writable=False
+        )
+        artifact_server.Handler.cache = artifact_server.IndexCache(
+            artifact_server.ROOT, artifact_server.Handler.stars
+        )
+        check(
+            "a read-only store refuses to unstar",
+            post_star(base, {**star, "starred": False}) == 403,
+        )
+        index = json.loads(get(base, "/api/index.json")[1])
+        check(
+            "a read-only store still shows the star, without a toggle",
+            index["artifacts"][0]["starred"] is True
+            and index["star_writable"] is False,
         )
     finally:
         server.shutdown()

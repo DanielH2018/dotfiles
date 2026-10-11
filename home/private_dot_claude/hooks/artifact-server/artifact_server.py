@@ -11,19 +11,26 @@ that wrote the file:
 
     /                       the GUI
     /api/index.json         the index every search reads
+    /api/star               POST: star or unstar one artifact (see StarStore)
     /a/<host>/<relpath>     one artifact, served from ROOT/<host>/<relpath>
     /healthz                liveness
 
+The star list is the one thing the server writes. Every artifact tree stays mounted read-only;
+the list lives in its own file, ARTIFACTS_STARS_FILE, which prune-artifacts.sh on each host
+reads so that a starred artifact is never aged out.
+
 The index is built ON REQUEST and cached against a signature of (path, mtime, size) for
 every file under ROOT. It is not built on a timer: prune-artifacts.sh deletes artifacts
-after 7 days, so a timer-built index serves links to files that are already gone. Building
+after 30 days, so a timer-built index serves links to files that are already gone. Building
 on request cannot. ~50 files parse in single-digit milliseconds.
 
 Two siblings ship beside this one in the same ConfigMap: `artifact_meta.py` holds the
 taxonomy and the metadata parsers, and `_gui_html.py` holds the page served at `/`.
 
 Local copy: vendored from DanielH2018/Server ansible/roles/k8s/artifacts/files/ at 977d9bf3ab41
-and started by serve-artifacts.sh on each workstation. It differs from upstream in four places:
+and started by serve-artifacts.sh on each workstation. The star list (StarStore, POST
+/api/star) was ported from upstream later, in DanielH2018/Server#4430. It differs from upstream
+in five places:
 
 - It binds ARTIFACTS_BIND, default 127.0.0.1. Upstream binds 0.0.0.0 inside a pod; a laptop
   must never serve these documents to the LAN.
@@ -34,13 +41,18 @@ and started by serve-artifacts.sh on each workstation. It differs from upstream 
   macOS's /usr/bin/python3 is 3.9.
 - Each local artifact carries the repository its session worked in, read from
   ARTIFACTS_REPOS_FILE, and the GUI filters and sorts on it. Upstream has no such field.
+- ARTIFACTS_STARS_READONLY=1 shows the star list without letting the GUI change it.
+  serve-artifacts.sh sets it on the k3s nodes, where the cluster's browser owns the list.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import posixpath
+import tempfile
+import threading
 import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -66,6 +78,10 @@ LOCAL_HOST = os.environ.get("ARTIFACTS_LOCAL_HOST", "")
 # link-artifact.sh appends `<relpath>\t<repo>` here each time a session writes an artifact,
 # naming the repository the session was working in. Unset or absent means no repo facet.
 REPOS_FILE = os.environ.get("ARTIFACTS_REPOS_FILE", "")
+STARS_FILE = os.environ.get("ARTIFACTS_STARS_FILE", "")
+STARS_READONLY = os.environ.get("ARTIFACTS_STARS_READONLY", "") == "1"
+# A star request carries one host and one relpath, so anything larger is not one.
+MAX_STAR_BODY = 4096
 
 
 def load_repos(path: str = REPOS_FILE) -> dict[str, str]:
@@ -135,10 +151,91 @@ def scan(root: Path) -> list[tuple[str, Path, os.stat_result]]:
     return found
 
 
+class StarStore:
+    """The starred artifacts, one `<host>/<relpath>` line each, in a single file.
+
+    `<host>` is the ROOT/<host> segment, which is also the label each host's
+    prune-artifacts.sh carries (CLAUDE_ARTIFACTS_HOST). The prune keeps every artifact whose
+    line names its own label, so one file serves every host it reaches.
+
+    Attributes:
+        path: The star file. A missing file means nothing is starred.
+        writable: Whether POST /api/star may change the file.
+    """
+
+    def __init__(self, path: Path, writable: bool = True) -> None:
+        self.path = path
+        self.writable = writable
+        # ThreadingHTTPServer handles requests concurrently, and two stars landing in the same
+        # read-modify-write would lose one of them.
+        self._lock = threading.Lock()
+
+    def signature(self) -> tuple[int, int] | None:
+        """The file's (mtime_ns, size), or None when it does not exist."""
+        try:
+            st = self.path.stat()
+        except OSError:
+            return None
+        return st.st_mtime_ns, st.st_size
+
+    def load(self, strict: bool = False) -> set[str]:
+        """Reads the starred keys.
+
+        Args:
+            strict: Raise on a read error other than a missing file. `mark` reads strictly,
+                because writing back an empty list over an unreadable one unstars everything.
+
+        Returns:
+            The set of `<host>/<relpath>` keys; empty when the file does not exist.
+
+        Raises:
+            OSError: `strict` is set and the file exists but cannot be read.
+        """
+        try:
+            text = self.path.read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            return set()
+        except OSError:
+            if strict:
+                raise
+            return set()
+        return {line for line in text.splitlines() if line.strip()}
+
+    def mark(self, key: str, starred: bool) -> None:
+        """Adds or removes one key and replaces the file atomically.
+
+        The new list is written beside the old one and renamed over it, so a prune reading
+        the file mid-write sees one whole list or the other. A torn read would drop stars for
+        that sweep, and dropping a star is how a starred artifact gets deleted.
+
+        Raises:
+            OSError: The file cannot be read, or its directory cannot be written.
+        """
+        with self._lock:
+            keys = self.load(strict=True)
+            if starred:
+                keys.add(key)
+            else:
+                keys.discard(key)
+            fd, tmp = tempfile.mkstemp(prefix=".stars.", dir=self.path.parent)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write("".join(f"{k}\n" for k in sorted(keys)))
+                # mkstemp creates 0600. The agent user's prune on daniel-box reads this file
+                # as another uid, and it lists file names, not secrets.
+                os.chmod(tmp, 0o644)
+                os.replace(tmp, self.path)
+            except BaseException:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp)
+                raise
+
+
 def build_index(
     root: Path,
     known_services: list[str] | None = None,
     repos: dict[str, str] | None = None,
+    stars: StarStore | None = None,
 ) -> dict:
     """Scans `root` and builds the searchable index of every artifact under it.
 
@@ -152,13 +249,16 @@ def build_index(
             load_known_services() when None.
         repos: Relpath to repository name for LOCAL_HOST's artifacts; loaded via
             load_repos() when None.
+        stars: The star list each entry's `starred` flag reads; None stars nothing and
+            reports starring as unavailable.
 
     Returns:
         The index dict, with keys `generated`, `count`, `hosts`, `repos`, `categories`,
-        `statuses` and `artifacts`.
+        `statuses`, `star_writable` and `artifacts`.
     """
     known = load_known_services() if known_services is None else known_services
     repos = load_repos() if repos is None else repos
+    starred = stars.load() if stars else set()
     entries = []
     for host, path, st in scan(root):
         rel = path.relative_to(root / host).as_posix()
@@ -171,6 +271,7 @@ def build_index(
             "kind": suffix.lstrip("."),
             "size": st.st_size,
             "mtime": datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat(),
+            "starred": f"{host}/{rel}" in starred,
         }
         if host == LOCAL_HOST and rel in repos:
             entry["repo"] = repos[rel]
@@ -200,15 +301,17 @@ def build_index(
         # category nothing uses never appears as a dead dropdown entry.
         "categories": sorted({e["category"] for e in entries if e.get("category")}),
         "statuses": sorted({e["status"] for e in entries if e.get("status")}),
+        "star_writable": bool(stars and stars.writable),
         "artifacts": entries,
     }
 
 
 class IndexCache:
-    """Rebuilds only when a file under root was added, removed, or changed."""
+    """Rebuilds only when a file under root, or the star list, was added, removed, or changed."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, stars: StarStore | None = None) -> None:
         self.root = root
+        self.stars = stars
         self._signature: tuple | None = None
         self._index: dict | None = None
 
@@ -222,12 +325,15 @@ class IndexCache:
             st = os.stat(REPOS_FILE) if REPOS_FILE else None
         except OSError:
             st = None
-        return files, (st.st_mtime_ns, st.st_size) if st else None
+        repos_sig = (st.st_mtime_ns, st.st_size) if st else None
+        # A star changes no artifact, so without the list's own stat a toggle would never
+        # reach the cached index.
+        return files, repos_sig, self.stars.signature() if self.stars else None
 
     def get(self) -> dict:
         sig = self.signature()
         if sig != self._signature or self._index is None:
-            self._index = build_index(self.root)
+            self._index = build_index(self.root, stars=self.stars)
             self._signature = sig
         return self._index
 
@@ -265,14 +371,16 @@ def render_gui() -> bytes:
 
 
 class Handler(BaseHTTPRequestHandler):
-    """Handles GET/HEAD requests for the GUI, index JSON, health check, and stored artifacts.
+    """Serves the GUI, index JSON, health check and stored artifacts, and takes star toggles.
 
     Attributes:
         cache: The shared IndexCache instance serving /api/index.json.
+        stars: The star list POST /api/star changes; None turns starring off.
     """
 
     server_version = "artifacts/1.0"
     cache: IndexCache = None  # type: ignore[assignment]
+    stars: StarStore | None = None
 
     # `format` shadows the builtin, and is the parameter name BaseHTTPRequestHandler.log_message
     # declares — renaming it makes this an incompatible override.
@@ -321,6 +429,58 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(404, b"not found\n", "text/plain; charset=utf-8")
 
+    def do_POST(self) -> None:
+        """Stars or unstars one artifact from a `{"host", "path", "starred"}` JSON body.
+
+        Answers 200 with the stored state, 403 when starring is off, 415 for a non-JSON
+        body, 400 for a malformed one, and 404 when host/path names no artifact.
+        """
+        text = "text/plain; charset=utf-8"
+        if unquote(urlparse(self.path).path) != "/api/star":
+            self._send(404, b"not found\n", text)
+            return
+        stars = self.stars
+        if stars is None or not stars.writable:
+            self._send(403, b"starring is not enabled on this server\n", text)
+            return
+        # The JSON content type is the CSRF defence. Another origin can POST a form or
+        # text/plain without asking, but a JSON body needs a CORS preflight, which this
+        # server never answers, so the browser never sends the request.
+        ctype = self.headers.get("Content-Type", "").split(";")[0].strip().lower()
+        if ctype != "application/json":
+            self._send(415, b"send application/json\n", text)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            length = 0
+        if not 0 < length <= MAX_STAR_BODY:
+            self._send(400, b"bad Content-Length\n", text)
+            return
+        try:
+            payload = json.loads(self.rfile.read(length))
+            host, rel, starred = payload["host"], payload["path"], payload["starred"]
+        except (ValueError, KeyError, TypeError):
+            self._send(400, b"expected {host, path, starred}\n", text)
+            return
+        if not (
+            isinstance(host, str) and isinstance(rel, str) and isinstance(starred, bool)
+        ):
+            self._send(400, b"expected {host, path, starred}\n", text)
+            return
+        rel = posixpath.normpath(rel).lstrip("/")
+        # A newline would split one key into two lines of the star file.
+        if "\n" in rel or "\r" in rel or safe_path(self.cache.root, host, rel) is None:
+            self._send(404, b"no such artifact\n", text)
+            return
+        try:
+            stars.mark(f"{host}/{rel}", starred)
+        except OSError as err:
+            self._send(500, f"could not write the star list: {err}\n".encode(), text)
+            return
+        body = json.dumps({"host": host, "path": rel, "starred": starred})
+        self._send(200, body.encode("utf-8"), "application/json")
+
     def _serve_artifact(self, rest: str) -> None:
         host, _, rel = rest.partition("/")
         # posixpath.normpath collapses `.`/`..` before safe_path resolves; both run, because
@@ -346,7 +506,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    Handler.cache = IndexCache(ROOT)
+    if STARS_FILE:
+        Handler.stars = StarStore(Path(STARS_FILE), writable=not STARS_READONLY)
+    Handler.cache = IndexCache(ROOT, Handler.stars)
     server = ThreadingHTTPServer((BIND, PORT), Handler)
     print(
         f"serving {ROOT} on :{PORT} at {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True

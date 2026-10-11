@@ -55,6 +55,14 @@
     {{/* An agent user's tree mounts beside the operator's as <host>-<user> (server repo,
          ansible/roles/k8s/artifacts), so its links name that segment. */}}
     "CLAUDE_ARTIFACTS_HOST": "{{ .chezmoi.hostname }}{{ if includeTemplate "is-agent" . }}-{{ .chezmoi.username }}{{ end }}",
+{{ if eq .chezmoi.hostname "daniel-box" }}
+    {{/* The star list the cluster's artifact browser writes (server repo,
+         ansible/roles/k8s/artifacts, artifacts_stars_file). prune-artifacts.sh keeps every
+         artifact it stars under this host's label. It sits outside /home/ubuntu so the agent
+         user's prune can read it too. daniel-server keeps the default path, because that is
+         where the browser's sync cron pushes its copy. */}}
+    "CLAUDE_ARTIFACT_STARS_FILE": "/var/lib/artifact-stars/stars.txt",
+{{ end }}
 {{ end }}
 {{ if has .chezmoi.hostname (list "daniel-box" "daniel-server") }}
     {{/* Bound the pytest fan-out for a Claude session started outside claude-rc.service —

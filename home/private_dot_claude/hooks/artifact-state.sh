@@ -1,6 +1,8 @@
 # shellcheck shell=bash
-# Shared state for the artifact auto-refresh pair: link-artifact.sh registers the
-# artifact a project is tracking, artifact-refresh.sh reads it back at Stop.
+# Shared state for the artifact hooks. Most of it serves the auto-refresh pair:
+# link-artifact.sh registers the artifact a project is tracking, artifact-refresh.sh
+# reads it back at Stop. The star list and the host label at the end serve the
+# artifact browser (serve-artifacts.sh) and the sweep (prune-artifacts.sh).
 #
 # Two keys, because the two halves of the state have different lifetimes.
 #
@@ -82,4 +84,24 @@ artifact_upstream_ref() {
     fi
   done
   return 1
+}
+
+# The star list: one `<host>/<relpath>` line per artifact the browser has starred, which
+# prune-artifacts.sh never deletes. Kept out of the artifacts dir and out of
+# ARTIFACT_STATE_DIR, because both are swept by mtime and a list nobody touched for a month
+# would be deleted with them. The k3s nodes set CLAUDE_ARTIFACT_STARS_FILE in
+# settings.base.json; a workstation's loopback browser owns the default path.
+ARTIFACT_STARS_FILE="${CLAUDE_ARTIFACT_STARS_FILE:-$HOME/.claude/artifact-stars.txt}"
+
+# The label this host's own tree carries: the /a/<host>/ segment the browser serves it
+# under, and the prefix of this host's lines in the star list. The browser and the sweep
+# must agree on it, or a star set in one is invisible to the other. On macOS, `hostname`
+# can follow a DHCP-supplied name, so LocalHostName comes first; it changes only when
+# someone renames the machine.
+artifact_host_label() {
+  local host="${CLAUDE_ARTIFACTS_HOST:-}"
+  if [[ -z "$host" && "$(uname -s)" == Darwin ]]; then
+    host=$(scutil --get LocalHostName 2>/dev/null)
+  fi
+  printf '%s' "${host:-$(hostname -s 2>/dev/null || echo local)}"
 }
