@@ -62,3 +62,27 @@ def test_list_names_the_built_ins_and_this_repo_s_probes(repo):
     # Built-ins in registry order, then the repo's probes. A copied list of built-in names was
     # hand-edited each time a source was added.
     assert names == [*BUILTINS, "land"]
+
+
+# Like argparse, --help wins over every other argument, --describe included.
+ARGPARSE_PROBE = """\
+case " $* " in
+  *" --help "* | *" -h "*) echo 'usage: land [-h] pr'; echo '  pr  the PR to wait on' ;;
+  *" --describe "*) echo '{"terminal": {"settled": 0, "failed": 1}}' ;;
+esac
+"""
+
+
+def test_a_trailing_help_prints_the_probe_s_own_help(repo):
+    write_probe(repo, "land", ARGPARSE_PROBE)
+    for argv in (["land", "--help"], ["land", "3501", "-h"]):
+        code, lines = run(repo, *argv)
+        assert code == 0
+        assert lines == ["usage: land [-h] pr", "  pr  the PR to wait on"]
+
+
+def test_a_probe_whose_help_fails_is_refused_with_its_whole_stderr(repo):
+    write_probe(repo, "land", "echo 'usage: land pr' >&2\nprintf 'x%.0s' $(seq 500) >&2\nexit 2\n")
+    code, lines = run(repo, "land", "--help")
+    assert code == 2
+    assert "--help exited 2: usage: land pr" in lines[0]

@@ -62,7 +62,13 @@ budget runs out.
 A repo probe is a git-tracked executable at `.claude/wait-sources/<name>`, in any language.
 
 - `<probe> --describe <args>` prints a JSON object. It has `terminal` (state to exit code),
-  `watch` (paths), `interval_s` and `remote`.
+  `watch` (paths), `interval_s` and `remote`. A `--describe` call never exits 0 with stdout
+  that is not that object: a probe that cannot describe its arguments exits non-zero with the
+  reason on stderr, and `cc-wait` prints the end of that stderr.
+- `<probe> --help` prints the probe's usage and exits 0. `cc-wait <name> [args] --help` runs
+  it and prints its output, so the flag never reaches `--describe`. An argparse probe that
+  received `--describe --help` would print its help and exit 0, and `cc-wait` would refuse
+  that output as not JSON.
 - `<probe> <args>` prints one JSON line, `{"state": …, "detail": …}`, and exits 0. Any other
   exit is a failed read, and `cc-wait` retries it.
 - `cc-wait` refuses a probe that git does not track, and a probe named like a built-in.

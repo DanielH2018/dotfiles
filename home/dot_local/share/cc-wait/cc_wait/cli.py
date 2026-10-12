@@ -3,6 +3,7 @@
     cc-wait <source> [args...]     wait on a source; see the exit codes below
     cc-wait --list                 the built-in sources and this repo's probes
     cc-wait --budget S <source>    wait at most S seconds (default 570, or $CC_WAIT_BUDGET)
+    cc-wait <probe> --help         a repo probe's own usage
 
 `--budget` is cc-wait's own wherever it appears, so a source never sees it. The default sits
 under the 600s limit of a foreground Bash call; a backgrounded call or a Monitor can pass more.
@@ -24,6 +25,7 @@ from cc_wait.source import COULD_NOT_WAIT, Source, SourceError
 
 DEFAULT_BUDGET_S = 570.0
 BUDGET_ENV = "CC_WAIT_BUDGET"
+HELP_FLAGS = ("-h", "--help")
 
 
 def split_budget(argv: list[str]) -> tuple[float | None, list[str]]:
@@ -91,7 +93,7 @@ def main(argv: list[str] | None = None, out=None, cwd: Path | None = None, env=N
     out = out if out is not None else sys.stdout
     cwd = cwd if cwd is not None else Path.cwd()
     env = env if env is not None else os.environ
-    if not argv or argv[0] in ("-h", "--help"):
+    if not argv or argv[0] in HELP_FLAGS:
         print(__doc__.strip(), file=out)
         return 0 if argv else COULD_NOT_WAIT
     if argv[0] == "--list":
@@ -102,6 +104,11 @@ def main(argv: list[str] | None = None, out=None, cwd: Path | None = None, env=N
         if not rest:
             raise SourceError("name a source; `cc-wait --list` shows them")
         source = resolve(rest[0], cwd)
+        # Without this, the flag reaches `<probe> --describe --help`, and an argparse probe
+        # answers that with its help and exit 0, which cc-wait then refuses as non-JSON.
+        if isinstance(source, repo.ProbeSource) and len(rest) > 1 and rest[-1] in HELP_FLAGS:
+            print(source.help(), file=out)
+            return 0
         bound = source.bind(rest[1:])
     except SourceError as exc:
         print(f"WAIT: error {exc}", file=out, flush=True)

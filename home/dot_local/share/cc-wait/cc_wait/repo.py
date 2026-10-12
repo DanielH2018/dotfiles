@@ -2,7 +2,8 @@
 
 A probe is an executable of any language. `<probe> --describe <args>` prints the JSON that
 `cc_wait.source.description_from_json` reads, and `<probe> <args>` prints one JSON line with
-the state and exits 0. Any other exit is a failed read, which the loop retries.
+the state and exits 0. Any other exit is a failed read, which the loop retries. `<probe>
+--help` prints the probe's usage, which `cc-wait <name> --help` shows the caller.
 
 A repo probe gets the same trust as that repo's `.claude/hooks/`, which already run without a
 prompt on every tool call. The one extra condition is that git tracks it, so a file dropped
@@ -110,6 +111,21 @@ class ProbeSource:
 
     def bind(self, args: list[str]) -> ProbeWait:
         return ProbeWait(self.path, tuple(args), self.cwd)
+
+    def help(self) -> str:
+        """The probe's own `--help` output.
+
+        Raises:
+          SourceError: the probe did not run, or exited non-zero.
+        """
+        try:
+            out = _run([str(self.path), "--help"], self.cwd, DESCRIBE_TIMEOUT_S)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise SourceError(f"{self.path} --help did not run: {exc}") from exc
+        if out.returncode != 0:
+            # The whole stderr, not a tail: a usage message opens with its usage line.
+            raise SourceError(f"{self.path} --help exited {out.returncode}: {out.stderr.strip()}")
+        return (out.stdout or out.stderr).rstrip()
 
 
 def find(name: str, cwd: Path) -> ProbeSource | None:
