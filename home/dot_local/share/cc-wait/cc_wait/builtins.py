@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from cc_wait import github, k8s, systemd
-from cc_wait.source import ArgParser, Description, ReadError, Reading, SourceError
+from cc_wait.source import ArgParser, Description, ParsedSource, ReadError, Reading, SourceError
 
 
 def pid_alive(pid: int) -> bool:
@@ -70,16 +70,20 @@ class FileWait:
         return None
 
 
-class FileSource:
+class FileSource(ParsedSource):
     name = "file"
     summary = "a path appears, or a line matching --match is written to it"
 
-    def bind(self, args: list[str]) -> FileWait:
+    def parser(self) -> ArgParser:
         parser = ArgParser(prog="cc-wait file", add_help=False)
         parser.add_argument("path")
         parser.add_argument("--match", help="success: a line matching this regex")
         parser.add_argument("--fail", help="failure: a line matching this regex")
         parser.add_argument("--pid", type=int, help="failure: this writer exits first")
+        return parser
+
+    def bind(self, args: list[str]) -> FileWait:
+        parser = self.parser()
         ns = parser.parse_args(args)
         if ns.fail is None and ns.pid is None:
             parser.error("give --fail, --pid or both: a wait must be able to see its writer fail")
@@ -122,17 +126,20 @@ class ExitWait:
         return Reading("failed", f"exit code {raw or '(empty)'}")
 
 
-class ExitSource:
+class ExitSource(ParsedSource):
     name = "exit"
     summary = (
         "a process records its exit code in --rc-file (and --pid, if given, is alive until then)"
     )
 
-    def bind(self, args: list[str]) -> ExitWait:
+    def parser(self) -> ArgParser:
         parser = ArgParser(prog="cc-wait exit", add_help=False)
         parser.add_argument("--rc-file", required=True)
         parser.add_argument("--pid", type=int, help="the process that writes --rc-file")
-        ns = parser.parse_args(args)
+        return parser
+
+    def bind(self, args: list[str]) -> ExitWait:
+        ns = self.parser().parse_args(args)
         return ExitWait(Path(ns.rc_file), ns.pid)
 
 

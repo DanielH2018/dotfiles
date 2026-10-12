@@ -4,6 +4,7 @@ import threading
 import pytest
 
 from cc_wait import cli
+from cc_wait.builtins import BUILTINS
 from cc_wait.source import SourceError
 
 
@@ -27,6 +28,20 @@ def test_an_unknown_source_names_the_known_ones(tmp_path):
     out = io.StringIO()
     assert cli.main(["nope"], out=out, cwd=tmp_path, env={}) == 2
     assert "known here: file, exit" in out.getvalue()
+
+
+def test_a_trailing_help_prints_the_built_in_s_option_help(tmp_path):
+    for argv in (["file", "--help"], ["file", "x.log", "-h"]):
+        out = io.StringIO()
+        assert cli.main(argv, out=out, cwd=tmp_path, env={}) == 0
+        text = out.getvalue()
+        assert text.startswith("usage: cc-wait file ")
+        assert "--match MATCH  success: a line matching this regex" in text
+    # Every built-in answers it, not only `file`: each one's parser was built add_help=False.
+    for name in BUILTINS:
+        out = io.StringIO()
+        assert cli.main([name, "--help"], out=out, cwd=tmp_path, env={}) == 0
+        assert out.getvalue().startswith(f"usage: cc-wait {name}")
 
 
 def test_a_file_wait_ends_when_the_line_is_written(tmp_path):

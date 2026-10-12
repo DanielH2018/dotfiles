@@ -31,7 +31,7 @@ import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
-from cc_wait.source import ArgParser, Description, ReadError, Reading, SourceError
+from cc_wait.source import ArgParser, Description, ParsedSource, ReadError, Reading, SourceError
 
 PROPERTIES = (
     "LoadState",
@@ -125,14 +125,18 @@ class UnitWait:
         return Reading("stopped", f"{state} since {since}, nothing queued")
 
 
-class UnitSource:
+class UnitSource(ParsedSource):
     name = "systemd"
     summary = "a systemd unit is up or its oneshot run succeeded (0), or it failed (1)"
 
-    def bind(self, args: list[str]) -> UnitWait:
+    def parser(self) -> ArgParser:
         parser = ArgParser(prog="cc-wait systemd", add_help=False)
         parser.add_argument("unit")
         parser.add_argument("--user", action="store_true", help="a unit of the user's manager")
+        return parser
+
+    def bind(self, args: list[str]) -> UnitWait:
+        parser = self.parser()
         ns = parser.parse_args(args)
         if not _UNIT.match(ns.unit):
             parser.error(f"{ns.unit!r} is not a unit name")

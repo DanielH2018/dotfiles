@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from cc_wait.source import ArgParser, Description, ReadError, Reading, SourceError
+from cc_wait.source import ArgParser, Description, ParsedSource, ReadError, Reading, SourceError
 
 INTERVAL_S = 30.0
 GH_TIMEOUT_S = 30
@@ -96,14 +96,18 @@ class PrWait:
         return Reading("open", f"mergeable {str(data.get('mergeable', '?')).lower()}{auto}")
 
 
-class PrSource:
+class PrSource(ParsedSource):
     name = "gh-pr"
     summary = "a pull request is merged (0) or closed unmerged (1)"
 
-    def bind(self, args: list[str], cwd: Path | None = None) -> PrWait:
+    def parser(self) -> ArgParser:
         parser = ArgParser(prog="cc-wait gh-pr", add_help=False)
         parser.add_argument("number")
         parser.add_argument("--repo")
+        return parser
+
+    def bind(self, args: list[str], cwd: Path | None = None) -> PrWait:
+        parser = self.parser()
         ns = parser.parse_args(args)
         if not ns.number.isdigit():
             parser.error(f"{ns.number!r} is not a pull request number")
@@ -187,15 +191,19 @@ class CiWait:
         return ", ".join(parts)
 
 
-class CiSource:
+class CiSource(ParsedSource):
     name = "gh-ci"
     summary = "a commit's (or a PR head's) GitHub check runs all pass (0), or one fails (1)"
 
-    def bind(self, args: list[str], cwd: Path | None = None) -> CiWait:
+    def parser(self) -> ArgParser:
         parser = ArgParser(prog="cc-wait gh-ci", add_help=False)
         parser.add_argument("ref", nargs="?", help="a commit SHA")
         parser.add_argument("--pr", help="follow this pull request's head commit instead")
         parser.add_argument("--repo")
+        return parser
+
+    def bind(self, args: list[str], cwd: Path | None = None) -> CiWait:
+        parser = self.parser()
         ns = parser.parse_args(args)
         if (ns.ref is None) == (ns.pr is None):
             parser.error("give a commit SHA or --pr <number>, not both")

@@ -29,7 +29,7 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from cc_wait.source import ArgParser, Description, ReadError, Reading
+from cc_wait.source import ArgParser, Description, ParsedSource, ReadError, Reading
 
 INTERVAL_S = 10.0
 KUBECTL_TIMEOUT_S = 30
@@ -262,17 +262,21 @@ class RolloutWait:
         return progress
 
 
-class RolloutSource:
+class RolloutSource(ParsedSource):
     name = "k8s-rollout"
     summary = (
         "a Deployment, StatefulSet or DaemonSet rolls out, or a Job completes (0); or fails (1)"
     )
 
-    def bind(self, args: list[str]) -> RolloutWait:
+    def parser(self) -> ArgParser:
         parser = ArgParser(prog="cc-wait k8s-rollout", add_help=False)
         parser.add_argument("target", metavar="KIND/NAME")
         parser.add_argument("-n", "--namespace")
         parser.add_argument("--context")
+        return parser
+
+    def bind(self, args: list[str]) -> RolloutWait:
+        parser = self.parser()
         ns = parser.parse_args(args)
         kind, _, name = ns.target.partition("/")
         if kind.lower() not in KINDS or not _NAME.match(name):

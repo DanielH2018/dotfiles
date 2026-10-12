@@ -56,6 +56,9 @@ budget runs out.
   (`16:20:01 <state>: <detail>`), then a final `WAIT: <state> <detail>`. The same command
   works as a background task, which gives one notification, and as a Monitor command, which
   gives a stream.
+- **A trailing `--help` shows the source's usage.** `cc-wait <source> [args] --help` (or
+  `-h`) prints that source's usage and exits 0, for a built-in and a repo probe alike. A
+  built-in prints its argument parser's help; a probe prints its own `--help` output.
 
 ### Probe protocol
 

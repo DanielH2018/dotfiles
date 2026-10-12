@@ -3,7 +3,7 @@
     cc-wait <source> [args...]     wait on a source; see the exit codes below
     cc-wait --list                 the built-in sources and this repo's probes
     cc-wait --budget S <source>    wait at most S seconds (default 570, or $CC_WAIT_BUDGET)
-    cc-wait <probe> --help         a repo probe's own usage
+    cc-wait <source> --help        a source's own usage
 
 `--budget` is cc-wait's own wherever it appears, so a source never sees it. The default sits
 under the 600s limit of a foreground Bash call; a backgrounded call or a Monitor can pass more.
@@ -104,9 +104,10 @@ def main(argv: list[str] | None = None, out=None, cwd: Path | None = None, env=N
         if not rest:
             raise SourceError("name a source; `cc-wait --list` shows them")
         source = resolve(rest[0], cwd)
-        # Without this, the flag reaches `<probe> --describe --help`, and an argparse probe
-        # answers that with its help and exit 0, which cc-wait then refuses as non-JSON.
-        if isinstance(source, repo.ProbeSource) and len(rest) > 1 and rest[-1] in HELP_FLAGS:
+        # Without this, a built-in's parser, built with add_help=False, refuses the flag as an
+        # unknown argument; and a probe gets `<probe> --describe --help`, which an argparse
+        # probe answers with its help and exit 0, so cc-wait refuses that as non-JSON.
+        if len(rest) > 1 and rest[-1] in HELP_FLAGS:
             print(source.help(), file=out)
             return 0
         bound = source.bind(rest[1:])

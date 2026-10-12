@@ -75,12 +75,30 @@ class Bound(Protocol):
 
 
 class Source(Protocol):
-    """A named kind of wait. `bind` raises SourceError on arguments it cannot use."""
+    """A named kind of wait. `bind` raises SourceError on arguments it cannot use.
+
+    `help` returns the source's usage, which `cc-wait <name> --help` prints.
+    """
 
     name: str
     summary: str
 
     def bind(self, args: list[str]) -> Bound: ...
+
+    def help(self) -> str: ...
+
+
+class ParsedSource:
+    """A built-in source whose arguments one ArgParser reads.
+
+    `bind` and `help` share `parser()`, so the help lists exactly the arguments `bind` takes.
+    """
+
+    def parser(self) -> ArgParser:
+        raise NotImplementedError
+
+    def help(self) -> str:
+        return self.parser().format_help().rstrip()
 
 
 def validate(desc: Description) -> Description:
