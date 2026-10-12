@@ -24,7 +24,7 @@ const { scratch } = require('./lib/tmp');
 const { have, skipUnless } = require('./lib/probe');
 const { srcPath } = require('./lib/paths');
 
-// The one synthetic token that must NOT be allowlisted, generated per run rather than
+// The synthetic tokens that must NOT be allowlisted are derived at run time rather than
 // written down. A committed literal PROPAGATES: any session that reads this file copies it
 // into its own transcript, and the next sweep flags it there forever. That is measured, not
 // theoretical — the two allowlisted fixtures below did exactly that on 2026-08-29, and the
@@ -32,18 +32,27 @@ const { srcPath } = require('./lib/paths');
 // commit that fixed it, in four transcripts.
 //
 // Allowlisting is not available here: this token's whole job is to prove the allowlist is
-// not so wide that it swallows every github-pat. So it is generated instead, and lives only
-// in the transcript of the run that made it, which ages out of the scan window.
+// not so wide that it swallows every github-pat. So it is derived instead, and appears only
+// in the scratch files of the run that made it.
 //
-// 36 characters from a 62-symbol alphabet. The entropy floor is the thing to get right —
-// gitleaks discards low-entropy candidates, which is how a `ghp_AAAA…` fixture once reported
-// clean against a working scanner — and a random draw at this length clears it with margin.
+// Derived from a hash of a fixed label, never drawn at random. A random draw failed CI
+// (dotfiles #835): gitleaks drops a candidate that contains one of its stopwords, among other
+// filters, so a draw carrying `demo` or `help` reads as clean against a working scanner. Measured 2026-10-12, 2.5% of
+// random draws in the mixed-case framing below went unflagged, and about 0.1% of the
+// github-pat, Cloudflare and Discord draws. Filtering vowels or forcing digits still missed.
+// A fixed derivation is checked once, against both shipped rulesets, and then cannot miss.
+// Changing a label means re-checking that the new token is still flagged under both.
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-function draw(n) {
-  return Array.from(crypto.randomBytes(n), (b) => ALPHABET[b % ALPHABET.length]).join('');
+function derive(label, n) {
+  let out = '';
+  for (let i = 0; out.length < n; i++) {
+    const digest = crypto.createHash('sha256').update(`claude-transcript-scan fixture ${label} ${i}`).digest();
+    for (const b of digest) out += ALPHABET[b % ALPHABET.length];
+  }
+  return out.slice(0, n);
 }
-function syntheticPat() {
-  return 'ghp_' + draw(36);
+function syntheticPat(label = 'pat one') {
+  return 'ghp_' + derive(label, 36);
 }
 
 const SCANNER = srcPath('dot_local', 'bin', 'executable_claude-transcript-scan');
@@ -301,8 +310,8 @@ test('the shipped ruleset still catches a token that is not a fixture', { skip }
   const sb = sandbox();
   const p = path.join(sb.projects, 'real.jsonl');
   // A third synthetic token, deliberately NOT allowlisted — without this half, an allowlist
-  // that swallowed every github-pat would pass the test above just as well. Generated per
-  // run so it never becomes a committed literal; see syntheticPat above for why.
+  // that swallowed every github-pat would pass the test above just as well. Derived at run
+  // time so it never becomes a committed literal; see syntheticPat above for why.
   fs.writeFileSync(p, JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: `GITHUB_TOKEN=${syntheticPat()}` }] } }) + '\n');
   const r = run(['--session', p], sb, { CLAUDE_TRANSCRIPT_GITLEAKS_CONFIG: SHIPPED });
   assert.strictEqual(r.status, 1, `expected a finding: ${r.stdout}${r.stderr}`);
@@ -330,6 +339,15 @@ function stubOtelq(sb, payload) {
   const empty = path.join(sb.dir, 'no-transcripts');
   fs.mkdirSync(empty, { recursive: true });
   return { PATH: `${bin}:${process.env.PATH}`, CLAUDE_TRANSCRIPT_ROOT: empty };
+}
+
+// A stub whose slice ending at `--until 0h` returns nothing, the way a Loki query that times
+// out does, and whose other slices return the payload.
+function stubOtelqFailingNewest(sb, payload) {
+  const env = stubOtelq(sb, payload);
+  fs.writeFileSync(path.join(sb.dir, 'bin', 'otelq'),
+    `#!/bin/sh\ncase " $* " in *" --until 0h "*) exit 1 ;; esac\ncat <<'JSON'\n${payload}\nJSON\n`);
+  return env;
 }
 
 function lokiPayload(...streams) {
@@ -493,11 +511,11 @@ test('the bare rules DO flag both, so the targeted allowlists are doing the work
 });
 
 test('both shipped rulesets still flag a real-shaped Cloudflare token and Discord secret', { skip }, () => {
-  // Generated per run, for the reason syntheticPat is. The leading Q is uppercase, which
-  // neither targeted pattern admits, so a finding here cannot depend on a lucky draw.
+  // Derived at run time, for the reason syntheticPat is. The leading Q is uppercase, which
+  // neither targeted pattern admits.
   for (const cfg of [SHIPPED, SHIPPED_LOKI]) {
     const sb = sandbox();
-    const p = writeTranscript(sb, 'real.jsonl', `CLOUDFLARE_API_TOKEN=Q${draw(39)}\nDISCORD_CLIENT_SECRET=Q${draw(31)}`);
+    const p = writeTranscript(sb, 'real.jsonl', `CLOUDFLARE_API_TOKEN=Q${derive('cloudflare-api-key', 39)}\nDISCORD_CLIENT_SECRET=Q${derive('discord-client-secret', 31)}`);
     const r = run(['--session', p], sb, { CLAUDE_TRANSCRIPT_GITLEAKS_CONFIG: cfg });
     assert.strictEqual(r.status, 1, `${path.basename(cfg)} must still flag real shapes: ${r.stdout}${r.stderr}`);
     const log = fs.readFileSync(sb.log, 'utf8');
@@ -524,7 +542,7 @@ test('the bare default set flags that identifier, so the allowlist is doing the 
 test('the snake_case allowlist does not reach a mixed-case token in the same framing', { skip }, () => {
   // The rejecting half for the class itself. If the class ever admits uppercase, this fails.
   const sb = sandbox();
-  const env = stubOtelq(sb, lokiPayload({ prompt: `the key, \`Q${draw(15)}_${draw(16)}\`, goes in the vault` }));
+  const env = stubOtelq(sb, lokiPayload({ prompt: `the key, \`Q${derive('mixed-case left', 15)}_${derive('mixed-case right', 16)}\`, goes in the vault` }));
   const r = run(['--loki', '--since', '1'], sb, { ...env, CLAUDE_TRANSCRIPT_GITLEAKS_LOKI_CONFIG: SHIPPED_LOKI });
   assert.strictEqual(r.status, 1, `expected a finding: ${r.stdout}${r.stderr}`);
   assert.match(fs.readFileSync(sb.log, 'utf8'), /"rule":"generic-api-key"/);
@@ -548,6 +566,33 @@ test('a slice under the cap leaves no truncation marker', { skip }, () => {
   const r = run(['--loki', '--since', '1'], sb, env);
   assert.doesNotMatch(r.stderr, /entry cap/, 'nothing was truncated, so nothing may claim it was');
   assert.strictEqual(r.status, 0);
+});
+
+test('one failed slice among clean ones is could-not-evaluate, never clean', { skip }, () => {
+  // The run used to read FAILED only when every source failed, so one slice that timed out
+  // sat behind "clean — N source(s) scanned" with exit 0 and no marker (dotfiles #832).
+  const sb = sandbox();
+  const env = stubOtelqFailingNewest(sb, lokiPayload({ prompt: 'ordinary text' }));
+  const r = run(['--loki', '--since', '2'], sb, env);
+  assert.strictEqual(r.status, 3, `expected could-not-evaluate, got ${r.status}: ${r.stdout}${r.stderr}`);
+  assert.doesNotMatch(r.stdout, /clean —/);
+  assert.match(r.stdout, /1 failed: Loki slice 1h\.\.0h/, 'the verdict names the slice that was not scanned');
+  const rows = fs.readFileSync(sb.pending, 'utf8').trim().split('\n');
+  assert.strictEqual(rows.length, 1, `one incomplete run is one marker row: ${rows}`);
+  const [, count, why] = rows[0].split('\t');
+  assert.strictEqual(count, '0');
+  assert.match(why, /1 source\(s\) failed to scan: Loki slice 1h\.\.0h/);
+});
+
+test('a failed slice does not hide a finding in the slices that did scan', { skip }, () => {
+  const sb = sandbox();
+  const env = stubOtelqFailingNewest(sb, lokiPayload({ prompt: `token ${syntheticPat()}` }));
+  const r = run(['--loki', '--since', '2'], sb, env);
+  assert.strictEqual(r.status, 1, `expected the finding to win: ${r.stdout}${r.stderr}`);
+  assert.match(fs.readFileSync(sb.log, 'utf8'), /"rule":"github-pat"/);
+  assert.match(r.stdout, /Not scanned: Loki slice 1h\.\.0h/);
+  const counts = fs.readFileSync(sb.pending, 'utf8').trim().split('\n').map((row) => row.split('\t')[1]);
+  assert.deepStrictEqual(counts.sort(), ['0', '1'], 'one could-not-run row beside the finding row');
 });
 
 test('a missing otelq reports could-not-evaluate, never clean', { skip }, () => {
@@ -620,7 +665,7 @@ test('two DIFFERENT findings in one run are both kept', { skip }, () => {
   const sb = sandbox();
   const env = stubOtelq(sb, lokiPayload(
     { tool_parameters: `{"full_command":"curl -H \\"Authorization: token ${syntheticPat()}\\""}` },
-    { prompt: `a second, different one: ${syntheticPat()}` },
+    { prompt: `a second, different one: ${syntheticPat('pat two')}` },
   ));
   const r = run(['--loki', '--since', '1'], sb, env);
   assert.strictEqual(r.status, 1);
