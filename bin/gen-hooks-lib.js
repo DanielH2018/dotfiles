@@ -57,7 +57,7 @@ const LIBRARY_KEYS = new Set(['reason']);
 // a hook that never fires -- so it is an error here, not a new key.
 const EVENT_ORDER = [
   'PermissionRequest', 'SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse',
-  'Notification', 'PreCompact', 'PostCompact', 'Stop', 'StopFailure', 'SessionEnd',
+  'PostToolUseFailure', 'Notification', 'PreCompact', 'PostCompact', 'Stop', 'StopFailure', 'SessionEnd',
   'InstructionsLoaded', 'SubagentStop',
 ];
 

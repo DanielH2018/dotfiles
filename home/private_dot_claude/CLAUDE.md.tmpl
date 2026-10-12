@@ -54,8 +54,10 @@ My dotfiles and Claude config are managed across **two repos** — edit the *sou
 
 Isolate before editing, and treat a failure to isolate as a stop rather than a fallback.
 **Retry `EnterWorktree` once. If it fails again, make no edits — report the failure and
-stop.** `isolation-guard.sh` backstops this for a background job, and only catches a
-missed isolation after an edit is already attempted, so retrying first is on you.
+stop.** `repeat-failure-guard.py` enforces the stop: at the second identical failure of
+any tool call in one turn, it tells the session to stop retrying and report.
+`isolation-guard.sh` backstops a missed isolation for a background job, and only after an
+edit is already attempted.
 
 This binds only where isolation was called for in the first place. Reading, searching and
 answering questions happen in place as usual, and a session already inside
