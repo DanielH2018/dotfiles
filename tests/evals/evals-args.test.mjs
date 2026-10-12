@@ -11,6 +11,11 @@ test('parseArgs reads flags', () => {
   assert.strictEqual(o.smoke, false);
 });
 
+test('parseArgs reads --max-total-usd as a number and leaves it unset by default', () => {
+  assert.strictEqual(parseArgs(['--max-total-usd', '0.5']).maxTotalUsd, 0.5);
+  assert.strictEqual(parseArgs([]).maxTotalUsd, undefined);
+});
+
 test('effectiveK precedence: smoke > --k > case k', () => {
   assert.strictEqual(effectiveK({ k: 5 }, { smoke: true, k: 3 }), 1);
   assert.strictEqual(effectiveK({ k: 5 }, { smoke: false, k: 3 }), 3);

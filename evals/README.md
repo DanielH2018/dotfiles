@@ -18,6 +18,7 @@ node evals/run-evals.mjs --agent implementer   # only one agent's cases
 node evals/run-evals.mjs --case migration-reviewer/001-drop-column-still-read
 node evals/run-evals.mjs --k 3                 # override k for every case
 node evals/run-evals.mjs --json report.json    # also write a machine-readable report
+node evals/run-evals.mjs --max-total-usd 5     # stop the sweep once it has spent $5
 node evals/run-evals.mjs --agent rules-sentence-clarity --control   # the no-rules arm (see Rules cases)
 ```
 
@@ -111,6 +112,14 @@ included, and each run's `costUsd` adds the judge call to the agent call. Each c
 `--json` carries its `costUsd`, and the summary ends with the sweep's total, which is the sum of
 those. This is the only record of a hermetic sweep's cost: `--bare` skips `settings.json`, where
 the OTEL exporter config lives, so those calls export no telemetry.
+
+`--max-total-usd <n>` caps the whole sweep. Before each run, the runner compares the cost so far
+against the cap and starts no further run once the total reaches it. It then writes the partial
+`--json` report and exits 3, which no other outcome uses. A case the cap cut short carries
+`"truncated": true` and is graded against its full `k`, so it usually reads INCONCLUSIVE. A
+capped sweep runs one call at a time, so the overshoot is at most the cost of the run that
+crossed the cap. That run is bounded by the per-call `--max-budget-usd` caps, retries
+included.
 
 ## The agents
 

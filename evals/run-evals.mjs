@@ -11,11 +11,15 @@ import { checkAssertions } from './lib/assertions.mjs';
 import { judge } from './lib/judge.mjs';
 import { gradeFromParts } from './lib/grade.mjs';
 import { aggregateCase, overallExitCode, formatReport, sweepCostUsd } from './lib/report.mjs';
+import { createSpendCap } from './lib/spend-cap.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..');
 const CASES_DIR = join(HERE, 'cases');
 const CONCURRENCY = 3;
+// Exit code for a sweep that --max-total-usd stopped before it ran every requested run.
+// 1 is a FAIL/INCONCLUSIVE case and 2 is a usage error.
+const EXIT_SPEND_CAP = 3;
 
 async function gradeRun(caseDef, agentsFlagCache) {
   if (!agentsFlagCache[caseDef.agent]) {
@@ -54,12 +58,28 @@ async function main() {
   const opts = parseArgs(process.argv.slice(2));
   const cases = loadCases(opts, [CASES_DIR, ...envCaseDirs()]);
   if (!cases.length) { console.error('no cases matched'); process.exit(2); }
+  if (opts.maxTotalUsd !== undefined && !(opts.maxTotalUsd > 0)) {
+    console.error('--max-total-usd needs a positive dollar amount'); process.exit(2);
+  }
+  const cap = createSpendCap(opts.maxTotalUsd);
+  // A capped sweep runs one call at a time. In parallel, every run already in flight when
+  // the total crosses the cap would also finish and bill, so the overshoot would grow with
+  // CONCURRENCY instead of stopping at one run.
+  const concurrency = cap.limited ? 1 : CONCURRENCY;
   const agentsFlagCache = {};
   const reports = [];
   for (const c of cases) {
+    if (!cap.allows()) break;
     const k = effectiveK(c, opts);
-    const runs = await pool(Array.from({ length: k }), CONCURRENCY, () => gradeRun(c, agentsFlagCache));
+    const runs = (await pool(Array.from({ length: k }), concurrency, async () => {
+      if (!cap.allows()) return null;
+      const run = await gradeRun(c, agentsFlagCache);
+      cap.add(run.costUsd);
+      return run;
+    })).filter(Boolean);
     const report = aggregateCase({ ...c, k }, runs);
+    // A case the cap cut short reports the runs it did make, against the k it asked for.
+    if (runs.length < k) report.truncated = true;
     report._runs = runs;
     reports.push(report);
     console.log(`${report.status.padEnd(12)} ${c.id}  (${report.passes}/${report.healthy} pass, $${report.costUsd.toFixed(4)})`);
@@ -71,6 +91,11 @@ async function main() {
   console.log('\n' + formatReport(reports));
   console.log(`\nsweep cost: $${sweepCostUsd(reports).toFixed(4)} (sum of each case's costUsd in --json)`);
   if (opts.json) writeFileSync(opts.json, JSON.stringify(reports, null, 2));
+  if (cap.stopped) {
+    console.log(`stopped: spent $${cap.spent.toFixed(4)}, reaching the --max-total-usd cap of $${opts.maxTotalUsd}; ` +
+      `${cases.length - reports.length} case(s) not started`);
+    process.exit(EXIT_SPEND_CAP);
+  }
   process.exit(overallExitCode(reports));
 }
 

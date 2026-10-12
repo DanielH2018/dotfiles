@@ -8,6 +8,7 @@ export function parseArgs(argv) {
     else if (a === '--case') o.case = argv[++i];
     else if (a === '--k') o.k = Number(argv[++i]);
     else if (a === '--json') o.json = argv[++i];
+    else if (a === '--max-total-usd') o.maxTotalUsd = Number(argv[++i]);
   }
   return o;
 }
