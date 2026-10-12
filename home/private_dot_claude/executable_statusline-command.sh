@@ -110,23 +110,30 @@ add() { put "$@"; end_seg; }
 #
 # Two record types share the file, both `ts \t count \t detail`. A positive count is a
 # number of distinct findings: the scanner writes their fingerprints in a fourth column
-# and never counts one twice, so the sum below is a distinct total. A zero count is a scan that could not run, which needs saying separately:
-# silence from a detector that never ran looks exactly like a clean result. The segment
+# and never counts one twice, so the sum below is a distinct total. A zero count is a scan
+# that did not cover everything, which needs saying separately: silence from a detector that
+# never ran looks exactly like a clean result. A zero row whose detail reads
+# `<n> source(s) failed to scan: <names>` is a partial run, where the other sources did
+# scan, so it is counted as incomplete rather than as could-not-run (#839). The segment
 # shows only the counts; the marker file is $CLAUDE_TRANSCRIPT_LEAK_PENDING or the default
 # below, and its third column says where the details are. `-s` comes first, so the common
 # case costs no fork.
 leak_file="${CLAUDE_TRANSCRIPT_LEAK_PENDING:-$HOME/.claude/logs/transcript-leaks-pending}"
 if [[ -s "$leak_file" ]]; then
-  read -r leak_found leak_down < <(awk -F'\t' '
+  read -r leak_found leak_down leak_partial < <(awk -F'\t' '
     $2 + 0 > 0 { found += $2; next }
+    index($3, "failed to scan:") { partial += 1; next }
     { down += 1 }
-    END { printf "%d %d\n", found, down }
+    END { printf "%d %d %d\n", found, down, partial }
   ' "$leak_file" 2>/dev/null)
   if [[ "${leak_found:-0}" =~ ^[0-9]+$ ]] && (( leak_found > 0 )); then
     add '\033[38;2;243;139;168m⚠ %s transcript leak(s)\033[0m' "$leak_found"
   fi
   if [[ "${leak_down:-0}" =~ ^[0-9]+$ ]] && (( leak_down > 0 )); then
     add '\033[38;2;243;139;168m⚠ transcript scan could not run %s time(s)\033[0m' "$leak_down"
+  fi
+  if [[ "${leak_partial:-0}" =~ ^[0-9]+$ ]] && (( leak_partial > 0 )); then
+    add '\033[38;2;243;139;168m⚠ transcript scan incomplete %s time(s)\033[0m' "$leak_partial"
   fi
 fi
 

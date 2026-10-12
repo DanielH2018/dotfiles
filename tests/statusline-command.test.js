@@ -75,6 +75,18 @@ test('a scan that could not run shows as such, not as a finding', { skip }, () =
   assert.doesNotMatch(out, /transcript leak\(s\)/);
 });
 
+test('a partially failed scan shows as incomplete, not as could-not-run', { skip }, () => {
+  // claude-transcript-scan writes a zero-count row when some sources failed and the rest
+  // scanned; that run happened, so calling it could-not-run overstates it.
+  const f = leakFile([
+    ['2026-08-29T04:17:00Z', '0', '2 source(s) failed to scan: x'],
+    ['2026-08-29T05:17:00Z', '0', 'every source failed to scan'],
+  ]);
+  const out = stripAnsi(run(LEAK_INPUT, '400', f).stdout);
+  assert.match(out, /transcript scan incomplete 1 time\(s\)/);
+  assert.match(out, /transcript scan could not run 1 time\(s\)/);
+});
+
 test('both record types show together, whatever their order', { skip }, () => {
   // The old SessionStart banner lost the could-not-run half when a record carried an empty
   // field; the counts here come from one awk pass that emits no text fields at all.

@@ -148,7 +148,9 @@ fi
 # Exit 3 is could-not-evaluate, and it is the one verdict with no other durable trace: a
 # finding lands in $LOG, but a scan that never ran leaves nothing behind at all. Record it
 # in the same marker, as a zero-count row, so the statusline reports "the detector
-# could not run" rather than the silence that is indistinguishable from "clean".
+# could not run" rather than the silence that is indistinguishable from "clean". A partial
+# run also lands here, and the statusline tells it apart by the `failed to scan:` text in
+# its reason, so keep that wording in $PARTIAL below.
 mark_unavailable() {
   mkdir -p "$(dirname "$PENDING")" 2>/dev/null
   printf '%s\t0\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "$PENDING"
