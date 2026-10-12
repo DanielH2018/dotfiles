@@ -32,8 +32,10 @@ async function gradeRun(caseDef, agentsFlagCache) {
     agentsFlagCache[caseDef.agent] = r.flag;
   }
   const invocation = await invokeAgent({ agentsFlag: agentsFlagCache[caseDef.agent], name: caseDef.agent, input: caseDef.input });
-  // Each run's costUsd covers the agent under test plus the judge, when one ran.
-  const priced = (grade, judgeCost = 0) => ({ ...grade, costUsd: invocation.costUsd + judgeCost });
+  // Each run's costUsd covers the agent under test plus the judge, when one ran. capUsd is
+  // what the --max-total-usd cap charges, which counts an unpriced call at its ceiling.
+  const priced = (grade, judgeResult = { costUsd: 0, capUsd: 0 }) =>
+    ({ ...grade, costUsd: invocation.costUsd + judgeResult.costUsd, capUsd: invocation.capUsd + judgeResult.capUsd });
   if (invocation.status !== 'ok') return priced(gradeFromParts({ invocation }));
   const assertion = checkAssertions(invocation.text, caseDef.assert);
   if (!assertion.pass) return priced(gradeFromParts({ invocation, assertion }));
@@ -42,7 +44,7 @@ async function gradeRun(caseDef, agentsFlagCache) {
   // assertion already decided.
   if (!caseDef.rubric) return priced(gradeFromParts({ invocation, assertion, needsJudge: false }));
   const judgeResult = await judge({ rubric: caseDef.rubric, output: invocation.text });
-  return priced(gradeFromParts({ invocation, assertion, judgeResult }), judgeResult.costUsd);
+  return priced(gradeFromParts({ invocation, assertion, judgeResult }), judgeResult);
 }
 
 async function pool(items, n, fn) {
@@ -74,7 +76,7 @@ async function main() {
     const runs = (await pool(Array.from({ length: k }), concurrency, async () => {
       if (!cap.allows()) return null;
       const run = await gradeRun(c, agentsFlagCache);
-      cap.add(run.costUsd);
+      cap.add(run.capUsd);
       return run;
     })).filter(Boolean);
     const report = aggregateCase({ ...c, k }, runs);

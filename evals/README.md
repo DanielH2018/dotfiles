@@ -119,7 +119,9 @@ against the cap and starts no further run once the total reaches it. It then wri
 `"truncated": true` and is graded against its full `k`, so it usually reads INCONCLUSIVE. A
 capped sweep runs one call at a time, so the overshoot is at most the cost of the run that
 crossed the cap. That run is bounded by the per-call `--max-budget-usd` caps, retries
-included.
+included. A call killed at its timeout, or one whose output does not parse, reports no
+`total_cost_usd`. The cap charges such a call its full `--max-budget-usd` rather than $0,
+because it may still have billed. The reported `costUsd` stays the measured figure.
 
 ## The agents
 

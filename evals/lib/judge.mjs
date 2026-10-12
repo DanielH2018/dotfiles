@@ -28,18 +28,20 @@ export function parseVerdict(text) {
 
 export async function judge({ rubric, output, maxBudgetUsd = 0.5, timeoutMs = 120000, retries = 2 }) {
   const args = buildJudgeArgs({ rubric, output, maxBudgetUsd });
-  // costUsd sums every attempt, like invokeAgent: a retried call is billed for each try.
-  let last = { status: 'infra_error', verdict: null, reason: 'not run', costUsd: 0 };
+  // costUsd and capUsd sum every attempt, like invokeAgent: a retried call is billed for each try.
+  let last = { status: 'infra_error', verdict: null, reason: 'not run', costUsd: 0, capUsd: 0 };
   let costUsd = 0;
+  let capUsd = 0;
   for (let attempt = 0; attempt <= retries; attempt++) {
     const raw = await runClaudeJson(args, { timeoutMs });
     const c = classifyRun(raw);
     costUsd += c.costUsd;
+    capUsd += c.priced ? c.costUsd : maxBudgetUsd;
     if (c.status === 'ok') {
-      try { return { status: 'ok', verdict: parseVerdict(c.text), reason: null, costUsd }; }
-      catch (e) { last = { status: 'infra_error', verdict: null, reason: `verdict parse failed: ${e.message}`, costUsd }; }
+      try { return { status: 'ok', verdict: parseVerdict(c.text), reason: null, costUsd, capUsd }; }
+      catch (e) { last = { status: 'infra_error', verdict: null, reason: `verdict parse failed: ${e.message}`, costUsd, capUsd }; }
     } else {
-      last = { status: 'infra_error', verdict: null, reason: c.reason, costUsd };
+      last = { status: 'infra_error', verdict: null, reason: c.reason, costUsd, capUsd };
     }
     if (attempt < retries) await sleep(1000 * (attempt + 1));
   }

@@ -34,3 +34,9 @@ test('costUsd is 0 when total_cost_usd is absent', () => {
   assert.strictEqual(classifyRun({ is_error: true, subtype: 'exec_error', result: 'ENOENT' }).costUsd, 0);
   assert.strictEqual(classifyRun(null).costUsd, 0);
 });
+
+test('priced says whether total_cost_usd was present', () => {
+  assert.strictEqual(classifyRun({ is_error: false, subtype: 'success', result: 'x', total_cost_usd: 0 }).priced, true);
+  assert.strictEqual(classifyRun({ is_error: true, subtype: 'timeout', result: 'killed' }).priced, false);
+  assert.strictEqual(classifyRun(null).priced, false);
+});
