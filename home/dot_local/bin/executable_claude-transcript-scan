@@ -335,12 +335,14 @@ while IFS= read -r f; do
   # `[.. | strings]` takes every string leaf of every record, which is what makes this
   # independent of the transcript schema: a value moving from .message.content to some new
   # field stays covered without a change here.
+  # A transcript deleted since `find` listed it holds nothing to leak, so it is skipped
+  # before jq can count it as a failed source.
+  [ -f "$f" ] || continue
   if ! jq -r '[.. | strings] | join("\n")' "$f" > "$WORK" 2>/dev/null; then
     echo "claude-transcript-scan: jq could not read $f — treat as not scanned" >&2
     note_failed "$f"
     continue
   fi
-  [ -f "$f" ] || continue
   scan_work "$f" "$(basename "$f")" "$GL_RULES" || true
 done <<EOF
 $FILES
