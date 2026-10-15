@@ -48,6 +48,30 @@ export CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000
 # (dot_local/bin/executable_ct) is the deliberate opt-in: it runs claude under a named
 # `tmux new-session -A`, so a session worth protecting is one command away.
 claude() {
+  # On daniel-box, a session started in the homelab checkout runs as the dedicated `claude`
+  # user (see claude-agents below). An audit on 2026-10-15 found every session since
+  # 2026-10-10 ran as `ubuntu`, because habit types plain `claude` and only `claude-agents`
+  # routed.
+  # Routing is narrow on purpose. Outside ~/server the agent's home cannot read the directory,
+  # and a non-interactive caller would hang on sudo's prompt: a Claude Code Bash tool call
+  # sources this function from its shell snapshot. So every condition must hold: no opt-out,
+  # stdin and stdout are TTYs, the helper exists (the claude user exists on this host), the
+  # shell is interactive, and $PWD is ~/server or under it (which includes .claude/worktrees/*).
+  # Opt out for one run with CLAUDE_AS_OPERATOR=1, or start the session with `claude-ubuntu`.
+  if [ -z "${CLAUDE_AS_OPERATOR:-}" ] && [ -t 0 ] && [ -t 1 ] \
+    && type _claude_as_agent >/dev/null 2>&1; then
+    case $- in
+      *i*)
+        case "$PWD" in
+          "$HOME/server"|"$HOME/server"/*)
+            echo "claude: starting as the 'claude' user (bypass: claude-ubuntu, or CLAUDE_AS_OPERATOR=1)" >&2
+            _claude_as_agent "$@"
+            return $?
+            ;;
+        esac
+        ;;
+    esac
+  fi
   case "${1:-}" in
     ''|-c|--continue|-r|--resume|attach|agents) ;;
     *) command claude "$@"; return $? ;;
@@ -62,10 +86,18 @@ claude() {
   command claude "$@"
 }
 
+# claude-ubuntu — the way out of the routing above: the old behaviour, unconditionally. `local`
+# scopes the opt-out to this one call (both shells scope it dynamically), so it cannot leak
+# into the interactive shell the way an `export` would.
+claude-ubuntu() {
+  local CLAUDE_AS_OPERATOR=1
+  claude "$@"
+}
+
 # claude-agents — start `claude agents` as the dedicated `claude` UNIX user (daniel-box moves
 # new interactive sessions there; see server/docs/claude-agent-user.md). It is a separate name
-# on purpose: plain `claude` above still starts a session as this user, which is where the
-# sessions that predate the move stay. Defined only where that user exists, so every other
+# on purpose: it opens the agents view, which plain `claude` never does. Plain `claude` above
+# reaches the same user only from ~/server. Defined only where that user exists, so every other
 # machine gets no function and no failing sudo. The `id` test keeps it out of the claude
 # user's own shells, where it would sudo to itself.
 #
@@ -77,6 +109,10 @@ claude() {
 if getent passwd claude >/dev/null 2>&1 && [ "$(id -un)" != claude ]; then
   claude-agents() {
     sudo machinectl shell claude@ /bin/bash -lc 'cd ~/server && exec claude agents "$@"' claude-agents "$@"
+  }
+  # Called by claude() above: the same command, without the `agents` word.
+  _claude_as_agent() {
+    sudo machinectl shell claude@ /bin/bash -lc 'cd ~/server && exec claude "$@"' claude "$@"
   }
 fi
 
