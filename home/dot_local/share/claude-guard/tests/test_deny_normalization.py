@@ -35,6 +35,13 @@ def denied(commands: list[str]) -> list[str]:
     return [c for c in commands if d.deny(c, "", ENV).kind == "deny"]
 
 
+def decided(commands: list[str]) -> list[str]:
+    """Commands some rule matched, whatever it decided. The normalization properties are
+    about a rule FIRING on a later line or inside quotes; whether that rule then denies or
+    asks is the rule's own business, and gh-api asks."""
+    return [c for c in commands if d.deny(c, "", ENV).kind in ("deny", "ask")]
+
+
 def test_normalization_never_deletes_a_real_separator():
     real, _ = separator_cases()
     assert denied(real) == real
@@ -152,7 +159,7 @@ def test_a_newline_is_a_real_separator_to_every_anchored_family():
         "echo a\npkill -9 node",
         "echo a\ngh api -XPOST /repos/o/r/issues",
     ]
-    assert denied(cmds) == cmds
+    assert decided(cmds) == cmds
 
 
 def test_the_whole_string_arm_still_catches_what_per_segment_normalization_would_lose():
@@ -163,7 +170,7 @@ def test_the_whole_string_arm_still_catches_what_per_segment_normalization_would
         'python3 -c "x" ; echo "c; gh api -XPOST /repos/o/r/issues"',
         'bash -c "foo" ; echo "d; git push origin main"',
     ]
-    assert denied(cmds) == cmds
+    assert decided(cmds) == cmds
 
 
 def test_a_command_the_parse_refuses_still_gets_the_whole_string_rules():
@@ -192,7 +199,7 @@ def test_anchored_rules_still_fire_on_any_line_not_just_the_first():
         "ls -la\npkill -9 node",
         "echo one\necho two\ngh api -X POST /repos/o/r",
     ]
-    assert denied(cmds) == cmds
+    assert decided(cmds) == cmds
 
 
 def test_the_case_insensitive_rules_stay_case_insensitive():

@@ -348,47 +348,63 @@ GH_API_AT = (
     r"(^|[;&|(`])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+|"
     r"(command|env|exec|sudo|nohup|nice)[[:space:]]+)*([^[:space:];&|()]*/)?gh[[:space:]]+api\b"
 )
-GH_HINT = "Read-only gh api is fine; a human runs the mutation."
+GH_HINT = "Read-only requests need no prompt; approve this if the mutation is intended."
+GH_SECRET_HINT = (
+    "It also names a secrets path, so it is denied rather than offered: `gh` is absent "
+    "from READERS, which leaves this rule the only gate on that path."
+)
 
 
 def gh_api(sc: Scan, target: str) -> Verdict | None:
-    """:745-766. Gate on the scan set; the flag arms read SCAN. The method arm folds case."""
+    """:745-766. Gate on the scan set; the flag arms read SCAN. The method arm folds case.
+
+    A possible mutation is an ask rather than a deny: the caller is usually posting a review
+    reply or editing a PR, and a prompt is the right gate for that. A command naming a
+    secrets path stays a deny. `gh` is absent from READERS and this rule runs ahead of
+    secret_readers, so first-match-wins leaves it the only gate on a request body read out
+    of `~/.ssh/id_rsa`; an ask there would downgrade a hard stop to one approval."""
     if not bdb_re(sc.scanset, GH_API_AT):
         return None
+    secret = bdb_re(sc.scan, SECRET_PATHS)
+
+    def gate(rule: str, message: str) -> Verdict:
+        if secret:
+            return Verdict("deny", rule + "-secret", message + " " + GH_SECRET_HINT)
+        return Verdict("ask", rule, message + " " + GH_HINT)
+
     if bdb_rei(
         sc.scan,
         r"(^|[[:space:]])(-X|--method)[[:space:]]*=?[[:space:]]*(POST|PUT|PATCH|DELETE)\b",
     ):
-        return Verdict(
-            "deny",
+        return gate(
             "gh-api-method",
-            f"Blocked: mutating gh api request (POST/PUT/PATCH/DELETE). {GH_HINT}",
+            "Mutating request (POST/PUT/PATCH/DELETE).",
         )
     arms = (
         (
             "gh-api-field-long",
             r"(^|[[:space:]])(--field|--raw-field)([[:space:]]|=)",
-            "Blocked: gh api field parameter, which makes the request a POST.",
+            "Field parameter, which makes the request a POST.",
         ),
         (
             "gh-api-field-short",
             r"(^|[[:space:]])-[a-zA-Z]*[fF]",
-            "Blocked: gh api field parameter (-f/-F), which makes the request a POST.",
+            "Field parameter (-f/-F), which makes the request a POST.",
         ),
         (
             "gh-api-input",
             r"(^|[[:space:]])--input([[:space:]]|=)",
-            "Blocked: gh api reading a request body from a file.",
+            "Request body read from a file.",
         ),
         (
             "gh-api-graphql",
             r"(^|[[:space:]]|/)graphql\b",
-            "Blocked: gh api graphql, which can mutate.",
+            "A graphql request, which can mutate.",
         ),
     )
     for rule, pattern, message in arms:
         if bdb_re(sc.scan, pattern):
-            return Verdict("deny", rule, f"{message} {GH_HINT}")
+            return gate(rule, message)
     return None
 
 
