@@ -1,12 +1,12 @@
-// The always-on design's "The idle exit": the server exits 0 after 30 minutes with no
-// request, so a launchd-managed process does not hold a resolved GitHub token in memory
-// indefinitely. See docs/specs/2026-09-16-pr-dash-always-on-design.md.
+// The always-on design's "The idle exit": the server exits 0 after 16 hours with no
+// request, so launchd replaces a process nobody is using with a fresh one. See
+// docs/specs/2026-09-16-pr-dash-always-on-design.md.
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { createIdleExit, IDLE_TIMEOUT_MS } from '../src/main-lib.ts';
 
-test('the idle window is 30 minutes', () => {
-  assert.strictEqual(IDLE_TIMEOUT_MS, 1_800_000);
+test('the idle window is 16 hours', () => {
+  assert.strictEqual(IDLE_TIMEOUT_MS, 57_600_000);
 });
 
 // A minimal fake timer, not a call-count stub: `clear` marks a handle so `fireAll` skips

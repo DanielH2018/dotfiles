@@ -60,8 +60,8 @@ if (preloadEnabled(process.env)) {
   });
 }
 
-// Exits the process after 30 minutes with no request, so the token this process resolved
-// does not stay in memory indefinitely — see createIdleExit. Created before the server so
+// Exits the process after 16 hours with no request — see createIdleExit and IDLE_TIMEOUT_MS.
+// The token's own max age (TOKEN_MAX_AGE_MS) bounds how long it stays in memory. Created before the server so
 // the window is already running from process start, not just from the first request.
 const idleExit = createIdleExit();
 const server = createServer({

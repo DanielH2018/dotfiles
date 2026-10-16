@@ -46,8 +46,9 @@ the design it saves.
 
 So the agent uses `KeepAlive` instead, and the idle exit lives in the server. launchd respawns
 within `ThrottleInterval`, so the port is held except during a respawn — see the respawn gap
-under Deferred, which rejecting socket activation leaves unmitigated. What the idle exit buys
-is not an idle machine but a bound on how long the token stays in memory.
+under Deferred, which rejecting socket activation leaves unmitigated. The idle exit replaces a
+process nobody is using; the token's max age, not the exit, bounds how long the credential
+stays in memory — see "The idle exit".
 
 ## Dropping the per-launch secret
 
@@ -119,9 +120,9 @@ Three consequences a reviewer should see stated rather than derive:
   A local process can spend the credential only through `/api/prs`, so what it can obtain is
   PR metadata and rate-limit consumption. Add one mutating route and the same caller gains
   write access to the operator's repositories.
-- The residual after the idle exit is a write-capable token in the memory of a process that
-  lives up to 30 minutes past its last use. That is what bounds the window, and it is the
-  reason the window was not widened to hold the credential all day.
+- The residual is a write-capable token in the memory of the server for up to 16 hours after
+  it was resolved. `TOKEN_MAX_AGE_MS` is what bounds that window, not the idle exit — see
+  "The idle exit" for why the bound moved.
 - **A read-only token would close most of this, and is the right follow-up.** A fine-grained
   token scoped to `pull_requests: read` and `metadata: read` serves every query this dashboard
   issues. The dashboard works today with the token it has; narrowing the token is a change to
@@ -156,11 +157,10 @@ the browser's own start, so that a `pr-dash` run paints fresh rows sooner. It ca
 unawaited before `listen()`, which under a lazy token means **it resolves the token at process
 start** — and that fires a Touch ID prompt with no operator present.
 
-Under an always-on agent that is not a small cost. `KeepAlive` plus a 30-minute idle exit means
-a respawn roughly every 30 minutes, so an unconditional pre-load would prompt for biometrics
-all day, unprompted, whether or not anyone opened the dashboard. It would also defeat the idle
-exit's only purpose: the token would be re-resolved and resident again seconds after each exit
-dropped it.
+Under an always-on agent that is not a small cost. `KeepAlive` respawns the server after every
+idle exit, so an unconditional pre-load would prompt for biometrics at each respawn, unprompted,
+whether or not anyone opened the dashboard. It would also hold the token for every hour the agent
+runs rather than only after someone asked for it.
 
 There is also nothing left to overlap. The agent's server is listening long before the operator
 opens a bookmark, so the fetch has no browser startup to hide behind, and the restored payload
@@ -185,9 +185,21 @@ Two properties hold, and both need tests:
 
 ## The idle exit
 
-The server exits 0 after **30 minutes** with no request. The window is a security knob: it
-bounds how long the token stays in memory after first use. Shorter means more Touch ID
-prompts, longer approaches holding the credential all day, which was declined.
+The server exits 0 after **16 hours** with no request, and a resolved token is reused for
+**16 hours** (`TOKEN_MAX_AGE_MS`) before the next fetch resolves it again.
+
+The first version of this design used a 30-minute idle exit as the only bound on the token, and
+declined a longer window because it approached holding the credential all day. That decision
+was reversed on 2026-10-16. Every exit meant a fresh node process, and every fresh process
+raised the node and 1Password prompts again on its first fetch, several times a day. The
+operator chose one prompt a day over the shorter residency.
+
+The bound on the token is now its max age, not the idle exit. A 16-hour idle window alone would
+not bound it: with daily use the gap between the last request of one day and the first of the
+next is under 16 hours, so the process never exits and the token could stay resident for
+weeks. The max age drops the token after 16 hours whatever the request pattern, and an expired
+token is not kept as a fallback when its re-resolution fails. The idle exit matches the max age
+so that it never forces a prompt the max age would not.
 
 The timer is armed by every request, including the poll. A page left open polls only while a
 response says `refreshing`, so an idle tab does not hold the process alive indefinitely.
@@ -226,6 +238,8 @@ could not authenticate.
   path, including the page shell and static assets.
 - The token resolves once across concurrent first requests, and a failed resolution is retried
   rather than cached.
+- A token is reused inside `TOKEN_MAX_AGE_MS` and resolved again at it, once across concurrent
+  callers, with no fallback to the expired token.
 - A token failure surfaces as a `500` whose body carries `resolveToken`'s message.
 - The idle timer exits 0, is re-armed by a request, and is not armed twice.
 - The plist parses, and names the same port and program path the server expects.
@@ -239,12 +253,12 @@ could not authenticate.
   a local proxy, not a secret in a URL.
 - **Restarting on a changed build.** `chezmoi apply` deploys new files under a running server,
   which serves the new static assets immediately and the old server code until the next idle
-  exit. Acceptable while the idle window is 30 minutes, and the plist header's reload block is
-  the operator's way to skip the wait after a change to the `/api/prs` response shape.
+  exit. With a 16-hour idle window and daily use, that exit may never come, so the plist
+  header's reload block is a required step after any change under `src/`, not a shortcut.
 - **The respawn gap.** Between an idle exit and launchd's respawn, `127.0.0.1:8770` refuses
   connections. A browser handed ERR_CONNECTION_REFUSED does not retry, so the operator gets a
   browser error page with nothing about pr-dash on it and has to reload. The window is short —
-  the process ran 30 minutes, so `ThrottleInterval` has long expired and launchd respawns
+  the process ran at least 16 hours, so `ThrottleInterval` has long expired and launchd respawns
   promptly — but rejecting socket activation means there is no mitigation, only a reload.
 - **A foreground `pr-dash` that wins the port wedges the agent.** The probe and the bind are
   not atomic, so if the agent has just idle-exited, the launcher can take 8770 first. Every
@@ -253,7 +267,7 @@ could not authenticate.
   launchd churn and a growing log, not data loss, and the plist header's deactivate block is
   the operator's way out.
 - **`agent.log` is unrotated**, one file taking both stdout and stderr. Steady state is
-  roughly 48 lines a day, one per respawn; it is unbounded only under the case above.
+  at most a few lines a day, one per respawn; it is unbounded only under the case above.
 - **The credential-failure poll.** A dismissed Touch ID prompt on a cold start leaves the page
   polling a 500 every 600ms for 60 seconds before the give-up banner. `TOKEN_FAILURE_TTL_MS`
   bounds that to roughly a dozen `op` spawns rather than one per poll. Two alternatives were

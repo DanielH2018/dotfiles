@@ -7,7 +7,12 @@ import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createLazyClient, createLazyToken, TOKEN_FAILURE_TTL_MS } from '../src/main-lib.ts';
+import {
+  createLazyClient,
+  createLazyToken,
+  TOKEN_FAILURE_TTL_MS,
+  TOKEN_MAX_AGE_MS,
+} from '../src/main-lib.ts';
 import { createClient } from '../src/github.ts';
 import { stripComments } from './strip-comments.ts';
 
@@ -143,6 +148,65 @@ test('two concurrent callers who both hit a rejection see the same error, and bo
   const token = await getToken();
   assert.strictEqual(calls, 2);
   assert.strictEqual(token, 'tok');
+});
+
+test('the token max age is 16 hours', () => {
+  assert.strictEqual(TOKEN_MAX_AGE_MS, 57_600_000);
+});
+
+test('a token is reused until its max age and resolved again at it', async () => {
+  // Each resolution is a node and 1Password prompt, so reuse just inside the age is what
+  // keeps the prompts to once a day, and the re-resolution at the age is what bounds how
+  // long the credential stays in memory.
+  let calls = 0;
+  const clock = fakeClock();
+  const getToken = createLazyToken(async () => {
+    calls += 1;
+    return `tok-${calls}`;
+  }, { now: clock.now });
+
+  await getToken();
+  clock.advance(TOKEN_MAX_AGE_MS - 1);
+  assert.strictEqual(await getToken(), 'tok-1', 'a token inside its max age must be reused');
+
+  clock.advance(1);
+  assert.strictEqual(await getToken(), 'tok-2', 'a token at its max age must be resolved again');
+  assert.strictEqual(calls, 2);
+});
+
+test('two concurrent callers after the max age resolve the token exactly once', async () => {
+  // The expiry path must join the in-flight resolution the same way the first resolution
+  // does, or one page load after expiry raises two Touch ID prompts.
+  let calls = 0;
+  const clock = fakeClock();
+  const getToken = createLazyToken(async () => {
+    calls += 1;
+    return `tok-${calls}`;
+  }, { now: clock.now });
+
+  await getToken();
+  clock.advance(TOKEN_MAX_AGE_MS);
+  const [a, b] = await Promise.all([getToken(), getToken()]);
+
+  assert.strictEqual(calls, 2, 'the second caller must join the re-resolution');
+  assert.strictEqual(a, 'tok-2');
+  assert.strictEqual(b, 'tok-2');
+});
+
+test('an expired token is not served after its re-resolution fails', async () => {
+  // Falling back to the expired token would keep the credential resident past its max age
+  // for as long as `op` keeps failing.
+  let calls = 0;
+  const clock = fakeClock();
+  const getToken = createLazyToken(async () => {
+    calls += 1;
+    if (calls === 2) throw new Error('touch id dismissed');
+    return `tok-${calls}`;
+  }, { now: clock.now });
+
+  await getToken();
+  clock.advance(TOKEN_MAX_AGE_MS);
+  await assert.rejects(() => getToken(), /touch id dismissed/);
 });
 
 test('createLazyClient does not resolve the token until a query is made', async () => {

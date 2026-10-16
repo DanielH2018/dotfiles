@@ -50,7 +50,8 @@
   assets under the running server, which serves them per request, while `src/` stays at
   whatever the process loaded — so a change to the /api/prs response shape leaves a new
   app.js validating an old server's body. That is a 60-second poll and a give-up banner
-  for up to the idle window, and reloading the job is the fix rather than waiting it out.
+  for up to the 16-hour idle window, which daily use may never reach, so reloading the job
+  is the fix rather than waiting it out.
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">

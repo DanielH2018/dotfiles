@@ -366,8 +366,22 @@ export type TokenSource = () => Promise<string>;
 // otherwise spawn another `op`, re-prompting for biometrics the operator just dismissed.
 export const TOKEN_FAILURE_TTL_MS = 5_000;
 
+/**
+ * How long a resolved token is reused before the next call resolves it again. This is the
+ * bound on how long the credential stays in memory, and it is sized so the operator sees
+ * the 1Password prompts at most once a day: 16 hours covers a working day plus the evening,
+ * and a token resolved in the morning is re-resolved the next morning. The idle exit used to
+ * be this bound, but at {@link IDLE_TIMEOUT_MS} a process in daily use may never go idle long
+ * enough to exit, so without this the token could stay resident for weeks. Asserted against
+ * the literal `57_600_000` in lazy-token.test.ts.
+ */
+export const TOKEN_MAX_AGE_MS = 16 * 60 * 60 * 1000;
+
 export type LazyTokenOpts = {
-  /** The clock the negative cache reads. Defaults to `Date.now`; injectable for tests. */
+  /**
+   * The clock the negative cache and the max age read. Defaults to `Date.now`; injectable
+   * for tests.
+   */
   now?: () => number;
 };
 
@@ -377,21 +391,24 @@ export type LazyTokenOpts = {
 // before it listens, so `resolve` here only ever runs once something (the startup pre-load,
 // or the browser's own first /api/prs) actually needs GitHub.
 //
-// Only success is remembered indefinitely. A rejection — the operator dismissing a biometric
-// prompt, or `op` failing for any other reason — must not poison the process for its
-// remaining life, so `cached` stays unset on that path and a later call starts a fresh
+// A success is remembered for TOKEN_MAX_AGE_MS. A rejection — the operator dismissing a
+// biometric prompt, or `op` failing for any other reason — must not poison the process for
+// its remaining life, so `cached` stays unset on that path and a later call starts a fresh
 // resolution instead of replaying the same failure forever. A failure is retained for
 // TOKEN_FAILURE_TTL_MS, no longer, for the reason on that constant.
 export function createLazyToken(resolve: TokenSource, opts: LazyTokenOpts = {}): TokenSource {
   const now = opts.now ?? Date.now;
-  let cached: string | undefined;
+  let cached: { token: string; at: number } | undefined;
   let pending: Promise<string> | undefined;
   let failure: { error: unknown; at: number } | undefined;
 
   return async function getToken(): Promise<string> {
+    // An expired token is dropped here rather than kept as a fallback, so the process holds
+    // no credential older than TOKEN_MAX_AGE_MS even if the re-resolution below fails.
+    if (cached !== undefined && now() - cached.at >= TOKEN_MAX_AGE_MS) cached = undefined;
     // Ahead of the negative cache, so a success can never be shadowed by an earlier
     // failure — which is also why nothing clears `failure` on the success path.
-    if (cached !== undefined) return cached;
+    if (cached !== undefined) return cached.token;
     if (pending !== undefined) return pending;
     if (failure !== undefined) {
       if (now() - failure.at < TOKEN_FAILURE_TTL_MS) throw failure.error;
@@ -406,7 +423,9 @@ export function createLazyToken(resolve: TokenSource, opts: LazyTokenOpts = {}):
     pending = attempt;
     try {
       const token = await attempt;
-      cached = token;
+      // Timed from when the resolution finished, not when it started: a Touch ID prompt the
+      // operator leaves waiting must not eat into the token's reuse window.
+      cached = { token, at: now() };
       return token;
     } catch (err) {
       failure = { error: err, at: now() };
@@ -440,12 +459,14 @@ export function createLazyClient(
 
 /**
  * How long the server waits with no request before exiting — see the always-on design's
- * "The idle exit". A security knob, not a performance one: it bounds how long the resolved
- * GitHub token stays in memory, not how efficiently the process runs. Asserted against the
- * literal `1_800_000` in idle-exit.test.ts, so a future change to this value is visible
- * there instead of silently changing the window.
+ * "The idle exit". Each exit costs a fresh process, and a fresh process must resolve the
+ * token again, which raises the node and 1Password prompts. 16 hours matches
+ * {@link TOKEN_MAX_AGE_MS}, so an exit never forces a prompt the max age would not already
+ * have forced. The max age, not this window, bounds how long the token stays in memory.
+ * Asserted against the literal `57_600_000` in idle-exit.test.ts, so a future change to this
+ * value is visible there instead of silently changing the window.
  */
-export const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+export const IDLE_TIMEOUT_MS = 16 * 60 * 60 * 1000;
 
 /** The minimal shape this module needs from a scheduled timer, real or injected in a test. */
 type TimerHandle = { unref?: () => void };
