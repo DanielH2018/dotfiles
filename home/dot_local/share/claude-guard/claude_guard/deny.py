@@ -30,7 +30,8 @@ The regexes are the bash's EREs with two textual substitutions (`_ere`): `[:spac
 and `[:alnum:]` → `a-zA-Z0-9`, both inside bracket expressions where Python has no POSIX
 classes. `\\b` and `\\s` are the same GNU extensions in both engines. ERE's leftmost-longest
 rule and Python's leftmost-first differ only in WHICH match is chosen, never in whether one
-exists, and every use here is a boolean search.
+exists, and every use here is a boolean search. SECRET_PATHS is the one exception: its
+`.env` branch carries a Python lookahead that has no ERE form (#861).
 
 One rule is not the bash's. The bash upgraded a `--force`/`-f` push to a feature branch into
 `--force-with-lease` and allowed it; `force_push_flag` denies it instead (dotfiles #701), so
@@ -53,6 +54,7 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
+from claude_guard.checks.scratch import tokenize
 from claude_guard.gitargv import (
     GLOBALS_RE,
     PUSH_SUBCOMMANDS,
@@ -203,8 +205,13 @@ def _writes_data(seg: Segment) -> bool:
     a commit message, with a quoted delimiter so nothing in it expands."""
     if len(seg.heredocs) != 1 or not all(seg.heredoc_quoted):
         return False
-    text = seg.text.strip()
-    return heredoc_write_target(text) is not None or bool(_COMMIT_MESSAGE_HEREDOC.match(text))
+    # Spaces and tabs only, as judge._trim: a trailing `\r` must stay to fail the match.
+    text = seg.text.strip(" \t")
+    if _COMMIT_MESSAGE_HEREDOC.match(text):
+        return True
+    target = heredoc_write_target(text)
+    # A `| next` stage receives the body, and a `>(…)` target runs it, so neither is data.
+    return target is not None and seg.sep != "|" and tokenize(target) is not None
 
 
 def _cut_data_bodies(command: str, segments: tuple[Segment, ...]) -> str:

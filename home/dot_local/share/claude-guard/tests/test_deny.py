@@ -676,6 +676,26 @@ CODE_THAT_MAY_READ_A_SECRET = [
     ("cat > note.md <<'EOF'\nok\nEOF\ncat ~/.ssh/id_rsa", "secret-read"),
     ("git commit -F - <<'EOF'\nmsg\nEOF\ncat .env.local", "secret-read"),
     ("cat .envrc", "secret-read"),
+    # A pipe hands the body to the next stage, and a `>(…)` target runs it.
+    (
+        "cat > /dev/stdout <<'EOF' | python3\nprint(open('.env').read())\nEOF",
+        "secret-read-interpreter",
+    ),
+    ("cat > >(bash) <<'EOF'\ncat ~/.ssh/id_rsa\nEOF", "secret-read"),
+    # The rest are lexically ambiguous: each could be a read, so the guard treats it as one.
+    # `v.key)` is a Python attribute, and also how `open(v.key)` reads once quotes go.
+    ("uv run python - <<'EOF'\nprint(sorted(v.key) for v in rows)\nEOF", "secret-read-interpreter"),
+    # A naive `;` split puts the quoted body text in command position.
+    (
+        'gh pr create --title t --body "x; cat ansible/vars/cluster-vars.sops.env"',
+        "secret-read",
+    ),
+    ("sed -i 's/cluster-vars.sops.env/x/' secret-rotate.sh", "secret-read"),
+    (
+        "python3 - <<'EOF'\nCA = '/var/run/secrets/kubernetes.io/ca.crt'\nEOF",
+        "secret-read-interpreter",
+    ),
+    ("cat ansible/roles/app/files/alert-webhook.env", "secret-read"),
 ]
 
 

@@ -729,7 +729,10 @@
            a compound like `rm -rf /tmp/x; (...)` was observed running unprompted while a bare
            `rm` prompted, so treat these as a speed bump, not a guarantee. Anything that must
            NEVER run belongs in deny, which is evaluated before both the ask tier and the
-           classifier. */}}
+           classifier. Inside a `.claude/worktrees/<name>` checkout, claude_guard resolves
+           `rm` of untracked paths and `git restore` to HEAD without the prompt
+           (checks/worktree_scratch.py, #861): a session owns that tree, and a headless one
+           has no prompt to answer. */}}
       "Bash(rm:*)",
       "Bash(rmdir:*)",
       "Bash(git reset --hard:*)",
