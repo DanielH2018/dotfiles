@@ -27,11 +27,14 @@ every repo would fire on each `gh pr create` whose heredoc body holds an odd quo
 """
 
 import functools
+import re
 import shlex
 import subprocess
 
 from claude_guard.deny import Verdict
 from claude_guard.segment import parse
+
+_SHA = re.compile(r"[0-9a-f]{7,40}")
 
 _UGREP_FLAG_FIXES = {
     "Z": "-Z is --fuzzy here (approximate matching), not a NUL separator. Use --null (-0).",
@@ -130,7 +133,9 @@ def _ugrep_flag(stage: list[str]) -> str | None:
 def _bare_stash(stage: list[str]) -> str | None:
     if not (_invokes(stage, ("git", "stash", "pop")) or _invokes(stage, ("git", "stash", "apply"))):
         return None
-    if any(word.startswith("stash@") for word in stage):
+    # A stash commit's SHA names one entry as surely as `stash@{n}` does, and unlike the
+    # index it does not shift when another session pushes (#861).
+    if any(word.startswith("stash@") or _SHA.fullmatch(word) for word in stage):
         return None
     return (
         "The git stash stack is per-repository, not per-worktree, so a bare pop can apply "

@@ -34,6 +34,7 @@ from claude_guard.checks.curl import curl_safe
 from claude_guard.checks.git_reset import clean_reset_safe
 from claude_guard.checks.remote import readonly_remote_safe, trusted_host_safe
 from claude_guard.checks.scratch import rm_confined, tokenize
+from claude_guard.checks.worktree_scratch import worktree_restore_safe, worktree_rm_safe
 from claude_guard.rules import Rules
 from claude_guard.segment import parse
 from claude_guard.tables import POSIX_SPACE, WS
@@ -105,6 +106,7 @@ _HARMLESS_REDIRECT_WORD = re.compile(
 
 def _allow_listed(rules: Rules, s: str) -> bool:
     return rules.allows(s) or rules.allows(_HARMLESS_REDIRECT_WORD.sub("", s).strip())
+
 
 # server #1898. The stderr redirects the remote-segment arm in judge_segment strips before
 # handing an ssh/hl segment to readonly_remote_safe/trusted_host_safe, whose raw-text
@@ -512,10 +514,10 @@ def judge_segment(
 
     `cwd_changed` is H1's gate (task-8-fix-2-brief.md): True when an EARLIER segment in
     the same chain was `cd`/`pushd`/`popd` (`judge()`'s own loop sets it, via
-    `_changes_cwd`, after judging each segment in turn). It has exactly one consumer
-    below — the heredoc-write carve-out — and is otherwise unused by design: every other
-    check in this function judges the segment's own text and is unaffected by where the
-    shell happens to be.
+    `_changes_cwd`, after judging each segment in turn). Its consumers below are the
+    heredoc-write carve-out and the two worktree cleanup checks (#861), which refuse a
+    relative operand once it is set. Every other check in this function judges the
+    segment's own text and is unaffected by where the shell happens to be.
     """
     # H2 (task-8-fix-2-brief.md): deny hoisted to the top of this function, ahead of the
     # heredoc-write carve-out below. The carve-out used to return an early `True` before
@@ -687,6 +689,13 @@ def judge_segment(
         return True, "curl-check"
     if word == "rm" and rm_confined(part, roots):
         return True, "rm-check"
+
+    # dotfiles #861. The same ask rules (`rm:*`, `git restore:*`) resolved for cleanup
+    # inside the session's own worktree, which a headless session otherwise cannot run.
+    if word == "rm" and worktree_rm_safe(part, cwd, cwd_changed):
+        return True, "worktree-rm-check"
+    if word == "git" and worktree_restore_safe(part, cwd, cwd_changed):
+        return True, "worktree-restore-check"
 
     # server #1898. The per-segment twin of judge()'s two whole-command remote arms, so an
     # ssh/hl stage can sit in a LOCAL pipeline — `ssh host docker ps | head -3` — with every

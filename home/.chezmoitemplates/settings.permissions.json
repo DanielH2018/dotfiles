@@ -169,6 +169,12 @@
       "Bash(git tag -l:*)",
       "Bash(git describe:*)",
       "Bash(git stash show:*)",
+      {{/* The stash protocol the harness prescribes for a shared stash stack: push under a
+           unique tag, apply by the entry's SHA. Neither is in the ask tier, but neither was
+           allowed either, so a headless session was refused both (#861). A bare `apply`
+           still meets claude_guard's bare-stash deny. */}}
+      "Bash(git stash push -u -m:*)",
+      "Bash(git stash apply:*)",
       "Bash(git worktree list:*)",
       "Bash(git shortlog:*)",
       "Bash(git reflog:*)",

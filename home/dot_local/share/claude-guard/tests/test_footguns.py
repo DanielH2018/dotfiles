@@ -82,6 +82,11 @@ def test_stash_pop_with_an_explicit_ref_is_clean():
     assert footgun("git stash pop 'stash@{2}'") is None
 
 
+def test_stash_apply_by_sha_is_clean():
+    assert footgun("git stash apply 3f9c2a1b7e") is None
+    assert rule("git stash apply wip") == "bare-stash"
+
+
 def test_git_stash_push_is_clean():
     assert footgun("git stash push -m wip") is None
 
