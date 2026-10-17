@@ -189,9 +189,11 @@ REMOTE_READONLY_VERBS: frozenset[str] = READONLY_BASE | _REMOTE_ONLY
 
 # allow-readonly-remote.sh:133 (SECRET_RE), matched at :134 with `grep -qiE` — hence
 # re.IGNORECASE here. /proc/<pid>/environ dumps a process's exported env unrestricted;
-# the rest are credential files a read-only verb (cat, grep, ...) could exfiltrate.
+# the rest are credential files a read-only verb (cat, grep, ...) could exfiltrate. `.env`
+# is anchored as deny.SECRET_PATHS anchors it (#861), so `os.environ` is not a path.
 SECRET_PATH_RE: re.Pattern[str] = re.compile(
-    r"(\.env|\.ssh(/|\s|$)|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|"
+    r"(\.env\b(?!\.(j2|example|sample|template|tmpl|dist)\b)|\.envrc\b|\.ssh(/|\s|$)|"
+    r"id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|"
     r"\.gnupg(/|\s|$)|\.netrc|\.pypirc|\.npmrc|/secrets(/|\s|$)|\.git-credentials|"
     r"\.kube/config|\.docker/config\.json|\.config/gh/hosts\.yml|\.config/gcloud/|"
     r"\.config/rclone/rclone\.conf|terraform\.tfstate|\.bash_history|\.claude\.json|"

@@ -641,6 +641,53 @@ def test_a_read_that_is_not_a_search_names_the_secret_without_an_exclude():
     assert "exclude" not in reasons[0]
 
 
+# dotfiles #861: one row per distinct shape among the 72 secret-read denials that fan-out
+# batches logged on 2026-10-15..17, cut down to the part that decided the verdict.
+CODE_THAT_READS_NO_SECRET = [
+    "python3 - <<'EOF'\nimport os\nprint(os.environ.get('HANDOFF_ENV'))\nEOF",
+    'uv run python -c "import os; env = dict(os.environ.items())"',
+    "python3 -c \"import os; print(os.environ['PATH'])\"",
+    'uv run python -c "import renderer.renderer_lib.environment"',
+    "cat > tests/test_vendored.py <<'EOF'\ncluster_file = tmp_path / 'cluster-vars.sops.env'\nEOF",
+    "cat >> tests/test_bundle.py <<'EOF'\nSECRET = 'id_ed25519: ENC[AES256_GCM,data:eA==]'\nEOF",
+    "mkdir -p /tmp/n && cat > /tmp/n/finding.md <<'EOF'\nreads ~/.kube/config\nEOF\n"
+    "uv run python scripts/dev/findings.py open --body-file /tmp/n/finding.md",
+    "git add -A && git commit -q -F - <<'EOF' 2>&1 | tail -40\nRender config.env, not key.pem\nEOF",
+    "grep -n REPO ansible/roles/setup/gitops_deploy/templates/config.env.j2",
+    "cat > templates/config.env.j2 <<'EOF'\nREPO={{ repo }}\nEOF",
+]
+# Each still names a secrets path where something could read it: a file argument, the code
+# an interpreter runs, or a heredoc whose body expands or executes.
+CODE_THAT_MAY_READ_A_SECRET = [
+    ("grep -c '^peanut_password=' ansible/vars/cluster-vars.sops.env", "secret-read"),
+    (
+        "uv run python scripts/secrets_mgmt/cluster_vars.py check out/cluster-vars.sops.env",
+        "secret-read-interpreter",
+    ),
+    # Code that names a SOPS file may open it; the guard cannot tell a mention from a read.
+    (
+        "python3 - <<'EOF'\nPATHS = ['ansible/vars/cluster-vars.sops.env']\nEOF",
+        "secret-read-interpreter",
+    ),
+    # `self.env.filters` is lexically a dotenv file named `self.env.filters`.
+    ("python3 - <<'EOF'\nfilters = self.env.filters\nEOF", "secret-read-interpreter"),
+    ("cat > out.txt <<EOF\n$(cat ~/.ssh/id_rsa)\nEOF", "secret-read"),
+    ("bash <<'EOF'\ncat .env\nEOF", "secret-read"),
+    ("cat > note.md <<'EOF'\nok\nEOF\ncat ~/.ssh/id_rsa", "secret-read"),
+    ("git commit -F - <<'EOF'\nmsg\nEOF\ncat .env.local", "secret-read"),
+    ("cat .envrc", "secret-read"),
+]
+
+
+def test_code_that_only_names_an_environment_variable_is_allowed():
+    assert kinds(CODE_THAT_READS_NO_SECRET) == ["none"] * len(CODE_THAT_READS_NO_SECRET)
+
+
+def test_code_that_may_read_a_secrets_path_is_still_denied():
+    commands = [c for c, _ in CODE_THAT_MAY_READ_A_SECRET]
+    assert rules(commands) == [r for _, r in CODE_THAT_MAY_READ_A_SECRET]
+
+
 def test_env_dump_confirmation_is_skipped_when_the_parse_refused():
     # :919-921: with no quote-aware segments the confirmation is skipped, not ANDed against
     # SCAN — a whole-string subject can never match an end-anchored pattern.

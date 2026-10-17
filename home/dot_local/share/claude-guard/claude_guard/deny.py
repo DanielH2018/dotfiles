@@ -42,6 +42,11 @@ that no stage runs as shell is allowed, and its message names an alternative (do
 #801). `secret_readers` drops exclude arguments before it matches, and both secret-read
 denials name the words that matched, with the exclude arguments for a recursive search
 (dotfiles #802).
+
+Both secret-read rules also read differently from the bash since dotfiles #861. `.env` in
+SECRET_PATHS is anchored on the right, so `os.environ` is no longer a secrets path. Their
+subject is `Scan.reads`: SCAN without the body of a quoted-delimiter `cat > path` heredoc,
+because `cat` writes that body and never reads it.
 """
 
 import re
@@ -58,7 +63,8 @@ from claude_guard.gitargv import (
     remote_add_mirrors_push,
     subcommand_at,
 )
-from claude_guard.segment import parse
+from claude_guard.judge import heredoc_write_target
+from claude_guard.segment import Segment, parse
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,13 +186,49 @@ class Scan:
     parsed: bool
     # Every git invocation the parsed segments run, read by claude_guard.gitargv (#709).
     gits: tuple[Invocation, ...] = ()
+    # SCAN with each data heredoc body cut out; the secret-read rules read this (#861).
+    reads: str = ""
+
+
+# `git commit [-q …] -F - <<'EOF' [2>&1]`: git reads the body as the commit message. Bare
+# option words only before `-F`, so nothing in the segment names a file or a value.
+_COMMIT_MESSAGE_HEREDOC = re.compile(
+    r"""^git[ \t]+commit([ \t]+-[A-Za-z-]+)*[ \t]+(-F|--file)[ \t]+-[ \t]+<<-?[ \t]*"""
+    r"""('[A-Za-z_][A-Za-z0-9_]*'|"[A-Za-z_][A-Za-z0-9_]*")([ \t]+2>&1)?[ \t]*$"""
+)
+
+
+def _writes_data(seg: Segment) -> bool:
+    """True when the segment's one heredoc body is data: copied by `cat > path` or taken as
+    a commit message, with a quoted delimiter so nothing in it expands."""
+    if len(seg.heredocs) != 1 or not all(seg.heredoc_quoted):
+        return False
+    text = seg.text.strip()
+    return heredoc_write_target(text) is not None or bool(_COMMIT_MESSAGE_HEREDOC.match(text))
+
+
+def _cut_data_bodies(command: str, segments: tuple[Segment, ...]) -> str:
+    """`command` without the body of any heredoc `_writes_data` accepts.
+
+    `cat` copies that body into `path` byte for byte, `git commit -F -` stores it as the
+    message, and the quoted delimiter rules out expansion inside it, so a secret path named
+    in it is never read (#861). Every other heredoc body stays: `python3 - <<'EOF'` runs its
+    body, and `bash <<EOF` does too.
+    """
+    spans = [span for seg in segments if _writes_data(seg) for span in seg.heredoc_spans]
+    out, last = [], 0
+    for start, end in sorted(spans):
+        out.append(command[last:start])
+        last = end
+    out.append(command[last:])
+    return "".join(out)
 
 
 def build_scan(command: str) -> Scan:
     scan = normalize(command)
     p = parse(command)
     if not p.ok:
-        return Scan(command, scan, scan, scan, False)
+        return Scan(command, scan, scan, scan, False, reads=scan)
     texts = [seg.text for seg in p.segments] + list(p.substitutions)
     members = [normalize(text) for text in texts]
     # Not the bash's (#709): one more member per git push a segment runs, spelled
@@ -198,7 +240,8 @@ def build_scan(command: str) -> Scan:
     gits = tuple(inv for text in texts for inv in invocations(text))
     scanset = "\n".join([scan, *members])
     segset = "\n".join(members) if members else scan
-    return Scan(command, scan, scanset, segset, True, gits)
+    reads = normalize(_cut_data_bodies(command, p.segments))
+    return Scan(command, scan, scanset, segset, True, gits, reads)
 
 
 # --- shared anchors (:368, :383-384, :591-599) ------------------------------------------------
@@ -599,9 +642,14 @@ def disk_wipe(sc: Scan, target: str) -> Verdict | None:
 # --- secret reads (:859-949) -------------------------------------------------------------------
 
 # :881. The four key/cert suffixes are anchored on BOTH sides so `.keys()` and a jq
-# `\(.key)` do not read as a file (:866-880).
+# `\(.key)` do not read as a file (:866-880). `.env` is anchored on the right (#861): the
+# bash's bare `\.env` matched `os.environ` and `.environment` in code text, which was most
+# of 72 denials in three days of fan-out batches. `.env.local` and `x.sops.env` still
+# match. A template suffix (`config.env.j2`, `.env.example`) does not: it holds no value.
+# `.envrc` is named on its own because the anchor drops it.
 SECRET_PATHS = (
-    r"(\.env|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|"
+    r"(\.env\b(?!\.(j2|example|sample|template|tmpl|dist)\b)|\.envrc\b|"
+    r"\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|"
     r"\.pypirc|\.npmrc|/secrets/|\.git-credentials|\.kube/config|\.docker/config\.json|"
     r"\.config/gh/hosts\.yml|\.claude/\.credentials\.json|\.claude\.json|/etc/shadow|"
     r"/etc/gshadow|/proc/[^/[:space:]]+/environ|(^|[A-Za-z0-9_~/-])\.(pem|key|p12|pfx)\b)"
@@ -695,8 +743,9 @@ def secret_readers(sc: Scan, target: str) -> Verdict | None:
     when the piece matches AND — if the parse succeeded — some quote-aware segment matches
     too (:911-921). Exclude arguments are dropped, then for a filter command the pattern
     argument (:931-938), before the readers arm. The denial names the words that matched,
-    and for a recursive search the exclude arguments that would let it through (#802)."""
-    for piece in re.split(r"[;&|]", sc.scan):
+    and for a recursive search the exclude arguments that would let it through (#802).
+    The subject is `sc.reads`, so a `cat > path` heredoc body is not read (#861)."""
+    for piece in re.split(r"[;&|]", sc.reads):
         words = piece.split()
         if not words:
             continue
@@ -729,14 +778,15 @@ def secret_readers(sc: Scan, target: str) -> Verdict | None:
 
 
 def secret_interpreter(sc: Scan, target: str) -> Verdict | None:
-    """:945-949. The denial names the words that matched SECRET_PATHS (#802)."""
+    """:945-949. The denial names the words that matched SECRET_PATHS (#802). The subject
+    is `sc.reads`, as in secret_readers (#861)."""
     interpreter = r"\b(python[0-9.]*|node|deno|bun|perl|ruby|php|Rscript|osascript)\b"
-    if bdb_re(sc.scan, rf"{interpreter}.*{SECRET_PATHS}"):
+    if bdb_re(sc.reads, rf"{interpreter}.*{SECRET_PATHS}"):
         return Verdict(
             "deny",
             "secret-read-interpreter",
             "Blocked: reading a secrets file via an interpreter. Ask the user to share the "
-            f"specific value needed.{_naming(_secret_words(sc.scan.split()))}",
+            f"specific value needed.{_naming(_secret_words(sc.reads.split()))}",
         )
     return None
 

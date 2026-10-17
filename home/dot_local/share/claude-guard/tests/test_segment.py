@@ -219,6 +219,13 @@ def test_two_heredocs_on_one_command_keep_their_quoted_flags_aligned():
     assert p.segments[0].heredoc_quoted == (False, True)
 
 
+def test_each_heredoc_span_covers_its_body_and_not_its_delimiter():
+    command = "cat <<A <<'B'\n1\nA\n2\nB\necho done"
+    p = parse(command)
+    assert [command[a:b] for a, b in p.segments[0].heredoc_spans] == ["1\n", "2\n"]
+    assert p.segments[1].heredoc_spans == ()
+
+
 def test_a_redirect_alongside_a_heredoc_stays_visible_in_the_segment():
     p = parse("cat > /tmp/x <<'EOF'\nhello\nEOF")
     assert visible(p) == ["cat > /tmp/x <<'EOF'"]

@@ -49,6 +49,9 @@ class Segment:
     sep: str
     heredocs: tuple[str, ...]
     heredoc_quoted: tuple[bool, ...]
+    # `(start, end)` of each body in the command string, the delimiter line excluded, so a
+    # caller can cut a body out by position rather than by searching for its text.
+    heredoc_spans: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +77,7 @@ def parse(command: str) -> Parsed:
     cnt: list[int] = []  # nesting counter per frame, aligned with `kind`
     seg_start: list[int] = [0]  # per depth; index 0 is the top level
     pend: list[tuple[str, bool, bool, int]] = []  # (delim, strip_tabs, quoted, offset)
-    heredocs: list[tuple[int, str, bool]] = []  # (offset, body, quoted)
+    heredocs: list[tuple[int, str, bool, int, int]] = []  # (offset, body, quoted, start, end)
     segs: list[list] = []  # [text, sep, off0, off1]
     subs: list[str] = []
 
@@ -268,6 +271,7 @@ def parse(command: str) -> Parsed:
                     body_start = i
                     for delim, strip, quoted, hoff in pend:
                         body = ""
+                        body_begin = body_end = body_start
                         while True:
                             # Absolute find(), not s[body_start:] then a relative find(): slicing
                             # the remainder copies it on every line, making a large heredoc body
@@ -277,14 +281,15 @@ def parse(command: str) -> Parsed:
                             line = s[body_start:line_end] if has_nl else s[body_start:]
                             cmp = line.lstrip("\t") if strip else line
                             if cmp == delim:
+                                body_end = body_start
                                 body_start = line_end + 1 if has_nl else n
                                 break
                             body += line + "\n"
                             if not has_nl:
-                                body_start = n
+                                body_start = body_end = n
                                 break
-                            body_start = line_end + 1
-                        heredocs.append((hoff, body, quoted))
+                            body_start = body_end = line_end + 1
+                        heredocs.append((hoff, body, quoted, body_begin, body_end))
                     pend.clear()
                     seg_start[depth] = body_start
                     i = body_start
@@ -306,7 +311,7 @@ def parse(command: str) -> Parsed:
     # its own sep — see the module docstring and DanielH2018/server#2261.
     while len(segs) > 1:
         text, _sep, off0, off1 = segs[-1]
-        if any(off0 <= hoff < off1 for hoff, _b, _q in heredocs):
+        if any(off0 <= h[0] < off1 for h in heredocs):
             break
         if text.strip(" \t\r\n"):
             break
@@ -314,8 +319,16 @@ def parse(command: str) -> Parsed:
 
     out: list[Segment] = []
     for text, sep, off0, off1 in segs:
-        mine = [(body, quoted) for hoff, body, quoted in heredocs if off0 <= hoff < off1]
-        out.append(Segment(text, sep, tuple(b for b, _q in mine), tuple(q for _b, q in mine)))
+        mine = [h for h in heredocs if off0 <= h[0] < off1]
+        out.append(
+            Segment(
+                text,
+                sep,
+                tuple(h[1] for h in mine),
+                tuple(h[2] for h in mine),
+                tuple((h[3], h[4]) for h in mine),
+            )
+        )
     return Parsed("ok", tuple(out), tuple(subs))
 
 
