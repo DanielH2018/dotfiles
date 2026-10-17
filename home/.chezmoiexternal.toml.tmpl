@@ -12,4 +12,21 @@
     # The upstream test suite and its type stub run under `bun test` from a checkout, never from
     # $HOME, so they stay out of the deploy. With `exact`, apply also deletes copies already there.
     exclude = ["*/tests", "*/tests/**", "*/bun/bun-test.d.ts"]
+
+# The Flux CLI, for the operator-only `flux diff kustomization` step before a role PR that moves
+# a service to Flux (DanielH2018/server, docs/target-architecture/deploy/d5-bulk-move.md). The
+# version follows `flux_version` in that repo's ansible/roles/k8s/flux/defaults/main.yml, so the
+# CLI matches the controllers it diffs against. Renovate does not track this pin. To move it after
+# the server bumps `flux_version`, change both versions in the URL, then take the new tarball's
+# hash from that release's flux_<version>_checksums.txt and check it against the downloaded bytes.
+# The admin kubeconfig is root-only, so the operator runs:
+#   sudo /home/ubuntu/.local/bin/flux --kubeconfig /etc/rancher/k3s/k3s.yaml \
+#     diff kustomization <tag> --path <render>/cluster/<tag> \
+#     --kustomization-file <render>/flux/<tag>.yaml
+[".local/bin/flux"]
+    type = "archive-file"
+    url = "https://github.com/fluxcd/flux2/releases/download/v2.9.6/flux_2.9.6_linux_amd64.tar.gz"
+    checksum.sha256 = "b4d22673e9246cbd628881f1a9ef3b090085dced291e42d804555cee8e8d42c5"
+    path = "flux"
+    executable = true
 {{- end }}
