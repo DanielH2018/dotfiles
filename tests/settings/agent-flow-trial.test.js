@@ -30,9 +30,12 @@ test('daniel-box enables agent-flow from the pinned local copy', { skip }, () =>
 
 test('the external pins agent-flow to a full commit and a checksum', { skip }, () => {
   const toml = renderAs('daniel-box', EXTERNAL);
-  assert.match(toml, new RegExp(`^\\["${DIR.replace(/[./]/g, '\\$&')}"\\]$`, 'm'));
-  assert.match(toml, /^\s*url = "https:\/\/github\.com\/Charlie0113-T\/claude-agent-flow\/archive\/[0-9a-f]{40}\.tar\.gz"$/m);
-  assert.match(toml, /^\s*checksum\.sha256 = "[0-9a-f]{64}"$/m);
+  const entry = toml.split(new RegExp(`^\\["${DIR.replace(/[./]/g, '\\$&')}"\\]$`, 'm'))[1];
+  assert.ok(entry, `the daniel-box render has no ${DIR} external`);
+  // Only this entry's own lines, so another external's checksum cannot satisfy the match.
+  const body = entry.split(/^\[/m)[0];
+  assert.match(body, /^\s*url = "https:\/\/github\.com\/Charlie0113-T\/claude-agent-flow\/archive\/[0-9a-f]{40}\.tar\.gz"$/m);
+  assert.match(body, /^\s*checksum\.sha256 = "[0-9a-f]{64}"$/m);
 });
 
 test('no other host installs or enables agent-flow', { skip }, () => {
