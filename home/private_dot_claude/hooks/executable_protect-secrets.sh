@@ -40,7 +40,7 @@ deny() {
 }
 
 case "$FILE_PATH" in
-  .env|*/.env|.env.*|*/.env.*)
+  .env|*/.env|.env.*|*/.env.*|.envrc|*/.envrc)
     deny "Blocked: .env files may contain secrets. Ask the user to share the specific value needed."
     ;;
   */.ssh/*|*/id_rsa*|*/id_ed25519*|*/id_ecdsa*)
