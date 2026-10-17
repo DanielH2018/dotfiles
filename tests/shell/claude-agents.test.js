@@ -48,4 +48,13 @@ for (const shell of ['bash', 'zsh']) {
       '--resume', 'a b', "it's",
     ]);
   });
+
+  test(`${shell}: claude-shell opens a login shell in the clone and starts no Claude`, { skip }, () => {
+    const out = run(shell, 'claude-shell', { hasClaude: true });
+    assert.deepStrictEqual(out.trimEnd().split('\n'), [
+      'machinectl', 'shell', 'claude@', '/bin/bash', '-lc', 'cd ~/server && exec bash -l',
+    ]);
+    const absent = run(shell, 'type claude-shell >/dev/null 2>&1 && echo defined || echo absent', { hasClaude: false });
+    assert.strictEqual(absent.trim(), 'absent');
+  });
 }

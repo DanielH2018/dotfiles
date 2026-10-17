@@ -114,6 +114,11 @@ if getent passwd claude >/dev/null 2>&1 && [ "$(id -un)" != claude ]; then
   _claude_as_agent() {
     sudo machinectl shell claude@ /bin/bash -lc 'cd ~/server && exec claude "$@"' claude "$@"
   }
+  # A login shell as the claude user, in its clone, with no Claude session: for a `/login`,
+  # `claude setup-token` or a look around. `exit` returns to this user.
+  claude-shell() {
+    sudo machinectl shell claude@ /bin/bash -lc 'cd ~/server && exec bash -l'
+  }
 fi
 
 # --- Vault (LLM Wiki) location for /lint, /healthcheck, /rebuild ---
