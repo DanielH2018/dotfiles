@@ -567,3 +567,37 @@ test('the safe-floor template also validates clean against shape assertion 1', (
 // isStringArray without importing the script (it is a CLI entry point, not a module).
 const isStringArrayShape = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
 
+// The sudo floor is host-aware (dotfiles #863). daniel-box carries the sudo boundary in
+// claude_guard's `sudo-boundary` rule; every other host keeps it in the settings deny. The
+// stub replaces os.hostname() before the generator loads, so neither test depends on the
+// machine it runs on, and the generator itself reads no override.
+const hostStub = (host) => {
+  const p = path.join(tmp, `host-${host}.js`);
+  fs.writeFileSync(p, `require('node:os').hostname = () => ${JSON.stringify(host)};\n`);
+  return p;
+};
+const FLOOR_NO_SUDO = FLOOR.filter((r) => r !== 'Bash(sudo:*)');
+const env = { ...process.env };
+delete env.CLAUDE_SETTINGS_SAFE_FLOOR;
+delete env.CLAUDE_SETTINGS_PRIOR;
+
+test('on daniel-box, a base whose deny omits Bash(sudo:*) still meets the floor', () => {
+  for (const host of ['daniel-box', 'daniel-box.lan']) {
+    const base = w(`floor-${host}.json`, { permissions: { deny: FLOOR_NO_SUDO } });
+    const out = execFileSync('node', ['--require', hostStub(host), BIN, base], { encoding: 'utf8', env });
+    assert.ok(!JSON.parse(out).permissions.deny.includes('Bash(sudo:*)'), `${host} wrote a sudo deny it was not given`);
+  }
+});
+
+test('on every other host, that base is refused, naming Bash(sudo:*)', () => {
+  for (const host of ['daniel-server', 'daniel-pi', 'work-laptop', 'daniel-box2', 'xdaniel-box']) {
+    const base = w(`floor-${host}.json`, { permissions: { deny: FLOOR_NO_SUDO } });
+    let err;
+    try {
+      execFileSync('node', ['--require', hostStub(host), BIN, base], { encoding: 'utf8', stdio: 'pipe', env });
+    } catch (e) { err = e; }
+    assert.ok(err, `${host} accepted a base without the sudo deny`);
+    assert.strictEqual(err.status, 1);
+    assert.match(err.stderr, /missing floor rules: Bash\(sudo:\*\)/);
+  }
+});

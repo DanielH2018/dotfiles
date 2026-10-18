@@ -2,6 +2,7 @@
 // Deep-merge JSON fragments left→right. Objects merge by key; arrays concat + de-dupe
 // by JSON value; scalars: the later (overlay) value wins; a missing file is treated as {}.
 const fs = require('node:fs');
+const os = require('node:os');
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
@@ -172,8 +173,17 @@ const applyRemovals = (acc) => {
 // rule edit would become a generator failure until both moved together. So the terraform
 // family, `git config` and `find *-exec*` are excluded on purpose — they are live policy.
 // Signed off 2026-07-30; spec §9a.
+//
+// `Bash(sudo:*)` is floored on every host except daniel-box. There, claude_guard's
+// `sudo-boundary` deny rule carries the sudo boundary instead, so that the one
+// homelab-takeover-check wrapper can run (dotfiles #863; operator ruling 2026-10-18).
+// The exemption keys on the machine's own short hostname, never on an argument or an
+// environment variable, so no caller of this script can widen it.
+const SUDO_BOUNDARY_IN_CLAUDE_GUARD = new Set(['daniel-box']);
+const HOST = os.hostname().split('.')[0];
 const FLOOR_DENY = [
-  'Bash(sudo:*)', 'Bash(su:*)', 'Bash(mkfs:*)', 'Bash(dd:*)',
+  ...(SUDO_BOUNDARY_IN_CLAUDE_GUARD.has(HOST) ? [] : ['Bash(sudo:*)']),
+  'Bash(su:*)', 'Bash(mkfs:*)', 'Bash(dd:*)',
   'Bash(rm -rf /)', 'Bash(rm -rf ~)',
   'Bash(* | sh*)', 'Bash(* | bash*)', 'Bash(* | zsh*)',
   'Read(**/.ssh/**)', 'Read(**/.aws/credentials)', 'Read(**/.env)',
