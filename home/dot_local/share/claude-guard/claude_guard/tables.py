@@ -192,7 +192,7 @@ REMOTE_READONLY_VERBS: frozenset[str] = READONLY_BASE | _REMOTE_ONLY
 # the rest are credential files a read-only verb (cat, grep, ...) could exfiltrate. `.env`
 # is anchored as deny.SECRET_PATHS anchors it (#861), so `os.environ` is not a path.
 SECRET_PATH_RE: re.Pattern[str] = re.compile(
-    r"(\.env\b(?!\.(j2|example|sample|template|tmpl|dist)\b)|\.envrc\b|\.ssh(/|\s|$)|"
+    r"(\.env(?![A-Za-z])(?!\.(j2|example|sample|template|tmpl|dist)\b)|\.envrc\b|\.ssh(/|\s|$)|"
     r"id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|"
     r"\.gnupg(/|\s|$)|\.netrc|\.pypirc|\.npmrc|/secrets(/|\s|$)|\.git-credentials|"
     r"\.kube/config|\.docker/config\.json|\.config/gh/hosts\.yml|\.config/gcloud/|"

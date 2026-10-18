@@ -682,6 +682,19 @@ CODE_THAT_MAY_READ_A_SECRET = [
         "secret-read-interpreter",
     ),
     ("cat > >(bash) <<'EOF'\ncat ~/.ssh/id_rsa\nEOF", "secret-read"),
+    # The written file runs in the same command, by path, by name, by glob or by variable.
+    (
+        "cat > /tmp/x.py <<'EOF'\nprint(open('.env').read())\nEOF\npython3 /tmp/x.py",
+        "secret-read",
+    ),
+    ("cat > /tmp/x.sh <<'EOF'\ncat ~/.ssh/id_rsa\nEOF\nbash /tmp/x.sh", "secret-read"),
+    ("cat > /tmp/x.sh <<'EOF' && bash /tmp/x.sh\ncat ~/.ssh/id_rsa\nEOF", "secret-read"),
+    ("cat > /tmp/a <<'EOF'\ncat .env\nEOF\n. /tmp/a", "secret-read"),
+    ("cd /tmp && cat > x.sh <<'EOF'\ncat .env\nEOF\nsh -e x.sh", "secret-read"),
+    ("cat > /tmp/d/x.sh <<'EOF'\ncat .env\nEOF\nbash /tmp/d/*.sh", "secret-read"),
+    ("f=/tmp/x.sh\ncat > /tmp/x.sh <<'EOF'\ncat .env\nEOF\nbash $f", "secret-read"),
+    ("cat .env_production", "secret-read"),
+    ("cat config/app.env2", "secret-read"),
     # The rest are lexically ambiguous: each could be a read, so the guard treats it as one.
     # `v.key)` is a Python attribute, and also how `open(v.key)` reads once quotes go.
     ("uv run python - <<'EOF'\nprint(sorted(v.key) for v in rows)\nEOF", "secret-read-interpreter"),

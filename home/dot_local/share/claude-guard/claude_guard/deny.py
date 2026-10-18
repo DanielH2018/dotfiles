@@ -200,9 +200,30 @@ _COMMIT_MESSAGE_HEREDOC = re.compile(
 )
 
 
-def _writes_data(seg: Segment) -> bool:
-    """True when the segment's one heredoc body is data: copied by `cat > path` or taken as
-    a commit message, with a quoted delimiter so nothing in it expands."""
+_WORD_SPLIT = re.compile(r"[\s;&|()<>`'\"]+")
+
+
+def _names_written_file(rest: str, target: str) -> bool:
+    """True when `rest`, the command outside one `cat > target` segment and its body, could
+    name `target` other than as a long option's value (`--body-file target`). A glob or a
+    `$` could name it too, so either counts."""
+    base = target.rstrip("/").rsplit("/", 1)[-1]
+    words = [w for w in _WORD_SPLIT.split(rest) if w]
+    for i, word in enumerate(words):
+        if any(c in word for c in "*?$"):
+            return True
+        value = word.split("=", 1)[1] if word.startswith("--") and "=" in word else word
+        if value not in (target, base) and not value.endswith("/" + base):
+            continue
+        if not (word.startswith("--") or (i > 0 and words[i - 1].startswith("--"))):
+            return True
+    return False
+
+
+def _writes_data(seg: Segment, command: str) -> bool:
+    """True when the segment's one heredoc body is data: copied by `cat > path` with nothing
+    else in `command` naming that file, or taken as a commit message. The delimiter must be
+    quoted, so nothing in the body expands."""
     if len(seg.heredocs) != 1 or not all(seg.heredoc_quoted):
         return False
     # Spaces and tabs only, as judge._trim: a trailing `\r` must stay to fail the match.
@@ -211,7 +232,15 @@ def _writes_data(seg: Segment) -> bool:
         return True
     target = heredoc_write_target(text)
     # A `| next` stage receives the body, and a `>(…)` target runs it, so neither is data.
-    return target is not None and seg.sep != "|" and tokenize(target) is not None
+    if target is None or seg.sep == "|" or tokenize(target) is None:
+        return False
+    start, end = seg.heredoc_spans[0]
+    head = command[:start]
+    own = head.rfind(seg.text)
+    if own == -1:
+        return False
+    rest = head[:own] + head[own + len(seg.text) :] + command[end:]
+    return not _names_written_file(rest, target)
 
 
 def _cut_data_bodies(command: str, segments: tuple[Segment, ...]) -> str:
@@ -222,7 +251,7 @@ def _cut_data_bodies(command: str, segments: tuple[Segment, ...]) -> str:
     in it is never read (#861). Every other heredoc body stays: `python3 - <<'EOF'` runs its
     body, and `bash <<EOF` does too.
     """
-    spans = [span for seg in segments if _writes_data(seg) for span in seg.heredoc_spans]
+    spans = [span for seg in segments if _writes_data(seg, command) for span in seg.heredoc_spans]
     out, last = [], 0
     for start, end in sorted(spans):
         out.append(command[last:start])
@@ -651,11 +680,12 @@ def disk_wipe(sc: Scan, target: str) -> Verdict | None:
 # :881. The four key/cert suffixes are anchored on BOTH sides so `.keys()` and a jq
 # `\(.key)` do not read as a file (:866-880). `.env` is anchored on the right (#861): the
 # bash's bare `\.env` matched `os.environ` and `.environment` in code text, which was most
-# of 72 denials in three days of fan-out batches. `.env.local` and `x.sops.env` still
-# match. A template suffix (`config.env.j2`, `.env.example`) does not: it holds no value.
-# `.envrc` is named on its own because the anchor drops it.
+# of 72 denials in three days of fan-out batches. Only a following letter is refused, so
+# `.env.local`, `.env_prod`, `app.env2` and `x.sops.env` still match. A template suffix
+# (`config.env.j2`, `.env.example`) does not: it holds no value. `.envrc` is named on its
+# own because the anchor drops it.
 SECRET_PATHS = (
-    r"(\.env\b(?!\.(j2|example|sample|template|tmpl|dist)\b)|\.envrc\b|"
+    r"(\.env(?![A-Za-z])(?!\.(j2|example|sample|template|tmpl|dist)\b)|\.envrc\b|"
     r"\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|"
     r"\.pypirc|\.npmrc|/secrets/|\.git-credentials|\.kube/config|\.docker/config\.json|"
     r"\.config/gh/hosts\.yml|\.claude/\.credentials\.json|\.claude\.json|/etc/shadow|"
