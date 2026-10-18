@@ -30,7 +30,8 @@ The regexes are the bash's EREs with two textual substitutions (`_ere`): `[:spac
 and `[:alnum:]` → `a-zA-Z0-9`, both inside bracket expressions where Python has no POSIX
 classes. `\\b` and `\\s` are the same GNU extensions in both engines. ERE's leftmost-longest
 rule and Python's leftmost-first differ only in WHICH match is chosen, never in whether one
-exists, and every use here is a boolean search.
+exists, and every use here is a boolean search. SECRET_PATHS is the one exception: its
+`.env` branch carries a Python lookahead that has no ERE form (#861).
 
 One rule is not the bash's. The bash upgraded a `--force`/`-f` push to a feature branch into
 `--force-with-lease` and allowed it; `force_push_flag` denies it instead (dotfiles #701), so
@@ -599,9 +600,15 @@ def disk_wipe(sc: Scan, target: str) -> Verdict | None:
 # --- secret reads (:859-949) -------------------------------------------------------------------
 
 # :881. The four key/cert suffixes are anchored on BOTH sides so `.keys()` and a jq
-# `\(.key)` do not read as a file (:866-880).
+# `\(.key)` do not read as a file (:866-880). DECIDED: the `.env` branch refuses the
+# Python and Node environment accessors by name (#861): `os.environ`, `.environ.get` and
+# `.environment` are code that names a process's environment, not a dotenv file, and they
+# were most of 72 denials in three days of fan-out batches. The lookahead exempts only the
+# exact words `environ`, `environment` and `environb`, so `.env_production`, `.env2`,
+# `.envfile`, `.envrc` and `.environment_prod` are still refused. Heredoc bodies stay in
+# the scanned text: a body that names a real secret path is refused wherever it appears.
 SECRET_PATHS = (
-    r"(\.env|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|"
+    r"(\.env(?!iron(?:ment|b)?\b)|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|"
     r"\.pypirc|\.npmrc|/secrets/|\.git-credentials|\.kube/config|\.docker/config\.json|"
     r"\.config/gh/hosts\.yml|\.claude/\.credentials\.json|\.claude\.json|/etc/shadow|"
     r"/etc/gshadow|/proc/[^/[:space:]]+/environ|(^|[A-Za-z0-9_~/-])\.(pem|key|p12|pfx)\b)"

@@ -592,6 +592,84 @@ def test_reading_an_ordinary_path_is_allowed():
     assert "deny" not in kinds(SECRET_ALLOW)
 
 
+# dotfiles #861. The sampled shapes the secret-read rules refused although the text only named
+# the process environment: python/uv heredocs, `cat >` heredocs that write a test, grep over
+# source, and `python -c`. The accessor words `environ`, `environment` and `environb` are
+# the whole narrowing: no heredoc body is exempt, so a body is scanned like any other text.
+NAMES_THE_ENVIRONMENT_ONLY = [
+    "python - <<'EOF'\nimport os; os.environ['X']\nEOF",
+    "cd scripts/deploy_tools; python3 - <<'EOF'\nimport os\nrow = os.environ.get('MUT')\nEOF",
+    "uv run python - <<'EOF'\nimport os\nos.environ.setdefault('A', '1')\nEOF",
+    "uv run python -c \"import os; print(os.environ['HOME'])\"",
+    "python3 -c \"print(os.environ.get('HOME'))\"",
+    "python3 - <<'EOF'\nimport os\nprint(os.environb[b'A'])\nEOF",
+    "cat > test_x.py <<'EOF'\nimport os\n\n\ndef test_it(monkeypatch):\n"
+    "    monkeypatch.setenv('A', '1')\n    assert os.environ['A'] == '1'\nEOF",
+    "cat >> tests/test_render.py <<'EOF'\nfrom renderer import environment\n\n"
+    "def test_env():\n    assert environment.name\nEOF",
+    "cat > /tmp/plug.py <<'EOF'\nimport os\nmode = os.environ.get('MODE')\nEOF",
+    "grep -rnE 'os\\.environ(\\.setdefault|\\.update)' scripts --include='*.py'",
+    "grep -n 'os.environ' scripts/renderer/homelab_render.py",
+    "git grep -nE 'os\\.environ\\.setdefault|os\\.putenv' -- 'scripts/*.py'",
+    "grep -n 'def main\\|os.environ' claude_guard/cli.py",
+    "grep -c environment docs/guide.md",
+    "grep -n 'renderer_lib.environment' scripts/renderer/images.py",
+    "rg 'jinja2.environment' scripts",
+]
+# The same words must still be refused when something actually names a secret. A bare
+# accessor cancels nothing else in the text, and a heredoc body gets no exemption: what a
+# body writes is as likely to run next (`cat > x.py <<EOF ... EOF; python x.py`) as to sit.
+NAMES_A_SECRET = [
+    # The write-then-run shapes the review held #865 for.
+    "cat > x.py <<'EOF'\nprint(open('vars/cluster-vars.sops.env').read())\nEOF\npython x.py",
+    "cat > x.py <<'EOF'\nimport os\nos.environ['A']\nopen('.env').read()\nEOF\npython3 x.py",
+    "cat > x.py <<EOF\nprint(open('app.env').read())\nEOF\npython3 x.py",
+    "cat > ~/x.py <<'EOF'\nopen('/home/u/.ssh/id_rsa').read()\nEOF; python3 ~/x.py",
+    "python3 - <<'EOF'\nimport os\nos.environ['A']\nprint(open('.env').read())\nEOF",
+    "python3 - <<'EOF'\nprint(open('ansible/vars/cluster-vars.sops.env').read())\nEOF",
+    "uv run python - <<'EOF'\nfrom pathlib import Path\nPath('config/.env').read_text()\nEOF",
+    "bash <<'EOF'\ncat .env\nEOF",
+    "sops -d ansible/vars/secrets.yml; python3 - <<'EOF'\nimport os\nos.environ['A']\nEOF",
+    "cat <<'EOF' | bash\ncat ~/.ssh/id_rsa\nEOF",
+    "cat > f <<'EOF' | python3\nopen('.env').read()\nEOF",
+    "git commit -F - <<'EOF'\nmsg\nEOF\ncat .env",
+    # A path that begins like the environment accessors but is a dotenv-style file.
+    "cat .env_production",
+    "cat config/.env2",
+    "cat app/.envfile",
+    "cat .envrc",
+    "cat .env.local",
+    "cat .env.production.local",
+    "cat .environment_prod",
+    "cat .environ_secrets",
+    "grep TOKEN deploy/.env_production",
+    "python3 -c \"print(open('.env2').read())\"",
+    "python3 -c \"import os; os.environ['A']; open('.envfile').read()\"",
+    "node -e \"require('fs').readFileSync('.env_local')\"",
+    "grep -c KEY ansible/vars/cluster-vars.sops.env",
+    "cat ansible/vars/cluster-vars.sops.env",
+    "python3 -c \"print(open('x.sops.env').read())\"",
+    "echo hi; os.environ; cat .envrc",
+]
+
+
+def test_naming_the_environment_alone_is_not_a_secret_read():
+    assert kinds(NAMES_THE_ENVIRONMENT_ONLY) == ["none"] * len(NAMES_THE_ENVIRONMENT_ONLY)
+
+
+def test_naming_a_secret_is_still_refused_wherever_the_text_sits():
+    assert kinds(NAMES_A_SECRET) == ["deny"] * len(NAMES_A_SECRET)
+
+
+def test_the_remote_read_pattern_narrows_the_same_words():
+    from claude_guard.tables import SECRET_PATH_RE
+
+    bare = ["os.environ", "os.environ.get", "a.environment", "os.environb", "x.environ[0]"]
+    named = [".env", ".env_production", ".env2", ".envfile", ".envrc", "a.sops.env"]
+    assert [bool(SECRET_PATH_RE.search(w)) for w in bare] == [False] * len(bare)
+    assert [bool(SECRET_PATH_RE.search(w)) for w in named] == [True] * len(named)
+
+
 # dotfiles #802: (denied search, the exclude argument its denial gives, the search rewritten
 # with it). The rewrite is what the agent's retry runs, so it must pass.
 EXCLUDE_ROUND_TRIPS = [

@@ -191,7 +191,7 @@ REMOTE_READONLY_VERBS: frozenset[str] = READONLY_BASE | _REMOTE_ONLY
 # re.IGNORECASE here. /proc/<pid>/environ dumps a process's exported env unrestricted;
 # the rest are credential files a read-only verb (cat, grep, ...) could exfiltrate.
 SECRET_PATH_RE: re.Pattern[str] = re.compile(
-    r"(\.env|\.ssh(/|\s|$)|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|"
+    r"(\.env(?!iron(?:ment|b)?\b)|\.ssh(/|\s|$)|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|"
     r"\.gnupg(/|\s|$)|\.netrc|\.pypirc|\.npmrc|/secrets(/|\s|$)|\.git-credentials|"
     r"\.kube/config|\.docker/config\.json|\.config/gh/hosts\.yml|\.config/gcloud/|"
     r"\.config/rclone/rclone\.conf|terraform\.tfstate|\.bash_history|\.claude\.json|"
