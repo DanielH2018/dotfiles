@@ -403,7 +403,7 @@
         "rm -rf ~/dev/build",
         "ls | grep \"\\.pem\"",
         "git log --oneline | grep -i \"\\.env\"",
-        "sudo systemctl status ssh",
+        "systemctl status ssh",
         "git commit -m \"document terraform apply steps\"",
         "echo \"run terraform destroy manually\""
       ]

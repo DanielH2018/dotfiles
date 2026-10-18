@@ -45,7 +45,10 @@ denials name the words that matched, with the exclude arguments for a recursive 
 (dotfiles #802).
 """
 
+import fnmatch
+import posixpath
 import re
+import shlex
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
@@ -1236,6 +1239,171 @@ def config_write(sc: Scan, target: str) -> Verdict | None:
     return None
 
 
+# --- sudo at any command position (dotfiles #863) -----------------------------------------------
+
+# On daniel-box the settings deny `Bash(sudo:*)` is lifted so the auto-mode classifier can
+# reach the allow entry for the homelab-takeover-check wrapper (server#5508). This rule is the
+# boundary there, and it runs on every host: it refuses every sudo except that one command
+# line. The hook's deny side fails closed, so an exception in this code reaches the user as
+# an ask, never as an allow.
+SUDO_WRAPPER = "/usr/local/sbin/homelab-takeover-check"
+_SUDO_ARG = re.compile(r"^[A-Za-z0-9_./,=:@+-]+$")
+_ESCALATORS = frozenset({"sudo", "sudoedit", "sudo-rs", "doas", "pkexec", "su", "run0"})
+_SHELLS = frozenset(
+    {"sh", "bash", "zsh", "dash", "ksh", "ash", "mksh", "fish", "csh", "tcsh", "eval", "busybox"}
+)
+# Commands that exec the rest of their argv, or take a command as an argument.
+_EXECUTORS = frozenset(
+    {
+        "command", "builtin", "exec", "env", "nohup", "setsid", "time", "nice", "ionice",
+        "timeout", "stdbuf", "xargs", "watch", "flock", "chroot", "setpriv", "taskset", "chrt",
+        "unshare", "nsenter", "runuser", "parallel", "find", "strace", "ltrace", "unbuffer",
+        "script", "entr", "sg", "systemd-run", "firejail", "bwrap", "fakeroot", "sshpass",
+    }
+)  # fmt: skip
+# Interpreters whose argument is code: `os.system('sudo ...')` has no command position to find.
+_INTERPRETERS = frozenset(
+    {
+        "python", "python2", "python3", "perl", "ruby", "node", "deno", "bun", "lua", "php",
+        "awk", "gawk", "mawk", "expect", "tclsh", "Rscript", "julia",
+    }
+)  # fmt: skip
+_KEYWORDS = frozenset(
+    {"coproc", "if", "then", "else", "elif", "do", "while", "until", "!", "{", "}"}
+)
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_BRACE_LIST = re.compile(r"\{[^}]*(,|\.\.)[^}]*\}")
+_LOOSE_SPLIT = re.compile(r"""[\s;&|()<>`'"=,{}\\$]+""")
+SUDO_MSG = (
+    "Blocked: sudo is refused except `sudo -n /usr/local/sbin/homelab-takeover-check` followed "
+    "by plain argument words (letters, digits and _ . / , = : @ + -). Any other sudo option, "
+    "a wrapper or shell in front of sudo, doas, pkexec, su, or an argument with a shell "
+    "metacharacter is not that command."
+)
+
+
+def _loose_hit(s: str) -> bool:
+    """Whether any word of `s`, split on shell punctuation, names a privilege escalator."""
+    return any(posixpath.basename(p) in _ESCALATORS for p in _LOOSE_SPLIT.split(s) if p)
+
+
+def _command_lines(words: list[str]) -> tuple[list[list[str]], bool, list[str]]:
+    """(the simple commands, whether any redirect appeared, here-string operands). A redirect
+    and its operand are dropped, so `2>/dev/null sudo` leaves `sudo` in command position."""
+    cmds: list[list[str]] = []
+    cur: list[str] = []
+    redirected = False
+    here: list[str] = []
+    i = 0
+    while i < len(words):
+        w = words[i]
+        i += 1
+        if w and set(w) <= set(";&|()<>"):
+            if set(w) & set("();") or not set(w) & set("<>"):
+                cmds.append(cur)
+                cur = []
+                continue
+            redirected = True
+            if cur and cur[-1].isdigit():
+                cur.pop()
+            if i < len(words):
+                if w == "<<<":
+                    here.append(words[i])
+                i += 1
+            continue
+        cur.append(w)
+    cmds.append(cur)
+    return cmds, redirected, here
+
+
+def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool) -> bool:
+    """Whether one segment runs an escalator other than the one allowed command line. The
+    allowed line counts only as a whole top-level segment: inside a payload or a
+    substitution it is refused too."""
+    # Bash joins a backslash-newline before it splits words; shlex would keep the newline in
+    # the word, so `sudo\<newline> -n true` would read as a command named "sudo\n".
+    lex = shlex.shlex(text.replace("\\\n", ""), posix=True, punctuation_chars=True)
+    lex.whitespace_split = True
+    lex.commenters = ""
+    try:
+        words = list(lex)
+    except ValueError:
+        return _loose_hit(text)
+    cmds, redirected, here = _command_lines(words)
+    for cur in cmds:
+        skip = 0
+        while skip < len(cur) and (cur[skip] in _KEYWORDS or _ASSIGNMENT.match(cur[skip])):
+            skip += 1
+        argv = cur[skip:]
+        if not argv:
+            continue
+        name = posixpath.basename(argv[0])
+        # A command word built by expansion, brace or glob could spell an escalator.
+        unknowable = (
+            (any(c in name for c in "$`") and " " not in name)
+            or _BRACE_LIST.search(name)
+            or (
+                any(c in name for c in "*?[")
+                and any(fnmatch.fnmatchcase(e, name) for e in _ESCALATORS)
+            )
+        )
+        if name in _ESCALATORS or unknowable:
+            allowed = (
+                not nested
+                and argv[0] == "sudo"
+                and skip == 0
+                and len(cmds) == 1
+                and not redirected
+                and not here
+                and not heredocs
+                and argv[1:3] == ["-n", SUDO_WRAPPER]
+                and all(_SUDO_ARG.match(a) for a in argv[3:])
+            )
+            if not allowed:
+                return True
+            continue
+        interpreter = name in _INTERPRETERS
+        if not (interpreter or name in _SHELLS or name in _EXECUTORS):
+            continue
+        rest = argv[1:]
+        if name in ("command", "builtin") and rest[:1] in (["-v"], ["-V"], ["-pv"], ["-pV"]):
+            continue  # a lookup, which runs nothing
+        for tok in rest:
+            if _loose_hit(tok) if interpreter else posixpath.basename(tok) in _ESCALATORS:
+                return True
+            # env -S 'sudo -n true' glues its payload to the option; bash -c, eval and
+            # timeout pass theirs as one word with a space in it.
+            payload = tok.removeprefix("--split-string=").removeprefix("-S")
+            if (
+                not interpreter
+                and (payload != tok or any(c in tok for c in " \t\n"))
+                and _sudo_text(payload, depth + 1, True)
+            ):
+                return True
+        if any(_sudo_text(body, depth + 1, True) for body in (*heredocs, *here)):
+            return True
+    return False
+
+
+def _sudo_text(text: str, depth: int = 0, nested: bool = False) -> bool:
+    """Whether `text`, read as shell, runs an escalator other than the one allowed line. A
+    command the parser refuses is searched word by word instead, which over-refuses."""
+    if depth > 4:
+        return True
+    p = parse(text)
+    if not p.ok:
+        return _loose_hit(text)
+    return any(_segment_sudo(s.text, s.heredocs, depth, nested) for s in p.segments) or any(
+        _sudo_text(sub, depth, True) for sub in p.substitutions
+    )
+
+
+def sudo_boundary(sc: Scan, target: str) -> Verdict | None:
+    if _sudo_text(sc.command):
+        return Verdict("deny", "sudo-boundary", SUDO_MSG)
+    return None
+
+
 # --- the decision ------------------------------------------------------------------------------
 
 # Bash order (:625-1142). The first match wins and carries its message; later tasks append.
@@ -1265,6 +1433,7 @@ RULES: tuple[Rule, ...] = (
     push_config,
     push_no_verify,
     config_write,
+    sudo_boundary,
 )
 
 

@@ -507,7 +507,23 @@
            Per-verb matching means this cannot carve out the routine `delete pod` (the
            Deployment recreates it) — accepted, because RBAC refuses that too today. */}}
       "Bash(kubectl delete:*)",
+      {{/* Every host but daniel-box denies `sudo` outright. daniel-box lifts the deny so the
+           auto-mode classifier can reach the autoMode.allow entry for the
+           homelab-takeover-check wrapper (dotfiles #860, server#5508): a deny rule is
+           evaluated before the classifier, and Claude Code has no rule that excepts one path
+           from a deny, so the entry is inert while this line applies.
+
+           The boundary there moves to claude_guard's `sudo-boundary` rule
+           (dot_local/share/claude-guard/claude_guard/deny.py), which refuses sudo at any
+           command position on EVERY host except the exact line
+           `sudo -n /usr/local/sbin/homelab-takeover-check <plain words>`. The hook's deny
+           side fails closed (an exception in a rule becomes an ask), and the sudoers entry
+           names one path. The cost is that the boundary is now a parser rather than a prefix
+           match; claude_guard's SUDO_REFUSE and SUDO_PASS tables are its spec. The comment
+           above ("With `sudo` denied ...") describes the other hosts. dotfiles #863. */}}
+      {{ if ne .chezmoi.hostname "daniel-box" -}}
       "Bash(sudo:*)",
+      {{ end -}}
       "Bash(su:*)",
       "Bash(chown:*)",
       "Bash(chmod 777:*)",
