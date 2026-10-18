@@ -548,11 +548,11 @@
            on daniel-box only, hence the host gate. The classifier reads any `sudo` as a
            privilege escalation, so this states what the wrapper does and what it does not.
 
-           This entry is inert while settings.permissions.json denies `Bash(sudo:*)`: a deny
-           rule is evaluated before the classifier, and Claude Code has no rule that excepts
-           one path from a deny. That deny is the boundary its own comment describes, "With
-           `sudo` denied, Ansible is the ONLY write path to this cluster", so narrowing it is
-           the operator's call: dotfiles #863. */}}
+           A deny rule is evaluated before the classifier, and Claude Code has no rule that
+           excepts one path from a deny. So settings.permissions.json does not deny
+           `Bash(sudo:*)` on daniel-box, and claude_guard's `sudo-boundary` rule (deny.py)
+           refuses every sudo there except this exact line. That makes this entry effective
+           (dotfiles #863). */}}
       "On daniel-box, `sudo -n /usr/local/sbin/homelab-takeover-check --label … --render … --src … --tags …` is routine: the operator granted it on 2026-10-17 for the D5 flip pre-merge checks. The wrapper runs only dry-run checks with hard-coded flags (`flux diff`, server-side `kubectl diff`, `kubectl get`, `kubectl apply --dry-run=server`), validates every argument, and prints only object names and field paths, never values. This covers that one path and nothing else: any other `sudo` command, and any `kubectl` or `flux` invocation outside the wrapper, gets no exception from this entry"{{ end }}
     ],
 
