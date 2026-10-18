@@ -149,9 +149,9 @@ REMOTE_ALLOW = [
     'ssh homelab "~/.local/bin/claude -p hello"',
     "ssh homelab 'rm -rf ./build'",
     "ssh-add -l",
-    "sudo systemctl status ssh",
+    "systemctl status ssh",
     "ps aux | grep ssh",
-    "echo `su - root -c reboot`",
+    'echo "su - root -c reboot"',
 ]
 
 
@@ -1281,3 +1281,226 @@ def test_the_whole_corpus_is_not_silently_small():
     deny_list, ask_list, allow_list = load_vectors(HOME)
     corpus = deny_list + ask_list + allow_list + every_inline_vector()
     assert len(corpus) >= 400
+
+
+# --- sudo at any command position (dotfiles #863) -------------------------------------------
+#
+# daniel-box lifts the settings deny `Bash(sudo:*)` so the auto-mode classifier can reach the
+# allow entry for the takeover-check wrapper; this rule is the boundary there, on every host.
+# The two tables are the spec: the rule refuses every sudo except `sudo -n <wrapper>` followed
+# by plain argument words. A bypass found in review becomes a row here, not a sentence.
+
+W = "/usr/local/sbin/homelab-takeover-check"
+
+SUDO_REFUSE = [
+    # another option or order
+    f"sudo {W}",
+    f"sudo -E -n {W}",
+    f"sudo -u root -n {W}",
+    f"sudo -n -E {W}",
+    f"sudo -n -u root {W}",
+    "sudo -s",
+    "sudo -i",
+    "sudo bash",
+    "sudo -n true",
+    "sudo",
+    "sudo -n",
+    f"sudo -n {W} --label L ; sudo -n true",
+    f"sudo -n {W} && sudo -n true",
+    f"FOO=1 sudo -n {W}",
+    f"PATH=/tmp sudo -n {W}",
+    f"sudo -n {W} --label 'a b'",
+    f"sudo -n sudo -n {W}",
+    # sudo reached through a prefix
+    f"env sudo -n {W}",
+    "env sudo -n true",
+    "env -i sudo -n true",
+    "env -u HOME sudo -n true",
+    "env -S 'sudo -n true'",
+    "command sudo -n true",
+    "exec sudo -n true",
+    "nohup sudo -n true",
+    "timeout 5 sudo -n true",
+    "timeout -s KILL 5 sudo -n true",
+    "xargs sudo -n true",
+    "nice sudo -n true",
+    "nice -n 5 sudo -n true",
+    "time sudo -n true",
+    "stdbuf -oL sudo -n true",
+    "setsid sudo -n true",
+    "ionice -c 2 sudo -n true",
+    "flock /tmp/l sudo -n true",
+    "find . -maxdepth 0 -exec sudo -n true {} +",
+    "watch sudo -n true",
+    "builtin exec sudo -n true",
+    "/usr/bin/sudo -n true",
+    f"/usr/bin/sudo -n {W}",
+    "../../usr/bin/sudo -n true",
+    "\\sudo -n true",
+    '"sudo" -n true',
+    "su''do -n true",
+    "s\\udo -n true",
+    "bash -c 'sudo -n true'",
+    'bash -c "sudo -n true"',
+    "sh -c 'sudo -n true'",
+    "sh -lc 'sudo -n true'",
+    "zsh -c 'ls; sudo -n true'",
+    f"bash -c 'sudo -n {W}'",
+    "env bash -c 'sudo -n true'",
+    "timeout 5 sh -c 'sudo -n true'",
+    "eval 'sudo -n true'",
+    "eval sudo -n true",
+    "bash <<< 'sudo -n true'",
+    "bash <<EOF\nsudo -n true\nEOF",
+    "python3 -c \"import os; os.system('sudo -n true')\"",
+    "perl -e 'system(\"sudo -n true\")'",
+    # sudo at a command position of a compound command
+    "true && sudo -n true",
+    "false || sudo -n true",
+    "ls; sudo -n true",
+    "ls\nsudo -n true",
+    "ls | sudo -n true",
+    "ls & sudo -n true",
+    "! sudo -n true",
+    "(sudo -n true)",
+    "{ sudo -n true; }",
+    "if sudo -n true; then ls; fi",
+    "while sudo -n true; do ls; done",
+    "for i in 1; do sudo -n true; done",
+    "echo $(sudo -n true)",
+    "echo `sudo -n true`",
+    'echo "$(sudo -n true)"',
+    "echo $(echo $(sudo -n true))",
+    "cat <(sudo -n true)",
+    ">/dev/null sudo -n true",
+    "2>/dev/null sudo -n true",
+    "2>&1 sudo -n true",
+    "f() { sudo -n true; }; f",
+    # an argument the wrapper line must not carry
+    f"sudo -n {W} $(id)",
+    f"sudo -n {W} `id`",
+    f"sudo -n {W} <(id)",
+    f"sudo -n {W} --label x > /tmp/out",
+    f"sudo -n {W} --label x >> /tmp/out",
+    f"sudo -n {W} --label x 2>&1",
+    f"sudo -n {W} --label x < /tmp/in",
+    f"sudo -n {W} $HOME",
+    f"sudo -n {W} --src ~/x",
+    f"sudo -n {W} --src /tmp/*",
+    f"sudo -n {W} --src {{a,b}}",
+    f"sudo -n {W} --label 'a;b'",
+    f"sudo -n {W} --label 'a|b'",
+    f"sudo -n {W} --label 'a&b'",
+    f'sudo -n {W} --label "a>b"',
+    f'sudo -n {W} --label "a$b"',
+    f"sudo -n {W} <<< x",
+    f"sudo -n {W} <<EOF\nx\nEOF",
+    "sudo\\\n -n true",
+    "su\\\ndo -n true",
+    "coproc sudo -n true",
+    "gh api -X POST repos/o/r/issues -f title=x && sudo -n true",
+    "ls;sudo -n true",
+    "ls&&sudo -n true",
+    "ls|sudo -n true",
+    "echo x | sudo -n true",
+    "[[ -n x ]] && sudo -n true",
+    "case x in x) sudo -n true;; esac",
+    "tee >(sudo -n true) < /dev/null",
+    "env -- sudo -n true",
+    "env FOO=bar sudo -n true",
+    "/usr/bin/env sudo -n true",
+    "command -p sudo -n true",
+    "exec -a x sudo -n true",
+    "busybox sudo -n true",
+    "$(echo sudo) -n true",
+    "$'sudo' -n true",
+    "SUDO_ASKPASS=/x sudo -A true",
+    "bash --login -c 'sudo -n true'",
+    "bash -ic 'sudo -n true'",
+    "/bin/bash -c 'sudo -n true'",
+    "find / -name x -execdir sudo -n true ;",
+    # a different path
+    f"sudo -n {W}2",
+    "sudo -n /tmp/homelab-takeover-check",
+    "sudo -n ./homelab-takeover-check",
+    "sudo -n homelab-takeover-check",
+    "sudo -n /usr/local/sbin/../sbin/homelab-takeover-check",
+    "sudo -n /usr/local/bin/homelab-takeover-check",
+    # an expansion that could spell sudo
+    "$S -n true",
+    '"$S" -n true',
+    "${S} -n true",
+    "/usr/bin/s*do -n true",
+    "/usr/bin/su?o -n true",
+    "{sudo,-n,true}",
+    "`echo sudo` -n true",
+    # other escalators
+    "sudoedit /etc/hosts",
+    "doas id",
+    "doas -n id",
+    "pkexec id",
+    "su -c id",
+    "su - root",
+    "su",
+    "run0 id",
+    "env doas id",
+    "bash -c 'pkexec id'",
+    # a command the parser cannot read is searched word by word
+    "echo 'unbalanced; sudo -n true",
+]
+
+SUDO_PASS = [
+    f"sudo -n {W}",
+    f"sudo -n {W} --help",
+    f"sudo -n {W} --label L",
+    f"sudo -n {W} --label d5-flip --render /tmp/render --src /home/ubuntu/server/ansible",
+    f"sudo -n {W} --tags a,b",
+    f"sudo -n {W} --label=L --tags=a,b",
+    f"sudo -n {W} --label 'L'",
+    f'sudo -n {W} --label "L"',
+    f"sudo -n {W} --src ./rel/dir -- x@y+z:1.2_3",
+    f"sudo -n {W} --label L &",
+    f"sudo -n {W} --label L | cat",
+    f"sudo -n {W} --label L ; id",
+    f"sudo -n {W} --label L && echo done",
+    f"ls; sudo -n {W} --help",
+    f"ls\nsudo -n {W} --help",
+    f"true && sudo -n {W} --label L",
+    # sudo only as text, never run
+    "echo sudo",
+    "echo 'sudo -n true'",
+    "grep -r sudo .",
+    "grep sudo /etc/hosts",
+    "man sudo",
+    "which sudo",
+    "command -v sudo",
+    "type sudo",
+    "ls /usr/local/sbin/homelab-takeover-check",
+    "cat /etc/sudoers.d/homelab",
+    "git commit -m 'drop the sudo deny on daniel-box'",
+    "timeout 5 git commit -m 'no sudo here'",
+    "ssh daniel-pi uptime",
+    "systemctl status sudo.service",
+    "awk '/sudo/ {print}' /var/log/auth.log",
+    "echo sudo | wc -l",
+    "pip install pytest",
+    "ls -la",
+]
+
+
+@pytest.mark.parametrize("command", SUDO_REFUSE)
+def test_a_sudo_other_than_the_takeover_wrapper_line_is_refused(command):
+    v = d.deny(command, "", ENV)
+    assert (v.kind, v.rule) == ("deny", "sudo-boundary")
+
+
+@pytest.mark.parametrize("command", SUDO_PASS)
+def test_the_takeover_wrapper_line_and_sudo_as_text_is_no_decision(command):
+    assert d.deny(command, "", ENV) == d.NONE
+
+
+def test_the_sudo_tables_are_not_vacuous():
+    assert len(SUDO_REFUSE) >= 100
+    assert len(SUDO_PASS) >= 25
+    assert len(set(SUDO_REFUSE)) == len(SUDO_REFUSE)
+    assert not set(SUDO_REFUSE) & set(SUDO_PASS)

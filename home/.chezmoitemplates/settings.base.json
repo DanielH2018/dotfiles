@@ -541,7 +541,19 @@
            refused after this, that is the corroboration, and the answer is to leave the deletion
            to the operator rather than to widen the rule again. */}}
       "Git worktree lifecycle under .claude/worktrees/ is routine and fully reversible: creating, entering and removing a worktree (`git worktree add/remove`), and deleting a branch whose work is already on origin/master. `git branch -d` covers the ordinary case; `git branch -D` is needed only for a squash- or rebase-merged branch, whose content landed under a new SHA that git's own ancestor test can no longer see — the branch tip stays in the reflog and the work is already on master, so nothing is lost. `uv run python scripts/dev/prune_worktrees.py --prune` applies exactly that content check before it removes anything. Several sessions work this repo in parallel and each owns its own worktree",
-      "Branch-level git that the reflog recovers — checkout, switch, rebase, merge, cherry-pick, stash push/apply — is routine local work in this repo"
+      "Branch-level git that the reflog recovers — checkout, switch, rebase, merge, cherry-pick, stash push/apply — is routine local work in this repo"{{ if eq .chezmoi.hostname "daniel-box" }},
+      {{/* The operator granted this on 2026-10-17 ("Let's add those 3 to your allowed
+           commands") so a flip batch can run the D5 pre-merge checks without a round trip.
+           server#5494 installs the wrapper and a NOPASSWD sudoers line for that one path,
+           on daniel-box only, hence the host gate. The classifier reads any `sudo` as a
+           privilege escalation, so this states what the wrapper does and what it does not.
+
+           A deny rule is evaluated before the classifier, and Claude Code has no rule that
+           excepts one path from a deny. So settings.permissions.json does not deny
+           `Bash(sudo:*)` on daniel-box, and claude_guard's `sudo-boundary` rule (deny.py)
+           refuses every sudo there except this exact line. That makes this entry effective
+           (dotfiles #863). */}}
+      "On daniel-box, `sudo -n /usr/local/sbin/homelab-takeover-check --label … --render … --src … --tags …` is routine: the operator granted it on 2026-10-17 for the D5 flip pre-merge checks. The wrapper runs only dry-run checks with hard-coded flags (`flux diff`, server-side `kubectl diff`, `kubectl get`, `kubectl apply --dry-run=server`), validates every argument, and prints only object names and field paths, never values. This covers that one path and nothing else: any other `sudo` command, and any `kubectl` or `flux` invocation outside the wrapper, gets no exception from this entry"{{ end }}
     ],
 
     {{/* Destructive risks specific to this environment that the built-ins miss. Note what is NOT

@@ -383,9 +383,11 @@ TEMPLATE = Path(__file__).resolve().parents[4] / ".chezmoitemplates" / "settings
 
 @pytest.fixture
 def real(tmp_path):
-    """settings.permissions.json as written, with its `{{/* */}}` comments removed. The
+    """settings.permissions.json as written, with its `{{/* */}}` comments removed and its
+    `{{ if }}` guards opened, which is the view every host but daniel-box renders. The
     fixtures above are hand copies, and one had already drifted from the file."""
     text = re.sub(r"\{\{/\*.*?\*/\}\}", "", TEMPLATE.read_text(), flags=re.DOTALL)
+    text = re.sub(r"\{\{-?\s*(if\b[^}]*|end)\s*-?\}\}", "", text)
     rules = rules_for(tmp_path, json.loads(text))
     # Named members, so a template that parses to nothing fails here by name.
     assert parse_rule("find:*") in rules.allow and parse_rule("git push:*") in rules.allow
