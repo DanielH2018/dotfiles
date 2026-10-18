@@ -1398,6 +1398,7 @@ SUDO_REFUSE = [
     "sudo\\\n -n true",
     "su\\\ndo -n true",
     "coproc sudo -n true",
+    "gh api -X POST repos/o/r/issues -f title=x && sudo -n true",
     "ls;sudo -n true",
     "ls&&sudo -n true",
     "ls|sudo -n true",

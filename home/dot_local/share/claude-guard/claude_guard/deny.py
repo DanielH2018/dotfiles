@@ -32,9 +32,11 @@ classes. `\\b` and `\\s` are the same GNU extensions in both engines. ERE's left
 rule and Python's leftmost-first differ only in WHICH match is chosen, never in whether one
 exists, and every use here is a boolean search.
 
-One rule is not the bash's. The bash upgraded a `--force`/`-f` push to a feature branch into
-`--force-with-lease` and allowed it; `force_push_flag` denies it instead (dotfiles #701), so
-this hook and the settings deny rules state one intent.
+Two rules are not the bash's. `sudo_boundary` is new (dotfiles #863): it refuses sudo at any
+command position except one wrapper line, on every host. The other: the bash upgraded a
+`--force`/`-f` push to a feature branch into `--force-with-lease` and allowed it;
+`force_push_flag` denies it instead (dotfiles #701), so this hook and the settings deny
+rules state one intent.
 
 Two rules have changed since the bash in ways that reach their messages. `pipe_to_shell`
 judges each pipeline stage rather than the whole string, so a `|sh` quoted in an argument
@@ -1436,5 +1438,8 @@ def deny(command: str, cwd: str = "", env: Mapping[str, str] | None = None) -> V
     for rule in RULES:
         verdict = rule(sc, target)
         if verdict is not None:
+            # An ask from an earlier rule must not hide a sudo further along the command.
+            if verdict.kind != "deny":
+                return sudo_boundary(sc, target) or verdict
             return verdict
     return NONE
