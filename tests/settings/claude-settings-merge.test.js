@@ -380,13 +380,15 @@ test('a later fragment can remove what an earlier fragment added', () => {
 
 // A $remove that deletes a FLOOR_DENY rule must not silently produce a weakened
 // settings.json — assertHasFloor runs on the post-removal output and names the rule.
+// It removes Bash(su:*), which is floored on every host, because daniel-box exempts
+// Bash(sudo:*) from the floor and there the no-widening check refuses it instead.
 test('a $remove that would drop a FLOOR_DENY rule is refused, naming the rule', () => {
   const base = w('rm12.json', withFloor({ permissions: { deny: [] } }));
-  const over = w('rm13.json', { $remove: { permissions: { deny: ['Bash(sudo:*)'] } } });
+  const over = w('rm13.json', { $remove: { permissions: { deny: ['Bash(su:*)'] } } });
   const r = runFail(base, over);
   assert.strictEqual(r.status, 1, 'dropping a floor rule must exit 1');
   assert.match(r.stderr, /missing floor rules/);
-  assert.match(r.stderr, /Bash\(sudo:\*\)/, 'stderr names the rule');
+  assert.match(r.stderr, /Bash\(su:\*\)/, 'stderr names the rule');
   assert.strictEqual(String(r.stdout || ''), '', 'nothing reaches stdout, so nothing reaches disk');
 });
 
