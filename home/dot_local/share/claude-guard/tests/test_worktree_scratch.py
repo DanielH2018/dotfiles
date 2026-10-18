@@ -131,3 +131,49 @@ def test_cleanup_in_another_sessions_worktree_is_refused(repo):
     assert not worktree_rm_safe("rm .git-pr-body.md", wt, False, project_dir=other)
     assert not worktree_restore_safe("git restore src/app.py", wt, False, project_dir=other)
     assert worktree_rm_safe("rm mine.txt", wt, False, project_dir=os.path.join(wt, "src"))
+
+
+def test_rm_of_an_ignored_path_or_a_directory_holding_one_is_refused(repo):
+    main, wt = repo
+    with open(os.path.join(main, ".git", "info", "exclude"), "a") as f:
+        f.write("local.cfg\n.venv/\n.fanout/\n")
+    for rel in ["local.cfg", ".venv/bin/python", ".fanout/batch/out.txt"]:
+        path = os.path.join(wt, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write("x\n")
+    # An untracked, not-ignored path stays removable, and so does the ignored `.fanout/`.
+    for command in [
+        "rm .git-pr-body.md",
+        "rm -r scratch",
+        "rm -r .fanout",
+        "rm .fanout/batch/out.txt",
+    ]:
+        assert worktree_rm_safe(command, wt, cwd_changed=False, project_dir=wt), command
+    os.makedirs(os.path.join(wt, "scratch", ".venv"))
+    with open(os.path.join(wt, "scratch", ".venv", "x"), "w") as f:
+        f.write("x\n")
+    for command in ["rm local.cfg", "rm -r .venv", "rm -rf .venv/bin", "rm -r scratch"]:
+        assert not worktree_rm_safe(command, wt, cwd_changed=False, project_dir=wt), command
+
+
+def test_a_glob_or_a_directory_is_not_a_tracked_file_to_restore(repo):
+    _, wt = repo
+    with open(os.path.join(wt, "src", "extra.py"), "w") as f:
+        f.write("y = 1\n")
+    sub = os.path.join(wt, "src")
+    assert worktree_restore_safe("git restore app.py", sub, False, project_dir=wt)
+    for cwd, command in [
+        (wt, "git restore '*'"),
+        (wt, "git restore 'src/*.py'"),
+        (wt, "git restore 'src/app.p[y]'"),
+        (wt, "git restore src"),
+        (wt, "git restore src/"),
+        (wt, "git restore src/extra.py"),
+        (wt, "git restore .git-pr-body.md"),
+        (wt, "git restore src/app.py nowhere.py"),
+        (sub, "git restore ."),
+        (sub, "git restore ../src"),
+        (sub, "git restore '*'"),
+    ]:
+        assert not worktree_restore_safe(command, cwd, False, project_dir=wt), (cwd, command)

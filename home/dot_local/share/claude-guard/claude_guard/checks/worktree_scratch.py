@@ -15,8 +15,15 @@ What bounds them:
     toplevel, and never into its `.git` file.
   - `rm` refuses any operand git tracks, so it only deletes untracked files. A tracked file
     goes through `git rm`, which the index records.
-  - `git restore` takes only `--staged`/`--worktree`/`--quiet` and a source of `HEAD`, so
-    it puts a tracked file back to the committed state and nothing else.
+  - `rm` also refuses a gitignored operand, or a directory holding one: an ignored path is
+    usually state the session did not make (a dotenv file, a `.venv`, a build cache).
+    Untracked and not ignored is what a session creates and forgets. The one ignored
+    subtree it may remove is `.fanout/`, the fan-out batches' own scratch directory.
+  - `git restore` takes only `--staged`/`--worktree`/`--quiet` and a source of `HEAD`, and
+    each operand must name exactly one tracked file. A directory, `.` or a glob would
+    discard more than the session edited, so none of them passes.
+  - No operand carries a glob character, because the shell or git would expand it to paths
+    no operand spells out.
   - A relative operand is refused once an earlier segment moved the shell's cwd, the same
     gate the heredoc-write carve-out in judge.py uses.
 
@@ -31,6 +38,7 @@ from claude_guard.checks.git_reset import _git
 from claude_guard.checks.scratch import BOOL_SHORT, LONG_OK, tokenize
 
 _SESSION_WORKTREE = re.compile(r"/\.claude/worktrees/[^/]+$")
+_GLOB = re.compile(r"[*?\[\]{}\\]")
 _RESTORE_FLAGS = frozenset({"--staged", "-S", "--worktree", "-W", "-q", "--quiet"})
 
 
@@ -55,7 +63,7 @@ def _session_root(cwd: str, project_dir: str) -> str | None:
 
 def _confined(path: str, root: str, cwd: str, cwd_changed: bool) -> str | None:
     """The resolved operand when it sits strictly below `root` and outside `.git`."""
-    if not path or path.startswith("-"):
+    if not path or path.startswith("-") or _GLOB.search(path):
         return None
     if not path.startswith("/") and cwd_changed:
         return None
@@ -95,13 +103,26 @@ def worktree_rm_safe(part: str, cwd: str, cwd_changed: bool, project_dir: str) -
             operands.append(real)
     if not operands:
         return False
-    tracked = _git(root, "ls-files", "--", *operands)
-    return tracked == ""
+    if _git(root, "ls-files", "--", *operands) != "":
+        return False
+    # `.fanout/` is ignored by design, so the ignore probe skips it.
+    probed = [op for op in operands if PurePosixPath(op).relative_to(root).parts[0] != ".fanout"]
+    if not probed:
+        return True
+    status = _git(root, "status", "--porcelain", "--ignored", "--", *probed)
+    return status is not None and not any(line.startswith("!!") for line in status.splitlines())
+
+
+def _is_one_tracked_file(real: str, root: str) -> bool:
+    """True when `real` is exactly one path in the index, which a directory never is."""
+    rel = os.path.relpath(real, root)
+    return _git(root, "ls-files", "--", rel) == rel + "\n"
 
 
 def worktree_restore_safe(part: str, cwd: str, cwd_changed: bool, project_dir: str) -> bool:
     """True when `part` is `git restore [--staged] [--worktree] [--source=HEAD] [--] paths`
-    with every path below the session worktree that holds both `cwd` and `project_dir`."""
+    with every path one tracked file below the session worktree that holds both `cwd` and
+    `project_dir`."""
     tokens = tokenize(part)
     if not tokens or tokens[:2] != ["git", "restore"]:
         return False
@@ -121,9 +142,12 @@ def worktree_restore_safe(part: str, cwd: str, cwd_changed: bool, project_dir: s
         elif not endopts and tok.startswith("-"):
             if tok not in _RESTORE_FLAGS and tok != "--source=HEAD":
                 return False
-        elif tok.startswith(":") or _confined(tok, root, cwd, cwd_changed) is None:
+        elif tok.startswith(":"):
             # `:(…)` is pathspec magic, which can name paths no operand spells out.
             return False
         else:
+            real = _confined(tok, root, cwd, cwd_changed)
+            if real is None or not _is_one_tracked_file(real, root):
+                return False
             paths += 1
     return paths > 0
