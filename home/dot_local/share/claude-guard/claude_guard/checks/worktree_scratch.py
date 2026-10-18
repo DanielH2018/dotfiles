@@ -15,10 +15,11 @@ What bounds them:
     toplevel, and never into its `.git` file.
   - `rm` refuses any operand git tracks, so it only deletes untracked files. A tracked file
     goes through `git rm`, which the index records.
-  - `rm` also refuses a gitignored operand, or a directory holding one: an ignored path is
-    usually state the session did not make (a dotenv file, a `.venv`, a build cache).
-    Untracked and not ignored is what a session creates and forgets. The one ignored
-    subtree it may remove is `.fanout/`, the fan-out batches' own scratch directory.
+  - `rm` also refuses an operand, or a directory holding one, that a specific ignore rule
+    names or whose name marks state or a secret (a dotenv file, a `.venv`, a SOPS file, a
+    key). A root catch-all rule (`/*`, as the homelab repo has) ignores every new scratch
+    file, so it does not count as a specific rule. `.fanout/`, the fan-out batches' own
+    scratch directory, is exempt from the ignore rule and not from the name check.
   - `git restore` takes only `--staged`/`--worktree`/`--quiet` and a source of `HEAD`, and
     each operand must name exactly one tracked file. A directory, `.` or a glob would
     discard more than the session edited, so none of them passes.
@@ -38,6 +39,16 @@ from claude_guard.checks.git_reset import _git
 from claude_guard.checks.scratch import BOOL_SHORT, LONG_OK, tokenize
 
 _SESSION_WORKTREE = re.compile(r"/\.claude/worktrees/[^/]+$")
+# Ignore rules that match every root entry: they cover scratch as well as state.
+_CATCH_ALL = frozenset({"/*", "*", "/*/", "*/"})
+# A name that marks state or a secret: a dotenv file, a virtualenv, a dependency tree, a
+# SOPS file, a key, a credentials file. Whatever the repo's ignore rules say, `rm` leaves it.
+_STATE_NAME = re.compile(
+    r"^(\.venv|venv|node_modules|\.ssh|\.aws|\.gnupg|\.kube|secrets?)$"
+    r"|^\.env(?!iron(?:ment|b)?$)|\.sops\.|credentials|\.(pem|key|p12|pfx)$|^id_(rsa|ed25519|ecdsa)",
+    re.IGNORECASE,
+)
+_WALK_LIMIT = 5000
 _GLOB = re.compile(r"[*?\[\]{}\\]")
 _RESTORE_FLAGS = frozenset({"--staged", "-S", "--worktree", "-W", "-q", "--quiet"})
 
@@ -105,12 +116,47 @@ def worktree_rm_safe(part: str, cwd: str, cwd_changed: bool, project_dir: str) -
         return False
     if _git(root, "ls-files", "--", *operands) != "":
         return False
-    # `.fanout/` is ignored by design, so the ignore probe skips it.
-    probed = [op for op in operands if PurePosixPath(op).relative_to(root).parts[0] != ".fanout"]
-    if not probed:
+    return all(_is_scratch(op, root) for op in operands)
+
+
+def _is_scratch(real: str, root: str) -> bool:
+    """True when nothing at or below `real` is named like state or ignored by a specific
+    rule. A repo with a root catch-all (`/*`) ignores every new scratch file, so that rule
+    alone says nothing; a rule that names the path does."""
+    if PurePosixPath(real).relative_to(root).parts[0] == ".fanout":
+        return not _names_state(real, root)
+    if _names_state(real, root):
+        return False
+    listed = _git(root, "ls-files", "--others", "--ignored", "--exclude-standard", "--", real)
+    if listed is None:
+        return False
+    paths = listed.splitlines()
+    if not paths:
         return True
-    status = _git(root, "status", "--porcelain", "--ignored", "--", *probed)
-    return status is not None and not any(line.startswith("!!") for line in status.splitlines())
+    if any(p.startswith('"') for p in paths):
+        return False
+    verbose = _git(root, "check-ignore", "-v", "--no-index", "--", *paths)
+    if verbose is None:
+        return False
+    for line in verbose.splitlines():
+        pattern = line.split("\t", 1)[0].split(":", 2)[-1]
+        if pattern not in _CATCH_ALL:
+            return False
+    return True
+
+
+def _names_state(real: str, root: str) -> bool:
+    """True when `real`, or any path below it, has a name that marks state or a secret."""
+    rel = PurePosixPath(real).relative_to(root).parts
+    if any(_STATE_NAME.search(part) for part in rel):
+        return True
+    seen = 0
+    for _dir, dirs, files in os.walk(real):
+        for name in dirs + files:
+            seen += 1
+            if seen > _WALK_LIMIT or _STATE_NAME.search(name):
+                return True
+    return False
 
 
 def _is_one_tracked_file(real: str, root: str) -> bool:

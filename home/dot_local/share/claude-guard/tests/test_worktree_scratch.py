@@ -26,7 +26,10 @@ def repo(tmp_path):
     _sh(main, "git", "config", "user.email", "a@b.c")
     _sh(main, "git", "config", "user.name", "a")
     (main / "src" / "app.py").write_text("x = 1\n")
-    _sh(main, "git", "add", "src/app.py")
+    # The homelab repo's shape: a root catch-all ignores every new root entry, and a few
+    # specific rules name state. `.gitignore` itself and `src/` are re-included.
+    (main / ".gitignore").write_text("/*\n!/.gitignore\n!/src/\nlocal.cfg\n*.tmp\n")
+    _sh(main, "git", "add", "src/app.py", ".gitignore")
     _sh(main, "git", "commit", "-q", "-m", "one")
     wt = main / ".claude" / "worktrees" / "fanout-1"
     _sh(main, "git", "worktree", "add", "-q", str(wt))
@@ -134,26 +137,45 @@ def test_cleanup_in_another_sessions_worktree_is_refused(repo):
 
 
 def test_rm_of_an_ignored_path_or_a_directory_holding_one_is_refused(repo):
-    main, wt = repo
-    with open(os.path.join(main, ".git", "info", "exclude"), "a") as f:
-        f.write("local.cfg\n.venv/\n.fanout/\n")
-    for rel in ["local.cfg", ".venv/bin/python", ".fanout/batch/out.txt"]:
+    _, wt = repo
+    for rel in [
+        "local.cfg",
+        "src/cache.tmp",
+        ".venv/bin/python",
+        ".env",
+        ".env.local",
+        "ansible/vars/cluster-vars.sops.env",
+        "tools/id_rsa",
+        ".fanout/batch/out.txt",
+        ".fanout/batch/.env",
+        "plain/notes.txt",
+        "plain/.venv/lib/x",
+    ]:
         path = os.path.join(wt, rel)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
             f.write("x\n")
-    # An untracked, not-ignored path stays removable, and so does the ignored `.fanout/`.
+    # The root catch-all ignores every one of these, so it must not by itself refuse scratch.
     for command in [
         "rm .git-pr-body.md",
         "rm -r scratch",
-        "rm -r .fanout",
-        "rm .fanout/batch/out.txt",
+        "rm -r plain/notes.txt",
+        "rm -r .fanout/batch/out.txt",
     ]:
         assert worktree_rm_safe(command, wt, cwd_changed=False, project_dir=wt), command
-    os.makedirs(os.path.join(wt, "scratch", ".venv"))
-    with open(os.path.join(wt, "scratch", ".venv", "x"), "w") as f:
-        f.write("x\n")
-    for command in ["rm local.cfg", "rm -r .venv", "rm -rf .venv/bin", "rm -r scratch"]:
+    for command in [
+        "rm local.cfg",
+        "rm src/cache.tmp",
+        "rm -r .venv",
+        "rm -rf .venv/bin",
+        "rm .env",
+        "rm -f .env.local",
+        "rm -r ansible",
+        "rm tools/id_rsa",
+        "rm -r plain",
+        "rm -r .fanout",
+        "rm .fanout/batch/.env",
+    ]:
         assert not worktree_rm_safe(command, wt, cwd_changed=False, project_dir=wt), command
 
 
