@@ -630,6 +630,13 @@ NAMES_A_SECRET = [
     "uv run python - <<'EOF'\nfrom pathlib import Path\nPath('config/.env').read_text()\nEOF",
     "bash <<'EOF'\ncat .env\nEOF",
     "sops -d ansible/vars/secrets.yml; python3 - <<'EOF'\nimport os\nos.environ['A']\nEOF",
+    # A decrypt inside a heredoc body that is then run, and one that follows a newline.
+    "cat > x.sh <<'EOF'\nsops -d ansible/vars/secrets.yml\nEOF\nbash x.sh",
+    "cat > x.sh <<'EOF'\nsops --decrypt ansible/vars/secrets.yml\nEOF\nbash x.sh",
+    "bash <<'EOF'\nsops -d ansible/vars/secrets.yml\nEOF",
+    "cat > x.sh <<'EOF'\ngit diff ansible/vars/secrets.yml\nEOF\nbash x.sh",
+    "echo hi\nsops -d ansible/vars/secrets.yml",
+    "cat > x.py <<'EOF'\nimport os\nos.system('sops -d vars/secrets.yml')\nEOF\npython3 x.py",
     "cat <<'EOF' | bash\ncat ~/.ssh/id_rsa\nEOF",
     "cat > f <<'EOF' | python3\nopen('.env').read()\nEOF",
     "git commit -F - <<'EOF'\nmsg\nEOF\ncat .env",

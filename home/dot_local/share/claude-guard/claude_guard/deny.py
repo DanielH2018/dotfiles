@@ -181,13 +181,18 @@ class Scan:
     parsed: bool
     # Every git invocation the parsed segments run, read by claude_guard.gitargv (#709).
     gits: tuple[Invocation, ...] = ()
+    # Each physical line of the command, normalized on its own. `normalize` joins lines with
+    # a space, which hides a command that starts a line: a heredoc body that runs
+    # `sops -d …`, or one that follows a newline. The decrypt rules read this too (#861).
+    lines: str = ""
 
 
 def build_scan(command: str) -> Scan:
     scan = normalize(command)
+    lines = "\n".join(normalize(line) for line in command.split("\n"))
     p = parse(command)
     if not p.ok:
-        return Scan(command, scan, scan, scan, False)
+        return Scan(command, scan, scan, scan, False, lines=lines)
     texts = [seg.text for seg in p.segments] + list(p.substitutions)
     members = [normalize(text) for text in texts]
     # Not the bash's (#709): one more member per git push a segment runs, spelled
@@ -199,7 +204,7 @@ def build_scan(command: str) -> Scan:
     gits = tuple(inv for text in texts for inv in invocations(text))
     scanset = "\n".join([scan, *members])
     segset = "\n".join(members) if members else scan
-    return Scan(command, scan, scanset, segset, True, gits)
+    return Scan(command, scan, scanset, segset, True, gits, lines)
 
 
 # --- shared anchors (:368, :383-384, :591-599) ------------------------------------------------
@@ -763,7 +768,7 @@ BDB_CMD_AT = (
 def sops_decrypt(sc: Scan, target: str) -> Verdict | None:
     """:985-992."""
     if bdb_re(
-        sc.scan,
+        f"{sc.scan}\n{sc.lines}",
         rf"{BDB_CMD_AT}sops\b[^;&|]*((^|[[:space:]])--decrypt([[:space:]]|=|$)|"
         r"(^|[[:space:]])-[A-Za-z]*d([[:space:]]|$)|(^|[[:space:]])(decrypt|exec-env|exec-file)"
         r"([[:space:]]|$))",
@@ -779,11 +784,12 @@ def sops_decrypt(sc: Scan, target: str) -> Verdict | None:
 
 def git_sops_diff(sc: Scan, target: str) -> Verdict | None:
     """:994-1014. `--stat`, `--name-only`, `--name-status` emit no content and are exempt."""
+    subject = f"{sc.scan}\n{sc.lines}"
     if bdb_re(
-        sc.scan,
+        subject,
         rf"{BDB_CMD_AT}git\b[^;&|]*(\bdiff\b|\bshow\b|\blog\b[^;&|]*(-p|--patch)\b)[^;&|]*"
         rf"{SOPS_PATHS}",
-    ) and not bdb_re(sc.scan, r"(^|[[:space:]])--(stat|name-only|name-status)([[:space:]]|=|$)"):
+    ) and not bdb_re(subject, r"(^|[[:space:]])--(stat|name-only|name-status)([[:space:]]|=|$)"):
         return Verdict(
             "deny",
             "git-sops-diff",
