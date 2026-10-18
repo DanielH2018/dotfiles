@@ -54,7 +54,7 @@ def cmd_explain(args: argparse.Namespace) -> int:
     rules = load_rules()
     roots = scratch_roots(os.environ.get("HOME", ""), os.environ.get("TMPDIR"))
     cwd = args.cwd if args.cwd is not None else os.getcwd()
-    d = judge(args.command, rules, roots, cwd)
+    d = judge(args.command, rules, roots, cwd, os.environ.get("CLAUDE_PROJECT_DIR", ""))
     reasons = iter(d.reasons)
     for i, seg in enumerate(p.segments):
         text = seg.text.strip()
@@ -117,7 +117,7 @@ def _replay_judge(records: list[dict]) -> int:
             print(f"MALFORMED RECORD {i}: missing key {exc.args[0]!r}", file=sys.stderr)
             print(f"ALLOW {allowed}/{len(records)}")
             return 1
-        d = judge(command, load_rules(home=home, project_dir=cwd), roots, cwd)
+        d = judge(command, load_rules(home=home, project_dir=cwd), roots, cwd, cwd)
         if d.allow:
             allowed += 1
             print(f"ALLOW: {_head(command)}")

@@ -46,7 +46,7 @@ def test_rm_of_untracked_files_in_a_session_worktree_is_allowed(repo):
         "rm -rf scratch/probe.py .git-pr-body.md",
         f"rm {wt}/.git-pr-body.md",
     ]:
-        assert worktree_rm_safe(command, wt, cwd_changed=False), command
+        assert worktree_rm_safe(command, wt, cwd_changed=False, project_dir=wt), command
 
 
 def test_rm_of_anything_tracked_or_outside_the_worktree_is_refused(repo, tmp_path):
@@ -63,21 +63,21 @@ def test_rm_of_anything_tracked_or_outside_the_worktree_is_refused(repo, tmp_pat
         "rm scratch/*.py",
         "rm --no-preserve-root -rf scratch",
     ]:
-        assert not worktree_rm_safe(command, wt, cwd_changed=False), command
+        assert not worktree_rm_safe(command, wt, cwd_changed=False, project_dir=wt), command
 
 
 def test_cleanup_outside_a_session_worktree_gets_no_opinion(repo, tmp_path):
     main, _ = repo
     (tmp_path / "repo" / "notes.md").write_text("n\n")
-    assert not worktree_rm_safe("rm notes.md", main, cwd_changed=False)
-    assert not worktree_restore_safe("git restore src/app.py", main, cwd_changed=False)
+    assert not worktree_rm_safe("rm notes.md", main, cwd_changed=False, project_dir=main)
+    assert not worktree_restore_safe("git restore src/app.py", main, False, main)
 
 
 def test_a_relative_operand_after_a_cd_is_refused_and_an_absolute_one_is_not(repo):
     _, wt = repo
-    assert not worktree_rm_safe("rm .git-pr-body.md", wt, cwd_changed=True)
-    assert worktree_rm_safe(f"rm {wt}/.git-pr-body.md", wt, cwd_changed=True)
-    assert not worktree_restore_safe("git restore src/app.py", wt, cwd_changed=True)
+    assert not worktree_rm_safe("rm .git-pr-body.md", wt, cwd_changed=True, project_dir=wt)
+    assert worktree_rm_safe(f"rm {wt}/.git-pr-body.md", wt, cwd_changed=True, project_dir=wt)
+    assert not worktree_restore_safe("git restore src/app.py", wt, cwd_changed=True, project_dir=wt)
 
 
 def test_git_restore_of_tracked_files_to_head_is_allowed(repo):
@@ -89,7 +89,7 @@ def test_git_restore_of_tracked_files_to_head_is_allowed(repo):
         "git restore -s HEAD -- src/app.py",
         f"git restore {wt}/src/app.py",
     ]:
-        assert worktree_restore_safe(command, wt, cwd_changed=False), command
+        assert worktree_restore_safe(command, wt, cwd_changed=False, project_dir=wt), command
 
 
 def test_git_restore_from_another_source_or_with_other_options_is_refused(repo):
@@ -103,7 +103,7 @@ def test_git_restore_from_another_source_or_with_other_options_is_refused(repo):
         f"git restore {main}/src/app.py",
         "git restore .",
     ]:
-        assert not worktree_restore_safe(command, wt, cwd_changed=False), command
+        assert not worktree_restore_safe(command, wt, cwd_changed=False, project_dir=wt), command
 
 
 def test_the_judge_resolves_both_ask_rules_inside_a_session_worktree(repo, tmp_path):
@@ -117,5 +117,17 @@ def test_the_judge_resolves_both_ask_rules_inside_a_session_worktree(repo, tmp_p
     rules = load_rules(home=str(home), project_dir=None)
     roots = scratch_roots(str(home))
     command = "rm .git-pr-body.md && git restore src/app.py && git status --short"
-    assert judge(command, rules, roots, wt).allow
-    assert not judge(command, rules, roots, main).allow
+    assert judge(command, rules, roots, wt, wt).allow
+    assert not judge(command, rules, roots, main, main).allow
+    assert not judge(command, rules, roots, wt, "").allow
+
+
+def test_cleanup_in_another_sessions_worktree_is_refused(repo):
+    main, wt = repo
+    other = os.path.join(main, ".claude", "worktrees", "fanout-2")
+    _sh(main, "git", "worktree", "add", "-q", other)
+    with open(os.path.join(wt, "mine.txt"), "w") as f:
+        f.write("x\n")
+    assert not worktree_rm_safe("rm .git-pr-body.md", wt, False, project_dir=other)
+    assert not worktree_restore_safe("git restore src/app.py", wt, False, project_dir=other)
+    assert worktree_rm_safe("rm mine.txt", wt, False, project_dir=os.path.join(wt, "src"))

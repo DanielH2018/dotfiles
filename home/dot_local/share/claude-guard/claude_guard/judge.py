@@ -508,7 +508,12 @@ def unwrap_wrapper(segment: str) -> str | None:
 
 
 def judge_segment(
-    part: str, rules: Rules, roots: tuple[str, ...], cwd: str, cwd_changed: bool
+    part: str,
+    rules: Rules,
+    roots: tuple[str, ...],
+    cwd: str,
+    cwd_changed: bool,
+    project_dir: str = "",
 ) -> tuple[bool, str]:
     """:286-395, one iteration of the loop. (ok, reason).
 
@@ -516,8 +521,10 @@ def judge_segment(
     the same chain was `cd`/`pushd`/`popd` (`judge()`'s own loop sets it, via
     `_changes_cwd`, after judging each segment in turn). Its consumers below are the
     heredoc-write carve-out and the two worktree cleanup checks (#861), which refuse a
-    relative operand once it is set. Every other check in this function judges the
-    segment's own text and is unaffected by where the shell happens to be.
+    relative operand once it is set. `project_dir` is the session's CLAUDE_PROJECT_DIR,
+    which those two checks require to sit in the same worktree as `cwd`. Every other check
+    in this function judges the segment's own text and is unaffected by where the shell
+    happens to be.
     """
     # H2 (task-8-fix-2-brief.md): deny hoisted to the top of this function, ahead of the
     # heredoc-write carve-out below. The carve-out used to return an early `True` before
@@ -692,9 +699,9 @@ def judge_segment(
 
     # dotfiles #861. The same ask rules (`rm:*`, `git restore:*`) resolved for cleanup
     # inside the session's own worktree, which a headless session otherwise cannot run.
-    if word == "rm" and worktree_rm_safe(part, cwd, cwd_changed):
+    if word == "rm" and worktree_rm_safe(part, cwd, cwd_changed, project_dir):
         return True, "worktree-rm-check"
-    if word == "git" and worktree_restore_safe(part, cwd, cwd_changed):
+    if word == "git" and worktree_restore_safe(part, cwd, cwd_changed, project_dir):
         return True, "worktree-restore-check"
 
     # server #1898. The per-segment twin of judge()'s two whole-command remote arms, so an
@@ -740,7 +747,9 @@ def judge_segment(
     return True, f"wrapper:{target}"
 
 
-def judge(command: str, rules: Rules, roots: tuple[str, ...], cwd: str) -> Decision:
+def judge(
+    command: str, rules: Rules, roots: tuple[str, ...], cwd: str, project_dir: str = ""
+) -> Decision:
     # DECIDED: D2 (docs/specs/2026-09-06-claude-guard-design.md, Decisions — "a single
     # segment is judged like a chain"). This used to be a literal-substring eligibility
     # gate — `if "&&" not in command and ";" not in command and "|" not in command: return
@@ -909,7 +918,7 @@ def judge(command: str, rules: Rules, roots: tuple[str, ...], cwd: str) -> Decis
         if _ASSIGNMENT_WORD.match(_first_word(part)):
             reasons.append("assignment")
             return Decision(False, f"segment:{i}:assignment", tuple(reasons))
-        ok, reason = judge_segment(part, rules, roots, cwd, cwd_changed)
+        ok, reason = judge_segment(part, rules, roots, cwd, cwd_changed, project_dir)
         reasons.append(reason)
         if not ok:
             return Decision(False, f"segment:{i}:{reason}", tuple(reasons))

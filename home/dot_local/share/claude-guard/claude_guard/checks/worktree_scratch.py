@@ -7,8 +7,10 @@ that ask for the one place a session owns outright, a worktree under `.claude/wo
 
 What bounds them:
 
-  - The cwd's git toplevel must be `<repo>/.claude/worktrees/<name>`. A primary checkout,
-    or any other directory, gets no opinion.
+  - The cwd's git toplevel must be `<repo>/.claude/worktrees/<name>`, and the session's
+    project dir (CLAUDE_PROJECT_DIR, passed in as `project_dir`) must sit in that same
+    worktree. A session that moved into a sibling's worktree, a primary checkout, or any
+    other directory gets no opinion.
   - Every operand resolves (realpath, so a symlink is followed) strictly below that
     toplevel, and never into its `.git` file.
   - `rm` refuses any operand git tracks, so it only deletes untracked files. A tracked file
@@ -43,6 +45,14 @@ def _worktree_root(cwd: str) -> str | None:
     return root if _SESSION_WORKTREE.search(root) else None
 
 
+def _session_root(cwd: str, project_dir: str) -> str | None:
+    """The worktree root `cwd` sits in, when `project_dir` sits in the same one."""
+    root = _worktree_root(cwd)
+    if root is None or not project_dir:
+        return None
+    return root if _worktree_root(project_dir) == root else None
+
+
 def _confined(path: str, root: str, cwd: str, cwd_changed: bool) -> str | None:
     """The resolved operand when it sits strictly below `root` and outside `.git`."""
     if not path or path.startswith("-"):
@@ -57,13 +67,14 @@ def _confined(path: str, root: str, cwd: str, cwd_changed: bool) -> str | None:
     return real
 
 
-def worktree_rm_safe(part: str, cwd: str, cwd_changed: bool) -> bool:
+def worktree_rm_safe(part: str, cwd: str, cwd_changed: bool, project_dir: str) -> bool:
     """True when `part` is an `rm` whose every operand is an untracked path below the
-    session worktree that holds `cwd`. Options are scratch.py's table."""
+    session worktree that holds both `cwd` and `project_dir`. Options are scratch.py's
+    table."""
     tokens = tokenize(part)
     if not tokens or tokens[0].rsplit("/", 1)[-1] != "rm":
         return False
-    root = _worktree_root(cwd)
+    root = _session_root(cwd, project_dir)
     if root is None:
         return False
     operands: list[str] = []
@@ -88,13 +99,13 @@ def worktree_rm_safe(part: str, cwd: str, cwd_changed: bool) -> bool:
     return tracked == ""
 
 
-def worktree_restore_safe(part: str, cwd: str, cwd_changed: bool) -> bool:
+def worktree_restore_safe(part: str, cwd: str, cwd_changed: bool, project_dir: str) -> bool:
     """True when `part` is `git restore [--staged] [--worktree] [--source=HEAD] [--] paths`
-    with every path below the session worktree that holds `cwd`."""
+    with every path below the session worktree that holds both `cwd` and `project_dir`."""
     tokens = tokenize(part)
     if not tokens or tokens[:2] != ["git", "restore"]:
         return False
-    root = _worktree_root(cwd)
+    root = _session_root(cwd, project_dir)
     if root is None:
         return False
     paths = 0
