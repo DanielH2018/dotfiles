@@ -38,13 +38,17 @@ const DESKTOP_ONLY_MARKERS = [
 ];
 const SANDBOX_MARKERS = ['claude-sandbox', '.claude/sandbox'];
 const DARWIN_HELPER_MARKERS = ['mac-askpass', 'logi-dev-mgr-kick'];
-const HOOKS_MARKER = 'test_bash_write_fanout.py';
+const HOOKS_MARKER = 'test_*.py';
+// Each script's header comment names the hooks/test_*.py suites, so a marker check on the
+// whole render would pass with the removal code gone. Hooks checks read code lines only.
+const codeOnly = (s) => s.split('\n').filter((l) => !l.trim().startsWith('#')).join('\n');
 
 test('a server removes the desktop utilities, the sandbox, the darwin helpers, and the hooks tests', { skip }, () => {
   const rendered = linuxServer();
-  for (const m of [...DESKTOP_ONLY_MARKERS, ...SANDBOX_MARKERS, ...DARWIN_HELPER_MARKERS, HOOKS_MARKER]) {
+  for (const m of [...DESKTOP_ONLY_MARKERS, ...SANDBOX_MARKERS, ...DARWIN_HELPER_MARKERS]) {
     assert.ok(rendered.includes(m), `daniel-box/daniel-server must clean up ${m}`);
   }
+  assert.ok(codeOnly(rendered).includes(HOOKS_MARKER), 'the hooks test suites are cleaned up on every host');
 });
 
 test('a workstation removes only the darwin helpers and the hooks tests', { skip }, () => {
@@ -58,7 +62,7 @@ test('a workstation removes only the darwin helpers and the hooks tests', { skip
   for (const m of DARWIN_HELPER_MARKERS) {
     assert.ok(rendered.includes(m), `Linux is never darwin, so ${m} is cleaned up on every Linux host`);
   }
-  assert.ok(rendered.includes(HOOKS_MARKER), 'the hooks test suites are cleaned up on every host');
+  assert.ok(codeOnly(rendered).includes(HOOKS_MARKER), 'the hooks test suites are cleaned up on every host');
 });
 
 test('the Linux script never names a systemd unit file as a removal target', { skip }, () => {
@@ -102,7 +106,7 @@ test('Windows cleans up the darwin helpers and the hooks tests, and nothing else
   for (const m of DARWIN_HELPER_MARKERS) {
     assert.ok(rendered.includes(m), `Windows is never darwin, so ${m} is cleaned up`);
   }
-  assert.ok(rendered.includes(HOOKS_MARKER));
+  assert.ok(codeOnly(rendered).includes(HOOKS_MARKER));
   for (const m of [...DESKTOP_ONLY_MARKERS, ...SANDBOX_MARKERS]) {
     assert.ok(!rendered.includes(m), `${m} was never gated for Windows, so it has nothing to clean up`);
   }
@@ -116,8 +120,30 @@ test('Windows renders empty off Windows, and the Linux/darwin scripts render emp
 
 test('darwin cleans up only the hooks tests', { skip }, () => {
   const rendered = darwinAs();
-  assert.ok(rendered.includes(HOOKS_MARKER));
+  assert.ok(codeOnly(rendered).includes(HOOKS_MARKER));
   for (const m of [...DESKTOP_ONLY_MARKERS, ...SANDBOX_MARKERS, ...DARWIN_HELPER_MARKERS]) {
     assert.ok(!rendered.includes(m), `darwin was never gated out of ${m} (or keeps it on purpose), so it has nothing to clean up`);
+  }
+});
+
+test('the hooks cleanup removes every stale test suite by pattern, and leaves overlay symlinks', { skip }, () => {
+  // test_premature_done.py was retired before these scripts existed and was never in their old
+  // name list; its .chezmoiremove entry was a no-op because .chezmoiignore also matches it.
+  // The Linux script only renders on a Linux host: faking .chezmoi.os elsewhere leaves
+  // is-wsl without the kernel data it reads. CI runs on Linux, so it covers both.
+  const hosts = [['darwin', darwinAs]];
+  if (process.platform === 'linux') hosts.push(['linux', linuxWorkstation]);
+  for (const [name, render] of hosts) {
+    const home = scratch(os.tmpdir(), `cleanup-hooks-${name}-`);
+    const hooks = path.join(home, '.claude', 'hooks');
+    fs.mkdirSync(hooks, { recursive: true });
+    for (const f of ['test_premature_done.py', '_testkit.py', 'stop-checks.py', 'overlay-target.py']) {
+      fs.writeFileSync(path.join(hooks, f), 'x');
+    }
+    fs.symlinkSync(path.join(hooks, 'overlay-target.py'), path.join(hooks, 'test_overlay.py'));
+    const script = path.join(home, 'cleanup.sh');
+    fs.writeFileSync(script, render());
+    execFileSync('sh', [script], { env: { ...process.env, HOME: home } });
+    assert.deepStrictEqual(fs.readdirSync(hooks).sort(), ['overlay-target.py', 'stop-checks.py', 'test_overlay.py'], name);
   }
 });

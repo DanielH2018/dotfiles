@@ -7,16 +7,15 @@
 # allow hooks executable in ~/.claude/hooks/, discovered only by driving them by hand.
 
 # claude-guard slice 3 cutover (docs/specs/2026-09-06-claude-guard-design.md, Rollout row 3):
-# the six bash PermissionRequest hooks it replaced, plus the allow-daniel-server test oracle
-# that had no chezmoi-managed sibling once its source (executable_allow-daniel-server.sh) was
-# deleted.
+# the six bash PermissionRequest hooks it replaced. A retired hooks/test_*.py suite is never
+# listed here: .chezmoiignore ignores that pattern, which makes an entry a silent no-op, so
+# the cleanup-host-gated-files scripts remove those instead (see the note further down).
 .claude/hooks/allow-compound-bash.sh
 .claude/hooks/allow-readonly-remote.sh
 .claude/hooks/allow-safe-curl.sh
 .claude/hooks/allow-safe-rm.sh
 .claude/hooks/allow-ansible-readonly.sh
 .claude/hooks/allow-daniel-server.sh
-.claude/hooks/test_allow_daniel_server.py
 
 # claude-guard slice 6 (docs/specs/2026-09-06-claude-guard-design.md, Rollout row 6): the
 # PreToolUse deny hook and the segmenter it sourced. Slice 4 unregistered the hook on the host
@@ -34,12 +33,9 @@
 .claude/hooks/agent-view-subagents.sh
 
 # #620: the two memory SessionStart hooks merged into memory-upkeep.py, which reports both
-# halves from one path derivation. Their test files merged into test_memory_upkeep.py; the
-# old copies would otherwise stay in ~/.claude/hooks importing a script that is gone.
+# halves from one path derivation.
 .claude/hooks/memory-index-size.py
 .claude/hooks/memory-stale-paths.py
-.claude/hooks/test_memory_index_size.py
-.claude/hooks/test_memory_stale_paths.py
 
 # #619: git-conventions-guard.sh started a second Python on every Bash call. Its rules now run
 # inside guard-pre-tool-use.sh's `claude_guard.cli pre-tool-use`, and gen-hooks dropped its
@@ -121,7 +117,6 @@
 # and voice-reminder.sh only injected per-prompt text the session already had.
 .claude/hooks/check-before-stop.sh
 .claude/hooks/premature-done.py
-.claude/hooks/test_premature_done.py
 .claude/hooks/worktree-context.sh
 .claude/hooks/voice-reminder.sh
 

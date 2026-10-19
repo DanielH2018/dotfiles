@@ -12,21 +12,14 @@
 # Idempotent: every removal is skip-if-absent, and prints only what it actually took.
 set -eu
 TAG=cleanup-host-gated-files
-for f in \
-  .claude/hooks/test_bash_write_fanout.py \
-  .claude/hooks/test_isolation_guard.py \
-  .claude/hooks/test_memory_upkeep.py \
-  .claude/hooks/test_prune_worktrees.py \
-  .claude/hooks/test_skill_usage_log.py \
-  .claude/hooks/test_skill_usage_table.py \
-  .claude/hooks/test_stop_checks.py \
-  .claude/hooks/test_worktree_landed.py \
-  .claude/hooks/_testkit.py \
-; do
-  p="$HOME/$f"
-  if [ -e "$p" ] || [ -L "$p" ]; then
+# The glob is the same pattern home/.chezmoiignore uses, so chezmoi deploys nothing it matches
+# and every regular file it matches is a leftover. A list of names missed the suites retired
+# before this script existed. A symlink is skipped because chezmoi never deploys one here, so
+# it belongs to the work overlay.
+for p in "$HOME"/.claude/hooks/test_*.py "$HOME"/.claude/hooks/_testkit.py; do
+  if [ -f "$p" ] && [ ! -L "$p" ]; then
     rm -f "$p"
-    echo "$TAG: removed $f"
+    echo "$TAG: removed ${p#"$HOME"/}"
   fi
 done
 echo "$TAG: done."

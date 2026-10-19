@@ -121,19 +121,13 @@ rm_file .local/bin/logi-dev-mgr-kick
 # the source tree's executable_-prefixed name, which chezmoi strips before deploying, so none
 # of them can run from ~/.claude/hooks. tests/python-suites.test.js already runs every one
 # from the repo. Every host needs this section — see the matching os-windows and os-darwin
-# scripts for the other two.
-for f in \
-  .claude/hooks/test_bash_write_fanout.py \
-  .claude/hooks/test_isolation_guard.py \
-  .claude/hooks/test_memory_upkeep.py \
-  .claude/hooks/test_prune_worktrees.py \
-  .claude/hooks/test_skill_usage_log.py \
-  .claude/hooks/test_skill_usage_table.py \
-  .claude/hooks/test_stop_checks.py \
-  .claude/hooks/test_worktree_landed.py \
-  .claude/hooks/_testkit.py \
-; do
-  rm_file "$f"
+# scripts for the other two. The glob is the ignore pattern itself, so a suite retired before
+# this script existed is caught too. A symlink is skipped because chezmoi never deploys one
+# here, so it belongs to the work overlay.
+for p in "$HOME"/.claude/hooks/test_*.py "$HOME"/.claude/hooks/_testkit.py; do
+  if [ -f "$p" ] && [ ! -L "$p" ]; then
+    rm_file "${p#"$HOME"/}"
+  fi
 done
 
 echo "$TAG: done."

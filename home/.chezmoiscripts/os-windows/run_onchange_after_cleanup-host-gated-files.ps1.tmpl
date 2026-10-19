@@ -12,15 +12,6 @@
 $targets = @(
     '.local\bin\mac-askpass'
     '.local\bin\logi-dev-mgr-kick'
-    '.claude\hooks\test_bash_write_fanout.py'
-    '.claude\hooks\test_isolation_guard.py'
-    '.claude\hooks\test_memory_upkeep.py'
-    '.claude\hooks\test_prune_worktrees.py'
-    '.claude\hooks\test_skill_usage_log.py'
-    '.claude\hooks\test_skill_usage_table.py'
-    '.claude\hooks\test_stop_checks.py'
-    '.claude\hooks\test_worktree_landed.py'
-    '.claude\hooks\_testkit.py'
 )
 foreach ($rel in $targets) {
     $path = Join-Path $HOME $rel
@@ -28,5 +19,18 @@ foreach ($rel in $targets) {
         Remove-Item -LiteralPath $path -Force
         Write-Host "cleanup-host-gated-files: removed $rel"
     }
+}
+# The hooks suites match the home/.chezmoiignore pattern itself, so a suite retired before this
+# script existed is caught too. A reparse point (symlink) is skipped because chezmoi never
+# deploys one here, so it belongs to the work overlay.
+$hooks = Join-Path $HOME '.claude\hooks'
+if (Test-Path -LiteralPath $hooks) {
+    Get-ChildItem -LiteralPath $hooks -File |
+        Where-Object { ($_.Name -like 'test_*.py' -or $_.Name -eq '_testkit.py') -and
+                       -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) } |
+        ForEach-Object {
+            Remove-Item -LiteralPath $_.FullName -Force
+            Write-Host "cleanup-host-gated-files: removed .claude\hooks\$($_.Name)"
+        }
 }
 {{- end -}}
