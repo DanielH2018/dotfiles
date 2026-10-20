@@ -6,15 +6,15 @@
 #   order: 50
 #   args: --prune
 # The startup slot prune-artifacts.sh sweeps in, for session worktrees: remove the
-# ones under
-# .claude/worktrees/ whose branch is already an ancestor of origin/HEAD, are clean,
-# and hold no live session's lock. Claude Code's exit prompt only reaches a session
-# still attached when it ends, so a backgrounded or killed one leaves its tree
-# behind forever. Every source that opens a working session, not just "startup":
-# a resumed session is the long-lived case where merged siblings pile up, and its
-# own tree is protected by the is_current check either way. Not "compact", which
-# fires mid-turn and would sweep for nothing. CLAUDE_WORKTREE_AUTOPRUNE=0 opts
-# out; every removal is logged to ~/.claude/logs/sessions.log.
+# ones under .claude/worktrees/ whose branch is already an ancestor of origin/HEAD and
+# has moved since it was created, are clean, and hold no live session's lock. Claude
+# Code's exit prompt only reaches a session still attached when it ends, so a
+# backgrounded or killed one leaves its tree behind forever. Every source that opens a
+# working session, not just "startup": a resumed session is the long-lived case where
+# merged siblings pile up, and its own tree is protected by the is_current check either
+# way. Not "compact", which fires mid-turn and would sweep for nothing.
+# CLAUDE_WORKTREE_AUTOPRUNE=0 opts out; every removal is logged to
+# ~/.claude/logs/sessions.log.
 """SessionStart hook: remove Claude session worktrees whose work has already landed.
 
 Every session that isolates its work gets a worktree under `.claude/worktrees/`, and
@@ -22,12 +22,13 @@ nothing removed one when its branch merged — Claude Code's exit prompt only co
 session that is still attached when it ends, not a backgrounded or killed one. Merged
 trees therefore pile up next to the live ones and it stops being obvious which is which.
 
-A tree is removable only when all four hold: its branch is an ancestor of the remote's
-default branch, it has no uncommitted changes, no live session holds its lock, and no
+A tree is removable only when all five hold: its branch is an ancestor of the remote's
+default branch, the branch has moved since it was created or is older than
+`FRESH_GRACE_S`, it has no uncommitted changes, no live session holds its lock, and no
 live process holds it, either as its working directory or as its `CLAUDE_PROJECT_DIR`.
 
-The fourth is the one git state cannot see. A detached `land.sh` keeps running from the
-tree after the merge that makes the first three pass: it waits on CI and ticks the
+The fifth is the one git state cannot see. A detached `land.sh` keeps running from the
+tree after the merge that makes the first four pass: it waits on CI and ticks the
 deployer, and the session that launched it may already be gone, its lock with it.
 Removing the tree under it kills the landing before its verdict, which is what
 worktree-landed.sh guards against in-session (dotfiles#747, #748). This sweeper is that
@@ -45,7 +46,7 @@ holding every tree (server#3994). The scan runs once before classifying and agai
 right before each removal, because a session can start in a tree while the sweep runs
 git in the others.
 
-Why the git-state three are enough. Once HEAD is an ancestor of `origin/<default>`,
+Why the git-state four are enough. Once HEAD is an ancestor of `origin/<default>`,
 every commit in the tree is already in the remote by construction — there is nothing
 recoverable only from this directory, so no CI or review gate needs re-checking here. If
 the merged work later turns out to be wrong it is fixed forward on the default branch,
@@ -64,6 +65,17 @@ unlocked and then removed.
 
 Removal never passes `--force`: git's own refusal on a tree containing modified or
 untracked files is the last line of defence behind the dirty check.
+
+A branch that has never moved since it was created is not merged, however the
+ancestry test reads. A session's worktree is cut at the default branch's tip, so until
+its first commit the branch IS an ancestor of `origin/<default>`, and a sweep that ran
+in that window removed the tree the session was starting in (2026-10-20: a session's
+own worktree and branch were pruned at its startup). The branch's reflog is the signal:
+a single `branch: Created from` entry means the tip never moved, so the branch holds no
+commits of its own. Such a branch is kept for `FRESH_GRACE_S` after it was created, and
+only then judged by ancestry, so the empty trees of read-only sessions still go. A
+landed branch has at least one more entry, such as a commit, a rebase or a reset, and
+is unaffected.
 
 Merged-ness is judged against the local `origin/<default>` ref as it already stands, so
 a stale ref makes it keep a tree it could have removed — never the reverse.
@@ -209,6 +221,11 @@ FORGE_BUDGET_S = 6.0
 # path prints these, unlike every other KEEP, because each one is a removal deferred.
 BUSY_PREFIX = "busy:"
 
+# How long a branch that has never moved since its creation is kept regardless of
+# ancestry. A week covers a session that idles before its first commit; past it, an
+# untouched tree is a read-only session's leftover and is judged like any other.
+FRESH_GRACE_S = 7 * 24 * 3600
+
 LOG_PATH = (
     Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
     / "logs"
@@ -225,6 +242,7 @@ def classify(
     contained: bool = False,
     forge: bool = False,
     busy: str = "",
+    fresh: bool = False,
 ) -> tuple[str, str]:
     """Return (verdict, reason) for one worktree.
 
@@ -241,6 +259,10 @@ def classify(
     superseded. `forge` settles which: a merged PR whose head is this exact tip makes
     the tree REMOVABLE.
 
+    `fresh` marks a branch that has not moved since it was created (see `is_fresh`). It
+    keeps the tree whatever the ancestry test said, because a branch cut at the default
+    branch's tip passes that test before it has done any work.
+
     `busy` names a live process that holds the tree (see `busy_process`). It
     is consulted last, only for a tree that would otherwise be removed, so the report
     names it only where it is the one thing standing between the tree and removal.
@@ -253,6 +275,8 @@ def classify(
         return KEEP, "uncommitted changes"
     if tree.branch is None:
         return KEEP, "detached HEAD — no branch to check"
+    if fresh:
+        return KEEP, f"{tree.branch} has no commits of its own yet"
     if busy and (merged or forge):
         return KEEP, f"{BUSY_PREFIX} {busy} uses it"
     if not merged:
@@ -367,6 +391,40 @@ def is_merged(repo: str, head: str, target: str) -> bool:
         check=False,
     )
     return result.returncode == 0
+
+
+def is_fresh(repo: str, branch: str, now: float | None = None) -> bool:
+    """Has this branch stayed where it was created, within the last FRESH_GRACE_S?
+
+    Only meaningful for a branch whose tip is already an ancestor of the default
+    branch, which is the one case where "never moved" changes the verdict. Reads the
+    branch's reflog. Anything other than exactly one `branch: Created from`
+    entry reads as not fresh: a missing or expired reflog then falls back to ancestry,
+    which is how this hook behaved before the check existed.
+    """
+    # The entry's own time comes from the selector, `<ref>@{<unix>}` under
+    # --date=unix. `%ct` would be the tip commit's date, which for a branch that never
+    # moved is when main's tip was committed, not when the branch was created.
+    entries = _git(
+        [
+            "reflog",
+            "show",
+            "--date=unix",
+            "--format=%gd%x09%gs",
+            f"refs/heads/{branch}",
+        ],
+        cwd=repo,
+    ).splitlines()
+    if len(entries) != 1:
+        return False
+    selector, _, subject = entries[0].partition("\t")
+    if not subject.startswith("branch: Created from"):
+        return False
+    try:
+        created = int(selector.rpartition("@{")[2].rstrip("}"))
+    except ValueError:
+        return False
+    return (time.time() if now is None else now) - created < FRESH_GRACE_S
 
 
 def is_dirty(path: str) -> bool:
@@ -579,11 +637,16 @@ def main() -> int:
     holds = process_holds()
     for tree in sessions:
         resolved = Path(tree.path).resolve()
-        merged = bool(target) and is_merged(repo, tree.head, target)
+        # Fresh only matters where ancestry would remove the tree: a never-moved branch
+        # cut from a commit main lacks is judged by the cherry and merge-tree tests.
+        ancestor = bool(target) and is_merged(repo, tree.head, target)
+        fresh = ancestor and tree.branch is not None and is_fresh(repo, tree.branch)
+        merged = ancestor and not fresh
         # The cherry test costs a patch-id walk per branch, so it only runs once the
         # cheap ancestor test has already failed — which is the only case it can change.
         equivalent = (
             not merged
+            and not fresh
             and bool(target)
             and tree.branch is not None
             and is_equivalent(repo, tree.branch, target)
@@ -591,6 +654,7 @@ def main() -> int:
         # Last and dearest: a real merge, run only once both history checks have failed.
         contained = (
             not merged
+            and not fresh
             and not equivalent
             and bool(target)
             and tree.branch is not None
@@ -606,6 +670,7 @@ def main() -> int:
             equivalent=equivalent,
             contained=contained,
             busy=busy_process(tree.path, holds),
+            fresh=fresh,
         )
         # Only a tree that would otherwise say "establish which" reaches the network.
         if (
@@ -638,7 +703,15 @@ def main() -> int:
     # candidate — `git branch -d` refuses that too, but not reaching for it is clearer.
     attached = {t.branch for t in trees if t.branch}
     orphans = orphan_branches(repo, attached)
-    orphan_merged = [b for b in orphans if bool(target) and is_merged(repo, b, target)]
+    orphan_ancestors = [
+        b for b in orphans if bool(target) and is_merged(repo, b, target)
+    ]
+    # A fresh ancestor is a session branch whose worktree may still be being created.
+    # It is left out of every signal, not just ancestry: `git cherry` reads a branch
+    # with no commits of its own as fully landed too.
+    orphan_fresh = {b for b in orphan_ancestors if is_fresh(repo, b)}
+    orphans = [b for b in orphans if b not in orphan_fresh]
+    orphan_merged = [b for b in orphan_ancestors if b not in orphan_fresh]
     # Same three signals, same order, same policy as the worktree sweep above: only
     # ancestry reaches `-d`; the two weaker signals are reported so the branch is looked
     # at rather than left behind in silence.

@@ -19,6 +19,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from _testkit import check, finish, git
@@ -230,8 +231,21 @@ check("is_dirty fails closed when git errors", mod.is_dirty("/nonexistent-path-x
 # ── end to end ────────────────────────────────────────────────────────────────
 
 
+def add_landed_tree(repo, path, branch):
+    """Add a session worktree whose one commit is fast-forwarded onto origin's main.
+
+    That is how bin/land lands a branch, and it leaves the branch moved since it was
+    created, so ancestry judges the tree rather than the fresh check.
+    """
+    git(["worktree", "add", "-q", "-b", branch, str(path), "origin/main"], repo)
+    (path / branch).write_text(f"{branch}\n")
+    git(["add", branch], path)
+    git(["commit", "-qm", f"land {branch}"], path)
+    git(["push", "-q", "origin", f"{branch}:main"], path)
+
+
 def build_repo(root):
-    """An origin with a default branch, a clone, and four session worktrees in it."""
+    """An origin with a default branch, a clone, and five session worktrees in it."""
     origin = root / "origin"
     origin.mkdir()
     git(["init", "-q", "-b", "main", "--bare", "."], origin)
@@ -242,14 +256,30 @@ def build_repo(root):
     git(["config", "user.name", "t"], repo)
     (repo / "a").write_text("a\n")
     git(["add", "a"], repo)
-    git(["commit", "-qm", "init"], repo)
+    # Committed a month ago, so a branch cut from it now is young while its tip is old:
+    # the fresh check has to read when the branch was created, not when its tip was.
+    subprocess.run(
+        ["git", "commit", "-qm", "init"],
+        cwd=repo,
+        check=True,
+        env={
+            **os.environ,
+            "GIT_COMMITTER_DATE": f"{int(time.time()) - 30 * 86400} +0000",
+        },
+    )
     git(["push", "-q", "origin", "main"], repo)
 
     trees = repo / ".claude" / "worktrees"
     trees.mkdir(parents=True)
 
-    # merged + locked by a dead session: the case that only works if we unlock first
+    # merged + locked by a dead session: the case that only works if we unlock first.
+    # Its commit lands on main the way bin/land lands one, by fast-forward, so the
+    # branch has moved since it was created and ancestry is what judges it.
     git(["worktree", "add", "-q", "-b", "wt-merged", str(trees / "merged")], repo)
+    (trees / "merged" / "m").write_text("m\n")
+    git(["add", "m"], trees / "merged")
+    git(["commit", "-qm", "landed"], trees / "merged")
+    git(["push", "-q", "origin", "wt-merged:main"], trees / "merged")
     git(
         [
             "worktree",
@@ -277,6 +307,9 @@ def build_repo(root):
     (trees / "ahead" / "b").write_text("b\n")
     git(["add", "b"], trees / "ahead")
     git(["commit", "-qm", "ahead"], trees / "ahead")
+    # fresh: cut at main's tip and never moved, so it passes the ancestry test before
+    # its session has made a single commit
+    git(["worktree", "add", "-q", "-b", "wt-fresh", str(trees / "fresh")], repo)
     return repo, trees
 
 
@@ -345,6 +378,11 @@ with tempfile.TemporaryDirectory() as tmp:
     check("keeps the tree whose lock reads as live", (trees / "live").exists())
     check("keeps the dirty tree", (trees / "dirty").exists())
     check("keeps the unmerged tree", (trees / "ahead").exists())
+    check(
+        "keeps a fresh tree at main's tip and its branch",
+        (trees / "fresh").exists()
+        and git(["branch", "--list", "wt-fresh"], repo).stdout.strip() != "",
+    )
     check("reports what it removed", "wt-merged" in pruned.stdout)
     log = (root / "cfg" / "logs" / "sessions.log").read_text()
     check("logs the removal", "event=worktree_pruned" in log and "wt-merged" in log)
@@ -360,7 +398,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("a no-op prune is silent", quiet.stdout == "")
 
     # Run from inside a worktree that is itself removable: it must survive.
-    git(["worktree", "add", "-q", "-b", "wt-self", str(trees / "self")], repo)
+    add_landed_tree(repo, trees / "self", "wt-self")
     self_run = subprocess.run(
         [sys.executable, str(SCRIPT), "--prune"],
         cwd=trees / "self",
@@ -374,7 +412,7 @@ with tempfile.TemporaryDirectory() as tmp:
     # A merged, clean, unlocked tree a live process still runs from: the detached
     # land.sh case (dotfiles#755). Skipped where /proc cannot show a cwd.
     if HAVE_PROC:
-        git(["worktree", "add", "-q", "-b", "wt-busy", str(trees / "busy")], repo)
+        add_landed_tree(repo, trees / "busy", "wt-busy")
         sleeper = subprocess.Popen(["sleep", "60"], cwd=trees / "busy")
         try:
             held = subprocess.run(
@@ -405,7 +443,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
         # A session whose project dir is the tree while its cwd is elsewhere: deleting
         # the tree would break every repo hook it runs (server#3887).
-        git(["worktree", "add", "-q", "-b", "wt-project", str(trees / "project")], repo)
+        add_landed_tree(repo, trees / "project", "wt-project")
         session = subprocess.Popen(
             ["sleep", "60"],
             cwd=tmp,
@@ -487,8 +525,14 @@ def build_branch_repo(root):
     trees = repo / ".claude" / "worktrees"
     trees.mkdir(parents=True)
 
-    # Merged the ordinary way: its worktree AND its branch should both go.
+    # Merged the ordinary way, a commit fast-forwarded onto main: its worktree AND its
+    # branch should both go.
     git(["worktree", "add", "-q", "-b", "worktree-merged", str(trees / "merged")], repo)
+    (trees / "merged" / "m").write_text("m\n")
+    git(["add", "m"], trees / "merged")
+    git(["commit", "-qm", "landed"], trees / "merged")
+    git(["merge", "-q", "--ff-only", "worktree-merged"], repo)
+    git(["push", "-q", "origin", "main"], repo)
 
     # Squash-merged: a commit of its own, whose patch is then replayed onto main under a
     # different sha. Not an ancestor, but every commit has an equivalent on main.
@@ -509,7 +553,10 @@ def build_branch_repo(root):
     git(["push", "-q", "origin", "main"], repo)
 
     # Three branches with no worktree at all.
-    git(["branch", "worktree-orphan-merged", "main"], repo)
+    # Created behind main and moved onto it, so it is not fresh: a branch created at
+    # main's tip and never moved is the case the fresh check keeps.
+    git(["branch", "worktree-orphan-merged", "main~1"], repo)
+    git(["branch", "-f", "worktree-orphan-merged", "main"], repo)
     git(["branch", "worktree-orphan-squashed", f"{sha}"], repo)
     git(["branch", "worktree-orphan-live", "main"], repo)
     git(["worktree", "add", "-q", "--detach", str(root / "scratch")], repo)
