@@ -164,7 +164,7 @@ test('every SECRET_PATHS entry in the deny gate is covered by this one', { skip 
 
   // Turn each alternation branch into a concrete path this hook can be asked about.
   const SAMPLE = {
-    '(?<!process)\\.env(?!iron(?:ments?|b)?\\b)': '/home/u/.env',
+    '(?<!process)(?<!\\.\\.)\\.env(?!iron(?:ments?|b)?\\b)': '/home/u/.env',
     '\\.ssh/': '/home/u/.ssh/id_rsa',
     'id_rsa': '/home/u/id_rsa',
     'id_ed25519': '/home/u/id_ed25519',

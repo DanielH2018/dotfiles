@@ -617,11 +617,13 @@ def disk_wipe(sc: Scan, target: str) -> Verdict | None:
 # exact words `environ`, `environment`, `environments` and `environb`, so `.env_production`,
 # `.env2`, `.envfile`, `.envrc`, `.envs/` and `.environment_prod` are still refused. A jq
 # filter's `.environments[]` (a GitHub API field) is why the plural is there. Node's
-# `process.env` is the same accessor, exempted by the lookbehind. A heredoc body is scanned
+# `process.env` is the same accessor, exempted by the lookbehind. A JavaScript spread,
+# `...env`, is a variable, not a path, so a `.env` after two more dots is exempt too; a
+# path to a dotenv file puts `/` before the dot (`../.env`). A heredoc body is scanned
 # unless `_without_stored_heredocs` finds it only stored, and a variable that names a
 # credential is `secret_env`'s, since this branch no longer sees either accessor.
 SECRET_PATHS = (
-    r"((?<!process)\.env(?!iron(?:ments?|b)?\b)|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|"
+    r"((?<!process)(?<!\.\.)\.env(?!iron(?:ments?|b)?\b)|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|"
     r"\.pypirc|\.npmrc|/secrets/|\.git-credentials|\.kube/config|\.docker/config\.json|"
     r"\.config/gh/hosts\.yml|\.claude/\.credentials\.json|\.claude\.json|/etc/shadow|"
     r"/etc/gshadow|/proc/[^/[:space:]]+/environ|(^|[A-Za-z0-9_~/-])\.(pem|key|p12|pfx)\b)"
@@ -829,14 +831,80 @@ def _without_stored_heredocs(sc: Scan) -> Scan:
     return sc if command == sc.command else build_scan(command)
 
 
+# Words that open a compound command or a loop header ahead of the command a piece runs:
+# `{ jq … f; }`, `( cat f )`, `! grep …`, `if cat f`, `for k in $(jq …)`.
+_PIECE_LEADERS = frozenset({"{", "(", "!", "if", "then", "elif", "else", "do", "while", "until"})
+_GLUED_OPENER = re.compile(r"^(\$\(|<\(|\(|`)+")
+
+
+def _command_words(words: list[str]) -> list[str]:
+    """`words` from the command a piece runs: compound-command openers, keywords and a
+    `for NAME in` header skipped, and a `$(`, `<(`, `(` or backtick glued to the command
+    word stripped. The command is what decides whether its first argument is a filter."""
+    i = 0
+    while i < len(words):
+        if words[i] in _PIECE_LEADERS:
+            i += 1
+        elif words[i] == "for" and i + 2 < len(words) and words[i + 2] == "in":
+            i += 3
+        else:
+            break
+    rest = words[i:]
+    if rest:
+        head = _GLUED_OPENER.sub("", rest[0])
+        rest = [head, *rest[1:]] if head else rest[1:]
+    return rest
+
+
+def _piece_read(piece: str) -> str | None:
+    """The piece reduced to what `secret_readers` matches, if it reads a secret path: exclude
+    arguments dropped, then for a filter command the pattern argument (:931-938)."""
+    words = _command_words(piece.split())
+    if not words:
+        return None
+    head = words[0].rsplit("/", 1)[-1]
+    words = [words[0], *_drop_excludes(words[1:])]
+    piece = " ".join(words)
+    if head in _FILTERS:
+        rest = words[1:]
+        while rest:
+            if not rest.pop(0).startswith("-"):
+                break
+        piece = f"{words[0]} {' '.join(rest)}"
+    return piece if bdb_re(piece, rf"\b{READERS}\b.*{SECRET_PATHS}") else None
+
+
+def _members_read(text: str, depth: int = 0) -> bool:
+    """Whether some quote-aware member of `text` reads a secret path: a segment, a
+    substitution body, or a heredoc body, read the same way as a SCAN piece. A segment
+    carries its heredoc bodies, as it does in SCAN, so `cat > x.py <<'EOF'` stays a read of
+    whatever the body names: the body is written for a later run, and the command may run
+    it. A body is also parsed in turn, so `bash <<'EOF'` is judged on the commands it runs.
+    Text the parser refuses is matched whole, as SCAN is."""
+    p = parse(text)
+    if not p.ok or depth > 4:
+        return any(_piece_read(x) for x in re.split(r"[;&|]", normalize(text)))
+    segments = ("\n".join((s.text, *s.heredocs)) for s in p.segments)
+    for member in [*segments, *p.substitutions]:
+        if any(_piece_read(x) for x in re.split(r"[;&|]", normalize(member))):
+            return True
+    return any(_members_read(body, depth + 1) for s in p.segments for body in s.heredocs)
+
+
 def secret_readers(sc: Scan, target: str) -> Verdict | None:
     """:893-944. SCAN split on every `;&|` character (a NAIVE split, deliberately: it is what
     catches a read hidden behind quoting), each piece word-split. The env-dump arm fires
     when the piece matches AND — if the parse succeeded — some quote-aware segment matches
     too (:911-921). Exclude arguments are dropped, then for a filter command the pattern
     argument (:931-938), before the readers arm. The denial names the words that matched,
-    and for a recursive search the exclude arguments that would let it through (#802)."""
+    and for a recursive search the exclude arguments that would let it through (#802).
+
+    The readers arm is confirmed the same way as the env-dump arm. SCAN joins lines with a
+    space, so `cd "$S" || exit 1` and a jq on the next line share one piece whose head is
+    `exit`, and the jq filter is matched as a path. When the parse succeeds, some
+    segment, substitution or heredoc body must read a secret path too (`_members_read`)."""
     sc = _without_stored_heredocs(sc)
+    confirmed: bool | None = None
     for piece in re.split(r"[;&|]", sc.scan):
         words = piece.split()
         if not words:
@@ -848,16 +916,15 @@ def secret_readers(sc: Scan, target: str) -> Verdict | None:
             and (not sc.parsed or bdb_re(sc.segset, ENV_DUMP))
         ):
             return Verdict("deny", "env-dump", ENV_DUMP_MSG)
-        words = [words[0], *_drop_excludes(words[1:])]
-        piece = " ".join(words)
-        if head in _FILTERS:
-            rest = words[1:]
-            while rest:
-                if not rest.pop(0).startswith("-"):
-                    break
-            piece = f"{words[0]} {' '.join(rest)}"
-        if bdb_re(piece, rf"\b{READERS}\b.*{SECRET_PATHS}"):
-            secrets = _secret_words(piece.split()[1:])
+        read = _piece_read(piece)
+        if read is None:
+            continue
+        if confirmed is None:
+            confirmed = not sc.parsed or _members_read(sc.command)
+        if confirmed:
+            words = _command_words(words)
+            words = [words[0], *_drop_excludes(words[1:])]
+            secrets = _secret_words(read.split()[1:])
             reason = SECRET_READ_MSG + _naming(secrets)
             if args := _exclude_args(words, secrets):
                 reason += (
@@ -882,7 +949,11 @@ def secret_interpreter(sc: Scan, target: str) -> Verdict | None:
     return None
 
 
-_INTERPRETER_WORD = r"\b(python[0-9.]*|node|deno|bun|perl|ruby|php|Rscript|osascript)\b"
+# An interpreter word ends where a command word does. A word followed by `/` or `.` is
+# a path component or a file name: `lib/python3.11/site-packages/airflow/secrets/` names
+# no interpreter. A trailing `\b` would not do: `python[0-9.]*` backtracks to `python3.`,
+# which ends at a word boundary before the `11`.
+_INTERPRETER_WORD = r"\b(python[0-9.]*|node|deno|bun|perl|ruby|php|Rscript|osascript)(?![\w./])"
 # The words of an environment variable name that mark it a credential. A name is split on
 # `_` and on camelCase, then compared word by word, so `GITHUB_TOKEN` and `apiKey` match
 # while `TOKENIZERS_PARALLELISM`, `HOME` and `TMPDIR` do not.
@@ -1515,7 +1586,8 @@ def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool
     substitution it is refused too."""
     # Bash joins a backslash-newline before it splits words; shlex would keep the newline in
     # the word, so `sudo\<newline> -n true` would read as a command named "sudo\n".
-    lex = shlex.shlex(text.replace("\\\n", ""), posix=True, punctuation_chars=True)
+    joined = text.replace("\\\n", "")
+    lex = shlex.shlex(joined, posix=True, punctuation_chars=True)
     lex.whitespace_split = True
     lex.commenters = ""
     try:
@@ -1523,6 +1595,13 @@ def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool
     except ValueError:
         return _loose_hit(text)
     cmds, redirected, here = _command_lines(words)
+    # Bash expands no brace inside quotes, and shlex has removed the quotes by the time a
+    # word reaches the brace check. A brace list counts only when one survives in the
+    # segment with every quoted character blanked: a Python heredoc body read as shell has
+    # a triple-quoted string whose `{a, b}` is one quoted word, while `{sudo,sh,-c,'id'}`
+    # keeps its braces and commas outside the quotes.
+    bare = _unquoted(joined)
+    brace_unquoted = bare is None or _BRACE_LIST.search(bare) is not None
     for cur in cmds:
         skip = 0
         while skip < len(cur) and (cur[skip] in _KEYWORDS or _ASSIGNMENT.match(cur[skip])):
@@ -1534,7 +1613,7 @@ def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool
         # A command word built by expansion, brace or glob could spell an escalator.
         unknowable = (
             (any(c in name for c in "$`") and " " not in name)
-            or _BRACE_LIST.search(name)
+            or (brace_unquoted and _BRACE_LIST.search(name))
             or (
                 any(c in name for c in "*?[")
                 and any(fnmatch.fnmatchcase(e, name) for e in _ESCALATORS)

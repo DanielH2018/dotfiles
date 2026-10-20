@@ -749,10 +749,33 @@ def test_the_remote_read_pattern_narrows_the_same_words():
         "x.environ[0]",
         ".environments[]",
         "process.env.PATH",
+        "{...env}",
     ]
     named = [".env", ".env_production", ".env2", ".envfile", ".envrc", "a.sops.env"]
     assert [bool(SECRET_PATH_RE.search(w)) for w in bare] == [False] * len(bare)
     assert [bool(SECRET_PATH_RE.search(w)) for w in named] == [True] * len(named)
+
+
+# The false positives #861 left denied on purpose, each narrowed on its own: (still denied,
+# no longer denied). 1: an interpreter word inside a path. 2: a jq filter on a line after
+# another command, or behind `{`, `$(` or a `for … in` header. 3: a JavaScript spread.
+NARROWED = [
+    (
+        ".venv/bin/python3.11 -c \"open('.env').read()\"",
+        "ls .venv/lib/python3.11/site-packages/airflow/secrets/ | head",
+    ),
+    (
+        'cd "$S" || exit 1\n{ jq -r . ~/.aws/credentials; }',
+        "cd \"$S\" || exit 1\n{ jq -r '.issues.nodes[].fields.parent.key' g.json; echo x; }\n"
+        "for k in $(jq -r '(.env // {}) | keys[]' cfg.json); do echo $k; done",
+    ),
+    ("cat ../.env", "grep -n '...process.env, ...env' src/server.js"),
+]
+
+
+@pytest.mark.parametrize(("denied", "allowed"), NARROWED)
+def test_a_narrowed_shape_passes_and_a_secret_read_beside_it_does_not(denied, allowed):
+    assert (d.deny(denied, "", ENV).kind, d.deny(allowed, "", ENV).kind) == ("deny", "none")
 
 
 # dotfiles #802: (denied search, the exclude argument its denial gives, the search rewritten
@@ -1596,6 +1619,8 @@ SUDO_REFUSE = [
     "/usr/bin/s*do -n true",
     "/usr/bin/su?o -n true",
     "{sudo,-n,true}",
+    # a quoted word inside the brace list does not hide it
+    "{sudo,sh,-c,'id -u'}",
     "`echo sudo` -n true",
     # other escalators
     "sudoedit /etc/hosts",
@@ -1647,6 +1672,8 @@ SUDO_PASS = [
     "awk '/sudo/ {print}' /var/log/auth.log",
     "echo sudo | wc -l",
     "pip install pytest",
+    # a Python heredoc body read as shell: the quoted `{a, b}` is no brace expansion
+    "python3 - <<'PYEOF'\nprint('{a, b}')\nPYEOF",
     "ls -la",
 ]
 

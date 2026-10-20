@@ -24,7 +24,7 @@ MAX_SOURCE_BYTES = 200_000  # ast.parse is recursive; do not hand it a novel
 # tests/jsonq.test.js asserts the two stay in sync; the only permitted difference is
 # POSIX [:space:] rewritten as \s for Python's re.
 SECRET_PATHS = (
-    r"((?<!process)\.env(?!iron(?:ments?|b)?\b)|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config"
+    r"((?<!process)(?<!\.\.)\.env(?!iron(?:ments?|b)?\b)|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config"
     r"|\.gnupg/|\.netrc|\.pypirc|\.npmrc|/secrets/|\.git-credentials"
     r"|\.kube/config|\.docker/config\.json|\.config/gh/hosts\.yml"
     r"|\.claude/\.credentials\.json|\.claude\.json"
