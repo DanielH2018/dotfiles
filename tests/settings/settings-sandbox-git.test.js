@@ -131,3 +131,11 @@ test('a scratch repo outside the listed roots can still be created', { skip }, (
   assert.ok(!denies(path.join(os.tmpdir(), 'fixture', '.git', 'config')));
   assert.ok(!denies(path.join(os.tmpdir(), 'fixture', '.git', 'hooks', 'pre-commit')));
 });
+
+test('writes under /tmp are allowed by its resolved path, /private/tmp', { skip }, () => {
+  // /tmp is a symlink to /private/tmp and Seatbelt checks the resolved path, so a "/tmp"
+  // entry alone left a sandboxed `touch /tmp/x` refused.
+  const allow = filesystem().allowWrite;
+  assert.ok(allow.includes('/private/tmp'), 'allowWrite lacks /private/tmp');
+  assert.ok(allow.includes('/tmp'), 'allowWrite lacks /tmp');
+});
