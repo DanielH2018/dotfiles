@@ -1145,7 +1145,14 @@
         "~/.sdkman",
         "~/.local/share/fnm",
         "~/Library/Caches/pyapp/locks",
+        {{- /* /tmp is a symlink to /private/tmp, and Seatbelt checks the resolved path, so the
+             "/tmp" entry alone grants nothing: a sandboxed `touch /tmp/x` was refused and
+             `/tmp/repro-worker.pid` writes failed. "/private/tmp" is the entry that takes
+             effect; "/tmp" stays for the non-resolving matchers. Claude Code's own
+             denyWithinAllow entries under it (/private/tmp/claude-501/bash-edit-diff) still
+             win, because a deny inside an allow overrides it. Approved 2026-10-20. */}}
         "/tmp",
+        "/private/tmp",
         "~/work-laptop-config"
       ],
       "denyWrite": [
