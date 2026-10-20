@@ -615,6 +615,7 @@ NAMES_THE_ENVIRONMENT_ONLY = [
     "grep -c environment docs/guide.md",
     "grep -n 'renderer_lib.environment' scripts/renderer/images.py",
     "rg 'jinja2.environment' scripts",
+    "gh api repos/o/r/environments --jq '.environments[]|{name, protection_rules}'",
 ]
 # The same words must still be refused when something actually names a secret. A bare
 # accessor cancels nothing else in the text, and a heredoc body gets no exemption: what a
@@ -649,6 +650,7 @@ NAMES_A_SECRET = [
     "cat .env.production.local",
     "cat .environment_prod",
     "cat .environ_secrets",
+    "cat .envs/.production/.django",
     "grep TOKEN deploy/.env_production",
     "python3 -c \"print(open('.env2').read())\"",
     "python3 -c \"import os; os.environ['A']; open('.envfile').read()\"",
@@ -668,10 +670,86 @@ def test_naming_a_secret_is_still_refused_wherever_the_text_sits():
     assert kinds(NAMES_A_SECRET) == ["deny"] * len(NAMES_A_SECRET)
 
 
+# A heredoc that is only stored, by a command that runs nothing, reads no secret: the
+# sampled denials were a script written for a later run, a commit message and README text
+# that named `docker/.env`.
+STORED_ONLY = [
+    "cat > blockers.py <<'PY'\nimport os\nhome = os.environ[\"HOME\"]\n"
+    'tmp = os.environ.get("TMPDIR")\nPY',
+    "git commit -q -F - -- Makefile run <<'EOF'\nlocal-refresh recreates docker/.env\nEOF",
+    "cat >> notes.md <<'EOF'\nCopy docker/.env.example to docker/.env, then cat .env.\nEOF",
+    "tee README.md >/dev/null <<'EOF'\nCredentials live in ~/.aws/credentials.\nEOF",
+    "gh pr create --title t --body-file - <<'EOF'\nThe hook refused `cat .env`.\nEOF",
+    "cat > t.py <<'EOF'\nimport os\nassert os.environ['API_TOKEN'] == 'x'\nEOF",
+]
+# The same bodies are scanned once anything in the command may run them, or when writing the
+# body runs a substitution.
+STORED_THEN_RUN = [
+    "cat > x.py <<'EOF'\nopen('.env').read()\nEOF\n./x.py",
+    "cat > x.py <<'EOF'\nopen('.env').read()\nEOF\n$PY x.py",
+    "cat > x.py <<'EOF'\nopen('.env').read()\nEOF\n.venv/bin/python x.py",
+    "cat > x.py <<'EOF'\nopen('.env').read()\nEOF\nuv run x.py",
+    "cat > x.sh <<'EOF'\ncat .env\nEOF\nsource x.sh",
+    "cat <<'EOF' | tee x.py | python3\nopen('.env').read()\nEOF",
+    "cat > notes.txt <<EOF\n$(cat .env)\nEOF",
+    "cat > notes.txt <<'EOF'\nx\nEOF\necho $(cat .env)",
+]
+
+
+def test_a_heredoc_that_is_only_stored_is_not_a_secret_read():
+    assert kinds(STORED_ONLY) == ["none"] * len(STORED_ONLY)
+
+
+def test_a_stored_heredoc_is_still_scanned_when_the_command_runs_code():
+    assert kinds(STORED_THEN_RUN) == ["deny"] * len(STORED_THEN_RUN)
+
+
+# The `.env` branch stopped matching `os.environ` (#861), and with it the only refusal of an
+# interpreter reading a credential out of the environment. The variable name decides now.
+SECRET_ENV_READS = [
+    "printenv GITHUB_TOKEN",
+    "printenv -0 HOME AWS_SECRET_ACCESS_KEY",
+    "python3 -c \"import os; print(os.environ['AWS_SECRET_ACCESS_KEY'])\"",
+    "python3 -c \"import os; print(os.environ.get('ANTHROPIC_API_KEY'))\"",
+    "python3 -c 'import os; print(os.getenv(\"DB_PASSWORD\"))'",
+    "node -e 'console.log(process.env.GITHUB_TOKEN)'",
+    "node -e \"console.log(process.env['npmAuthToken'])\"",
+    "ruby -e 'puts ENV[\"STRIPE_SECRET\"]'",
+    "perl -e 'print $ENV{CLAUDE_CODE_OAUTH_TOKEN}'",
+    "cat > x.py <<'EOF'\nimport os\nprint(os.environ['API_TOKEN'])\nEOF\npython3 x.py",
+]
+PLAIN_ENV_READS = [
+    "printenv HOME",
+    "printenv PATH TMPDIR",
+    "python3 -c \"import os; print(os.environ['HOME'], os.environ.get('TMPDIR'))\"",
+    "python3 -c \"import os; print(os.getenv('TOKENIZERS_PARALLELISM'))\"",
+    "node -e 'console.log(process.env.PATH)'",
+    "grep -n \"os.environ\\['API_TOKEN'\\]\" src/app.py",
+    'curl -H "Authorization: Bearer $GITHUB_TOKEN" https://api.example.com',
+    "man printenv",
+]
+
+
+def test_reading_a_credential_from_the_environment_is_denied():
+    assert rules(SECRET_ENV_READS) == ["secret-env"] * len(SECRET_ENV_READS)
+
+
+def test_reading_an_ordinary_environment_variable_is_allowed():
+    assert "deny" not in kinds(PLAIN_ENV_READS)
+
+
 def test_the_remote_read_pattern_narrows_the_same_words():
     from claude_guard.tables import SECRET_PATH_RE
 
-    bare = ["os.environ", "os.environ.get", "a.environment", "os.environb", "x.environ[0]"]
+    bare = [
+        "os.environ",
+        "os.environ.get",
+        "a.environment",
+        "os.environb",
+        "x.environ[0]",
+        ".environments[]",
+        "process.env.PATH",
+    ]
     named = [".env", ".env_production", ".env2", ".envfile", ".envrc", "a.sops.env"]
     assert [bool(SECRET_PATH_RE.search(w)) for w in bare] == [False] * len(bare)
     assert [bool(SECRET_PATH_RE.search(w)) for w in named] == [True] * len(named)

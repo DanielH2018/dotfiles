@@ -614,11 +614,14 @@ def disk_wipe(sc: Scan, target: str) -> Verdict | None:
 # Python and Node environment accessors by name (#861): `os.environ`, `.environ.get` and
 # `.environment` are code that names a process's environment, not a dotenv file, and they
 # were most of 72 denials in three days of fan-out batches. The lookahead exempts only the
-# exact words `environ`, `environment` and `environb`, so `.env_production`, `.env2`,
-# `.envfile`, `.envrc` and `.environment_prod` are still refused. Heredoc bodies stay in
-# the scanned text: a body that names a real secret path is refused wherever it appears.
+# exact words `environ`, `environment`, `environments` and `environb`, so `.env_production`,
+# `.env2`, `.envfile`, `.envrc`, `.envs/` and `.environment_prod` are still refused. A jq
+# filter's `.environments[]` (a GitHub API field) is why the plural is there. Node's
+# `process.env` is the same accessor, exempted by the lookbehind. A heredoc body is scanned
+# unless `_without_stored_heredocs` finds it only stored, and a variable that names a
+# credential is `secret_env`'s, since this branch no longer sees either accessor.
 SECRET_PATHS = (
-    r"(\.env(?!iron(?:ment|b)?\b)|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|"
+    r"((?<!process)\.env(?!iron(?:ments?|b)?\b)|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|"
     r"\.pypirc|\.npmrc|/secrets/|\.git-credentials|\.kube/config|\.docker/config\.json|"
     r"\.config/gh/hosts\.yml|\.claude/\.credentials\.json|\.claude\.json|/etc/shadow|"
     r"/etc/gshadow|/proc/[^/[:space:]]+/environ|(^|[A-Za-z0-9_~/-])\.(pem|key|p12|pfx)\b)"
@@ -706,6 +709,126 @@ def _naming(secrets: list[str]) -> str:
     return f" The command names {', '.join(f'`{w}`' for w in secrets)}." if secrets else ""
 
 
+# Commands that run code: an interpreter or shell, anything that execs its argv, and the
+# task runners that execute a project's files. A command word computed at runtime (`$PY`)
+# or given as a path (`./x.py`, `.venv/bin/python`) counts too, since it could be any of
+# them.
+_RUNNERS = frozenset(
+    {
+        "source",
+        ".",
+        "uv",
+        "uvx",
+        "npx",
+        "pnpm",
+        "yarn",
+        "npm",
+        "make",
+        "just",
+        "pytest",
+        "tox",
+        "nox",
+        "ssh",
+        "hl",
+        "docker",
+        "kubectl",
+        "sudo",
+        "doas",
+        "pkexec",
+        "su",
+    }
+)
+
+
+def _words(text: str) -> list[str] | None:
+    lex = shlex.shlex(text, posix=True, punctuation_chars=True)
+    lex.whitespace_split = True
+    lex.commenters = ""
+    try:
+        return list(lex)
+    except ValueError:
+        return None
+
+
+def _argv(words: list[str]) -> list[str]:
+    i = 0
+    while i < len(words) and (words[i] in _KEYWORDS or _ASSIGNMENT.match(words[i])):
+        i += 1
+    return words[i:]
+
+
+def _runs_code(text: str) -> bool:
+    """Whether the segment `text` may run code, so a file written earlier could execute."""
+    words = _words(text)
+    if words is None:
+        return True
+    argv = _argv(words)
+    if not argv:
+        return False
+    head = argv[0]
+    name = posixpath.basename(head)
+    return (
+        any(c in head for c in "$`/")
+        or name in _RUNNERS
+        or name in _INTERPRETERS
+        or name in _SHELLS
+        or name in _EXECUTORS
+        or re.fullmatch(r"python[0-9.]*", name) is not None
+    )
+
+
+def _is_data_sink(text: str, sep: str) -> bool:
+    """Whether the segment `text` stores its heredoc and runs nothing with it: `cat > f`,
+    `tee f`, `git commit -F -` and `gh … --body-file -`. A segment piped onward is not one,
+    because the next stage may be a shell."""
+    words = _words(text)
+    if words is None or sep == "|" or "|" in words:
+        return False
+    argv = _argv(words)
+    if not argv:
+        return False
+    name = posixpath.basename(argv[0])
+    pairs = set(zip(argv, argv[1:], strict=False))
+    if name == "cat":
+        return ">" in argv or ">>" in argv
+    if name == "tee":
+        return any(not w.startswith("-") for w in argv[1:])
+    if name == "git" and ("commit" in argv or "tag" in argv):
+        return (
+            ("-F", "-") in pairs
+            or ("--file", "-") in pairs
+            or bool({"-F-", "--file=-"} & set(argv))
+        )
+    if name == "gh":
+        return ("--body-file", "-") in pairs or ("-F", "-") in pairs or "--body-file=-" in argv
+    return False
+
+
+def _without_stored_heredocs(sc: Scan) -> Scan:
+    """`sc` rebuilt without the heredoc bodies that are only stored: fed to a data sink, by a
+    command where nothing runs code. Every other body stays in the scanned text.
+
+    DECIDED: the secret-read rules skip such a body (#865 held off a wider exemption). What
+    `cat > x.py <<EOF … EOF` writes can only reach a secret once something runs it, and a
+    command that runs anything keeps every body here. A write in one call and a run in the
+    next is the remaining gap, and the Write tool already opens it: a file it writes is never
+    scanned at all. A body whose delimiter is unquoted expands `$(…)` while it is written, so
+    that body is never skipped."""
+    p = parse(sc.command)
+    if not p.ok or p.substitutions or any(_runs_code(s.text) for s in p.segments):
+        return sc
+    command = sc.command
+    for seg in p.segments:
+        if not seg.heredocs or not _is_data_sink(seg.text, seg.sep):
+            continue
+        for body, quoted in zip(seg.heredocs, seg.heredoc_quoted, strict=True):
+            if quoted or not any(m in body for m in ("$(", "`", "${")):
+                # Removing the first copy is safe even when an identical text sits earlier
+                # in the command: the copy left behind is the same text, still scanned.
+                command = command.replace(body, "", 1)
+    return sc if command == sc.command else build_scan(command)
+
+
 def secret_readers(sc: Scan, target: str) -> Verdict | None:
     """:893-944. SCAN split on every `;&|` character (a NAIVE split, deliberately: it is what
     catches a read hidden behind quoting), each piece word-split. The env-dump arm fires
@@ -713,6 +836,7 @@ def secret_readers(sc: Scan, target: str) -> Verdict | None:
     too (:911-921). Exclude arguments are dropped, then for a filter command the pattern
     argument (:931-938), before the readers arm. The denial names the words that matched,
     and for a recursive search the exclude arguments that would let it through (#802)."""
+    sc = _without_stored_heredocs(sc)
     for piece in re.split(r"[;&|]", sc.scan):
         words = piece.split()
         if not words:
@@ -747,8 +871,8 @@ def secret_readers(sc: Scan, target: str) -> Verdict | None:
 
 def secret_interpreter(sc: Scan, target: str) -> Verdict | None:
     """:945-949. The denial names the words that matched SECRET_PATHS (#802)."""
-    interpreter = r"\b(python[0-9.]*|node|deno|bun|perl|ruby|php|Rscript|osascript)\b"
-    if bdb_re(sc.scan, rf"{interpreter}.*{SECRET_PATHS}"):
+    sc = _without_stored_heredocs(sc)
+    if bdb_re(sc.scan, rf"{_INTERPRETER_WORD}.*{SECRET_PATHS}"):
         return Verdict(
             "deny",
             "secret-read-interpreter",
@@ -756,6 +880,73 @@ def secret_interpreter(sc: Scan, target: str) -> Verdict | None:
             f"specific value needed.{_naming(_secret_words(sc.scan.split()))}",
         )
     return None
+
+
+_INTERPRETER_WORD = r"\b(python[0-9.]*|node|deno|bun|perl|ruby|php|Rscript|osascript)\b"
+# The words of an environment variable name that mark it a credential. A name is split on
+# `_` and on camelCase, then compared word by word, so `GITHUB_TOKEN` and `apiKey` match
+# while `TOKENIZERS_PARALLELISM`, `HOME` and `TMPDIR` do not.
+_SECRET_NAME_WORDS = frozenset(
+    {
+        "TOKEN",
+        "TOKENS",
+        "SECRET",
+        "SECRETS",
+        "PASSWORD",
+        "PASSWORDS",
+        "PASSWD",
+        "PASSPHRASE",
+        "CREDENTIAL",
+        "CREDENTIALS",
+        "APIKEY",
+        "KEY",
+        "KEYS",
+        "PAT",
+    }
+)
+# An interpreter's read of one variable, the name captured: Python `os.environ[…]`,
+# `.environ.get(…)` and `getenv(…)`, Node `process.env.X` and `process.env[…]`, Ruby
+# `ENV[…]` and `ENV.fetch(…)`, Perl `$ENV{…}`, Deno `Deno.env.get(…)`. Matched on the raw
+# command, so the quotes around the name are optional.
+_ENV_ACCESS = re.compile(
+    r"(?:\benvironb?(?:\.get|\.pop|\.setdefault)?\s*[\[(]|\bgetenv\s*\(|\bprocess\.env\s*\[|"
+    r"\bENV\s*\[|\bENV\.fetch\s*\(|\$ENV\{|\bDeno\.env\.get\s*\()\s*b?[\"']?"
+    r"([A-Za-z_][A-Za-z0-9_]*)|\bprocess\.env\.([A-Za-z_][A-Za-z0-9_]*)"
+)
+_PRINTENV = re.compile(
+    r"(?:^|[\s;&|(`])printenv((?:\s+-\S+)*(?:\s+[\"']?[A-Za-z_][A-Za-z0-9_]*[\"']?)+)"
+)
+
+
+def _secret_name(name: str) -> bool:
+    words = re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+", name)
+    return any(w.upper() in _SECRET_NAME_WORDS for w in words)
+
+
+def secret_env(sc: Scan, target: str) -> Verdict | None:
+    """A read of one environment variable whose name marks it a credential: `printenv NAME`,
+    or an interpreter's accessor in a command that runs an interpreter. The `.env` branch of
+    SECRET_PATHS stopped matching `os.environ` (#861), which had also been the only thing
+    refusing `os.environ['AWS_SECRET_ACCESS_KEY']`, and `ENV_DUMP` refuses only a bare dump.
+    The OS sandbox does not cover the environment, so this rule is the only layer there.
+    The name decides: `os.environ['HOME']` and `printenv TMPDIR` pass. A stored heredoc is
+    skipped as in the secret-read rules."""
+    sc = _without_stored_heredocs(sc)
+    names: list[str] = []
+    for m in _PRINTENV.finditer(sc.command):
+        names += [w.strip("\"'") for w in m.group(1).split() if not w.startswith("-")]
+    if bdb_re(sc.scan, _INTERPRETER_WORD):
+        names += [a or b for a, b in _ENV_ACCESS.findall(sc.command)]
+    secrets = list(dict.fromkeys(n for n in names if _secret_name(n)))[:5]
+    if not secrets:
+        return None
+    return Verdict(
+        "deny",
+        "secret-env",
+        "Blocked: this reads a credential from the environment into the session. Ask the "
+        "user to share the specific value needed, or run a tracked script that reads it "
+        f"without printing it.{_naming(secrets)}",
+    )
 
 
 # --- decrypting rather than reading (:951-1044) -----------------------------------------------
@@ -1424,6 +1615,7 @@ RULES: tuple[Rule, ...] = (
     disk_wipe,
     secret_readers,
     secret_interpreter,
+    secret_env,
     sops_decrypt,
     git_sops_diff,
     systemctl_env,
