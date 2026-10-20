@@ -1626,6 +1626,13 @@ SUDO_REFUSE = [
     "{sudo,-n,true}",
     # a quoted word inside the brace list does not hide it
     "{sudo,sh,-c,'id -u'}",
+    # an interpreter's program in a heredoc or here-string, or behind a runner
+    "python3 - <<'EOF'\nimport os\nos.system('sudo id')\nEOF",
+    "node <<'EOF'\nrequire('child_process').execSync('sudo id')\nEOF",
+    "python3 <<< \"import os; os.system('sudo id')\"",
+    "uv run python - <<'EOF'\nimport os\nos.system('sudo id')\nEOF",
+    "uv run python -c \"import os; os.system('sudo id')\"",
+    "python3.11 -c \"import os; os.system('sudo id')\"",
     "`echo sudo` -n true",
     # other escalators
     "sudoedit /etc/hosts",
@@ -1679,6 +1686,8 @@ SUDO_PASS = [
     "pip install pytest",
     # a Python heredoc body read as shell: the quoted `{a, b}` is no brace expansion
     "python3 - <<'PYEOF'\nprint('{a, b}')\nPYEOF",
+    # a Python dict literal is not a brace expansion either
+    "python3 - <<'PY'\nprint({\"a\":[1,2]})\nPY",
     "ls -la",
 ]
 

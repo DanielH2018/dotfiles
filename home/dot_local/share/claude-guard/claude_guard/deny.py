@@ -1588,6 +1588,19 @@ def _command_lines(words: list[str]) -> tuple[list[list[str]], bool, list[str]]:
     return cmds, redirected, here
 
 
+def _is_interpreter(name: str) -> bool:
+    return name in _INTERPRETERS or re.fullmatch(r"python[0-9.]*", name) is not None
+
+
+def _runs_interpreter(argv: list[str]) -> bool:
+    """Whether the command `argv` runs an interpreter: `python3.11`, or one behind a runner
+    or executor (`uv run python -`, `env python3 -c …`, `timeout 5 node`)."""
+    names = [posixpath.basename(w) for w in argv]
+    if _is_interpreter(names[0]):
+        return True
+    return (names[0] in _RUNNERS or names[0] in _EXECUTORS) and any(map(_is_interpreter, names[1:]))
+
+
 def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool) -> bool:
     """Whether one segment runs an escalator other than the one allowed command line. The
     allowed line counts only as a whole top-level segment: inside a payload or a
@@ -1642,7 +1655,7 @@ def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool
             if not allowed:
                 return True
             continue
-        interpreter = name in _INTERPRETERS
+        interpreter = _runs_interpreter(argv)
         if not (interpreter or name in _SHELLS or name in _EXECUTORS):
             continue
         rest = argv[1:]
@@ -1660,7 +1673,15 @@ def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool
                 and _sudo_text(payload, depth + 1, True)
             ):
                 return True
-        if any(_sudo_text(body, depth + 1, True) for body in (*heredocs, *here)):
+        bodies = (*heredocs, *here)
+        # An interpreter's heredoc or here-string is its program, not shell, so it gets the
+        # word search its `-c` argument gets. The shell parse finds no command position in
+        # `os.system('sudo id')`, and it reads a Python dict literal `{"a": [1, 2]}` as a
+        # brace expansion that could spell sudo.
+        if interpreter:
+            if any(_loose_hit(body) for body in bodies):
+                return True
+        elif any(_sudo_text(body, depth + 1, True) for body in bodies):
             return True
     return False
 
