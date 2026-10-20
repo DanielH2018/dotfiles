@@ -152,6 +152,12 @@ posture the bash took on a missing `jq`. An exception inside Python prints the s
 inside the hook's 10s) and takes the same `ask` (#660). In the sandbox `CLAUDE_GUARD_FAIL_CLOSED=1` turns that `ask` into a `deny` with exit
 2, because `--dangerously-skip-permissions` skips an ask (see the shim's header).
 
+`bypass.py` denies a call that sets `dangerouslyDisableSandbox` when the command would run
+inside the sandbox unchanged. That means the sandbox is enabled, `judge()` allows the
+command, every stage is a `readonly.py` read, nothing needs the network, and no
+`denyRead` path is named. The denial tells the model to run it again without the flag. Like
+`readonly.py`, it fails open.
+
 When nothing above decides, `readonly.py` (dotfiles #628, ported from the server repo's
 `auto-approve-readonly.py`) allows a command whose every stage is provably read-only. It
 applies only when the session cwd is `$HOME` itself or inside `~/server` or

@@ -359,6 +359,77 @@ def test_live_mode_turns_an_exception_into_ask(tmp_path, monkeypatch):
     assert pre_tool_use(payload("ls"), denv(home)) == ASK_JSON
 
 
+# --- a needless dangerouslyDisableSandbox (claude_guard.bypass) --------------------------------
+
+BYPASS_PERMS = {
+    "allow": [
+        "Bash(git log:*)",
+        "Bash(git fetch:*)",
+        "Bash(cat:*)",
+        "Bash(mkdir:*)",
+        "Bash(ls:*)",
+        "Bash(dig:*)",
+    ],
+    "deny": [],
+    "ask": [],
+}
+
+
+def sandboxed_home(tmp_path: Path, enabled: bool = True) -> Path:
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    settings = {
+        "permissions": BYPASS_PERMS,
+        "sandbox": {
+            "enabled": enabled,
+            "excludedCommands": ["docker"],
+            "filesystem": {"denyRead": ["~/private-notes"]},
+        },
+    }
+    (home / ".claude" / "settings.json").write_text(json.dumps(settings))
+    return home
+
+
+def bypassed(command: str) -> str:
+    return json.dumps({"tool_input": {"command": command, "dangerouslyDisableSandbox": True}})
+
+
+def test_a_needless_bypass_of_a_local_read_is_denied(tmp_path):
+    out = pre_tool_use(bypassed("git log -1 | cat"), denv(sandboxed_home(tmp_path)))
+    decided = json.loads(out)["hookSpecificOutput"]
+    assert decided["permissionDecision"] == "deny"
+    assert "without dangerouslyDisableSandbox" in decided["permissionDecisionReason"]
+    # The same read without the flag is untouched.
+    assert pre_tool_use(payload("git log -1 | cat"), denv(sandboxed_home(tmp_path / "b"))) is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git fetch origin",  # needs the network
+        "dig example.com",  # a read, but over the network
+        "cat ~/private-notes/todo.md",  # the sandbox refuses this read
+        "mkdir build",  # judge allows it, but it writes
+        "frobnicate",  # judge does not allow it
+    ],
+)
+def test_a_bypass_the_command_may_need_is_left_alone(tmp_path, command):
+    assert pre_tool_use(bypassed(command), denv(sandboxed_home(tmp_path))) is None
+
+
+def test_a_bypass_is_left_alone_when_the_sandbox_is_off(tmp_path):
+    home = sandboxed_home(tmp_path, enabled=False)
+    assert pre_tool_use(bypassed("git log -1"), denv(home)) is None
+
+
+def test_the_bypass_check_fails_open_not_closed(tmp_path, monkeypatch):
+    def boom(command, home):
+        raise RuntimeError("synthetic")
+
+    monkeypatch.setattr(hook.bypass, "stages_read_only", boom)
+    assert pre_tool_use(bypassed("git log -1"), denv(sandboxed_home(tmp_path))) is None
+
+
 # --- the PreToolUse shim, driven as the harness drives it --------------------------------------
 
 DENY_SHIM = HOOKS / "executable_guard-pre-tool-use.sh"

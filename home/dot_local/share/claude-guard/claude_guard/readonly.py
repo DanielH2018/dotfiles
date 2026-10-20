@@ -475,6 +475,18 @@ def classify(command: str, cwd: str, home: str) -> str | None:
     return _classify(command, _Scope(home, os.path.realpath(cwd)))
 
 
+def stages_read_only(command: str, home: str) -> bool:
+    """True when every stage of `command` is a read by this module's verb tables, wherever
+    it runs.
+
+    The directory checks `classify` makes are off: they guard against an untrusted clone's
+    git config, which is a question about approving the command, not about what it
+    touches. `claude_guard.bypass` asks only the second question."""
+    if not home:
+        return False
+    return _classify(command, _Scope(os.path.realpath(home), None, remote=True)) is not None
+
+
 def readonly(command: str, cwd: str, env: Mapping[str, str]) -> Verdict | None:
     """`classify` as an allow Verdict, or None. Never raises: a failure here is no decision,
     not the deny side's ask, because this side can only ever remove a prompt."""

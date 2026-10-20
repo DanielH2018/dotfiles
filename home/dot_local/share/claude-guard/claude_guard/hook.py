@@ -23,7 +23,7 @@ import json
 import os
 from collections.abc import Mapping
 
-from claude_guard import waits
+from claude_guard import bypass, waits
 from claude_guard.checks import git_conventions, worktree_escape
 from claude_guard.checks.awk import awk_risk
 from claude_guard.deny import Verdict, deny
@@ -198,6 +198,15 @@ def awk_verdict(command: str) -> Verdict | None:
     return Verdict(risk[0], "awk-exec", f"{lead}: {risk[1]}")
 
 
+def bypass_verdict(stdin_text: str, cwd: str, env: Mapping[str, str]) -> Verdict | None:
+    """claude_guard.bypass's deny for a needless sandbox bypass, or None. Never raises."""
+    try:
+        data = json.loads(stdin_text)
+    except ValueError:
+        return None
+    return bypass.verdict(data, cwd, env, decide) if isinstance(data, dict) else None
+
+
 def escape_verdict(command: str, cwd: str) -> Verdict | None:
     """claude_guard.checks.worktree_escape as a Verdict, or None (server#2818). It is a deny
     rule, so it runs inside pre_tool_use's fail-closed try rather than beside it."""
@@ -233,7 +242,8 @@ def pre_tool_use(stdin_text: str, env: Mapping[str, str]) -> str | None:
     worktree-escape check is a deny rule and shares that try, because it is the only one that
     reads the session's cwd. Unparseable
     stdin is no decision (:22-23). The git conventions run beside the deny rules and fail
-    open (conventions()). The read-only classifier runs last and only when nothing else
+    open (conventions()). The needless-bypass check (claude_guard.bypass) runs after them and
+    also fails open. The read-only classifier runs last and only when nothing else
     decided, so it can never outrank a deny or an ask (#628)."""
     try:
         command = read_command(stdin_text)
@@ -249,6 +259,9 @@ def pre_tool_use(stdin_text: str, env: Mapping[str, str]) -> str | None:
     except Exception:
         return ASK_JSON
     verdict = _combine(rules, conventions(command, cwd))
+    # A needless dangerouslyDisableSandbox (claude_guard.bypass). Its own failure contract is
+    # no decision, so it runs outside the deny rules' fail-closed try above.
+    verdict = merge(verdict, bypass_verdict(stdin_text, cwd, env))
     if verdict.kind == "none":
         verdict = readonly(command, cwd, env) or verdict
     return pre_tool_use_json(verdict, nudge_for(command, stdin_text), wait_rewrite(stdin_text))
