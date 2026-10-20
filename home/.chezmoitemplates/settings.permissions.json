@@ -500,9 +500,12 @@
            tool, and with its own glob-to-regex for the sandbox's read deny (2.1.282). Neither
            can say "all but these three". The sandbox compiler escapes `^`, so `[^e]` does not
            negate there, and `[!e]` is a negation only in `ignore`. So the rules spell out the
-           complement with positive classes over printable ASCII. `ignore` matches
-           case-insensitively, so each letter is `[eE]` and each class excludes both cases;
-           with a bare `e`, the class `[ -d]` holds `E` and would match the template's `e`.
+           complement with positive classes over printable ASCII. Both layers match
+           case-insensitively, so each letter is `[eE]` and each class excludes both cases.
+           Seatbelt also misreads a range that crosses from upper to lower case: measured with
+           sandbox-exec, `[F-d]` and `[Z-a]` both match `e`. So each class is built from five
+           bands that never cross a case boundary, ` -@`, `A-Z`, `[-backtick`, `a-z` and `{-~`,
+           each minus the excluded letters.
 
            An `allowRead` exception cannot replace this. The sandbox keeps one only when its
            literal prefix sits under the session's cwd, so none reaches a worktree session,
@@ -516,9 +519,9 @@
 
            The cost is a suffix that leaves a word at a character outside printable ASCII
            (`.env.é…`). tests/settings/settings-env-template-read.test.js pins both sides. */}}
-      {{- $notNext := dict "a" "[ -@B-`b-~]" "e" "[ -DF-df-~]" "l" "[ -KM-km-~]" "m" "[ -LN-ln-~]" "p" "[ -OQ-oq-~]" "t" "[ -SU-su-~]" "x" "[ -WY-wy-~]" }}
+      {{- $notNext := dict "a" "[ -@B-Z[-`b-z{-~]" "e" "[ -@A-DF-Z[-`a-df-z{-~]" "l" "[ -@A-KM-Z[-`a-km-z{-~]" "m" "[ -@A-LN-Z[-`a-ln-z{-~]" "p" "[ -@A-OQ-Z[-`a-oq-z{-~]" "t" "[ -@A-SU-Z[-`a-su-z{-~]" "x" "[ -@A-WY-Z[-`a-wy-z{-~]" }}
       "Read(**/.env.)",
-      "Read(**/.env.[ -DF-RU-df-ru-~]*)",
+      "Read(**/.env.[ -@A-DF-RU-Z[-`a-df-ru-z{-~]*)",
       {{- range $w := list "example" "sample" "template" }}
       {{-   range $i := untilStep 1 (len $w) 1 }}
       {{-     $pre := "" }}{{ range $c := splitList "" (substr 0 $i $w) }}{{ $pre = print $pre "[" $c (upper $c) "]" }}{{ end }}

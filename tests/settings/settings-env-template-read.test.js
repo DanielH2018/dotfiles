@@ -9,10 +9,13 @@
 // below keeps every class positive and free of a leading `!`, which `ignore` reads as a
 // negation.
 //
-// `ignore` builds nearly the same regex but matches case-insensitively. That is why each
-// letter is written `[eE]`: with a plain `e`, the class `[ -d]` would hold `E` and, under the
-// `i` flag, match the `e` of `.env.example`. `denied` runs every name through both flags and
-// requires them to agree. The real evidence is the live check after `chezmoi apply`.
+// Both layers match case-insensitively, which is why each letter is written `[eE]`. `denied`
+// runs every name through both flags and requires them to agree.
+//
+// JS cannot model one Seatbelt fault: measured with sandbox-exec, a range that crosses from
+// upper to lower case (`[F-d]`, `[Z-a]`) matches `e`. The last test pins every range inside
+// one band that crosses no case boundary. The same corpus was run through sandbox-exec
+// against the rendered rules, and the live check after `chezmoi apply` is the final word.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { renderFile, chezmoiAvailable } = require('../lib/render');
@@ -65,9 +68,22 @@ test('every other .env file stays denied', { skip }, () => {
     '.env.test', '.env.prod2', '.env.dev.local', '.env.LOCAL', '.env.e', '.env.exampl',
     '.env.examples', '.env.example.local', '.env.example2', '.env.exbmple', '.env.Exzz',
     '.env.s', '.env.sample2', '.env.samples', '.env.t', '.env.templat', '.env.template.bak',
-    '.env.~', '.env. space', 'sub/dir/.env.local', '.env.local/inner',
+    '.env.~', '.env. space', '.env.{x', '.env.[x', '.env.@', '.env.`x', '.env.z', '.env.Z',
+    '.env.0', 'sub/dir/.env.local', '.env.local/inner',
   ];
   for (const name of names) assert.ok(denied(name), `readable: ${name}`);
+});
+
+test('no class range crosses a case boundary, which Seatbelt misreads', { skip }, () => {
+  const bands = [[' ', '@'], ['A', 'Z'], ['[', '`'], ['a', 'z'], ['{', '~']];
+  for (const g of envDenies()) {
+    for (const cls of g.match(/\[[^\]]*\]/g) || []) {
+      for (const [, from, to] of cls.slice(1, -1).matchAll(/(.)-(.)/g)) {
+        const ok = bands.some(([lo, hi]) => from >= lo && to <= hi);
+        assert.ok(ok, `range ${from}-${to} in ${g} crosses a band`);
+      }
+    }
+  }
 });
 
 test('every character class is positive, so both compilers read it the same way', { skip }, () => {
