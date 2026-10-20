@@ -874,21 +874,27 @@ def _piece_read(piece: str) -> str | None:
     return piece if bdb_re(piece, rf"\b{READERS}\b.*{SECRET_PATHS}") else None
 
 
-def _members_read(text: str, depth: int = 0) -> bool:
-    """Whether some quote-aware member of `text` reads a secret path: a segment, a
-    substitution body, or a heredoc body, read the same way as a SCAN piece. A segment
-    carries its heredoc bodies, as it does in SCAN, so `cat > x.py <<'EOF'` stays a read of
-    whatever the body names: the body is written for a later run, and the command may run
-    it. A body is also parsed in turn, so `bash <<'EOF'` is judged on the commands it runs.
-    Text the parser refuses is matched whole, as SCAN is."""
+def _first_read(text: str) -> str | None:
+    return next((x for x in re.split(r"[;&|]", normalize(text)) if _piece_read(x)), None)
+
+
+def _member_read(text: str, depth: int = 0) -> str | None:
+    """The first piece of a quote-aware member of `text` that reads a secret path, or None.
+    A member is a segment, a substitution body, or a heredoc body, each split and read the
+    same way as SCAN. A segment carries its heredoc bodies, as it does in SCAN, so
+    `cat > x.py <<'EOF'` stays a read of whatever the body names: the body is written for a
+    later run, and the command may run it. A body is also parsed in turn, so `bash <<'EOF'`
+    is judged on the commands it runs. Text the parser refuses is matched whole, as SCAN
+    is."""
     p = parse(text)
     if not p.ok or depth > 4:
-        return any(_piece_read(x) for x in re.split(r"[;&|]", normalize(text)))
+        return _first_read(text)
     segments = ("\n".join((s.text, *s.heredocs)) for s in p.segments)
     for member in [*segments, *p.substitutions]:
-        if any(_piece_read(x) for x in re.split(r"[;&|]", normalize(member))):
-            return True
-    return any(_members_read(body, depth + 1) for s in p.segments for body in s.heredocs)
+        if hit := _first_read(member):
+            return hit
+    bodies = (body for s in p.segments for body in s.heredocs)
+    return next((hit for body in bodies if (hit := _member_read(body, depth + 1))), None)
 
 
 def secret_readers(sc: Scan, target: str) -> Verdict | None:
@@ -902,9 +908,10 @@ def secret_readers(sc: Scan, target: str) -> Verdict | None:
     The readers arm is confirmed the same way as the env-dump arm. SCAN joins lines with a
     space, so `cd "$S" || exit 1` and a jq on the next line share one piece whose head is
     `exit`, and the jq filter is matched as a path. When the parse succeeds, some
-    segment, substitution or heredoc body must read a secret path too (`_members_read`)."""
+    segment, substitution or heredoc body must read a secret path too (`_member_read`),
+    and the denial names what that piece reads."""
     sc = _without_stored_heredocs(sc)
-    confirmed: bool | None = None
+    confirmed: str | None = None
     for piece in re.split(r"[;&|]", sc.scan):
         words = piece.split()
         if not words:
@@ -916,13 +923,14 @@ def secret_readers(sc: Scan, target: str) -> Verdict | None:
             and (not sc.parsed or bdb_re(sc.segset, ENV_DUMP))
         ):
             return Verdict("deny", "env-dump", ENV_DUMP_MSG)
-        read = _piece_read(piece)
-        if read is None:
+        if _piece_read(piece) is None:
             continue
-        if confirmed is None:
-            confirmed = not sc.parsed or _members_read(sc.command)
-        if confirmed:
-            words = _command_words(words)
+        if sc.parsed:
+            if confirmed is None:
+                confirmed = _member_read(sc.command) or ""
+            piece = confirmed
+        if read := _piece_read(piece):
+            words = _command_words(piece.split())
             words = [words[0], *_drop_excludes(words[1:])]
             secrets = _secret_words(read.split()[1:])
             reason = SECRET_READ_MSG + _naming(secrets)

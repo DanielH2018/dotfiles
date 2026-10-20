@@ -778,6 +778,11 @@ def test_a_narrowed_shape_passes_and_a_secret_read_beside_it_does_not(denied, al
     assert (d.deny(denied, "", ENV).kind, d.deny(allowed, "", ENV).kind) == ("deny", "none")
 
 
+def test_a_confirmed_read_names_its_own_words_not_the_joined_lines():
+    reason = d.deny("cd x || exit 1\n{ jq -r '.a.key' f; }\ncat .env", "", ENV).reason
+    assert ("`.env`" in reason, ".a.key" in reason) == (True, False)
+
+
 # dotfiles #802: (denied search, the exclude argument its denial gives, the search rewritten
 # with it). The rewrite is what the agent's retry runs, so it must pass.
 EXCLUDE_ROUND_TRIPS = [
