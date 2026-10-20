@@ -1633,6 +1633,8 @@ SUDO_REFUSE = [
     "uv run python - <<'EOF'\nimport os\nos.system('sudo id')\nEOF",
     "uv run python -c \"import os; os.system('sudo id')\"",
     "python3.11 -c \"import os; os.system('sudo id')\"",
+    "uv run bash -c 'sudo id'",
+    "npx sh -c 'sudo id'",
     "`echo sudo` -n true",
     # other escalators
     "sudoedit /etc/hosts",
@@ -1688,6 +1690,9 @@ SUDO_PASS = [
     "python3 - <<'PYEOF'\nprint('{a, b}')\nPYEOF",
     # a Python dict literal is not a brace expansion either
     "python3 - <<'PY'\nprint({\"a\":[1,2]})\nPY",
+    # a runner that starts no shell, and su inside a container
+    "pytest -k 'sudo and boundary' tests",
+    "docker run --rm alpine sh -c 'adduser -D dev; su dev -c id'",
     "ls -la",
 ]
 

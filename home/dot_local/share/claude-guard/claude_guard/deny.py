@@ -1592,13 +1592,20 @@ def _is_interpreter(name: str) -> bool:
     return name in _INTERPRETERS or re.fullmatch(r"python[0-9.]*", name) is not None
 
 
+# The runners that start a program on this host. docker, kubectl, ssh and hl start it in a
+# container or on another machine, where a sudo or su is not this boundary's: the `remote`
+# rule covers ssh and hl, and access to docker is root on the host already.
+_HOST_RUNNERS = _RUNNERS - {"docker", "kubectl", "ssh", "hl"}
+
+
 def _runs_interpreter(argv: list[str]) -> bool:
     """Whether the command `argv` runs an interpreter: `python3.11`, or one behind a runner
     or executor (`uv run python -`, `env python3 -c …`, `timeout 5 node`)."""
     names = [posixpath.basename(w) for w in argv]
     if _is_interpreter(names[0]):
         return True
-    return (names[0] in _RUNNERS or names[0] in _EXECUTORS) and any(map(_is_interpreter, names[1:]))
+    wrapper = names[0] in _HOST_RUNNERS or names[0] in _EXECUTORS
+    return wrapper and any(map(_is_interpreter, names[1:]))
 
 
 def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool) -> bool:
@@ -1656,7 +1663,13 @@ def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool
                 return True
             continue
         interpreter = _runs_interpreter(argv)
-        if not (interpreter or name in _SHELLS or name in _EXECUTORS):
+        # A runner that starts a shell (`uv run bash -c …`, `npx sh -c …`) passes its argv on
+        # as an executor does. A runner that starts no shell is not searched: `pytest -k
+        # 'sudo and x'` would read as a shell payload.
+        runs_shell = name in _HOST_RUNNERS and any(
+            posixpath.basename(w) in _SHELLS for w in argv[1:]
+        )
+        if not (interpreter or runs_shell or name in _SHELLS or name in _EXECUTORS):
             continue
         rest = argv[1:]
         if name in ("command", "builtin") and rest[:1] in (["-v"], ["-V"], ["-pv"], ["-pV"]):
