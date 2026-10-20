@@ -492,7 +492,42 @@
     "deny": [
       "WebFetch(domain:github.com)",
       "Read(**/.env)",
-      "Read(**/.env.*)",
+      {{- /* Every `.env.<suffix>` except the committed templates `.env.example`, `.env.sample`
+           and `.env.template`, which hold placeholder keys rather than values. Approved
+           2026-10-20. This replaced the single any-depth rule for `.env.*`.
+
+           Claude Code compiles each Read() deny twice: with the `ignore` package for the Read
+           tool, and with its own glob-to-regex for the sandbox's read deny (2.1.282). Neither
+           can say "all but these three". The sandbox compiler escapes `^`, so `[^e]` does not
+           negate there, and `[!e]` is a negation only in `ignore`. So the rules spell out the
+           complement with positive classes over printable ASCII. `ignore` matches
+           case-insensitively, so each letter is `[eE]` and each class excludes both cases;
+           with a bare `e`, the class `[ -d]` holds `E` and would match the template's `e`.
+
+           An `allowRead` exception cannot replace this. The sandbox keeps one only when its
+           literal prefix sits under the session's cwd, so none reaches a worktree session,
+           where 143 of about 150 template reads failed.
+
+           The rules deny:
+           - `.env.` itself, and any suffix whose first character is not e, s or t;
+           - for each template word, every proper prefix (`.env.exa`), and every suffix that
+             leaves the word at some character (`.env.exb…`, `.env.prod2`);
+           - the word followed by anything (`.env.example.local`, `.env.samples`).
+
+           The cost is a suffix that leaves a word at a character outside printable ASCII
+           (`.env.é…`). tests/settings/settings-env-template-read.test.js pins both sides. */}}
+      {{- $notNext := dict "a" "[ -@B-`b-~]" "e" "[ -DF-df-~]" "l" "[ -KM-km-~]" "m" "[ -LN-ln-~]" "p" "[ -OQ-oq-~]" "t" "[ -SU-su-~]" "x" "[ -WY-wy-~]" }}
+      "Read(**/.env.)",
+      "Read(**/.env.[ -DF-RU-df-ru-~]*)",
+      {{- range $w := list "example" "sample" "template" }}
+      {{-   range $i := untilStep 1 (len $w) 1 }}
+      {{-     $pre := "" }}{{ range $c := splitList "" (substr 0 $i $w) }}{{ $pre = print $pre "[" $c (upper $c) "]" }}{{ end }}
+      "Read(**/.env.{{ $pre }})",
+      "Read(**/.env.{{ $pre }}{{ index $notNext (substr $i (int (add $i 1)) $w) }}*)",
+      {{-   end }}
+      {{-   $pre := "" }}{{ range $c := splitList "" $w }}{{ $pre = print $pre "[" $c (upper $c) "]" }}{{ end }}
+      "Read(**/.env.{{ $pre }}?*)",
+      {{- end }}
       "Read(**/*.pem)",
       "Read(**/*.key)",
       "Read(**/*.p12)",
