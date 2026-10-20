@@ -1,0 +1,410 @@
+#!/usr/bin/env python3
+"""ghread — read GitHub through gh without a prompt, and never write to it.
+
+Exists for the same reason as `jsonq` and `otelq`. `gh` is the GitHub path here
+(WebFetch to github.com is denied), and `gh` cannot run in the sandbox: it loses
+the keychain token and macOS TLS trust (settings.base.json has the measurement).
+So every useful call runs unsandboxed, where an allow rule is the only gate, and
+gh's own surface is too wide for a blanket rule: `gh api` takes a method, a
+request body and graphql, and the shell redirect a caller adds to keep a big
+response out of context prompts on its own.
+
+What makes a blanket `Bash(ghread:*)` allow rule defensible is construction, not
+a check on gh's argv. Every subcommand below builds a fixed gh invocation from
+constants and validated values:
+
+  - No caller string is passed through as an argument of its own. A value
+    travels inside one `--flag=value` element, and the one positional (a PR,
+    issue or run selector, or an api path) sits after `--` and must not start
+    with `-`. So no caller text can become a gh flag.
+  - Nothing ever sends `-X`/`--method`, `-f`/`-F`/`--input`, or graphql, so
+    `gh api` stays on its default GET.
+  - `--out` writes only under a scratch root, and refuses a symlink or hard link
+    as the target, so it replaces `> file` without becoming a write primitive.
+
+  ghread pr view 123 -R owner/repo --json title,state
+  ghread pr comments 123 -R owner/repo --kind issue
+  ghread run logs 4567 --failed --out "$TMPDIR/run.log"
+  ghread api repos/owner/repo/pulls --paginate --jq '.[].number'
+  ghread stack view --short
+
+gh's exit status is ghread's exit status. A refusal ghread raises itself exits 2.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+
+PROG = "ghread"
+
+# A selector is a PR or issue number, a branch name, or a github.com URL. The
+# first character class is what keeps a value from ever reading as a flag.
+_SELECTOR = re.compile(
+    r"^(?:[0-9]+"
+    r"|[A-Za-z0-9][A-Za-z0-9._/-]*"
+    r"|https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(?:pull|issues)/[0-9]+)$"
+)
+_NUMBER = re.compile(r"^[0-9]+$")
+_REPO = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-]+$")
+_FIELDS = re.compile(r"^[A-Za-z]+(?:,[A-Za-z]+)*$")
+# An api path: relative or rooted, gh's {owner}/{repo}/{branch} placeholders,
+# and a query string. `:` is allowed because search qualifiers (`q=repo:x`)
+# need it, so build_api refuses `//` separately: gh treats a full URL as the
+# endpoint and would send the token to whatever host it names.
+_API_PATH = re.compile(r"^/?[A-Za-z0-9{][A-Za-z0-9_.~{}/?=&,%:+@-]*$")
+# gh's jq is gojq, which exposes the process environment as `$ENV` and `env`.
+# Nothing else in it reaches outside the response, so these are all it refuses.
+_JQ_ENV = re.compile(r"\$ENV\b|\benv\b|\$__prog_env\b")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+MAX_TEXT = 4096
+MAX_LIMIT = 1000
+
+# Scratch roots for --out. TMPDIR comes from the caller's environment, so it is
+# trusted only when it resolves under one of these; a prefix assignment such as
+# `TMPDIR=$HOME ghread ...` therefore cannot widen where --out may write.
+_FIXED_SCRATCH = ("/tmp", "/private/tmp")
+_TMPDIR_PARENTS = ("/tmp", "/private/tmp", "/private/var/folders")
+
+
+class GhreadError(Exception):
+    """A refusal ghread raises itself, reported without a traceback."""
+
+
+def _within(path: str, root: str) -> bool:
+    return path == root or path.startswith(root.rstrip("/") + "/")
+
+
+def _check(pattern: re.Pattern, value: str, what: str) -> str:
+    if not pattern.match(value):
+        raise GhreadError(f"refusing {what} {value!r}")
+    return value
+
+
+def _text(value: str, what: str) -> str:
+    """A free-text filter value such as a search query or a label name."""
+    if len(value) > MAX_TEXT or _CONTROL.search(value):
+        raise GhreadError(f"refusing {what}: too long or contains a control character")
+    return value
+
+
+def _jq(expr: str) -> str:
+    _text(expr, "--jq")
+    if _JQ_ENV.search(expr):
+        raise GhreadError("refusing --jq that reads the environment ($ENV or env)")
+    return expr
+
+
+def _limit(value: str) -> int:
+    try:
+        n = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a number: {value!r}") from None
+    if not 1 <= n <= MAX_LIMIT:
+        raise argparse.ArgumentTypeError(f"must be 1..{MAX_LIMIT}")
+    return n
+
+
+def scratch_roots() -> list[str]:
+    roots = [os.path.realpath(r) for r in _FIXED_SCRATCH if os.path.isdir(r)]
+    tmpdir = os.environ.get("TMPDIR")
+    if tmpdir:
+        real = os.path.realpath(tmpdir)
+        parents = [os.path.realpath(p) for p in _TMPDIR_PARENTS]
+        if any(_within(real, p) and real != p for p in parents):
+            roots.append(real)
+    return list(dict.fromkeys(roots))
+
+
+def open_out(path: str) -> int:
+    """Open --out for writing, or refuse.
+
+    The parent directory is resolved, so `/tmp` reaching `/private/tmp` through a
+    symlink is fine. The final component is not: O_NOFOLLOW refuses a symlink
+    there. The file is opened without O_TRUNC and truncated only after fstat
+    shows a regular file with one link, because a hard link planted in /tmp to a
+    file under $HOME shares a filesystem with it and would otherwise be written
+    through.
+
+    Returns:
+      An open file descriptor, truncated and ready to receive gh's stdout.
+
+    Raises:
+      GhreadError: the path is outside every scratch root, or is not a plain
+        single-link regular file.
+    """
+    absolute = os.path.abspath(path)
+    name = os.path.basename(absolute)
+    if not name or name in (".", ".."):
+        raise GhreadError(f"--out {path!r} names a directory, not a file")
+    parent = os.path.realpath(os.path.dirname(absolute))
+    target = os.path.join(parent, name)
+    roots = scratch_roots()
+    if not any(_within(parent, r) for r in roots):
+        raise GhreadError(
+            f"--out {path!r} is outside the scratch roots ({', '.join(roots)})"
+        )
+    try:
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    except OSError as exc:
+        raise GhreadError(
+            f"--out {path!r}: {exc.strerror} (symlinks are refused)"
+        ) from None
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+        os.close(fd)
+        raise GhreadError(f"--out {path!r} is not a single-link regular file")
+    os.ftruncate(fd, 0)
+    return fd
+
+
+def _repo_flag(ns) -> list[str]:
+    return [f"--repo={_check(_REPO, ns.repo, '--repo')}"] if ns.repo else []
+
+
+def _json_flags(ns) -> list[str]:
+    out = []
+    if ns.json:
+        out.append(f"--json={_check(_FIELDS, ns.json, '--json')}")
+    if ns.jq:
+        if not ns.json:
+            raise GhreadError("--jq needs --json")
+        out.append(f"--jq={_jq(ns.jq)}")
+    return out
+
+
+def _value_flags(ns, names: tuple[str, ...]) -> list[str]:
+    out = []
+    for name in names:
+        value = getattr(ns, name)
+        if value is not None:
+            out.append(f"--{name}={_text(str(value), '--' + name)}")
+    return out
+
+
+def build_pr(ns) -> list[str]:
+    if ns.verb == "list":
+        return (
+            ["pr", "list"]
+            + _repo_flag(ns)
+            + _value_flags(
+                ns, ("state", "limit", "author", "base", "head", "label", "search")
+            )
+            + _json_flags(ns)
+        )
+    if ns.verb == "comments":
+        number = _check(_NUMBER, ns.selector, "PR number")
+        repo = _check(_REPO, ns.repo, "--repo") if ns.repo else "{owner}/{repo}"
+        kind = "pulls" if ns.kind == "review" else "issues"
+        argv = ["api", "--paginate"]
+        if ns.jq:
+            argv.append(f"--jq={_jq(ns.jq)}")
+        return argv + ["--", f"repos/{repo}/{kind}/{number}/comments"]
+    selector = _check(_SELECTOR, ns.selector, "selector")
+    argv = ["pr", ns.verb] + _repo_flag(ns)
+    if ns.verb == "view":
+        argv += (["--comments"] if ns.comments else []) + _json_flags(ns)
+    elif ns.verb == "checks":
+        argv += (["--required"] if ns.required else []) + _json_flags(ns)
+    elif ns.verb == "diff":
+        argv += ["--color=never"] + (["--name-only"] if ns.name_only else [])
+    return argv + ["--", selector]
+
+
+def build_issue(ns) -> list[str]:
+    if ns.verb == "list":
+        return (
+            ["issue", "list"]
+            + _repo_flag(ns)
+            + _value_flags(
+                ns, ("state", "limit", "author", "assignee", "label", "search")
+            )
+            + _json_flags(ns)
+        )
+    selector = _check(_SELECTOR, ns.selector, "selector")
+    return (
+        ["issue", "view"]
+        + _repo_flag(ns)
+        + (["--comments"] if ns.comments else [])
+        + _json_flags(ns)
+        + ["--", selector]
+    )
+
+
+def build_run(ns) -> list[str]:
+    if ns.verb == "list":
+        return (
+            ["run", "list"]
+            + _repo_flag(ns)
+            + _value_flags(ns, ("branch", "workflow", "status", "limit"))
+            + _json_flags(ns)
+        )
+    run_id = _check(_NUMBER, ns.run_id, "run id")
+    argv = ["run", "view"] + _repo_flag(ns)
+    if ns.job:
+        argv.append(f"--job={_check(_NUMBER, ns.job, '--job')}")
+    if ns.verb == "logs":
+        argv.append("--log-failed" if ns.failed else "--log")
+    else:
+        argv += _json_flags(ns)
+    return argv + ["--", run_id]
+
+
+def build_api(ns) -> list[str]:
+    path = _check(_API_PATH, ns.path, "api path")
+    if "//" in path:
+        raise GhreadError(f"refusing api path {path!r}: a URL, not a path")
+    if "graphql" in path.lower():
+        raise GhreadError("refusing graphql: it carries mutations over the same POST")
+    argv = ["api"]
+    if ns.paginate:
+        argv.append("--paginate")
+    if ns.jq:
+        argv.append(f"--jq={_jq(ns.jq)}")
+    return argv + ["--", path]
+
+
+def build_stack(ns) -> list[str]:
+    return (
+        ["stack", "view"]
+        + (["--json"] if ns.json else [])
+        + (["--short"] if ns.short else [])
+    )
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog=PROG, description="Read GitHub through gh (GET only, fixed invocations)."
+    )
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "--out",
+        metavar="PATH",
+        help="write gh's stdout here; must be under $TMPDIR or /tmp",
+    )
+    repo = argparse.ArgumentParser(add_help=False)
+    repo.add_argument("-R", "--repo", help="OWNER/REPO (default: the cwd's repository)")
+    json_ = argparse.ArgumentParser(add_help=False)
+    json_.add_argument("--json", metavar="FIELDS", help="comma-separated JSON fields")
+    json_.add_argument("--jq", metavar="EXPR", help="filter --json output")
+    listing = argparse.ArgumentParser(add_help=False)
+    listing.add_argument("--state", choices=("open", "closed", "merged", "all"))
+    listing.add_argument("-L", "--limit", type=_limit)
+    listing.add_argument("--author")
+    listing.add_argument("--label")
+    listing.add_argument("--search")
+
+    top = parser.add_subparsers(dest="cmd", required=True)
+
+    pr = top.add_parser("pr", help="pull requests").add_subparsers(
+        dest="verb", required=True
+    )
+    p = pr.add_parser("view", parents=[common, repo, json_])
+    p.add_argument("selector")
+    p.add_argument("--comments", action="store_true")
+    p = pr.add_parser("list", parents=[common, repo, json_, listing])
+    p.add_argument("--base")
+    p.add_argument("--head")
+    p = pr.add_parser("checks", parents=[common, repo, json_])
+    p.add_argument("selector")
+    p.add_argument("--required", action="store_true")
+    p = pr.add_parser("diff", parents=[common, repo])
+    p.add_argument("selector")
+    p.add_argument("--name-only", action="store_true")
+    p = pr.add_parser(
+        "comments",
+        parents=[common, repo],
+        help="review comments (default) or issue comments, via the REST API",
+    )
+    p.add_argument("selector", help="PR number")
+    p.add_argument("--kind", choices=("review", "issue"), default="review")
+    p.add_argument("--jq", metavar="EXPR")
+
+    issue = top.add_parser("issue", help="issues").add_subparsers(
+        dest="verb", required=True
+    )
+    p = issue.add_parser("view", parents=[common, repo, json_])
+    p.add_argument("selector")
+    p.add_argument("--comments", action="store_true")
+    p = issue.add_parser("list", parents=[common, repo, json_, listing])
+    p.add_argument("--assignee")
+
+    run = top.add_parser("run", help="workflow runs").add_subparsers(
+        dest="verb", required=True
+    )
+    p = run.add_parser("list", parents=[common, repo, json_])
+    p.add_argument("-b", "--branch")
+    p.add_argument("-w", "--workflow")
+    p.add_argument("-s", "--status")
+    p.add_argument("-L", "--limit", type=_limit)
+    p = run.add_parser("view", parents=[common, repo, json_])
+    p.add_argument("run_id")
+    p.add_argument("--job")
+    p = run.add_parser("logs", parents=[common, repo], help="gh run view --log")
+    p.add_argument("run_id")
+    p.add_argument("--job")
+    p.add_argument("--failed", action="store_true", help="only the failed steps")
+
+    p = top.add_parser("api", parents=[common], help="GET one REST path")
+    p.add_argument("path")
+    p.add_argument("--paginate", action="store_true")
+    p.add_argument("--jq", metavar="EXPR")
+
+    stack = top.add_parser("stack", help="gh stack").add_subparsers(
+        dest="verb", required=True
+    )
+    p = stack.add_parser("view", parents=[common])
+    p.add_argument("--json", action="store_true")
+    p.add_argument("-s", "--short", action="store_true")
+    return parser
+
+
+BUILDERS = {
+    "pr": build_pr,
+    "issue": build_issue,
+    "run": build_run,
+    "api": build_api,
+    "stack": build_stack,
+}
+
+
+def main(argv: list[str] | None = None) -> int:
+    ns = _parser().parse_args(argv)
+    try:
+        gh_args = BUILDERS[ns.cmd](ns)
+        gh = shutil.which("gh")
+        if gh is None:
+            raise GhreadError("gh is not on PATH")
+        out_fd = open_out(ns.out) if ns.out else None
+    except GhreadError as exc:
+        print(f"{PROG}: {exc}", file=sys.stderr)
+        return 2
+    # gh pages to $PAGER on a terminal and prompts on stdin; neither belongs in
+    # a non-interactive reader.
+    env = {
+        **os.environ,
+        "GH_PAGER": "cat",
+        "GH_PROMPT_DISABLED": "1",
+        "GH_NO_UPDATE_NOTIFIER": "1",
+    }
+    try:
+        return subprocess.run(
+            [gh, *gh_args],
+            stdin=subprocess.DEVNULL,
+            stdout=out_fd,
+            env=env,
+            check=False,
+        ).returncode
+    finally:
+        if out_fd is not None:
+            os.close(out_fd)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

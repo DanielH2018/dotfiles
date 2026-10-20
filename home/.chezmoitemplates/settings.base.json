@@ -1261,7 +1261,11 @@
            outside the sandbox, and gh is not a pure API client — `gh alias set` with a
            shell-escape body, and `gh extension install`, can execute arbitrary code. Neither is
            allowlisted, so both face the classifier rather than running silently. */}}
-      "gh"
+      "gh",
+      {{/* ghread and dockq wrap gh and docker, inherit their reason to be here, and are
+           equally inert today. Unlike gh, neither has an alias or extension surface. */}}
+      "ghread",
+      "dockq"
     ]
   }{{ else }}{ "enabled": false }{{ end }},
   "alwaysThinkingEnabled": true,
