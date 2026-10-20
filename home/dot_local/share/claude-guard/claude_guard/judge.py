@@ -8,8 +8,8 @@ order, with the bash line cited beside it. This is a PORT: PR #477's three rules
 newline judged like `;`, a quoted-delimiter `cat > path` heredoc write (both the
 scratch-root AND the session-cwd confinement arms), and `set -` stripping — are ported
 here, plus D2's removal of the not-compound early return (see the marker at its old site).
-`VAR=` stripping is the one #477 rule deliberately NOT ported — see the DECIDED marker at
-its refusal site in `judge()` below.
+`VAR=` stripping was the one #477 rule deliberately NOT ported; it came back narrowed to an
+allowlist (claude_guard.assignments) — see the DECIDED marker in `judge()` below.
 
 Fix round 1 (finding 3/6/7), F0: `remote.readonly_remote_safe`, `remote.trusted_host_safe`,
 `ansible.ansible_readonly_safe` and `git_reset.clean_reset_safe` are STANDALONE
@@ -26,14 +26,17 @@ allow-compound-bash.sh's own loop, so they stay a `judge_segment` arm alongside 
 
 import os
 import re
+import shlex
 from dataclasses import dataclass
 
+from claude_guard.assignments import prefix_ok, split_assignments, standalone_name_ok
 from claude_guard.checks.ansible import ansible_readonly_safe
 from claude_guard.checks.awk import segment_risk
 from claude_guard.checks.curl import curl_safe
 from claude_guard.checks.git_reset import clean_reset_safe
 from claude_guard.checks.remote import readonly_remote_safe, trusted_host_safe
-from claude_guard.checks.scratch import rm_confined, tokenize
+from claude_guard.checks.remote_guards import git_readonly
+from claude_guard.checks.scratch import rm_confined, tokenize, write_confined
 from claude_guard.checks.worktree_scratch import worktree_restore_safe, worktree_rm_safe
 from claude_guard.rules import Rules
 from claude_guard.segment import parse
@@ -41,6 +44,9 @@ from claude_guard.tables import POSIX_SPACE, WS
 
 # :191. Wrapper commands take another command as an ARGUMENT and exec it.
 WRAPPERS = frozenset({"timeout", "env", "nice", "nohup", "setsid", "stdbuf", "xargs"})
+
+# The operand of `env -u`: a variable name, nothing a shell would expand.
+_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 # H1 (task-8-fix-2-brief.md). A segment whose command word is one of these can move the
 # shell's own working directory for every segment after it in the chain. Tracked only to
@@ -186,18 +192,14 @@ _HEREDOC_CAT_WRITE = re.compile(
     rf"""(?:'[A-Za-z_][A-Za-z0-9_]*'|"[A-Za-z_][A-Za-z0-9_]*")[{WS}]*$"""
 )
 
-# PR #477 (:392-405) read a leading `VAR=value` assignment word with this shape and
-# STRIPPED it before judging the rest of the segment. Fix round (G1, task-8-fix-1-brief.md):
-# that arm is not ported. `_ASSIGNMENT_WORD` is kept only to DETECT the shape, at the
-# refusal site in `judge()` below — see the DECIDED marker there for why.
-_ASSIGNMENT_WORD = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-
 # PR #477 (:415-421). `set -e`, `set -euo pipefail`, `set -o pipefail`: options to the
 # CURRENT shell, not a command of their own. K3 (task-8-fix-4-brief.md): `WS`, not `\s` —
 # narrowing this can only make MORE segments miss the "is this a bare `set -...`" test,
 # which sends them to be judged as an ordinary command word instead of skipped; `set` is
 # not itself allow-listed, so the worst case is an extra refusal, never a new approval.
 _SET_OPTIONS = re.compile(rf"^set[{WS}]+-[A-Za-z]")
+# An `a` anywhere in a short-option cluster: `set -a`, `set -ea`.
+_SET_ALLEXPORT = re.compile(rf"[{WS}][-+][A-Za-z]*a")
 
 
 def heredoc_write_target(text: str) -> str | None:
@@ -274,8 +276,15 @@ def _under_session_cwd(path: str, cwd: str) -> bool:
 
 
 def _is_set_options(part: str) -> bool:
-    """:415-421. True for `set -e`/`set -euo pipefail`/`set -o pipefail`."""
-    return bool(_SET_OPTIONS.match(part))
+    """:415-421. True for `set -e`/`set -euo pipefail`/`set -o pipefail`.
+
+    False for allexport (`set -a`, `-o allexport`), which is then judged as an unlisted
+    command: it exports every later standalone assignment, and the standalone policy in
+    `claude_guard.assignments` rests on those staying out of child environments.
+    """
+    if not _SET_OPTIONS.match(part):
+        return False
+    return not (_SET_ALLEXPORT.search(part) or "allexport" in part)
 
 
 def _changes_cwd(part: str) -> bool:
@@ -308,6 +317,162 @@ def _changes_cwd(part: str) -> bool:
         return True
     target = unwrap_wrapper(part)
     return target is not None and target != part and _basename(_first_word(target)) in _CD_LIKE
+
+
+def _mask_quotes(s: str) -> str:
+    """`s` with every quoted character replaced by `_`, the quotes themselves kept.
+
+    The redirect gate below asks where the shell sees `>`, and a `>` inside quotes is an
+    argument (`grep -E 'a->b'`, `--jq 'select(.a > 1)'`). The mask keeps the length and
+    keeps a quoted span a non-empty, non-blank word, so nothing that was glued stays
+    unglued: `ls >&1'/../../x'` masks to `ls >&1'________'`, which `_FD_DUP` still refuses
+    to strip, because bash reads that word as the write target `1/../../x`. A backslash
+    outside quotes keeps the character after it unmasked, so `\\>` still reads as a
+    redirect — a refusal of a literal `>`, never an approval of a real one.
+    """
+    out: list[str] = []
+    quote = ""
+    i = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if quote:
+            if c == quote:
+                quote = ""
+                out.append(c)
+            elif quote == '"' and c == "\\" and i + 1 < n:
+                out.append("__")
+                i += 2
+                continue
+            else:
+                out.append("_")
+        elif c in "'\"":
+            quote = c
+            out.append(c)
+        elif c == "\\" and i + 1 < n:
+            out.append(s[i : i + 2])
+            i += 2
+            continue
+        else:
+            out.append(c)
+        i += 1
+    return "".join(out)
+
+
+# A write redirect the scratch arm can vet: `>` or `>>`, an optional fd digit, and the word
+# after it. Not `&>`, `<>`, `>|` or `>&word`: the lookbehind and lookahead leave each of them
+# unmatched, so its `>` survives and refuses.
+_WRITE_REDIRECT = re.compile(rf"(?<![&<>])[0-9]*>>?(?![>&|(])[{WS}]*(?P<target>[^{WS}]+)")
+
+# Commands the allow list grants that can put a symlink or a hard link at a path they are
+# handed: `ln` makes one, `cp`/`mv`/`rsync`/`ditto` copy or move one, the archivers extract
+# one, and a git checkout writes a tracked symlink. A scratch redirect is vetted when the
+# command is judged, so a link one of these places at the target later in the same chain
+# (or concurrently, in another pipeline stage) would carry the write wherever it points.
+# `git` counts only outside `remote_guards.git_readonly`, the read-only subcommands. A
+# command the allow list already lets run arbitrary code (`uv run`, `npx`) can write
+# anywhere without this race, so it is not listed.
+LINK_MAKERS = frozenset(
+    {"ln", "cp", "mv", "install", "rsync", "ditto", "tar", "bsdtar", "unzip", "cpio", "pax"}
+)
+
+
+def _makes_links(part: str) -> bool:
+    """True when the command a segment runs is a `LINK_MAKERS` entry or a git mutation."""
+    target = unwrap_wrapper(part) or part
+    word = _basename(_first_word(target))
+    if word in LINK_MAKERS:
+        return True
+    if word != "git":
+        return False
+    try:
+        return not git_readonly(shlex.split(target))
+    except ValueError:
+        return True
+
+
+def _redirects_ok(part: str, roots: tuple[str, ...], scratch_ok: bool) -> tuple[bool, str]:
+    """:293-300, widened. Whether every write redirect in `part` is harmless, and the
+    masked text with the vetted redirects removed.
+
+    Harmless is `/dev/null`, an fd dup, or — when `scratch_ok` — a `>`/`>>` into a scratch
+    root that `write_confined` vets. Every write redirect in the segment is checked, since
+    bash opens (and truncates) each one, not only the last.
+    """
+    rest = _FD_DUP.sub("", _DEVNULL_REDIRECT.sub("", _mask_quotes(part)))
+    if ">" not in rest:
+        return True, rest
+    if not scratch_ok:
+        return False, rest
+    for m in _WRITE_REDIRECT.finditer(rest):
+        if not write_confined(m.group("target"), roots):
+            return False, rest
+    rest = _WRITE_REDIRECT.sub("", rest)
+    return ">" not in rest, rest
+
+
+# :402-428's loop keywords. bash runs a loop's body as ordinary commands, so the judge reads
+# past the keyword and judges what follows it. `for ((` is refused: the `;` inside it is
+# split by the segmenter as if it ended a command.
+_LOOP_FOR = re.compile(rf"^for[{WS}]+(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?P<tail>[{WS}].*)?$")
+_LOOP_IN = re.compile(rf"^[{WS}]+in(?:[{WS}].*)?$")
+_LOOP_COND = re.compile(rf"^(?:while|until)[{WS}]+(?P<cond>.+)$")
+_LOOP_DO = re.compile(rf"^do(?:[{WS}]+(?P<body>.*))?$")
+_LOOP_DONE = re.compile(rf"^done(?P<tail>[{WS}].*)?$")
+# What may follow `done`: redirects of the whole loop, input or output.
+_INPUT_REDIRECT = re.compile(rf"(?<![<])[0-9]*<(?![<(&])[{WS}]*[^{WS}]+")
+
+
+def _loop_command(part: str, roots: tuple[str, ...], scratch_ok: bool) -> tuple[str | None, str]:
+    """The command a loop-keyword segment runs, "" for none, or None to refuse.
+
+    Returns:
+        (command, reason). `command` is `part` itself when the segment opens with no loop
+        keyword. `reason` names the keyword the judge read past, for the census.
+    """
+    m = _LOOP_FOR.match(part)
+    if m:
+        tail = m.group("tail") or ""
+        if not standalone_name_ok(m.group("name")):
+            return None, "loop:for-name"
+        if tail.strip(WS) and not _LOOP_IN.match(tail):
+            return None, "loop:for-shape"
+        # The word list runs nothing — a substitution in it was refused before the segment
+        # loop — but a redirect there would write.
+        if not _redirects_ok(tail, roots, scratch_ok=False)[0]:
+            return None, "loop:for-redirect"
+        return "", "loop:for"
+    if part == "for" or part.startswith(("for((", "for ((")):
+        return None, "loop:for-shape"
+    m = _LOOP_COND.match(part)
+    if m:
+        return m.group("cond"), "loop:cond"
+    m = _LOOP_DO.match(part)
+    if m:
+        return (m.group("body") or "").strip(WS), "loop:do"
+    m = _LOOP_DONE.match(part)
+    if m:
+        ok, rest = _redirects_ok(m.group("tail") or "", roots, scratch_ok)
+        if not ok or _INPUT_REDIRECT.sub("", rest).strip(WS):
+            return None, "loop:done-tail"
+        return "", "loop:done"
+    return part, ""
+
+
+def _bare_command(part: str) -> str:
+    """`part` with a loop keyword and any leading assignments removed: the command it runs,
+    for the `LINK_MAKERS` scan, which must see `ln` behind `do` or `X=1` too."""
+    for pattern, group in ((_LOOP_COND, "cond"), (_LOOP_DO, "body")):
+        m = pattern.match(part)
+        if m:
+            part = (m.group(group) or "").strip(WS)
+            break
+    words = split_assignments(part)
+    return words.rest if words else part
+
+
+# `git -C <path> <rest>`: git runs `<rest>` as if started in `<path>`.
+_GIT_DASH_C = re.compile(rf"^git[{WS}]+-C[{WS}]+(?P<path>[^{WS}]+)[{WS}]+(?P<rest>.+)$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -437,6 +602,21 @@ def unwrap_wrapper(segment: str) -> str | None:
             # assignment and still unwraps normally below. (The loop this replaced could
             # consume several VAR= tokens in a row; refusing on the first means it can
             # never loop more than once, so there is nothing left here to iterate.)
+            #
+            # `-u NAME`, `-uNAME` and `--unset=NAME` are read past: removing a variable from
+            # the environment can only take a setting away, never add a program to run.
+            # Every other option still refuses — `-i` (empty environment), `-S` (splits a
+            # string into a command), `-C` (changes directory) among them.
+            while i < n:
+                tok = t[i]
+                if tok == "-u" and i + 1 < n and _ENV_NAME.fullmatch(t[i + 1]):
+                    i += 2
+                elif (tok.startswith("-u") and _ENV_NAME.fullmatch(tok[2:])) or (
+                    tok.startswith("--unset=") and _ENV_NAME.fullmatch(tok[8:])
+                ):
+                    i += 1
+                else:
+                    break
             if i < n and (t[i].startswith("-") or "=" in t[i]):
                 return None
         elif w == "stdbuf":
@@ -514,8 +694,12 @@ def judge_segment(
     cwd: str,
     cwd_changed: bool,
     project_dir: str = "",
+    scratch_ok: bool = False,
 ) -> tuple[bool, str]:
     """:286-395, one iteration of the loop. (ok, reason).
+
+    `scratch_ok` admits a `>`/`>>` redirect into a scratch root (`_redirects_ok`). `judge()`
+    sets it only when no segment of the chain is a `LINK_MAKERS` command.
 
     `cwd_changed` is H1's gate (task-8-fix-2-brief.md): True when an EARLIER segment in
     the same chain was `cd`/`pushd`/`popd` (`judge()`'s own loop sets it, via
@@ -644,10 +828,13 @@ def judge_segment(
         return False, "heredoc-write:unconfined"
 
     # :293-300. Redirection turns an allow-listed reader into a writer. /dev/null and fd
-    # dups are the harmless cases and are everywhere in diagnostics.
-    redir = _FD_DUP.sub("", _DEVNULL_REDIRECT.sub("", part))
-    if ">" in redir:
+    # dups are the harmless cases and are everywhere in diagnostics; a write into a scratch
+    # root is the third (`_redirects_ok`). The gate reads the quote-masked text, so a `>`
+    # inside quotes is an argument, not a redirect.
+    if not _redirects_ok(part, roots, scratch_ok)[0]:
         return False, "redirect"
+    # The ff-only arm below reads its ref off the unmasked text, as it always has.
+    redir = _FD_DUP.sub("", _DEVNULL_REDIRECT.sub("", part))
 
     # :302-313. tee writes every path it is handed. Judge the command WORD, not a glob
     # over the segment: `tee /usr/bin/tee` must not look harmless.
@@ -692,6 +879,26 @@ def judge_segment(
     # local invocation. After deny, before ask: where allow-safe-curl.sh/allow-safe-rm.sh
     # sit relative to this hook.
     word = _basename(_first_word(part))
+
+    # `git -C <path> <rest>` is `git <rest>` run in `<path>`, so it is judged as exactly
+    # that: every check below, the deny and ask rules included, sees `git <rest>`, and the
+    # cwd-sensitive worktree checks see `<path>` as the cwd. The path must be a plain word.
+    # A relative one after a `cd` resolves against a directory this judge never measured,
+    # so the checks get no cwd at all and refuse what depends on one.
+    dash_c = _GIT_DASH_C.match(part) if word == "git" else None
+    if dash_c:
+        path = dash_c.group("path")
+        if tokenize(path) != [path]:
+            return False, "git-C-unreadable"
+        if path.startswith("/"):
+            git_cwd = path
+        elif cwd and not cwd_changed:
+            git_cwd = os.path.join(cwd, path)
+        else:
+            git_cwd = ""
+        rest = f"git {dash_c.group('rest')}"
+        return judge_segment(rest, rules, roots, git_cwd, cwd_changed, project_dir, scratch_ok)
+
     if word == "curl" and curl_safe(part):
         return True, "curl-check"
     if word == "rm" and rm_confined(part, roots):
@@ -731,6 +938,17 @@ def judge_segment(
     # such as `/usr/bin/env bash --version` becomes unreachable.
     if _allow_listed(rules, part):
         return True, "allow-list"
+
+    # A git read the allow list cannot express as a prefix: `git grep` executes a pager
+    # command under `-O`, so `Bash(git grep:*)` would approve that too. The read-only
+    # classifier's git guard refuses `-O`, `--open-files-in-pager`, `--output` and `-c`,
+    # and admits only its read-only subcommands.
+    if word == "git":
+        try:
+            if git_readonly(shlex.split(part)):
+                return True, "git-readonly-check"
+        except ValueError:
+            pass
 
     # :374-378.
     target = unwrap_wrapper(part)
@@ -884,41 +1102,56 @@ def judge(
     # `cd` segment itself is still judged against its own cwd. Threaded into
     # `judge_segment` to gate the heredoc-write carve-out; see the DECIDED marker there.
     cwd_changed = False
+    # A scratch redirect is vetted against the filesystem as it is now, so it is admitted
+    # only when no segment of the chain can put a link at its target first (LINK_MAKERS).
+    scratch_ok = not any(_makes_links(_bare_command(_trim(seg.text))) for seg in parsed.segments)
+
+    def refuse(i: int, reason: str) -> Decision:
+        reasons.append(reason)
+        return Decision(False, f"segment:{i}:{reason}", tuple(reasons))
+
     for i, seg in enumerate(parsed.segments):
         part = _trim(seg.text)
         if not part:
             continue
+        command, loop_reason = _loop_command(part, roots, scratch_ok)
+        if command is None:
+            return refuse(i, loop_reason)
+        if not command:
+            reasons.append(loop_reason)
+            continue
+        part = command
         # PR #477. A `set -...`/`set -o ...` segment is an option to the CURRENT shell, not
         # a command of its own — it takes no action and earns no allow entry, so it is
         # skipped rather than judged.
         if _is_set_options(part):
             continue
-        # DECIDED (G1, task-8-fix-1-brief.md, fix round 1 on 96da9d4): #477's own leading
-        # `VAR=value` STRIP is not ported, full stop — not narrowed to an allowlist or
-        # denylist of variable names. Three reasons. (1) The deployed
-        # allow-compound-bash.sh being replaced never stripped assignments at all — this
-        # arm came only from the unmerged #477 prototype, so removing it restores exact
-        # parity with the chain this commit retires. (2) An assignment can change what the
-        # REST of the segment executes (`PATH=/tmp ls -la` resolves `ls` from the attacker
-        # path; `LD_PRELOAD=/tmp/x.so git status` loads an arbitrary `.so`;
-        # `GIT_SSH_COMMAND=/tmp/x git fetch origin` execs `/tmp/x` directly) — stripping the
-        # prefix and judging only `ls -la` / `git status` / `git fetch origin` judges a
-        # command the shell never actually runs. `env` is deliberately absent from the
-        # allow list for exactly this reason (SPAWNERS in
-        # tests/settings/settings-permissions-no-spawners.test.js); this rule reintroduced
-        # the identical capability through assignment syntax instead of `env`. (3) No
-        # allowlist of "inert" variable names is enumerable — PATH, LD_PRELOAD,
-        # GIT_SSH_COMMAND, BASH_ENV, GIT_DIR, GIT_CONFIG_GLOBAL, NODE_OPTIONS and
-        # PYTHONPATH all arrived as one evidence list; a denylist only ever protects the
-        # names already measured. A segment carrying a leading assignment therefore gets
-        # its OWN rule label — never silently falls through to `unlisted` — so the census
-        # can tell "declined for an assignment prefix" apart from "declined because
-        # nothing matched," which is what would let a narrow, evidence-based allowlist be
-        # designed later instead of guessed at now.
-        if _ASSIGNMENT_WORD.match(_first_word(part)):
-            reasons.append("assignment")
-            return Decision(False, f"segment:{i}:assignment", tuple(reasons))
-        ok, reason = judge_segment(part, rules, roots, cwd, cwd_changed, project_dir)
+        # DECIDED (G1, task-8-fix-1-brief.md; narrowed 2026-10-20): a leading `VAR=value`
+        # used to refuse outright, because an assignment can change what the REST of the
+        # segment executes (`PATH=/tmp ls -la` resolves `ls` from the attacker path;
+        # `LD_PRELOAD=/tmp/x.so git status` loads an arbitrary `.so`;
+        # `GIT_SSH_COMMAND=/tmp/x git fetch origin` execs `/tmp/x`), and no denylist of
+        # dangerous names is complete. That reasoning stands, and G1 named the way out: a
+        # narrow, evidence-based ALLOWLIST, designed from the census its own rule label made
+        # possible. `claude_guard.assignments` is that allowlist, built from a 14-day
+        # transcript census; its docstring has the two policies (prefix and standalone)
+        # and why each is safe. A literal value is required either way. Anything off the
+        # allowlist still refuses here under the same `assignment` label.
+        words = split_assignments(part)
+        if words is None:
+            return refuse(i, "assignment")
+        if words.assignments:
+            if not words.rest:
+                if not all(standalone_name_ok(a.name) for a in words.assignments):
+                    return refuse(i, "assignment")
+                reasons.append("assignment:standalone")
+                continue
+            if not prefix_ok(words.assignments):
+                return refuse(i, "assignment")
+            if rules.denies(part) or rules.asks(part):
+                return refuse(i, "assignment:deny-or-ask")
+            part = words.rest
+        ok, reason = judge_segment(part, rules, roots, cwd, cwd_changed, project_dir, scratch_ok)
         reasons.append(reason)
         if not ok:
             return Decision(False, f"segment:{i}:{reason}", tuple(reasons))

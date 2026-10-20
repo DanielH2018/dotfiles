@@ -1,5 +1,8 @@
 """tests/hooks/allow-safe-rm.test.js, case for case. HOME is /home/testuser as there."""
 
+import os
+from pathlib import Path
+
 import pytest
 
 from claude_guard.checks import scratch
@@ -107,21 +110,65 @@ def test_tmpdir_can_only_ever_narrow_never_widen():
     assert rm_confined("rm -rf /tmp/x/a", scratch_roots("/home/testuser", "/tmp/x")) is True
 
 
+def test_a_tmpdir_is_a_root_when_it_resolves_under_tmp():
+    # macOS hands TMPDIR over as /private/tmp/..., the real path behind /tmp. Linux has no
+    # such link, so there the same spelling resolves outside /tmp and stays refused.
+    on_macos = os.path.realpath("/tmp") == "/private/tmp"
+    roots = scratch_roots("/home/testuser", "/private/tmp/claude-501/s/")
+    assert ("/private/tmp/claude-501/s" in roots) is on_macos
+
+
+def test_a_tmpdir_that_only_spells_tmp_does_not_move_the_boundary(scratch_dir):
+    assert "/tmp/../home/testuser" not in scratch_roots("/home/testuser", "/tmp/../home/testuser")
+    link = f"{scratch_dir}/home"
+    os.symlink("/etc", link)
+    assert link not in scratch_roots("/home/testuser", link)
+
+
+def test_a_write_into_a_scratch_root_is_confined(scratch_dir):
+    assert scratch.write_confined(f"{scratch_dir}/new.txt", ROOTS) is True
+    Path(scratch_dir, "old.txt").write_text("x")
+    assert scratch.write_confined(f"{scratch_dir}/old.txt", ROOTS) is True
+
+
+def test_a_write_that_a_link_would_carry_elsewhere_is_not_confined(scratch_dir):
+    # A hard link's other name may be anywhere; a second name beside it is enough to show
+    # the link count is what refuses.
+    victim = Path(scratch_dir, "victim")
+    victim.write_text("x")
+    os.symlink("/etc/hosts", f"{scratch_dir}/sym")
+    os.link(victim, f"{scratch_dir}/hard")
+    os.symlink("/etc", f"{scratch_dir}/dir")
+    assert scratch.write_confined(f"{scratch_dir}/sym", ROOTS) is False
+    assert scratch.write_confined(f"{scratch_dir}/hard", ROOTS) is False
+    assert scratch.write_confined(f"{scratch_dir}/dir/new.txt", ROOTS) is False
+
+
+@pytest.mark.parametrize(
+    "target", ["/etc/x", "rel/x.txt", "/tmp/$X/x", "/tmp/a b", "/tmp/nonexistent-dir-9f3/x"]
+)
+def test_a_write_outside_or_unreadable_is_not_confined(target):
+    assert scratch.write_confined(target, ROOTS) is False
+
+
 # The structure block of the node suite, as assertions on the tables rather than on source.
 def test_the_option_tables_stay_closed_allowlists():
     assert frozenset("rRfdvIi") == scratch.BOOL_SHORT
     assert "--no-preserve-root" not in scratch.LONG_OK
-    assert frozenset(
-        {
-            "--recursive",
-            "--force",
-            "--dir",
-            "--verbose",
-            "--interactive",
-            "--one-file-system",
-            "--preserve-root",
-        }
-    ) == scratch.LONG_OK
+    assert (
+        frozenset(
+            {
+                "--recursive",
+                "--force",
+                "--dir",
+                "--verbose",
+                "--interactive",
+                "--one-file-system",
+                "--preserve-root",
+            }
+        )
+        == scratch.LONG_OK
+    )
 
 
 def test_allow_needs_a_confined_operand_not_just_clean_options():

@@ -7,6 +7,9 @@ link, POSIX never traverses a symlink while deleting, and a trailing slash on a 
 operand makes rm refuse rather than follow (allow-safe-rm.sh:20-29).
 """
 
+import os
+import stat
+
 # allow-safe-rm.sh:54-61. -i/-I only add prompts; -v only prints. --preserve-root is the
 # default and is named so writing it explicitly is not a refusal.
 BOOL_SHORT = frozenset("rRfdvIi")
@@ -84,6 +87,37 @@ def under_scratch(path: str, roots: tuple[str, ...]) -> bool:
         return False  # collapsed separators: refuse rather than guess
     # `[[ $p == "$root"/?* ]]`: the root, a slash, and at least one more character.
     return any(p.startswith(root + "/") and len(p) > len(root) + 1 for root in roots)
+
+
+def write_confined(target: str, roots: tuple[str, ...]) -> bool:
+    """True when a `>`/`>>` redirect to `target` writes a plain file inside a scratch root.
+
+    Unlike `under_scratch`, this resolves: the target's parent directory must exist and its
+    real path must sit at or below a root's real path, so a symlinked directory cannot carry
+    the write out, and macOS's `/tmp` -> `/private/tmp` link compares equal on both sides.
+    The target itself must be absent, or a regular file with one link: an existing symlink
+    or a hard link to a file elsewhere would carry the write to that file. Whether a later
+    segment of the same chain can create such a link before the write runs is the caller's
+    question (see `judge.LINK_MAKERS`).
+    """
+    if tokenize(target) != [target] or not target.startswith("/"):
+        return False
+    parent, name = os.path.split(target)
+    if name in ("", ".", ".."):
+        return False
+    real_parent = os.path.realpath(parent)
+    if not os.path.isdir(real_parent):
+        return False
+    real_roots = [os.path.realpath(r) for r in roots]
+    if not any(real_parent == r or real_parent.startswith(r + "/") for r in real_roots):
+        return False
+    try:
+        st = os.lstat(target)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return stat.S_ISREG(st.st_mode) and st.st_nlink == 1
 
 
 def rm_confined(command: str, roots: tuple[str, ...]) -> bool:

@@ -7,6 +7,7 @@ in node.
 """
 
 import json
+import os
 import re
 from pathlib import Path
 
@@ -549,7 +550,7 @@ def test_a_wrapper_whose_options_cannot_be_read_defers(esc):
         judge("echo hi && env -S 'ls -l'", esc, ROOTS, CWD).rule == "segment:1:wrapper-unreadable"
     )
     assert not allowed("echo hi && env -i ls", esc)
-    assert not allowed("echo hi && env -u PATH ls", esc)
+    assert not allowed("echo hi && env -u 'P' ls", esc)
     assert not allowed("echo hi | xargs -e ls", esc)
     assert not allowed("echo hi && timeout ls", esc)
     assert not allowed("echo hi && timeout --unknown-flag 5 ls", esc)
@@ -1231,3 +1232,128 @@ def test_an_unlisted_stage_beside_an_allowed_ssh_stage_still_refuses(main):
 def test_an_untrusted_host_with_a_mutating_payload_gets_no_per_segment_grace(main):
     assert not allowed("ssh 10.0.0.9 docker rm web | tail -1", main)
     assert not allowed("ssh 10.0.0.9 uptime; ssh 10.0.0.9 docker rm web", main)
+
+
+# --- 2026-10-20 transcript replay: safe commands that deferred -------------------------------
+
+
+def test_a_loop_is_judged_by_its_body_and_its_condition(main):
+    assert allowed("for n in 1 2; do echo $n; done", main)
+    assert allowed("for f in a b\ndo\ncat $f\ndone", main)
+    assert allowed("while ls; do echo x; done < list.txt", main)
+    assert judge("for n in 1 2; do frob $n; done", main, ROOTS, CWD).rule == "segment:1:unlisted"
+    assert judge("while frob; do ls; done", main, ROOTS, CWD).rule == "segment:0:unlisted"
+
+
+def test_a_loop_cannot_hide_a_write_or_a_live_variable_name(main):
+    assert not allowed("for n in 1 2; do echo $n; done > /etc/x", main)
+    assert not allowed("for PATH in /tmp; do ls; done", main)
+    assert not allowed("for ((i=0; i<2; i++)); do echo $i; done", main)
+    assert judge("for n in 1; do rm -rf build; done", main, ROOTS, CWD).rule == "segment:1:deny"
+
+
+def test_a_standalone_literal_assignment_outside_the_exported_convention_is_inert(main):
+    assert allowed("SP=/private/tmp/x && ls $SP", main)
+    assert allowed("d=$HOME/src; base=a; ls $d/$base", main)
+
+
+def test_a_standalone_assignment_that_can_reach_a_later_command_refuses(main):
+    # An upper-case name of three or more characters may already be exported, and `PATH`
+    # is: `PATH=/tmp/evil; git status` runs /tmp/evil/git.
+    assert judge("PATH=/tmp/evil; git status", main, ROOTS, CWD).rule == "segment:0:assignment"
+    assert not allowed("VAULT=/x; ls", main)
+    assert not allowed("CC=/tmp/x; ls", main)
+    assert not allowed("S=${x:-y}; ls", main)
+    # allexport exports every later assignment, so it is judged, not skipped.
+    assert judge("set -a; S=1; ls", main, ROOTS, CWD).rule == "segment:0:unlisted"
+
+
+def test_an_allowlisted_literal_prefix_is_read_past(main):
+    assert allowed("NO_COLOR=1 git log -1", main)
+    assert allowed("GIT_EDITOR=true git commit --amend", main)
+    assert judge("TZ=UTC frob", main, ROOTS, CWD).rule == "segment:0:unlisted"
+
+
+def test_a_prefix_off_the_allowlist_or_with_a_live_editor_refuses(main):
+    for command in (
+        "GIT_EDITOR=vim git commit --amend",
+        "LD_PRELOAD=/tmp/x.so git status",
+        "PYTHONPATH=src git status",
+        "NO_COLOR=1 GIT_DIR=/tmp/x git status",
+        "NO_COLOR=1>/etc/x git status",
+    ):
+        assert judge(command, main, ROOTS, CWD).rule == "segment:0:assignment", command
+
+
+def test_env_unset_is_read_past_and_its_other_options_still_refuse(esc):
+    assert allowed("echo hi && env -u FOO ls", esc)
+    assert allowed("echo hi && env -uFOO -u BAR ls", esc)
+    assert allowed("echo hi && env --unset=FOO ls", esc)
+    assert not allowed("echo hi && env -u FOO -i ls", esc)
+    assert not allowed("echo hi && env -u FOO BAR=1 ls", esc)
+
+
+def test_a_quoted_angle_bracket_is_an_argument_not_a_redirect(main):
+    assert allowed("echo 'a->b' && ls", main)
+    assert allowed("jq 'select(.a > 1)' f.json", main)
+    assert allowed('cat "pulumi>=3"', main)
+
+
+def test_masking_quotes_keeps_every_glued_redirect_refused(main):
+    # K2's shape with the glued word quoted: bash still writes `1/../../x`.
+    for command in ("ls >&1'/../../x'", "ls > /dev/null'x'", 'echo x > "/etc/y"', "echo a\\>b"):
+        assert judge(command, main, ROOTS, CWD).rule == "segment:0:redirect", command
+
+
+def test_a_redirect_into_a_scratch_root_is_allowed(main, scratch_dir):
+    assert allowed(f"cat a.json > {scratch_dir}/x.txt", main)
+    assert allowed(f"ls | jq . >> {scratch_dir}/x.json 2>&1", main)
+
+
+def test_a_scratch_redirect_refuses_a_link_or_a_second_unconfined_write(tmp_path, scratch_dir):
+    rules = rules_for(tmp_path, {"allow": ["Bash(echo:*)", "Bash(ln:*)", "Bash(cat:*)"]})
+    os.symlink("/etc/hosts", f"{scratch_dir}/sym")
+    assert not allowed(f"echo hi > {scratch_dir}/sym", rules)
+    # The link is not there when the judge looks, but it is when the write runs.
+    assert not allowed(f"ln -s ~/.zshrc {scratch_dir}/z; echo hi > {scratch_dir}/z", rules)
+    assert not allowed(f"echo hi > {scratch_dir}/a > /etc/b", rules)
+    assert not allowed(f"echo hi &> {scratch_dir}/a", rules)
+
+
+def test_git_dash_c_is_judged_as_the_subcommand_it_runs(main):
+    assert allowed("git -C /home/testuser/repo log -1", main)
+    assert allowed("git -C ../other -C sub status", main)
+    assert judge("git -C /x push origin main", main, ROOTS, CWD).rule == "segment:0:ask"
+    assert judge("git -C $X log", main, ROOTS, CWD).rule == "segment:0:git-C-unreadable"
+
+
+def test_a_git_read_the_allow_list_cannot_express_passes_the_read_only_guard(main):
+    assert judge("git grep -n foo", main, ROOTS, CWD).rule == "allow"
+    assert not allowed("git grep -Oless foo", main)
+    assert not allowed("git grep --open-files-in-pager=vi foo", main)
+    assert not allowed("git -c core.pager=x grep foo", main)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git merge-base HEAD origin/main",
+        "git check-ignore -v foo",
+        "git merge-tree --write-tree main feat",
+        "gh stack view",
+        "lsof -nP -iTCP:8080",
+        "cc-wait --list",
+        "cc-wait gh-ci --pr 3 --budget 1740",
+        "while true; do ls; done",
+    ],
+)
+def test_the_real_template_allows_each_replayed_read(real, command):
+    assert allowed(command, real)
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["gh stack submit", "gh stack link", "cc-wait my-repo-probe", "git merge-tree a b c"],
+)
+def test_the_real_template_keeps_writers_and_repo_code_beside_those_reads_a_prompt(real, command):
+    assert not allowed(command, real)

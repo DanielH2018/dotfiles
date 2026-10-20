@@ -67,6 +67,12 @@
       "Bash(shasum:*)",
       "Bash(md5:*)",
       "Bash(df:*)",
+      {{/* lsof lists open files and sockets and has no option that writes or runs a
+           command (it is in claude_guard.tables.READONLY_BASE for the same reason).
+           `true` is here for `while true; do ...` loops, which the judge reads keyword by
+           keyword. */}}
+      "Bash(lsof:*)",
+      "Bash(true)",
       "Bash(du:*)",
       {{/* `Bash(timeout:*)` was here to stop timeout-wrapped commands prompting (73892e2).
            It cannot stay: timeout's next token IS an arbitrary command, so the prefix rule
@@ -110,6 +116,21 @@
       "Bash(stdio-blocking)",
       {{/* otelq queries the local Loki/Prometheus stack. curl is ask-listed because it takes an arbitrary URL and can write the response to disk; otelq exposes neither — the host is a hardcoded 127.0.0.1 constant, not a flag, the method is always GET, and output only goes to stdout. LogQL/PromQL cannot spawn a process or read a file, so a free-form query argument stays inert. tests/otelq.test.js pins the loopback bases, the absence of any --host/--url/--output flag, and the GET-only construction. */}}
       "Bash(otelq:*)",
+      {{/* CLAUDE.md sends every wait through cc-wait, so a prompt on it is a prompt on
+           every wait. Only the built-in sources are granted: a repo can add its own under
+           `.claude/wait-sources/<name>`, which is that repo's code, and cc-wait refuses a
+           repo probe that reuses a built-in's name, so these names always mean the
+           built-in. The built-ins read files, poll GitHub, systemd or kubectl, and write
+           nothing. `--budget` goes after the source name; claude_guard.waits appends it
+           there. */}}
+      "Bash(cc-wait --list)",
+      "Bash(cc-wait --help)",
+      "Bash(cc-wait file:*)",
+      "Bash(cc-wait exit:*)",
+      "Bash(cc-wait gh-pr:*)",
+      "Bash(cc-wait gh-ci:*)",
+      "Bash(cc-wait systemd:*)",
+      "Bash(cc-wait k8s-rollout:*)",
       {{/* otel-sweep is otelq's question asked of every machine, and it earns the same grant the same way — by absence. ssh is ask-listed because it takes a destination and a command, both arbitrary; otel-sweep exposes neither. The destinations are a three-entry dict of literals and --only validates against that dict, so no argument names a host. The program that runs on each machine is PROBE, one module-level constant delivered on stdin to `python3 -`; nothing is ever interpolated into it or into any argv, so there is no position where caller data becomes a command. subprocess is always given an argv list and never shell=True, so there is no shell to escape. There is no --host, --url, --query or --output flag, every request is a GET, and PROBE writes no files — output is JSON on stdout.
            The weak link is worth naming rather than hiding: on daniel-server Loki is not published on the host, so PROBE resolves the container's bridge address out of `docker inspect` and builds a URL from it. That is the one place remote data selects a network target. It is constrained by construction — the value must match an RFC1918 literal or it is discarded, and the port is a constant — so the reachable set is private addresses on that machine's own docker bridge and nothing else.
            tests/otel-sweep.test.js pins the properties rather than sampling bad inputs: the destination enum, the absence of every redirecting flag, no shell=True or bare eval/exec/compile, PROBE never concatenated or formatted, the ssh argv built from constants with BatchMode=yes, the RFC1918 gate, and that the probe opens no files and sends no request body. If a --host flag or an interpolated command ever lands, this rule comes out in the same commit. */}}
@@ -186,6 +207,16 @@
       "Bash(git reflog:*)",
       "Bash(git cat-file:*)",
       "Bash(git name-rev:*)",
+      {{/* Reads the 2026-10-20 transcript replay found prompting. merge-base and
+           check-ignore only print. `merge-tree --write-tree` writes the merged tree's objects
+           into the object store and moves no ref, so nothing a reader sees changes; the
+           older trivial-merge form is left out because nobody used it. `git grep` is NOT
+           here: `-O<cmd>` runs a command, so a prefix rule would approve that too.
+           claude_guard.judge allows it through remote_guards.git_readonly instead, which
+           refuses `-O`. `git -C <path> <sub>` is judged there as `git <sub>` too. */}}
+      "Bash(git merge-base:*)",
+      "Bash(git check-ignore:*)",
+      "Bash(git merge-tree --write-tree:*)",
       {{/* Branch-level git the reflog recovers. autoMode.allow already calls this routine
            in prose, which the classifier honours — but claude_guard.judge reads Bash()
            prefixes, not prose, so every `cd X && git switch Y` chain prompted anyway (56 of
@@ -253,6 +284,9 @@
       "Bash(gh ruleset list:*)",
       "Bash(gh variable list:*)",
       "Bash(gh org list:*)",
+      {{/* gh-stack's one read verb. `link` and `submit` push branches and open PRs, so
+           only `view` is here. */}}
+      "Bash(gh stack view:*)",
       {{/* Read-only kubectl against the homelab k3s cluster. autoMode.allow states these
            verbs are routine because the default credential is a read-only ServiceAccount —
            the same reasoning, restated as prefixes so claude_guard.judge can act on it.

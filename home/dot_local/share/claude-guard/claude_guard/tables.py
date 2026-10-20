@@ -1,5 +1,6 @@
 """The shared tables. One home for each; a check imports from here and defines none."""
 
+import os
 import re
 
 # K3 (task-8-fix-4-brief.md), the class fix. Bash's own word boundary — after a redirect
@@ -206,8 +207,16 @@ def scratch_roots(home: str, tmpdir: str | None = None) -> tuple[str, ...]:
 
     allow-safe-rm.sh:50-52: TMPDIR is read but only honoured under /tmp, so exporting it
     as a home path cannot move the boundary. One trailing slash is stripped (${TMPDIR%/}).
+
+    "Under /tmp" is decided on the resolved path, not the spelling. macOS sets TMPDIR to
+    `/private/tmp/claude-<uid>/...`, the real path behind its `/tmp` symlink, which the
+    old `startswith("/tmp/")` test refused. Resolving also refuses spellings that only
+    look like /tmp: `/tmp/../Users/x`, and a `/tmp/<link>` pointing into home. On Linux
+    `/private/tmp` is not /tmp, so it resolves outside and stays refused there.
     """
     roots = [home + r[1:] if r.startswith("~/") else r for r in SCRATCH_ROOTS]
-    if tmpdir and tmpdir.startswith("/tmp/"):
-        roots.append(tmpdir.removesuffix("/"))
+    if tmpdir and tmpdir.startswith(("/tmp/", "/private/tmp/")):
+        real_tmp = os.path.realpath("/tmp")
+        if os.path.realpath(tmpdir).startswith(real_tmp + "/"):
+            roots.append(tmpdir.removesuffix("/"))
     return tuple(roots)
