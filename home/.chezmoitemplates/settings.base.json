@@ -1097,6 +1097,27 @@
     },
     "filesystem": {
       "allowWrite": [
+        {{- /* The .git directory of each repo under ~/Repositories, so a session can commit in a
+             repo it was not started in. Claude Code already grants the main repo's .git when the
+             session's cwd is a linked worktree, but not to a subagent pinned to a worktree, nor
+             to a repo the session reaches with `git -C` or `cd`. Those were the
+             `Unable to create '…/index.lock': Operation not permitted` and `cannot lock ref`
+             failures behind most git bypasses.
+
+             Enumerated at render time rather than written as a glob over ~/Repositories, because
+             a glob also matches a linked worktree's `.git` FILE (the `gitdir:` pointer;
+             airflow-wt-proc-3674-t112-trigger-based is one). A writable pointer can be aimed at
+             a planted git dir carrying its own hooks. lstat, not stat, so a symlinked .git is
+             skipped too. The cost: a repo cloned later is not covered until the next apply.
+
+             Granting a git dir is only safe with the denyWrite entries below: they stop a
+             sandboxed process from planting a hook or a config line that git then runs
+             outside the sandbox. */}}
+        {{- range $git := glob (joinPath .chezmoi.homeDir "Repositories/*/.git") }}
+        {{-   if eq (lstat $git).type "dir" }}
+        {{ $git | toJson }},
+        {{-   end }}
+        {{- end }}
         "~/.local/share/chezmoi",
         "~/.claude",
         "~/.gradle",
@@ -1110,6 +1131,34 @@
         "~/work-laptop-config"
       ],
       "denyWrite": [
+        {{- /* Everything inside a writable git dir that git executes or reads as config. Without
+             these a sandboxed process can write .git/hooks/pre-commit, or core.hooksPath into
+             .git/config, and git runs it outside the sandbox at the next commit or push.
+             Measured 2026-10-20 with nothing here: a sandboxed `touch` created a file in the
+             chezmoi repo's .git/hooks-safe (its core.hooksPath), and from a cwd of
+             ~/Repositories the built-in protection left info/attributes, config.worktree, each
+             worktree's commondir and every submodule git dir writable, and let hooks be
+             renamed aside.
+
+             Anchored at each root, never as an any-depth double-star pattern:
+             - A sandbox path with no leading `/` resolves relative to the settings scope, so
+               the unanchored double-star form matched nothing and every probe above went
+               through.
+             - The double-star form behind a leading `/` does match, but it also blocks
+               `git init` and `git clone` in $TMPDIR, which the test suites here do constantly.
+             - Patterns sit directly under .git/, so refs stay writable: a branch named
+               `config-x` or `feature/hooks` lives under refs/heads/ and is not matched.
+
+             hooks* rather than hooks covers the chezmoi repo's hooks-safe. config* covers
+             config.lock and config.worktree. commondir is denied because a writable one
+             points a worktree at a planted git dir; the cost is that `git worktree add` in
+             these repos stays a sandbox bypass (27 runs in all transcripts). Submodules are
+             covered one level deep under .git/modules, not nested. */}}
+        {{- range $root := list "~/Repositories/*" "~/.local/share/chezmoi" "~/work-laptop-config" }}
+        {{-   range $p := list "config*" "hooks*" "info/attributes" "worktrees/*/config*" "worktrees/*/commondir" "modules/*/config*" "modules/*/hooks*" "modules/*/info/attributes" }}
+        "{{ $root }}/.git/{{ $p }}",
+        {{-   end }}
+        {{- end }}
         "~/.ssh",
         "~/.aws",
         "~/.gnupg",
