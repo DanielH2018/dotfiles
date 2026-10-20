@@ -151,7 +151,9 @@ Opt out entirely by setting CLAUDE_WORKTREE_AUTOPRUNE=0 in the environment.
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import select
 import subprocess
 import sys
 import time
@@ -427,6 +429,41 @@ def is_fresh(repo: str, branch: str, now: float | None = None) -> bool:
     return (time.time() if now is None else now) - created < FRESH_GRACE_S
 
 
+def session_dirs(stdin_wait: float = 0.5) -> list[Path]:
+    """Return the directories the session running this hook works in, resolved.
+
+    The hook's own cwd is not enough. The desktop app runs SessionStart hooks from the
+    primary checkout while the session itself starts in its worktree: on 2026-10-20 a
+    session's transcript recorded its cwd as its worktree, the repo-context hook in
+    the same startup read `Branch: main`, and this hook pruned that worktree as not
+    current. Off Linux the process scan is empty, so nothing else stood in the way.
+    The hook input's `cwd` and the hook's own `CLAUDE_PROJECT_DIR` both name the
+    session's directory, so each one counts as current too.
+
+    Args:
+      stdin_wait: Seconds to wait for the hook input. A run by hand has none, and an
+        inherited pipe that never closes must not hang the sweep.
+    """
+    dirs = [Path.cwd()]
+    payload: object = None
+    try:
+        if not sys.stdin.isatty() and select.select([sys.stdin], [], [], stdin_wait)[0]:
+            payload = json.loads(sys.stdin.read() or "null")
+    except (OSError, ValueError):
+        payload = None
+    input_cwd = payload.get("cwd") if isinstance(payload, dict) else None
+    if isinstance(input_cwd, str) and input_cwd:
+        dirs.append(Path(input_cwd))
+        if Path(input_cwd).resolve() != dirs[0].resolve():
+            # The measurement the docstring rests on, kept so a change in where the
+            # app runs hooks shows up in the log rather than as a lost worktree.
+            log(f"event=prune_session_dir hook_cwd={dirs[0]} input_cwd={input_cwd}")
+    project_dir = os.environ.get("CLAUDE_PROJECT_DIR")
+    if project_dir:
+        dirs.append(Path(project_dir))
+    return [d.resolve() for d in dirs]
+
+
 def is_dirty(path: str) -> bool:
     """Does this tree hold uncommitted work? Anything short of a clean answer says yes.
 
@@ -619,7 +656,7 @@ def main() -> int:
     sessions = [t for t in trees[1:] if Path(t.path).parent == sessions_dir]
 
     target = default_ref(repo)
-    here = Path.cwd().resolve()
+    session = session_dirs()
     deadline = time.monotonic() + FORGE_BUDGET_S
 
     def forge_confirms(branch: str, head: str) -> bool:
@@ -661,7 +698,7 @@ def main() -> int:
             and is_contained(repo, tree.branch, target)
         )
         dirty = is_dirty(tree.path)
-        is_current = here == resolved or resolved in here.parents
+        is_current = any(d == resolved or resolved in d.parents for d in session)
         verdict, reason = classify(
             tree,
             merged=merged,

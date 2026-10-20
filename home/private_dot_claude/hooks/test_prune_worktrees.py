@@ -409,6 +409,37 @@ with tempfile.TemporaryDirectory() as tmp:
     check("never removes the worktree it is running in", (trees / "self").exists())
     check("self run exits 0", self_run.returncode == 0)
 
+    # The desktop app runs SessionStart hooks from the primary checkout while the
+    # session starts in its worktree, so the hook's own cwd never names the tree. The
+    # hook input's `cwd` and CLAUDE_PROJECT_DIR do, and either one must keep it.
+    add_landed_tree(repo, trees / "starting", "wt-starting")
+    named = subprocess.run(
+        [sys.executable, str(SCRIPT), "--prune"],
+        cwd=repo,
+        input=json.dumps(
+            {"hook_event_name": "SessionStart", "cwd": str(trees / "starting")}
+        ),
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    check(
+        "keeps the tree the hook input's cwd names, run from the primary checkout",
+        named.returncode == 0 and (trees / "starting").exists(),
+    )
+    subprocess.run(
+        [sys.executable, str(SCRIPT), "--prune"],
+        cwd=repo,
+        input="",
+        capture_output=True,
+        text=True,
+        env={**env, "CLAUDE_PROJECT_DIR": str(trees / "starting")},
+    )
+    check(
+        "keeps the tree CLAUDE_PROJECT_DIR names, run from the primary checkout",
+        (trees / "starting").exists(),
+    )
+
     # A merged, clean, unlocked tree a live process still runs from: the detached
     # land.sh case (dotfiles#755). Skipped where /proc cannot show a cwd.
     if HAVE_PROC:
