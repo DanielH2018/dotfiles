@@ -47,7 +47,13 @@ function fixtureHome() {
 let fsBlock = null;
 function filesystem() {
   if (fsBlock) return fsBlock;
-  const body = fs.readFileSync(TMPL, 'utf8').replace('eq .chezmoi.os "darwin"', 'eq "darwin" "darwin"');
+  // The exact gate text, not a bare `eq .chezmoi.os "darwin"`: an earlier block also tests
+  // for darwin, and replace() rewrites only the first match, which on Linux left the sandbox
+  // block rendering as `{ "enabled": false }`.
+  const gate = 'if eq .chezmoi.os "darwin" }}';
+  const tmpl = fs.readFileSync(TMPL, 'utf8');
+  assert.strictEqual(tmpl.split(gate).length, 2, 'the sandbox gate text appears exactly once');
+  const body = tmpl.replace(gate, 'if eq "darwin" "darwin" }}');
   const out = renderTemplate(body, { env: { ...process.env, HOME: fixtureHome() } });
   fsBlock = JSON.parse(out).sandbox.filesystem;
   return fsBlock;
