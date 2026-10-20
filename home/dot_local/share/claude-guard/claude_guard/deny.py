@@ -622,8 +622,13 @@ def disk_wipe(sc: Scan, target: str) -> Verdict | None:
 # path to a dotenv file puts `/` before the dot (`../.env`). A heredoc body is scanned
 # unless `_without_stored_heredocs` finds it only stored, and a variable that names a
 # credential is `secret_env`'s, since this branch no longer sees either accessor.
+# DECIDED (2026-10-20, approved): the committed templates `.env.example`, `.env.sample` and
+# `.env.template` hold placeholder keys, so the second lookahead exempts exactly those
+# words. It applies only when no further path character follows, so `.env.example.local`,
+# `.env.examples` and `.env.example/x` are still refused. A symlink named like a template
+# is not resolved here; the sandbox resolves it and refuses a read that lands on a `.env`.
 SECRET_PATHS = (
-    r"((?<!process)(?<!\.\.)\.env(?!iron(?:ments?|b)?\b)|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|"
+    r"((?<!process)(?<!\.\.)\.env(?!iron(?:ments?|b)?\b)(?!\.(?:example|sample|template)(?![A-Za-z0-9_./-]))|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|"
     r"\.pypirc|\.npmrc|/secrets/|\.git-credentials|\.kube/config|\.docker/config\.json|"
     r"\.config/gh/hosts\.yml|\.claude/\.credentials\.json|\.claude\.json|/etc/shadow|"
     r"/etc/gshadow|/proc/[^/[:space:]]+/environ|(^|[A-Za-z0-9_~/-])\.(pem|key|p12|pfx)\b)"

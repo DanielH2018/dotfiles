@@ -662,6 +662,38 @@ NAMES_A_SECRET = [
 ]
 
 
+# The committed env templates hold placeholder keys (approved 2026-10-20). Every other
+# dotenv name stays refused, including names that start like a template.
+READS_AN_ENV_TEMPLATE = [
+    "cat .env.example",
+    "cat docker/.env.sample",
+    "head -5 /home/u/repo/.env.template",
+    "grep API_URL .env.example",
+    "cat .env.example .env.sample",
+]
+READS_A_REAL_ENV = [
+    "cat .env",
+    "cat .env.local",
+    "cat .env.production",
+    "cat .env.prod2",
+    "cat .env.example.local",
+    "cat .env.examples",
+    "cat .env.example/inner",
+    "cat .env.sample2",
+    "cat .env.template-prod",
+    "head .env.example .env",
+    "cat .env.example .env.local",
+]
+
+
+def test_reading_a_committed_env_template_is_allowed():
+    assert kinds(READS_AN_ENV_TEMPLATE) == ["none"] * len(READS_AN_ENV_TEMPLATE)
+
+
+def test_reading_any_other_env_file_is_still_refused():
+    assert kinds(READS_A_REAL_ENV) == ["deny"] * len(READS_A_REAL_ENV)
+
+
 def test_naming_the_environment_alone_is_not_a_secret_read():
     assert kinds(NAMES_THE_ENVIRONMENT_ONLY) == ["none"] * len(NAMES_THE_ENVIRONMENT_ONLY)
 
