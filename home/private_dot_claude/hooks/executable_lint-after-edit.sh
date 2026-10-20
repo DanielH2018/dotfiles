@@ -100,6 +100,21 @@ FILE_PATH=$(hook_field '.tool_input.file_path // empty')
 [ -z "$FILE_PATH" ] && exit 0
 [ ! -f "$FILE_PATH" ] && exit 0
 
+# A file under a temp root is a throwaway: a session scratchpad lives at
+# /private/tmp/claude-<uid>/<project>/<session>/scratchpad/, and blocking on a style
+# finding there costs a turn and protects nothing. Both sides are compared resolved,
+# because on macOS /tmp is a symlink to /private/tmp and $TMPDIR is under /var, itself a
+# symlink to /private/var. `pwd -P` rather than `readlink -f`, which BSD readlink lacks.
+# LINT_SKIP_ROOTS (colon-separated) is a seam: the tests write their fixtures under
+# os.tmpdir() and set it empty, which turns the exemption off.
+FILE_DIR=$(cd "$(dirname "$FILE_PATH")" 2>/dev/null && pwd -P) || FILE_DIR=""
+IFS=: read -r -a SKIP_ROOTS <<<"${LINT_SKIP_ROOTS-${TMPDIR:-}:/tmp:/private/tmp}"
+for root in "${SKIP_ROOTS[@]}"; do
+  [[ -n "$root" && -n "$FILE_DIR" ]] || continue
+  root=$(cd "$root" 2>/dev/null && pwd -P) || continue
+  [[ "$FILE_DIR/" == "${root%/}/"* ]] && exit 0
+done
+
 # Per-check bound. 8s/4MB for the interpreted/native checks; 10s for the JVM
 # checks (gradle daemon warm-up headroom — see the *.java/*.kt case). These are
 # initial caps from measured/estimated worst cost, not a tuned percentile — see
@@ -212,8 +227,17 @@ case "$FILE_PATH" in
     # -e SC1091: our hooks `source` helpers by their runtime path (~/.claude/hooks/…) that
     # ShellCheck can't follow statically — an info-level note. Since the hook blocks on any
     # finding, excluding it stops every edit to a sourced script from nagging. Other checks stay.
-    command -v shellcheck >/dev/null && run_check shellcheck "$LINT_TIMEOUT_S" "$LINT_CAP_BYTES" \
-      shellcheck -e SC1091 "$FILE_PATH"
+    # ShellCheck has no zsh dialect: on a zsh shebang it reports only SC1071 ("ShellCheck only
+    # supports sh/bash/dash/ksh"), which is no finding about the file, so such a script is
+    # skipped. Nothing else in the repo lints zsh either.
+    IFS= read -r SHEBANG <"$FILE_PATH" || true
+    case "$SHEBANG" in
+      '#!'*/zsh | '#!'*/zsh[[:space:]]* | '#!'*[[:space:]]zsh | '#!'*[[:space:]]zsh[[:space:]]*) ;;
+      *)
+        command -v shellcheck >/dev/null && run_check shellcheck "$LINT_TIMEOUT_S" "$LINT_CAP_BYTES" \
+          shellcheck -e SC1091 "$FILE_PATH"
+        ;;
+    esac
     ;;
   *.md|*.md.tmpl)
     # .md.tmpl as well as .md: CLAUDE.md.tmpl is the most-edited prose file in the dotfiles

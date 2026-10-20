@@ -32,11 +32,13 @@ const skip = skipUnless('bash', 'jq');
 const skipLintCase = !(have('bash') && have('jq') && have('shellcheck')) ? 'no supported linter installed'
   : skipUnless('bash', 'timeout');
 
+// Every fixture here is written under os.tmpdir(), which the hook skips as a throwaway, so
+// the skip roots are emptied unless a case sets them.
 function runHook(input, env = {}) {
   try {
     return execFileSync('bash', [HOOK], {
       input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, ...env },
+      env: { ...process.env, LINT_SKIP_ROOTS: '', ...env },
     });
   } catch (e) { return e.stdout || ''; }
 }
@@ -80,6 +82,43 @@ test('a very noisy linter run is truncated with a notice, not pasted whole', { s
   // The bound is the cap plus the hook's own framing lines, not a second magic number.
   const lines = reason.split('\n').length;
   assert.ok(lines < MAX_LINES + 20, `reason should be bounded near MAX_LINES=${MAX_LINES}, got ${lines} lines`);
+});
+
+// A session scratchpad sits under /private/tmp, and a style finding on a throwaway there
+// blocked the next turn. The root is given unresolved and the file resolved, so the case
+// also covers macOS, where os.tmpdir() sits under the /var -> /private/var symlink.
+test('a file under a temp root is not linted', { skip: skipLintCase }, () => {
+  const dir = scratch(os.tmpdir(), 'lint-after-edit-');
+  const f = path.join(fs.realpathSync(dir), 'bad.sh');
+  fs.writeFileSync(f, '#!/bin/bash\nfoo=$1\necho $foo\n');
+  const out = runHook(JSON.stringify({ tool_input: { file_path: f } }), {
+    LINT_SKIP_ROOTS: `/nonexistent:${os.tmpdir()}`,
+  });
+  assert.strictEqual(decision(out), null);
+});
+
+// The root is matched as a directory, so a sibling whose name only starts with it is linted.
+test('a directory that only shares a temp root name prefix is still linted', { skip: skipLintCase }, () => {
+  const base = scratch(os.tmpdir(), 'lint-after-edit-');
+  fs.mkdirSync(path.join(base, 'scratch'));
+  fs.mkdirSync(path.join(base, 'scratchpad'));
+  const f = path.join(base, 'scratchpad', 'bad.sh');
+  fs.writeFileSync(f, '#!/bin/bash\nfoo=$1\necho $foo\n');
+  const out = runHook(JSON.stringify({ tool_input: { file_path: f } }), {
+    LINT_SKIP_ROOTS: path.join(base, 'scratch'),
+  });
+  assert.strictEqual(decision(out), 'block');
+});
+
+// ShellCheck has no zsh dialect and answers a zsh shebang with SC1071 alone.
+test('a zsh script is not handed to shellcheck', { skip: skipLintCase }, () => {
+  const dir = scratch(os.tmpdir(), 'lint-after-edit-');
+  for (const shebang of ['#!/bin/zsh', '#!/usr/bin/env zsh', '#!/bin/zsh -f']) {
+    const f = path.join(dir, 'z.sh');
+    fs.writeFileSync(f, `${shebang}\nfoo=$1\necho $foo\n`);
+    const out = runHook(JSON.stringify({ tool_input: { file_path: f } }));
+    assert.strictEqual(decision(out), null, shebang);
+  }
 });
 
 test('unsupported file type is a no-op', { skip }, () => {
