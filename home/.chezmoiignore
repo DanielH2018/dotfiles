@@ -286,19 +286,31 @@ Scripts
 #                               shadow the very forward its telemetry travels through.
 #   daniel-pi                   out of telemetry altogether (settings.base.json), so it has
 #                               nothing to export and no reason to carry a stack.
+#   MacBook-Pro-2 (work Mac)    the org's managed settings point every Claude Code session
+#                               there at Lithic's collector, so a local stack receives
+#                               nothing. Removed 2026-10-20; see "The org override on the
+#                               work Mac" in claude-otel/README.md. Ignoring leaves an
+#                               already-deployed ~/claude-otel on disk, unmanaged, which is
+#                               deliberate: deleting it is the operator's call. This gate
+#                               is by hostname, and macOS can rename a machine on a name
+#                               conflict. A rename only redeploys these inert files; the
+#                               telemetry env that matters is gated on the OS in
+#                               settings.base.json, which a rename cannot reopen.
 #
 # otelq is deliberately NOT ignored. It tries the node-local hostPort first and falls back to
 # the cluster ClusterIPs (executable_otelq:59-61), so a query from daniel-box or daniel-server
 # actually reaches that stack's Loki and Prometheus rather than querying an empty localhost —
 # and the shape of the server stacks is changing anyway, so the fallback earns its keep.
-{{ if has .chezmoi.hostname (list "daniel-server" "daniel-box" "daniel-desktop" "daniel-pi") }}
+{{ if has .chezmoi.hostname (list "daniel-server" "daniel-box" "daniel-desktop" "daniel-pi" "MacBook-Pro-2") }}
 claude-otel
 {{ end }}
 
 # ensure-up.sh is the macOS launcher for that stack: the com.daniel.claude-otel launchd agent
 # (scheduled/com.daniel.claude-otel.plist.tmpl) runs it to start the stack once Docker
 # Desktop answers. Its PATH names Docker.app, and the Linux hosts that keep the stack start it
-# by hand (see claude-otel/README.md), so it deploys nowhere else.
+# by hand (see claude-otel/README.md), so it deploys nowhere else. The only Mac this repo
+# deploys to is the work Mac, which the claude-otel gate above already excludes, so today
+# this deploys nowhere; it stays for a Mac that runs its own collector.
 {{ if ne .chezmoi.os "darwin" }}
 claude-otel/ensure-up.sh
 {{ end }}

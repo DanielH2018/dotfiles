@@ -67,6 +67,13 @@ exporting".
 | daniel-box | k3s, `observability` ns | 127.0.0.1 hostPort, else the ClusterIP |
 | daniel-server | the same cluster, same namespace | 127.0.0.1 hostPort, else the ClusterIP |
 
+"This PC" means a Linux workstation. **The work Mac (`MacBook-Pro-2`) has no Loki,
+Prometheus or Tempo.** Its claude-otel stack was removed on 2026-10-20, because the org's
+managed settings send every session's telemetry to Lithic's collector and the local
+collector received nothing. There `otelq` reports every backend unreachable, and that is the
+expected state rather than a fault. To review that machine's sessions, read the session
+transcripts under `~/.claude/projects` instead.
+
 **Which cluster node holds the query backends is not fixed.** Loki, Prometheus and Tempo are
 single-replica Deployments with no `nodeSelector`. They publish their query ports on a
 `hostPort` bound to `127.0.0.1`, so whichever node they land on is the only node whose

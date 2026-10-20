@@ -55,7 +55,9 @@ const ignored = (agent) => parse(renderTemplate(BOX + fs.readFileSync(IGNORE, 'u
 // As `chezmoi managed` sees this host, unpinned.
 const ignoredHere = () => parse(renderFile(IGNORE, { data: { agent: false, profile: 'server', work: false } }));
 
-const settings = (agent) => JSON.parse(renderTemplate('{{ includeTemplate "settings.base.json" . }}',
+// Pinned to daniel-box like the renders above: the telemetry env the owner check reads is off
+// on darwin, so an unpinned render on the work Mac has no OTEL_RESOURCE_ATTRIBUTES to find.
+const settings = (agent) => JSON.parse(renderTemplate(`${BOX}{{ includeTemplate "settings.base.json" . }}`,
   { data: { agent, profile: 'server', work: false } }));
 
 const onBox = (file, agent) => renderTemplate(

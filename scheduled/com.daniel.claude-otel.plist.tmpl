@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
+  Not active on any machine. The work Mac (MacBook-Pro-2) was its only user, and its stack
+  was removed on 2026-10-20: the org's managed settings send that machine's telemetry to
+  Lithic's collector, so a local stack receives nothing. .chezmoiignore no longer deploys
+  ~/claude-otel there. Kept as the definition for a Mac that runs its own collector.
+
   Definition only. This file is outside `home/`, so chezmoi never deploys it. launchd reads
   a plist only at bootstrap, so an auto-deployed copy would let `chezmoi apply` rewrite the
   file while the loaded job kept the old definition. The script it runs,

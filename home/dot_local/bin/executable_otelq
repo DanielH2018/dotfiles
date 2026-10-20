@@ -27,6 +27,11 @@ node, so it answers wherever the pod landed.
   otelq labels --name service_name
   otelq ready
 
+The work Mac has no Loki, Prometheus or Tempo to query: its claude-otel stack was
+removed on 2026-10-20 because the org's managed settings send every session's
+telemetry to Lithic's collector. Every query there reports "unreachable"; the
+session transcripts under ~/.claude/projects are the record to read instead.
+
 Output is JSON on stdout so it composes with jsonq. `--rows` renders the common
 "value<TAB>labels" shape instead, which is what most ad-hoc queries wanted.
 """
@@ -66,6 +71,15 @@ TEMPO_BASES = ("http://127.0.0.1:3200", "http://10.43.4.147:3200")
 LOKI = LOKI_BASES[0]
 PROM = PROM_BASES[0]
 TEMPO = TEMPO_BASES[0]
+
+# Appended to every "unreachable" error. The work Mac (MacBook-Pro-2) runs no
+# stack at all since 2026-10-20 -- the org's managed settings send its telemetry to
+# Lithic's collector -- so there the answer is never `docker ps`. A session on that
+# machine reads the session transcripts under ~/.claude/projects instead.
+UNREACHABLE_HINT = (
+    "— is the stack up? `docker ps`"
+    " (the work Mac has no stack: read the transcripts under ~/.claude/projects)"
+)
 
 # How long to wait for a candidate to accept a connection. Deliberately short:
 # both candidates are on-LAN or loopback, and this cost is paid on every
@@ -247,13 +261,13 @@ def _get(base, path, params, timeout):
         raise OtelqError(f"{base}{path}: HTTP {exc.code} {detail}") from None
     except urllib.error.URLError as exc:
         raise OtelqError(
-            f"{base} unreachable ({exc.reason}) — is the stack up? `docker ps`"
+            f"{base} unreachable ({exc.reason}) {UNREACHABLE_HINT}"
         ) from None
     except TimeoutError:
         raise OtelqError(f"{base}{path}: timed out after {timeout}s") from None
     except _HANGUP as exc:
         raise OtelqError(
-            f"{base} unreachable ({exc}) — is the stack up? `docker ps`"
+            f"{base} unreachable ({exc}) {UNREACHABLE_HINT}"
         ) from None
 
     if len(body) > MAX_OUTPUT_BYTES:

@@ -46,26 +46,13 @@ delegates to an external provider it expects to find at
 podman-compose is the wrong choice here — it mishandles the
 `depends_on: service_completed_successfully` that `tempo-init` relies on.
 
-On the **work Mac** (`MacBook-Pro-2`) the engine is Docker Desktop, and a launchd agent
-starts the stack, so nothing has to be typed after a reboot. The agent
-`com.daniel.claude-otel` runs `~/claude-otel/ensure-up.sh` at load and again whenever
-`~/.docker/run/docker.sock` changes. The script waits up to two minutes for `docker info`
-to answer, then runs `docker compose up -d`. chezmoi deploys the script on darwin only.
-The plist is not deployed: it lives in the repo's `scheduled/` directory like every other
-launchd job, and its header carries the activate, deactivate and reload commands.
-
-- After editing `ensure-up.sh`, run `chezmoi apply ~/claude-otel`, then restart the job
-  with `launchctl kickstart -k gui/$(id -u)/com.daniel.claude-otel`. A running launchd
-  job keeps executing the script version it started with, and launchd does not rerun it
-  on its own until the socket changes.
-- After editing the plist, kickstart is not enough. launchd read the plist at bootstrap,
-  so bootout, re-render and bootstrap it as the plist header shows.
-- To check the agent, run `launchctl print gui/$(id -u)/com.daniel.claude-otel` and read
-  `~/claude-otel/launchd.log`, which takes the script's output and `docker info`'s stderr.
-
-The agent was down from 2026-08-04 to 2026-10-20. launchd's PATH has no `docker`, so
-every run logged `command not found: docker`, and the agent sat renamed to `.disabled`.
-The script now exports a PATH that includes Docker Desktop's bundled CLI.
+The **work Mac** (`MacBook-Pro-2`) runs no stack. The org's managed settings send every
+Claude Code session there to Lithic's collector, so a local stack received nothing, and it
+was removed on 2026-10-20. See "The org override on the work Mac" below.
+`.chezmoiignore` keeps `~/claude-otel` off that host. The launchd agent that used to start
+the stack, `com.daniel.claude-otel`, is booted out. Its plist stays in the repo's
+`scheduled/` directory, and `ensure-up.sh` stays in the source tree, for a Mac that runs its
+own collector.
 
 ```bash
 cd ~/claude-otel
@@ -83,19 +70,20 @@ Then open **http://localhost:3000** → dashboard **“Claude Code — Usage & O
 
 The exporter env lives in the chezmoi base template
 `home/.chezmoitemplates/settings.base.json`, gated as
-`{{ if ne .chezmoi.hostname "daniel-pi" }}` — **on everywhere except daniel-pi**. It is
+`{{ if and (ne .chezmoi.hostname "daniel-pi") (ne .chezmoi.os "darwin") }}` — **on
+everywhere except daniel-pi and the work Mac**. It is
 written as an exclusion so a newly onboarded machine reports from day one instead of
 waiting for someone to remember to add it; being outside the gate is silent by design, no
 telemetry and no error.
 
-Every host exports to `localhost:4317` and every host keeps its own data — nothing leaves
+Every host in the gate exports to `localhost:4317` and keeps its own data — nothing leaves
 the box that produced it. What differs is **who is listening on 4317**, which is a property
 of the machine, not of this repo:
 
 | Host | Collector on `:4317` | Runs this stack? |
 |---|---|---|
 | `fedora`, `daniel-wsl` | its own `claude-otel` | **yes** — `docker compose up -d` |
-| `MacBook-Pro-2` (work Mac) | its own `claude-otel`, but see the org override below | **yes** — the launchd agent starts it |
+| `MacBook-Pro-2` (work Mac) | none: the org override sends its telemetry to Lithic's collector | **no** — org override; no local stack |
 | `daniel-desktop` | `daniel-wsl`'s, via WSL2 localhost forwarding | no |
 | `daniel-server`, `daniel-box` | the one their existing observability stack already runs | **no — see below** |
 | `daniel-pi` | — | no, and no exporter env either |
@@ -133,9 +121,9 @@ What a 2026-10-20 check found:
   sets `CLAUDE_CODE_ENABLE_TELEMETRY`, `OTEL_EXPORTER_OTLP_ENDPOINT`,
   `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_METRICS_EXPORTER`
   and `OTEL_METRICS_INCLUDE_SESSION_ID`. Managed settings outrank the user `env` block
-  key by key, so the endpoint is the org's. Keys the org does not set still come from
-  `settings.base.json`; the darwin note there records `session_id` reaching the org's
-  Prometheus that way.
+  key by key, so the endpoint is the org's. Keys the org does not set used to come
+  from `settings.base.json` and ride along to Lithic's collector; `session_id` reached
+  the org's Prometheus that way before the org set it.
 - That file is not specific to the desktop app. It sits in `~/.claude`, so it applies
   to every Claude Code session on this machine, CLI included. So the expectation that
   the local stack still receives CLI sessions is unverified, and probably wrong: no CLI
@@ -148,9 +136,13 @@ What a 2026-10-20 check found:
 - `/Library/Application Support/ClaudeCode/managed-settings.json` does not exist on this
   machine, so the remote settings are the only managed tier.
 
-To make this stack receive the Mac's telemetry, the org override has to go, and the
-content-logging gate in `settings.base.json` has to be revisited with it. Changing this
-repo alone cannot redirect a key the org sets.
+Changing this repo alone cannot redirect a key the org sets, so on 2026-10-20 the Mac's
+stack was removed rather than fought for. The same day, `settings.base.json` stopped
+setting any telemetry key on darwin. The org's keys are the only telemetry config on that
+machine, and nothing from this repo adds a logs or traces exporter, a content flag, or a
+metrics option to what Lithic's collector receives. If the org override is ever removed,
+the Mac sends no telemetry at all until the darwin gate in `settings.base.json` and the
+`.chezmoiignore` entry are revisited together.
 
 To repeat the check, list key names only. `OTEL_EXPORTER_OTLP_HEADERS` can hold a token:
 

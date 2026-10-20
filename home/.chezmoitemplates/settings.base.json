@@ -193,14 +193,14 @@
            otelq logs 'sum(count_over_time({service_name="claude-code"}
              | event_name="api_request" | query_source="prompt_suggestion" [1h]))' --rows */}}
     "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION": "0",
-    "CTS_REMOTE_ROOTS": "~/server"{{ if ne .chezmoi.hostname "daniel-pi" }},
-    {{/* Telemetry is on everywhere except daniel-pi, and the exclusion is deliberately
+    "CTS_REMOTE_ROOTS": "~/server"{{ if and (ne .chezmoi.hostname "daniel-pi") (ne .chezmoi.os "darwin") }},
+    {{/* Telemetry is on everywhere except daniel-pi and darwin, and the exclusion is deliberately
          written as one rather than as a list of the machines that have it: a new host
          should start reporting the day it is onboarded, not the day someone remembers
          to add it here. The old inclusion list is why daniel-server had no telemetry —
          nothing was broken, it had simply never been added.
 
-         Every host exports to localhost:4317 and every host keeps its own data. What
+         Every host in the gate exports to localhost:4317 and keeps its own data. What
          differs is who is listening there, and that is a property of the machine rather
          than of this file:
 
@@ -217,6 +217,27 @@
          daniel-pi is out because the stack is five containers with 90d/31d/30d retention,
          which is not what that machine is for. Being absent from the gate is silent by
          design — no telemetry and no error.
+
+         darwin is out because it is the work laptop (MacBook-Pro-2), and there this file
+         does not own telemetry. ~/.claude/remote-settings.json is pushed by the org and sets
+         CLAUDE_CODE_ENABLE_TELEMETRY, the OTLP endpoint, protocol and headers,
+         OTEL_METRICS_EXPORTER and OTEL_METRICS_INCLUDE_SESSION_ID for every Claude Code
+         session on the machine. Managed settings win key by key, and the env is a merge,
+         not a replacement: any key the org does not set still comes from here and rides
+         along to Lithic's shared collector. That is how session_id first reached their
+         Prometheus (SRE-4745). A logs or traces exporter set here would ship events and
+         spans into a pipeline the company was told is metrics-only, and the interval,
+         temporality and entrypoint keys below would reshape the org's metrics. So the
+         whole block stays off and the org's keys are the only telemetry config on that
+         machine. With no override, the Mac fails closed: no telemetry at all.
+
+         Gated on the OS rather than the hostname because a hostname gate fails open: macOS
+         renames a machine on a name conflict (the "-2" in MacBook-Pro-2 is one), and the
+         keys would come back under the new name. The Mac's own claude-otel stack is gone
+         for the same reason (decided 2026-10-20) — the org endpoint meant it received
+         nothing; see "The org override on the work Mac" in home/claude-otel/README.md.
+         If that override is ever removed and the Mac gets a collector back, revisit this
+         gate together with the content flags at the bottom of the block.
 
          A server's collector still has to route what it now receives; that is its own
          config, not this repo's. Until something listens on 4317 the exporter just
@@ -236,7 +257,8 @@
          api_request cost_usd over just 24h, a ~5x undercount. Cumulative is the
          source-side fix documented at code.claude.com/docs/en/monitoring-usage. */}}
     "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE": "cumulative",
-    {{/* session_id MUST stay on. Without it every concurrent Claude Code process
+    {{/* session_id MUST stay on wherever this block renders (on darwin the org sets it,
+         see above). Without it every concurrent Claude Code process
          collapses into one Prometheus series, and the collector's prometheus exporter
          is last-writer-wins per label set — so cumulative counters (tokens, cost,
          sessions, active_time) stop accumulating. Measured with it off: 7549 api_request
@@ -262,7 +284,7 @@
          small closed set, unlike session_id. The sibling OTEL_METRICS_INCLUDE_VERSION is
          deliberately left off: the collector's resource_to_telemetry_conversion already
          puts service_version on every series, so it would only duplicate a label. */}}
-    "OTEL_METRICS_INCLUDE_ENTRYPOINT": "true"{{ if ne .chezmoi.os "darwin" }},
+    "OTEL_METRICS_INCLUDE_ENTRYPOINT": "true",
     {{/* Content logging, on deliberately. Default-off redacts prompts and responses to
          "<REDACTED>" and drops tool arguments and output, which leaves the logs able to
          say a turn was expensive but never what it was doing. Safe here and only here:
@@ -274,23 +296,19 @@
          call, which re-serialises the full system prompt and conversation history each
          turn, for content already captured by the four vars below.
 
-         Off on darwin — that is the work laptop, and it is the one host where the
-         "reports to nobody" premise above is false. ~/.claude/remote-settings.json is
-         pushed by the org and overrides OTEL_EXPORTER_OTLP_ENDPOINT to Lithic's shared
-         collector (otel-collector-public…pwpinfra.com:4318). The env is a merge, not a
-         replacement: keys the org does not define still come from this file, which is
-         why session_id reached their Prometheus while their own metrics lacked it
-         (SRE-4745). These four would reach it the same way. The announcement of that
-         collector states plainly that prompts, code content, and tool inputs/outputs
-         are never exported — so leaving them on ships exactly the payload the whole
-         company was told is not collected, into a Loki that has nowhere to put it (no
-         claude-code streams exist in any Lithic Loki datasource; the pipeline is
-         metrics-only). Verified 2026-08-12. If the Mac ever gets its own collector back
-         and the org override is gone, this gate is the thing to revisit. */}}
+         Never on darwin, which the gate at the top of this block already excludes. The
+         work laptop is the one host where the "reports to nobody" premise above is
+         false: the org's endpoint takes these four the same way it took session_id. The
+         announcement of Lithic's collector states plainly that prompts, code content, and
+         tool inputs/outputs are never exported, so these would ship exactly the payload
+         the whole company was told is not collected, into a pipeline that is
+         metrics-only (no claude-code streams in any Lithic Loki datasource; verified
+         2026-08-12). These four had their own darwin gate until 2026-10-20, when the whole
+         block moved off darwin; do not loosen the outer gate without restoring it. */}}
     "OTEL_LOG_USER_PROMPTS": "1",
     "OTEL_LOG_ASSISTANT_RESPONSES": "1",
     "OTEL_LOG_TOOL_DETAILS": "1",
-    "OTEL_LOG_TOOL_CONTENT": "1"{{ end }}{{ end }}{{ if eq .chezmoi.hostname "daniel-server" }},
+    "OTEL_LOG_TOOL_CONTENT": "1"{{ end }}{{ if eq .chezmoi.hostname "daniel-server" }},
     {{/* serve-artifacts.sh binds this port and link-artifact.sh writes it into the
          emitted URL, so both ends move together. It has to differ from the 8181
          default because daniel-server is reached over plain ssh from a workstation
