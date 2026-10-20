@@ -39,10 +39,29 @@ deny() {
   exit 0
 }
 
+is_env_template_name() {
+  case "${1##*/}" in
+    .env.example|.env.sample|.env.template) return 0 ;;
+  esac
+  return 1
+}
+
+# The committed templates `.env.example`, `.env.sample` and `.env.template` hold placeholder
+# keys, not values, so a Read of one is allowed (approved 2026-10-20). Read only: an Edit
+# or Write still reaches the deny, as Edit(**/.env.*) does in settings. The resolved path
+# must be a template too, so a symlink named `.env.example` that points at a real `.env`
+# is still refused. A path that does not resolve has nothing behind it to read.
+is_env_template_read() {
+  [[ "$(hook_field '.tool_name // empty')" == "Read" ]] || return 1
+  is_env_template_name "$FILE_PATH" || return 1
+  local real
+  real=$(realpath "$FILE_PATH" 2>/dev/null) || return 0
+  is_env_template_name "$real"
+}
+
+# The .env arm sits last, so a template under ~/.ssh/ or a secrets/ directory is refused
+# by that arm before the template exception is ever considered.
 case "$FILE_PATH" in
-  .env|*/.env|.env.*|*/.env.*)
-    deny "Blocked: .env files may contain secrets. Ask the user to share the specific value needed."
-    ;;
   */.ssh/*|*/id_rsa*|*/id_ed25519*|*/id_ecdsa*)
     deny "Blocked: SSH keys are never safe to read or modify automatically."
     ;;
@@ -88,6 +107,10 @@ case "$FILE_PATH" in
     ;;
   /proc/*/environ)
     deny "Blocked: /proc/<pid>/environ exposes another process's exported secrets."
+    ;;
+  .env|*/.env|.env.*|*/.env.*)
+    is_env_template_read ||
+      deny "Blocked: .env files may contain secrets. Ask the user to share the specific value needed."
     ;;
 esac
 

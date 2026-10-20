@@ -232,6 +232,47 @@ test('every SECRET_PATHS entry in the deny gate is covered by this one', { skip 
   }
 });
 
+// The committed env templates hold placeholder keys (approved 2026-10-20): a Read of one
+// is allowed. Every other dotenv name, any write to a template, and a template under a
+// directory another arm guards stay denied.
+const ENV_TEMPLATES = ['/home/u/repo/.env.example', '/home/u/repo/docker/.env.sample', '.env.template'];
+const ENV_SECRETS = ['/home/u/repo/.env', '/home/u/repo/.env.local', '/home/u/repo/.env.production',
+  '/home/u/repo/.env.prod2', '/home/u/repo/.env.example.local', '/home/u/repo/.env.examples',
+  '/home/u/repo/.env.EXAMPLE'];
+
+test('reading a committed env template is allowed', { skip }, () => {
+  for (const p of ENV_TEMPLATES) assert.strictEqual(decision(runHookAs('Read', p)), null, `Read should allow: ${p}`);
+});
+
+test('reading any other env file is still denied', { skip }, () => {
+  for (const p of ENV_SECRETS) assert.strictEqual(decision(runHookAs('Read', p)), 'deny', `Read should deny: ${p}`);
+});
+
+test('writing an env template is still denied', { skip }, () => {
+  for (const tool of ['Edit', 'Write', 'NotebookEdit']) {
+    for (const p of ENV_TEMPLATES) assert.strictEqual(decision(runHookAs(tool, p)), 'deny', `${tool} should deny: ${p}`);
+  }
+});
+
+test('an env template under a guarded directory is denied by that directory', { skip }, () => {
+  for (const p of ['/home/u/.ssh/.env.example', '/srv/secrets/.env.example']) {
+    assert.strictEqual(decision(runHookAs('Read', p)), 'deny', `Read should deny: ${p}`);
+  }
+});
+
+test('a template-named symlink that resolves to a real env file is denied', { skip }, () => {
+  const dir = scratch(os.tmpdir(), 'env-link-');
+  try {
+    fs.writeFileSync(`${dir}/.env`, 'DUMMY=1\n');
+    fs.symlinkSync(`${dir}/.env`, `${dir}/.env.example`);
+    assert.strictEqual(decision(runHookAs('Read', `${dir}/.env.example`)), 'deny');
+    fs.writeFileSync(`${dir}/.env.sample`, 'DUMMY=\n');
+    assert.strictEqual(decision(runHookAs('Read', `${dir}/.env.sample`)), null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // Every decision here is routed through jq, so a PATH without jq used to make the hook
 // exit 0 with empty stdout — the secret-file layer gone, and nothing saying so. Run the
 // hook with an empty PATH (the preflight needs only shell builtins) and require a
