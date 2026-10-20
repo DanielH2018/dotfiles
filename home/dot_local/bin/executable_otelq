@@ -34,6 +34,7 @@ Output is JSON on stdout so it composes with jsonq. `--rows` renders the common
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import re
@@ -213,6 +214,14 @@ def resolve_bases(timeout=RESOLVE_TIMEOUT):
     return resolved
 
 
+# A connection that is accepted and then dropped. Docker's port proxy does this while
+# the container behind it is down: the TCP connect succeeds, so urllib never wraps the
+# failure in URLError, and getresponse() raises RemoteDisconnected (an HTTPException
+# and a ConnectionResetError) or read() raises IncompleteRead. Caught after URLError
+# and TimeoutError, both of which are also OSErrors.
+_HANGUP = (http.client.HTTPException, ConnectionError)
+
+
 class OtelqError(Exception):
     """A refusal we raise ourselves — reported without a traceback."""
 
@@ -242,6 +251,10 @@ def _get(base, path, params, timeout):
         ) from None
     except TimeoutError:
         raise OtelqError(f"{base}{path}: timed out after {timeout}s") from None
+    except _HANGUP as exc:
+        raise OtelqError(
+            f"{base} unreachable ({exc}) — is the stack up? `docker ps`"
+        ) from None
 
     if len(body) > MAX_OUTPUT_BYTES:
         raise OtelqError(
@@ -322,7 +335,7 @@ def cmd_ready(ns, now):
         except urllib.error.HTTPError as exc:
             out[name] = {"code": exc.code,
                          "body": exc.read(200).decode("utf-8", "replace").strip()}
-        except (urllib.error.URLError, TimeoutError) as exc:
+        except (urllib.error.URLError, TimeoutError, *_HANGUP) as exc:
             out[name] = {"code": None, "body": f"unreachable: {exc}"}
     return out
 

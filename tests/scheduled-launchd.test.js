@@ -120,6 +120,13 @@ test('every program a definition runs exists in this repo', { skip }, () => {
         assert.ok(fs.existsSync(src),
           `${name} runs ~/${rel}, which nothing in this repo deploys (looked for ${src})`);
       }
+      // ~/claude-otel/ensure-up.sh is deployed from home/claude-otel/executable_ensure-up.sh.
+      const otel = rel.match(/^claude-otel\/([^/]+)$/);
+      if (otel) {
+        const src = srcPath('claude-otel', `executable_${otel[1]}`);
+        assert.ok(fs.existsSync(src),
+          `${name} runs ~/${rel}, which nothing in this repo deploys (looked for ${src})`);
+      }
       // Anything else (~/.claude/scheduled/run-skill.sh comes from work-laptop-config) is
       // out of this repo's reach and is documented as such in the plist's own header.
     }

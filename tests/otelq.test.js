@@ -99,6 +99,28 @@ elif verb == "rotated":
     print(json.dumps(m._rotated_into_window(sys.argv[2], float(sys.argv[3]))))
 elif verb == "readrecs":
     print(json.dumps(m._read_jsonl(sys.argv[2], sys.argv[4], int(sys.argv[3]))))
+elif verb == "hangup":
+    # A listener that reads each request and closes without answering, which is what
+    # Docker's port proxy does while the container behind it is down.
+    import socket, threading, types
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen()
+    def serve():
+        while True:
+            conn, _ = srv.accept()
+            conn.recv(4096)
+            conn.close()
+    threading.Thread(target=serve, daemon=True).start()
+    base = "http://127.0.0.1:%d" % srv.getsockname()[1]
+    m.LOKI = m.PROM = m.TEMPO = base
+    ready = m.cmd_ready(types.SimpleNamespace(timeout=2), 0)
+    try:
+        m._get(base, "/loki/api/v1/labels", {}, 2)
+        got = "returned"
+    except m.OtelqError as e:
+        got = str(e)
+    print(json.dumps({"ready": ready, "get": got}))
 `);
 
 function otelq(args, input, env) {
@@ -309,6 +331,18 @@ test('reports an unreachable backend as a refusal, not a crash', { skip }, () =>
   // Ports are fixed, so this asserts the error path's shape via the message the
   // URLError branch produces; a live stack makes it a no-op.
   assert.match(SRC, /unreachable.*docker ps/, 'unreachable path should hint at the stack');
+});
+
+// Docker's port proxy accepts the connection while the container behind it is down, then
+// closes it unanswered. urllib raises that as http.client.RemoteDisconnected, which is not
+// a URLError, so it escaped both handlers as a traceback.
+test('a backend that hangs up is reported as unreachable, not a traceback', { skip }, () => {
+  const out = JSON.parse(drive(['hangup']));
+  for (const name of ['loki', 'prometheus', 'tempo']) {
+    assert.strictEqual(out.ready[name].code, null, `${name} should have no HTTP status`);
+    assert.match(out.ready[name].body, /^unreachable: /, name);
+  }
+  assert.match(out.get, /unreachable .*docker ps/);
 });
 
 // ---------------------------------------------------------------------------

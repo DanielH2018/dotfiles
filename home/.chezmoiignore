@@ -295,6 +295,14 @@ Scripts
 claude-otel
 {{ end }}
 
+# ensure-up.sh is the macOS launcher for that stack: the com.daniel.claude-otel launchd agent
+# (scheduled/com.daniel.claude-otel.plist.tmpl) runs it to start the stack once Docker
+# Desktop answers. Its PATH names Docker.app, and the Linux hosts that keep the stack start it
+# by hand (see claude-otel/README.md), so it deploys nowhere else.
+{{ if ne .chezmoi.os "darwin" }}
+claude-otel/ensure-up.sh
+{{ end }}
+
 # Warp tab configs split into two kinds, and only one kind is personal. The general machinery
 # — settings.toml, keybindings.yaml, the Catppuccin theme, `local · shell` (which is also
 # `default_tab_config_path`, so it has to exist everywhere), `local · chezmoi`, `local · vault`,

@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Definition only. This file is outside `home/`, so chezmoi never deploys it. launchd reads
+  a plist only at bootstrap, so an auto-deployed copy would let `chezmoi apply` rewrite the
+  file while the loaded job kept the old definition. The script it runs,
+  ~/claude-otel/ensure-up.sh, IS deployed by chezmoi (home/claude-otel/executable_ensure-up.sh,
+  darwin only).
+
+  What it does: on a Mac running Docker Desktop, runs ensure-up.sh at load and whenever
+  ~/.docker/run/docker.sock changes, which is how Docker Desktop starting announces itself.
+  The script waits for `docker info` to answer, then runs `docker compose up -d` on
+  ~/claude-otel. See home/claude-otel/README.md for the stack itself.
+
+  A TEMPLATE, so activation renders it rather than symlinking it. launchd expands neither
+  $HOME nor ~ anywhere in a plist, and ProgramArguments, WatchPaths and the log paths all
+  have to be absolute.
+
+  Activate:
+
+    chezmoi execute-template \
+            < ~/.local/share/chezmoi/scheduled/com.daniel.claude-otel.plist.tmpl \
+            > ~/Library/LaunchAgents/com.daniel.claude-otel.plist
+    launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.daniel.claude-otel.plist
+
+  Deactivate:
+
+    launchctl bootout "gui/$(id -u)/com.daniel.claude-otel"
+    rm ~/Library/LaunchAgents/com.daniel.claude-otel.plist
+
+  The stack keeps running after a deactivate. Only the restart after Docker Desktop
+  restarts is lost; `docker compose -f ~/claude-otel/docker-compose.yml up -d` by hand still
+  works.
+
+  Reload after editing THIS file (bootout, re-render, bootstrap):
+
+    launchctl bootout "gui/$(id -u)/com.daniel.claude-otel"
+    chezmoi execute-template \
+            < ~/.local/share/chezmoi/scheduled/com.daniel.claude-otel.plist.tmpl \
+            > ~/Library/LaunchAgents/com.daniel.claude-otel.plist
+    launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.daniel.claude-otel.plist
+
+  After editing only ensure-up.sh, `chezmoi apply ~/claude-otel` and then restart the job.
+  A running job keeps executing the script it started with:
+
+    launchctl kickstart -k "gui/$(id -u)/com.daniel.claude-otel"
+
+  Check it:
+
+    launchctl print "gui/$(id -u)/com.daniel.claude-otel"
+    tail ~/claude-otel/launchd.log
+
+  The label is com.daniel.claude-otel with a hyphen, not com.daniel.claude.otel. The
+  catch-up agent in work-laptop-config replays every com.daniel.claude.*.plist it finds in
+  ~/Library/LaunchAgents, and this job has no schedule for it to replay.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.daniel.claude-otel</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{ .chezmoi.homeDir }}/claude-otel/ensure-up.sh</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>WatchPaths</key>
+  <array>
+    <string>{{ .chezmoi.homeDir }}/.docker/run/docker.sock</string>
+  </array>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>{{ .chezmoi.homeDir }}/claude-otel/launchd.log</string>
+  <key>StandardErrorPath</key><string>{{ .chezmoi.homeDir }}/claude-otel/launchd.log</string>
+</dict>
+</plist>
