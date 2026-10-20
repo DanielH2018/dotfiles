@@ -26,6 +26,14 @@ from cc_wait.source import COULD_NOT_WAIT, Source, SourceError
 DEFAULT_BUDGET_S = 570.0
 BUDGET_ENV = "CC_WAIT_BUDGET"
 HELP_FLAGS = ("-h", "--help")
+# A source's own help lists only its own arguments, so `cc-wait <source> --help` adds the bound
+# every source shares. Without it a caller reads `file`'s help, finds no timeout, and guesses one.
+BUDGET_HELP = (
+    "cc-wait's own option, for every source:\n"
+    "  --budget S     wait at most S seconds (default 570, or $CC_WAIT_BUDGET), then exit 75\n"
+    "                 with the command that resumes the wait"
+)
+TIMEOUT_FLAGS = ("--timeout",)
 
 
 def split_budget(argv: list[str]) -> tuple[float | None, list[str]]:
@@ -108,10 +116,16 @@ def main(argv: list[str] | None = None, out=None, cwd: Path | None = None, env=N
         # unknown argument; and a probe gets `<probe> --describe --help`, which an argparse
         # probe answers with its help and exit 0, so cc-wait refuses that as non-JSON.
         if len(rest) > 1 and rest[-1] in HELP_FLAGS:
-            print(source.help(), file=out)
+            print(f"{source.help()}\n\n{BUDGET_HELP}", file=out)
             return 0
         bound = source.bind(rest[1:])
     except SourceError as exc:
+        # `--budget` is the timeout. A second flag for it would need either the same exit 75,
+        # making it a synonym, or its own code, splitting "the bound elapsed" in two. So a
+        # `--timeout` the source refused gets pointed at `--budget` instead. A probe that takes
+        # its own `--timeout` never raises here, so it never sees the hint.
+        if any(arg.partition("=")[0] in TIMEOUT_FLAGS for arg in rest[1:]):
+            exc = SourceError(f"{exc}\ncc-wait bounds every wait with --budget S, which exits 75")
         print(f"WAIT: error {exc}", file=out, flush=True)
         return COULD_NOT_WAIT
     resume = shlex.join(["cc-wait", *argv])

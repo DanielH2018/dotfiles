@@ -44,6 +44,21 @@ def test_a_trailing_help_prints_the_built_in_s_option_help(tmp_path):
         assert out.getvalue().startswith(f"usage: cc-wait {name}")
 
 
+def test_a_source_s_help_names_the_budget_every_source_shares(tmp_path):
+    out = io.StringIO()
+    assert cli.main(["file", "--help"], out=out, cwd=tmp_path, env={}) == 0
+    assert "--budget S     wait at most S seconds" in out.getvalue()
+
+
+def test_a_timeout_the_source_refuses_is_pointed_at_budget(tmp_path):
+    for flag in (["--timeout", "300"], ["--timeout=300"]):
+        out = io.StringIO()
+        argv = ["file", str(tmp_path / "x.log"), "--pid", "1", *flag]
+        assert cli.main(argv, out=out, cwd=tmp_path, env={}) == 2
+        assert "unrecognized arguments: --timeout" in out.getvalue()
+        assert "cc-wait bounds every wait with --budget S, which exits 75" in out.getvalue()
+
+
 def test_a_file_wait_ends_when_the_line_is_written(tmp_path):
     log = tmp_path / "land.log"
     log.write_text("merging\n")

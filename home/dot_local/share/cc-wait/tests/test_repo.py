@@ -78,7 +78,8 @@ def test_a_trailing_help_prints_the_probe_s_own_help(repo):
     for argv in (["land", "--help"], ["land", "3501", "-h"]):
         code, lines = run(repo, *argv)
         assert code == 0
-        assert lines == ["usage: land [-h] pr", "  pr  the PR to wait on"]
+        assert lines[:2] == ["usage: land [-h] pr", "  pr  the PR to wait on"]
+        assert lines[3] == "cc-wait's own option, for every source:"
 
 
 def test_a_probe_whose_help_fails_is_refused_with_its_whole_stderr(repo):
