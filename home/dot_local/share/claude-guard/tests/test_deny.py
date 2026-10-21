@@ -1576,6 +1576,11 @@ SUDO_EXECUTOR_VARIABLE = [
     "env uv run $X",
     "timeout 5 npx $X",
     "uv run timeout 5 $X",
+    # npm runs the value of -c / --call as a shell command line, behind an executor too
+    'npm exec -c "$X"',
+    "npx --call='$X -n true'",
+    'env npx -c "$X"',
+    "find . -exec npx -c \"$X\" ';'",
     # a short-option cluster whose last letter takes a value takes the next word with it
     "strace -fo LOG $X",
     "timeout -vs KILL 5 $X",
@@ -1735,6 +1740,14 @@ SUDO_REFUSE = [
     "python3.11 -c \"import os; os.system('sudo id')\"",
     "uv run bash -c 'sudo id'",
     "npx sh -c 'sudo id'",
+    # npm runs the value of -c / --call as a shell command line, where even the allowed line
+    # is nested and refused
+    "npx -c 'sudo -n true'",
+    "npm exec --call 'doas id'",
+    "npx --call='sudo id'",
+    "npx -yc 'sudo -n true'",
+    f"npx -c 'sudo -n {W}'",
+    "uv run npx -c 'sudo id'",
     "`echo sudo` -n true",
     # other escalators
     "sudoedit /etc/hosts",
@@ -1823,6 +1836,10 @@ SUDO_PASS = [
     'npx eslint "$F"',
     'npx -p "$PKG" eslint .',
     'pnpm exec tsc -p "$P"',
+    "npx -c 'eslint .'",
+    "npm exec -c 'eslint \"$F\"'",
+    "npm exec -- eslint -c cfg.json",
+    "npx eslint -c 'sudo and x'",
     'strace -o "$LOG" ls',
     'strace -fo "$LOG" ls',
     'xargs -0I {} cp {} "$DEST"',

@@ -1684,8 +1684,11 @@ _UV_TAKES = _takes(
     "--build-constraints --overrides --torch-backend"
 )  # fmt: skip
 _NPM_TAKES = _takes(
-    "-p --package -w --workspace --prefix --userconfig --registry --cache --loglevel"
+    "-p --package -w --workspace --prefix --userconfig --registry --cache --loglevel -c --call"
 )
+# The npm runner options whose value is a shell command line that npm runs in place of a
+# command word: `npx -c 'eslint .'`, `npm exec --call='tsc -b'`.
+_NPM_PAYLOAD_OPTIONS = ("-c", "--call")
 _PNPM_TAKES = _takes(
     "-C --dir -F --filter --workspace-concurrency --reporter --resume-from --package --allow-build"
 )
@@ -1694,7 +1697,7 @@ _BUN_TAKES = _takes("-p --package")
 # with the options that take a separate value. The options before a subcommand are skipped
 # with the same table, so `uv -q run` and `pnpm -C dir exec` match too. The uv and npm tables
 # come from their `--help`; pnpm, yarn and bun are not installed here, so theirs come from
-# their docs. `npx -c` takes a command line, which this table reads as an option value only.
+# their docs. The value of `npx -c` is a command line, which `_runner_payloads` parses as shell.
 _RUNNER_ARGS: dict[tuple[str, ...], dict[str, int]] = {
     ("uv", "run"): _UV_TAKES,
     ("uv", "tool", "run"): _UV_TAKES,
@@ -1801,44 +1804,65 @@ def _names_by_expansion(word: str) -> bool:
     return any(c in name for c in "$`") and " " not in name
 
 
-def _past_options(argv: list[str], i: int, takes: dict[str, int]) -> int:
+def _past_options(
+    argv: list[str],
+    i: int,
+    takes: dict[str, int],
+    values: dict[str, list[str]] | None = None,
+) -> int:
     """The index of the first word from `i` on that is neither an option nor an option's
     value, past a `--` that ends the options.
 
     A short-option cluster is read left to right as getopt reads it: in `-fo FILE` the `o`
     takes a value and is the last letter, so FILE is its value, while in `-oL` the `L` is.
+    When `values` is given, each one-word value skipped is appended under its option: FILE
+    under `-o`, and the `v` of `--opt=v` under `--opt`.
     """
     while i < len(argv) and argv[i].startswith("-") and len(argv[i]) > 1:
         word = argv[i]
         i += 1
         if word == "--":
             break
+        option = None
         if word in takes:
-            i += takes[word]
-        elif not word.startswith("--"):
+            option = word
+        elif word.startswith("--"):
+            name, eq, value = word.partition("=")
+            if eq and values is not None:
+                values.setdefault(name, []).append(value)
+        else:
             for j, letter in enumerate(word[1:], 2):
                 if f"-{letter}" in takes:
                     if j == len(word):
-                        i += takes[f"-{letter}"]
+                        option = f"-{letter}"
                     break
+        if option is not None:
+            if values is not None and takes[option] == 1 and i < len(argv):
+                values.setdefault(option, []).append(argv[i])
+            i += takes[option]
     return i
 
 
-def _runner_command(argv: list[str]) -> int | None:
+def _runner_command(argv: list[str], values: dict[str, list[str]] | None = None) -> int | None:
     """The index of the word the runner `argv` runs as its command (`uv run --with foo X`),
-    or None when `argv` starts no runner mode that execs a program."""
+    or None when `argv` starts no runner mode that execs a program. `values` collects the
+    runner's option values as `_past_options` does."""
     head = posixpath.basename(argv[0])
     for prefix, takes in _RUNNER_ARGS.items():
         if prefix[0] != head:
             continue
         i = 1
+        seen: dict[str, list[str]] = {}
         for word in prefix[1:]:
-            i = _past_options(argv, i, takes)
+            i = _past_options(argv, i, takes, seen)
             if i >= len(argv) or argv[i] != word:
                 break
             i += 1
         else:
-            return _past_options(argv, i, takes)
+            i = _past_options(argv, i, takes, seen)
+            if values is not None:
+                values.update(seen)
+            return i
     return None
 
 
@@ -1853,23 +1877,45 @@ def _executor_command(argv: list[str]) -> int:
     return i + plain
 
 
+def _command_tails(argv: list[str]) -> list[list[str]]:
+    """The commands the executor or runner `argv` runs, each from its command word on:
+    `env X a` runs `X a`, and `find . -exec X {} +` runs `X {} +`. Empty when `argv` is
+    neither."""
+    name = posixpath.basename(argv[0])
+    runner = _runner_command(argv)
+    if name == "find":
+        return [argv[i + 1 :] for i, w in enumerate(argv) if w in _FIND_EXEC]
+    if runner is not None:
+        return [argv[runner:]]
+    if name in _EXECUTOR_ARGS:
+        return [argv[_executor_command(argv) :]]
+    return []
+
+
 def _runs_variable(argv: list[str]) -> bool:
     """Whether the executor or runner chain `argv` runs a command only an expansion names:
     `env $X`, `timeout 5 nice "$X"`, `find . -exec $X {} +`, `uv run --with foo "$X"`. An
     expansion in an option value, a leading plain argument or the command's own arguments
     names nothing, so `timeout "$T" git log "$REV"`, `find . -name "$P"` and `uv run pytest
     -k "$K"` run no variable."""
-    name = posixpath.basename(argv[0])
-    runner = _runner_command(argv)
-    if name == "find":
-        tails = [argv[i + 1 :] for i, w in enumerate(argv) if w in _FIND_EXEC]
-    elif runner is not None:
-        tails = [argv[runner:]]
-    elif name in _EXECUTOR_ARGS:
-        tails = [argv[_executor_command(argv) :]]
-    else:
-        return False
-    return any(tail and (_names_by_expansion(tail[0]) or _runs_variable(tail)) for tail in tails)
+    return any(
+        tail and (_names_by_expansion(tail[0]) or _runs_variable(tail))
+        for tail in _command_tails(argv)
+    )
+
+
+def _runner_payloads(argv: list[str]) -> list[str]:
+    """The shell command lines an npm runner in the chain `argv` runs from `-c` or `--call`:
+    `npx -c 'eslint .'`, `env npm exec --call="$X"`. npm hands that value to a shell, so it
+    has a command position of its own, which the runner's command word does not show."""
+    values: dict[str, list[str]] = {}
+    found: list[str] = []
+    if posixpath.basename(argv[0]) in ("npx", "npm") and _runner_command(argv, values) is not None:
+        found = [v for option in _NPM_PAYLOAD_OPTIONS for v in values.get(option, [])]
+    for tail in _command_tails(argv):
+        if tail:
+            found += _runner_payloads(tail)
+    return found
 
 
 def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool) -> int:
@@ -1938,6 +1984,10 @@ def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool
         # every word is searched for an escalator, so `uv run pytest -k sudo` would be refused.
         if _runner_command(argv) is not None and _runs_variable(argv):
             found = max(found, _SUDO_VARIABLE)
+        for payload in _runner_payloads(argv):
+            found = max(found, _sudo_text(payload, depth + 1, True))
+            if found == _SUDO_ESCALATES:
+                return found
         if not (interpreter or runs_shell or name in _SHELLS or name in _EXECUTORS):
             continue
         rest = argv[1:]
