@@ -303,6 +303,19 @@ export function isSafeUrl(url) {
 }
 
 /**
+ * The repository page a repo header links to, built from one of its PRs' URLs rather than a
+ * hard-coded `https://github.com` so a GitHub Enterprise host keeps working. Null when that
+ * URL fails {@link isSafeUrl}, so the header renders its name without a link.
+ * @param {string} prUrl Any PR's `url` in the repository.
+ * @param {string} repo The repository's `nameWithOwner`.
+ * @returns {string | null}
+ */
+export function repoUrl(prUrl, repo) {
+  if (!isSafeUrl(prUrl)) return null;
+  return `${new URL(prUrl).origin}/${repo}`;
+}
+
+/**
  * @typedef {object} StoredView
  * @property {Axis} axis
  * @property {Sort} sort

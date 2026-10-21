@@ -20,6 +20,7 @@ import {
   parsePrsBody,
   emptyStateMessage,
   isSafeUrl,
+  repoUrl,
   loadStoredView,
   saveStoredView,
   clearStoredView,
@@ -364,10 +365,8 @@ function addStackBadges(row, node) {
 }
 
 /**
- * The `▾`/`▸` glyph a disclosure button shows. `aria-hidden`: the glyph is decorative in both
- * callers — a header button's own name already comes from the repo name, count and chips
- * beside it, and a stack toggle carries an explicit `aria-label` instead of relying on this
- * text for its accessible name.
+ * The `▾`/`▸` glyph a stack toggle shows. `aria-hidden`: the glyph is decorative, since the
+ * toggle carries an explicit `aria-label` instead of relying on this text for its name.
  * @param {boolean} isCollapsed
  * @returns {HTMLElement}
  */
@@ -447,43 +446,63 @@ function renderStack(node, into, allowed) {
 }
 
 /**
- * A section header that folds its contents away. The disclosure state lives on the button as
- * `aria-expanded`, and the count and chips render in both states, not just while collapsed, so
- * folding a repository away never hides that something inside is failing.
+ * A section header that folds its contents away. The disclosure state lives on the arrow
+ * button as `aria-expanded`, and the count and chips render in both states, not just while
+ * collapsed, so folding a repository away never hides that something inside is failing.
+ *
+ * The header is not one big button, because a repo header's name is a link to the repository
+ * and a link cannot nest inside a button. A click anywhere on the header outside that link
+ * still toggles, through the one listener on the `<h2>`, which the arrow button's own click
+ * also bubbles to. Keyboard users reach the toggle through the arrow button.
  * @param {string} collapseKey The axis-qualified key {@link collapsed} tracks this section under.
- * @param {string} label The unqualified text the button shows — a bare repo name or group key.
+ * @param {string} label The unqualified text the header shows — a bare repo name or group key.
  * @param {import('./group.js').GroupSummary} summary
+ * @param {string | null} href The repository page the name links to, or null for no link.
  * @returns {HTMLElement}
  */
-function collapsibleHeader(collapseKey, label, summary) {
+function collapsibleHeader(collapseKey, label, summary, href) {
   const isCollapsed = collapsed.has(collapseKey);
   const h2 = document.createElement('h2');
+  h2.className = 'section-header';
+  h2.addEventListener('click', (event) => {
+    if (event.target instanceof Element && event.target.closest('a') !== null) return;
+    toggleCollapsed(collapseKey);
+  });
+
   const button = document.createElement('button');
   button.type = 'button';
-  button.className = 'disclosure';
+  button.className = 'section-toggle';
   button.dataset.key = collapseKey;
   button.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
-  button.addEventListener('click', () => toggleCollapsed(collapseKey));
-  button.append(chevron(isCollapsed));
+  button.setAttribute('aria-label', `${isCollapsed ? 'Expand' : 'Collapse'} ${label}`);
+  const arrow = document.createElement('span');
+  arrow.setAttribute('aria-hidden', 'true');
+  arrow.textContent = isCollapsed ? '▼' : '▲';
+  button.append(arrow);
+  h2.append(button);
 
-  const name = document.createElement('span');
+  const name = document.createElement(href === null ? 'span' : 'a');
   name.className = 'section-name';
   name.textContent = label;
-  button.append(name);
+  if (name instanceof HTMLAnchorElement && href !== null) {
+    name.href = href;
+    name.target = '_blank';
+    name.rel = 'noreferrer';
+  }
+  h2.append(name);
 
   const count = document.createElement('span');
   count.className = 'section-count';
   count.textContent = summary.total === 1 ? '1 PR' : `${summary.total} PRs`;
-  button.append(count);
+  h2.append(count);
 
   for (const chip of summaryChips(summary)) {
     const el = document.createElement('span');
     el.className = `summary-chip ${chip.tone}`;
     el.textContent = chip.label;
-    button.append(el);
+    h2.append(el);
   }
 
-  h2.append(button);
   return h2;
 }
 
@@ -544,7 +563,10 @@ function render(records, stacks) {
     for (const group of groupBy(filtered, axis)) {
       const collapseKey = groupCollapseKey(axis, group.key);
       const section = document.createElement('section');
-      section.append(collapsibleHeader(collapseKey, group.key, groupSummary(group.records)));
+      // Only a repo group's key names a repository; a CI or review group has no page to open.
+      const first = group.records[0];
+      const href = axis === 'repo' && first !== undefined ? repoUrl(first.url, group.key) : null;
+      section.append(collapsibleHeader(collapseKey, group.key, groupSummary(group.records), href));
       if (!collapsed.has(collapseKey)) {
         if (axis === 'repo') {
           // The tree, not the flat sort-selectable row list every other axis gets, since a

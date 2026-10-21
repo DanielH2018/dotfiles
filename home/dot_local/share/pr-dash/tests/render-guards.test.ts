@@ -16,6 +16,7 @@ import {
   parsePrsBody,
   emptyStateMessage,
   isSafeUrl,
+  repoUrl,
   parseStoredView,
   loadStoredView,
   saveStoredView,
@@ -690,6 +691,15 @@ test('isSafeUrl rejects javascript: and data: schemes', () => {
 
 test('isSafeUrl rejects a malformed URL', () => {
   assert.strictEqual(isSafeUrl('not a url'), false);
+});
+
+test('repoUrl keeps the PR URL host and drops its path', () => {
+  assert.strictEqual(repoUrl('https://github.com/acme/api/pull/12', 'acme/api'), 'https://github.com/acme/api');
+  assert.strictEqual(repoUrl('https://ghe.example.com/acme/api/pull/12', 'acme/api'), 'https://ghe.example.com/acme/api');
+});
+
+test('repoUrl returns null for a URL isSafeUrl rejects', () => {
+  assert.strictEqual(repoUrl('javascript:alert(1)', 'acme/api'), null);
 });
 
 const DEFAULT_VIEW: StoredView = {

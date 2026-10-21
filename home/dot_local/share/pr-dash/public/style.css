@@ -222,15 +222,45 @@ h2 {
   background: var(--mantle);
 }
 
-/* The header is a button so the whole row is a click target and screen readers get the
-   disclosure state from aria-expanded. */
-.disclosure {
+/* The whole header is a click target (app.js listens on the <h2>); the arrow button carries
+   the disclosure state for keyboard and screen-reader users. */
+.section-header {
   display: flex;
   align-items: center;
   /* A repo with four summary chips is wider than a narrow window. Wrapping the chips onto a
      second line keeps the header inside the viewport; without it the widest header set the
      width of the whole document and every row scrolled sideways. */
   flex-wrap: wrap;
+  gap: 8px;
+  padding: 7px 20px;
+  cursor: pointer;
+}
+
+.section-header:hover { background: var(--surface0); }
+
+/* Filled in the accent colour so it reads as a control rather than as part of the label. */
+.section-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: var(--surface1);
+  border: 1px solid var(--surface2);
+  border-radius: 6px;
+  color: var(--blue);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.section-toggle:hover { background: var(--blue); border-color: var(--blue); color: var(--crust); }
+
+/* The stack toggle's disclosure button: unstyled so the chevron sits flush in the tree. */
+.disclosure {
+  display: flex;
+  align-items: center;
   gap: 8px;
   width: 100%;
   padding: 0;
@@ -242,9 +272,6 @@ h2 {
   text-align: left;
   cursor: pointer;
 }
-
-h2 .disclosure { padding: 9px 20px; }
-h2 .disclosure:hover { background: var(--surface0); }
 
 .chevron {
   width: 1em;
@@ -261,6 +288,9 @@ h2 .disclosure:hover { background: var(--surface0); }
   letter-spacing: -0.01em;
   white-space: nowrap;
 }
+
+a.section-name { color: inherit; text-decoration: none; }
+a.section-name:hover { color: var(--blue); text-decoration: underline; }
 
 .section-count {
   color: var(--overlay0);
@@ -429,7 +459,7 @@ h2 .disclosure:hover { background: var(--surface0); }
   header { padding: 10px 14px; }
   .actions { margin-left: 0; width: 100%; }
   .row { padding-left: 14px; padding-right: 14px; }
-  h2 .disclosure { padding-left: 14px; padding-right: 14px; }
+  .section-header { padding-left: 14px; padding-right: 14px; }
   .stack-toggle { padding-left: 14px; }
   .stack-row.nested::before { left: 21px; }
   #banner { padding-left: 14px; padding-right: 14px; }
