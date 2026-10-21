@@ -17,8 +17,8 @@
 //
 // This file holds Part 1 and the os-unix half of Part 2. The other behavior tests are split by
 // the guard their scripts render behind: chezmoi-scripts-wsl.test.js (os-linux/wsl),
-// chezmoi-scripts-linux.test.js (os-linux, any profile), chezmoi-scripts-workstation.test.js
-// (os-linux, workstation and desktop only) and chezmoi-scripts-darwin.test.js (os-darwin). The sandbox helpers, the skip gates and the shared
+// chezmoi-scripts-linux.test.js (os-linux, any profile) and chezmoi-scripts-workstation.test.js
+// (os-linux, workstation and desktop only). The sandbox helpers, the skip gates and the shared
 // sudo stub are tests/lib/chezmoi-scripts.js.
 const { test } = require('node:test');
 const assert = require('node:assert');

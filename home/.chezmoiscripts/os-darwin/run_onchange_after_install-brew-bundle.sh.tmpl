@@ -43,15 +43,6 @@ if ! command -v brew >/dev/null 2>&1; then
   done
 fi
 
-# The Brewfile's `npm` rows run node, which fnm provides and only an interactive shell puts on
-# PATH. Without this the corepack row failed with "env: node: No such file or directory", the
-# whole run exited 1, and chezmoi re-ran the bundle on every apply (2026-10-21). Same
-# `fnm env` the post-install node scripts use. A Mac without fnm yet gets it from this bundle
-# and finds node on the next apply.
-if command -v fnm >/dev/null 2>&1; then
-  eval "$(fnm env --shell bash)" 2>/dev/null || true
-fi
-
 if ! command -v brew >/dev/null 2>&1; then
   echo "$TAG: Homebrew not installed — deferring (retries next apply)." >&2
   echo "$TAG: install it from https://brew.sh, then re-run 'chezmoi apply'." >&2
