@@ -255,6 +255,33 @@ build_repo_snapshot() {
   fi
 }
 
+# Delete one repo's superseded snapshots under $REPO_SNAPSHOT_ROOT/<name>, keeping <sha>.
+# The newest other snapshot also survives, because a sandbox launched before main moved may
+# still have it mounted, but only until it has gone $SNAPSHOT_MAX_AGE_DAYS (default 14)
+# without a mount. The mount loop touches each snapshot it mounts, so mtime is the last
+# mount. Left alone, the second copy of every repo doubled the cache (970 MB, 2026-10-21).
+# The age test also clears .tmp-* dirs that a killed build_repo_snapshot left behind.
+prune_repo_snapshots() {
+  local dir="$REPO_SNAPSHOT_ROOT/$1" sha="$2" old
+  # shellcheck disable=SC2012  # newest-first ordering is the point; find has no portable mtime sort
+  while IFS= read -r old; do
+    [[ -n "$old" ]] && rm -rf "$old" 2>/dev/null || true
+  done < <(ls -1dt "$dir"/*/ 2>/dev/null | tail -n +3)
+  find "$dir" -mindepth 1 -maxdepth 1 -type d ! -name "$sha" \
+    -mtime +"${SNAPSHOT_MAX_AGE_DAYS:-14}" -exec rm -rf {} + 2>/dev/null || true
+}
+
+# Delete the snapshots of repos that are no longer git repos under $REPOS_ROOT. The per-repo
+# prune above only visits repos it mounts, so a deleted or renamed repo's snapshots stayed.
+prune_orphan_snapshots() {
+  local snap
+  for snap in "$REPO_SNAPSHOT_ROOT"/*/; do
+    snap="${snap%/}"
+    [[ -d "$snap" ]] || continue
+    [[ -e "$REPOS_ROOT/$(basename "$snap")/.git" ]] || rm -rf "$snap" 2>/dev/null || true
+  done
+}
+
 add_sibling_repo_mounts() {
   if [[ "$NO_REPOS" == false && -d "$REPOS_ROOT" ]]; then
     repo_mounts=()          # "name<TAB>sha" — snapshot mode
@@ -313,7 +340,7 @@ add_sibling_repo_mounts() {
         echo "  Relaunch with --no-repos to skip sibling repos, or --repos-live to mount the live trees." >&2
         return 1
       fi
-      # Mount every snapshot; prune older SHAs (keep newest 2 per repo).
+      # Mount every snapshot, then prune superseded SHAs and orphaned repos.
       repos_mounted=0
       for spec in ${repo_mounts[@]+"${repo_mounts[@]}"}; do
         r_name="${spec%%$'\t'*}"; r_sha="${spec##*$'\t'}"
@@ -321,11 +348,9 @@ add_sibling_repo_mounts() {
         DOCKER_ARGS+=(-v "$dest:$REPOS_ROOT/$r_name:ro")
         repos_mounted=$((repos_mounted + 1))
         touch "$dest" 2>/dev/null || true             # keep the mounted SHA newest
-        # shellcheck disable=SC2012  # newest-first ordering is the point; find has no portable mtime sort
-        while IFS= read -r old; do
-          [[ -n "$old" ]] && rm -rf "$old" 2>/dev/null || true
-        done < <(ls -1dt "$REPO_SNAPSHOT_ROOT/$r_name"/*/ 2>/dev/null | tail -n +3)
+        prune_repo_snapshots "$r_name" "$r_sha"
       done
+      prune_orphan_snapshots
       if [[ "$repos_mounted" -gt 0 ]]; then
         DOCKER_ARGS+=(-e SANDBOX_REPOS_DIR="$REPOS_ROOT")
         echo "  Repos: $repos_mounted sibling repo(s) mounted read-only at main/master snapshot (--no-repos to disable, --repos-live for live trees)"

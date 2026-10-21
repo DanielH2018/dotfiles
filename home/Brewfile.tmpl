@@ -26,14 +26,27 @@ brew "util-linux"
 # an interactive PATH, and a hook launched from elsewhere may not see it.
 brew "coreutils"
 brew "mas"
+# neovim and yazi are OS-unique (tools.toml's header): the Linux cli-tools installer fetches
+# them from upstream releases and names this file as their macOS route.
+brew "neovim"
 brew "pipx"
 brew "pre-commit"
+# tfenv supplies the host Terraform default that sandbox-image.sh reads into the image.
+brew "tfenv"
 brew "tmux"
 # uv is the macOS half of run_onchange_after_install-python-tools.sh.tmpl, which installs the
 # binary itself only on Linux (no apt package) and then `uv tool install`s ruff + prek on
 # both. Windows gets uv from winget. Not in tools.toml: no apt field means no shared row.
 brew "uv"
 brew "wget"
+brew "yazi"
+# yazi's previewers: glow renders markdown (dot_config/yazi/yazi.toml), poppler PDFs, resvg
+# SVGs, and sevenzip lists archives. yazi runs without them and previews those types as
+# plain text.
+brew "glow"
+brew "poppler"
+brew "resvg"
+brew "sevenzip"
 brew "pulumi/tap/pulumi"
 
 # Core CLI toolchain — generated from .chezmoidata/tools.toml (the shared source of truth
@@ -54,6 +67,7 @@ cask "notion-mail"
 cask "spotify"
 cask "twingate"
 cask "visual-studio-code"
+cask "warp"
 mas "Keynote", id: 409183694
 mas "Numbers", id: 409203825
 mas "Pages", id: 409201541
@@ -75,3 +89,10 @@ vscode "rust-lang.rust-analyzer"
 vscode "yzhang.markdown-all-in-one"
 cargo "taplo-cli"
 npm "corepack"
+
+# Machine-local additions, such as the work overlay's casks, which this public file cannot
+# name. The file is Ruby, so `brew bundle` evaluates the local file in place. chezmoi's
+# run_onchange hash covers only this template: an edit to the local file installs on the next
+# `brew bundle --file ~/Brewfile`, not on the next apply.
+local_brewfile = File.expand_path("~/.config/homebrew/Brewfile.local")
+instance_eval(File.read(local_brewfile), local_brewfile) if File.exist?(local_brewfile)

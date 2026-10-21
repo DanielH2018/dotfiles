@@ -162,8 +162,8 @@ fi
 # =============================================================================
 # QUALITY OF LIFE (zsh-specific config aliases; generic ones live in common.sh)
 # =============================================================================
-alias zshconfig="$EDITOR ~/.zshrc"
-alias configterminal="$EDITOR ~/.zshrc ~/.config/starship.toml"
+# Opens the chezmoi sources, not the deployed files, which the next apply overwrites.
+alias zshconfig="chezmoi edit ~/.zshrc ~/.config/starship.toml"
 {{- if eq .chezmoi.os "linux" }}
 
 # marketplace.visualstudio.com returns 403 to some Mullvad exit IPs, so VS Code cannot

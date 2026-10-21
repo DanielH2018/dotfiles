@@ -1,5 +1,6 @@
 // shell/common.sh sets EDITOR to nvim, the editor dot_config/nvim configures, and falls back
-// to vim on a host where no installer put nvim on PATH (the Brewfile does not list it).
+// to vim on a host where no installer put nvim on PATH. On macOS that is a host that never ran
+// `brew bundle`, since the Brewfile lists neovim.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');

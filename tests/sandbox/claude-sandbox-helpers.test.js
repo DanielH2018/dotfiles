@@ -5,6 +5,7 @@
 //   detect_uv_need      - decides whether uv is installed into the image
 //   resolve_main_ref    - picks the ref sibling repos are snapshotted at
 //   build_repo_snapshot - archives that ref into the SHA cache (rm -rf + rename)
+//   prune_*_snapshots   - caps that cache by count, by age, and by repo still present
 //   check_gc_nudge      - the passive startup nudge, and its 7-day throttle
 //   cleanup_worktree    - decides whether a session's worktree survives exit
 //
@@ -52,7 +53,8 @@ function extractFunction(name) {
 }
 
 const SRC = skip ? {} : Object.fromEntries(
-  ['detect_uv_need', 'resolve_main_ref', 'build_repo_snapshot', 'check_gc_nudge', 'cleanup_worktree']
+  ['detect_uv_need', 'resolve_main_ref', 'build_repo_snapshot', 'prune_repo_snapshots',
+    'prune_orphan_snapshots', 'check_gc_nudge', 'cleanup_worktree']
     .map((n) => [n, extractFunction(n)]),
 );
 
@@ -190,6 +192,54 @@ build_repo_snapshot ${JSON.stringify(repo)} demo refs/heads/nope deadbeef`);
     ? fs.readdirSync(path.join(snapRoot, 'demo')).filter((f) => f.startsWith('.tmp-'))
     : [];
   assert.deepStrictEqual(leftovers, [], 'the temp extraction dir must not be left behind');
+});
+
+// --- prune_repo_snapshots / prune_orphan_snapshots ---------------------------
+
+const DAY = 24 * 60 * 60;
+
+// A snapshot root holding demo/<sha> dirs, each last mounted `ageDays` ago.
+function snapshotRoot(ages) {
+  const root = scratch(os.tmpdir(), 'sbhelp-');
+  const now = Date.now() / 1000;
+  for (const [sha, ageDays] of Object.entries(ages)) {
+    const dir = path.join(root, 'demo', sha);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.utimesSync(dir, now - ageDays * DAY, now - ageDays * DAY);
+  }
+  return root;
+}
+
+const prune = (root, sha) => runScript(`REPO_SNAPSHOT_ROOT=${JSON.stringify(root)}
+${SRC.prune_repo_snapshots}
+prune_repo_snapshots demo ${sha}`);
+
+const left = (root) => fs.readdirSync(path.join(root, 'demo')).sort();
+
+test('prune_repo_snapshots keeps the mounted SHA and a recently mounted previous one', { skip }, () => {
+  const root = snapshotRoot({ cur: 0, prev: 3, older: 5 });
+  assert.strictEqual(prune(root, 'cur').code, 0);
+  assert.deepStrictEqual(left(root), ['cur', 'prev'],
+    'a sandbox launched before main moved may still have prev mounted; older is a third copy');
+});
+
+test('prune_repo_snapshots drops a previous SHA unmounted for longer than the age cap', { skip }, () => {
+  const root = snapshotRoot({ cur: 30, prev: 15, '.tmp-abc123': 15 });
+  prune(root, 'cur');
+  assert.deepStrictEqual(left(root), ['cur'],
+    'the mounted SHA stays however old; a stale previous SHA and a killed build go');
+});
+
+test('prune_orphan_snapshots drops repos that are gone from the repos root', { skip }, () => {
+  const root = scratch(os.tmpdir(), 'sbhelp-');
+  const reposRoot = scratch(os.tmpdir(), 'sbhelp-');
+  fs.mkdirSync(path.join(reposRoot, 'kept', '.git'), { recursive: true });
+  for (const name of ['kept', 'gone']) fs.mkdirSync(path.join(root, name, 'sha'), { recursive: true });
+  const r = runScript(`REPO_SNAPSHOT_ROOT=${JSON.stringify(root)} REPOS_ROOT=${JSON.stringify(reposRoot)}
+${SRC.prune_orphan_snapshots}
+prune_orphan_snapshots`);
+  assert.strictEqual(r.code, 0);
+  assert.deepStrictEqual(fs.readdirSync(root), ['kept']);
 });
 
 // --- check_gc_nudge ----------------------------------------------------------

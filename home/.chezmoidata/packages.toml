@@ -334,7 +334,7 @@ apt = "code"
 [[apps.coding]]
 name = "Windows Terminal"
 winget = "Microsoft.WindowsTerminal"
-manual = "Windows-only by definition. macOS/Linux run Warp instead, installed by hand."
+manual = "Windows-only by definition. macOS and Linux run Warp instead: macOS from the Brewfile, Linux installed by hand."
 
 [[apps.coding]]
 name = "age"
