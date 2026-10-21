@@ -84,6 +84,24 @@ test('/api/prs carries the work organizations the server was configured with', a
   );
 });
 
+test('/api/prs carries reviewRequests, and an empty array when loadPrs has none', async () => {
+  // The extension reads a missing key as "pr-dash not updated yet", so a server that has
+  // the field must always send it, never omit it.
+  const [first, second] = records;
+  await withServer(
+    async (base) => {
+      const body = await (await fetch(`${base}/api/prs`)).json();
+      assert.deepStrictEqual(body.reviewRequests, [second]);
+      assert.deepStrictEqual(body.prs, [first]);
+    },
+    async () => ({ prs: [first!], reviewRequests: [second!], fetchedAt: new Date().toISOString() }),
+  );
+  await withServer(async (base) => {
+    const body = await (await fetch(`${base}/api/prs`)).json();
+    assert.deepStrictEqual(body.reviewRequests, []);
+  });
+});
+
 test('/api/prs reports workOrgs as an empty array, not omitted, when none are configured', async () => {
   await withServer(async (base) => {
     const body = await (await fetch(`${base}/api/prs`)).json();

@@ -9,6 +9,15 @@ import {
 import { createClient } from '../src/github.ts';
 import { createCache } from '../src/cache.ts';
 import type { LoadResult } from '../src/loader.ts';
+import { AUTHORED_SEARCH } from '../src/queries.ts';
+
+// A load runs two searches, the operator's own PRs and their review requests, so a stub
+// counting every request counts two per load. These tests count loads, so they count only
+// the authored search's requests.
+function isAuthoredSearch(init: RequestInit | undefined): boolean {
+  const body = JSON.parse(String(init?.body)) as { variables?: { q?: string } };
+  return body.variables?.q === AUTHORED_SEARCH;
+}
 import type { PrRecord } from '../src/types.ts';
 
 // A non-empty payload, not `[]`: a fallback that returns the fresh (empty) result
@@ -37,7 +46,7 @@ const one: PrRecord[] = [
 ];
 
 test('a successful load is not stale', async () => {
-  const load = withFallback(async () => ({ prs: one, fetchedAt: '2026-01-01T00:00:00.000Z', partialErrors: [] }));
+  const load = withFallback(async () => ({ prs: one, reviewRequests: [], fetchedAt: '2026-01-01T00:00:00.000Z', partialErrors: [] }));
   const r = await load();
   assert.strictEqual(r.stale, false);
   assert.strictEqual(r.error, undefined);
@@ -47,7 +56,7 @@ test('a failure after a success returns the last good payload, marked stale', as
   let fail = false;
   const load = withFallback(async () => {
     if (fail) throw new Error('network down');
-    return { prs: one, fetchedAt: '2026-01-01T00:00:00.000Z', partialErrors: [] };
+    return { prs: one, reviewRequests: [], fetchedAt: '2026-01-01T00:00:00.000Z', partialErrors: [] };
   });
   await load();
   fail = true;
@@ -129,7 +138,7 @@ test('createLoadPrs forwards its opts (initial and onSuccess) to withFallback', 
     },
   });
   const cache = createCache<LoadResult>(60_000);
-  const seeded: LoadResult = { prs: one, fetchedAt: '2026-09-15T06:00:00.000Z', partialErrors: [] };
+  const seeded: LoadResult = { prs: one, reviewRequests: [], fetchedAt: '2026-09-15T06:00:00.000Z', partialErrors: [] };
   const seen: LoadResult[] = [];
   const loadPrs = createLoadPrs(client, cache, {
     initial: seeded,
@@ -185,8 +194,8 @@ test('a forced refresh through createLoadPrs re-fetches inside the TTL', async (
   let calls = 0;
   const client = createClient({
     token: 'tok',
-    fetchImpl: async () => {
-      calls += 1;
+    fetchImpl: async (_url, init) => {
+      if (isAuthoredSearch(init)) calls += 1;
       return pageResponse([RAW_NODE]);
     },
   });
@@ -293,7 +302,7 @@ test('startPreload calls the loader without being awaited', async () => {
   let calls = 0;
   const loadPrs = async () => {
     calls += 1;
-    return { prs: one, fetchedAt: 'T1', partialErrors: [], stale: false };
+    return { prs: one, reviewRequests: [], fetchedAt: 'T1', partialErrors: [], stale: false };
   };
 
   startPreload(loadPrs);
@@ -322,7 +331,7 @@ test('a warm start never calls onError, since the stale banner already says so',
   // rather than rejecting — the page's own banner names the failure and the last-good
   // time, so onError firing here would be a second, redundant channel for the same fact.
   const seen: string[] = [];
-  const seeded: LoadResult = { prs: one, fetchedAt: '2026-09-15T06:00:00.000Z', partialErrors: [] };
+  const seeded: LoadResult = { prs: one, reviewRequests: [], fetchedAt: '2026-09-15T06:00:00.000Z', partialErrors: [] };
   const loadPrs = withFallback(
     async () => {
       throw new Error('network down');
@@ -341,7 +350,7 @@ test('a rejected preload leaves the loader usable', async () => {
   const loadPrs = async () => {
     calls += 1;
     if (calls === 1) throw new Error('network down');
-    return { prs: one, fetchedAt: 'T1', partialErrors: [], stale: false };
+    return { prs: one, reviewRequests: [], fetchedAt: 'T1', partialErrors: [], stale: false };
   };
 
   startPreload(loadPrs);
@@ -353,7 +362,7 @@ test('a rejected preload leaves the loader usable', async () => {
 });
 
 test('a seeded payload is served, marked stale, when the first fetch fails', async () => {
-  const seeded: LoadResult = { prs: one, fetchedAt: '2026-09-15T06:00:00.000Z', partialErrors: [] };
+  const seeded: LoadResult = { prs: one, reviewRequests: [], fetchedAt: '2026-09-15T06:00:00.000Z', partialErrors: [] };
   const load = async () => {
     throw new Error('network down');
   };
@@ -383,8 +392,8 @@ test('a cold start with no seed still throws, so the server can 500', async () =
 });
 
 test('a successful fetch replaces the seeded payload', async () => {
-  const seeded: LoadResult = { prs: [], fetchedAt: 'OLD', partialErrors: [] };
-  const fresh: LoadResult = { prs: one, fetchedAt: 'NEW', partialErrors: [] };
+  const seeded: LoadResult = { prs: [], reviewRequests: [], fetchedAt: 'OLD', partialErrors: [] };
+  const fresh: LoadResult = { prs: one, reviewRequests: [], fetchedAt: 'NEW', partialErrors: [] };
   let calls = 0;
   const load = async () => {
     calls += 1;
@@ -408,7 +417,7 @@ test('a successful fetch replaces the seeded payload', async () => {
 });
 
 test('onSuccess receives each successful payload, and not a stale one', async () => {
-  const fresh: LoadResult = { prs: one, fetchedAt: 'NEW', partialErrors: [] };
+  const fresh: LoadResult = { prs: one, reviewRequests: [], fetchedAt: 'NEW', partialErrors: [] };
   const seen: string[] = [];
   let calls = 0;
   const load = async () => {
@@ -425,7 +434,7 @@ test('onSuccess receives each successful payload, and not a stale one', async ()
 });
 
 test('a throwing onSuccess does not fail the request', async () => {
-  const fresh: LoadResult = { prs: one, fetchedAt: 'NEW', partialErrors: [] };
+  const fresh: LoadResult = { prs: one, reviewRequests: [], fetchedAt: 'NEW', partialErrors: [] };
   const loadPrs = withFallback(async () => fresh, {
     onSuccess: () => {
       throw new Error('disk full');
@@ -442,12 +451,12 @@ test('a throwing onSuccess does not fail the request', async () => {
 // request awaited createLazyToken -> resolveToken -> the `op` process -> the Touch ID prompt
 // -> the paginated GraphQL query, and the page was blank for all of it.
 test('the first request is answered from the restored payload while the fetch runs behind it', async () => {
-  const seeded: LoadResult = { prs: one, fetchedAt: '2026-09-15T06:00:00.000Z', partialErrors: [] };
+  const seeded: LoadResult = { prs: one, reviewRequests: [], fetchedAt: '2026-09-15T06:00:00.000Z', partialErrors: [] };
   let release = (): void => {};
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const fresh: LoadResult = { prs: [], fetchedAt: 'NEW', partialErrors: [] };
+  const fresh: LoadResult = { prs: [], reviewRequests: [], fetchedAt: 'NEW', partialErrors: [] };
   let calls = 0;
   const loadPrs = withFallback(async () => {
     calls += 1;
@@ -483,7 +492,7 @@ test('a failing background fetch does not start a second fetch on the next poll'
   // The 4xx retry storm this project has already shipped once, in the other direction: if
   // each poll took the prime path it would start its own background fetch on top of the one
   // it awaits, so one unreachable GitHub would be two requests per poll.
-  const seeded: LoadResult = { prs: one, fetchedAt: 'OLD', partialErrors: [] };
+  const seeded: LoadResult = { prs: one, reviewRequests: [], fetchedAt: 'OLD', partialErrors: [] };
   let calls = 0;
   const loadPrs = withFallback(async () => {
     calls += 1;
@@ -506,11 +515,11 @@ test('a forced first call bypasses the prime path, and the next poll starts no e
   // The operator whose first action is clicking Refresh. `primed` is set before the force
   // check for this case: if a forced call left it false, this poll would take the prime path
   // and start a second background fetch alongside the one it awaits.
-  const seeded: LoadResult = { prs: one, fetchedAt: 'OLD', partialErrors: [] };
+  const seeded: LoadResult = { prs: one, reviewRequests: [], fetchedAt: 'OLD', partialErrors: [] };
   let calls = 0;
   const loadPrs = withFallback(async () => {
     calls += 1;
-    return { prs: [], fetchedAt: 'NEW', partialErrors: [] };
+    return { prs: [], reviewRequests: [], fetchedAt: 'NEW', partialErrors: [] };
   }, { initial: seeded });
 
   const forced = await loadPrs({ force: true });
@@ -532,7 +541,7 @@ test('a first-ever launch with nothing restored still waits for the fetch', asyn
   });
   const loadPrs = withFallback(async () => {
     await gate;
-    return { prs: one, fetchedAt: 'NEW', partialErrors: [] };
+    return { prs: one, reviewRequests: [], fetchedAt: 'NEW', partialErrors: [] };
   });
 
   let settled = false;
@@ -551,14 +560,14 @@ test('a first-ever launch with nothing restored still waits for the fetch', asyn
 });
 
 test('a forced request waits for GitHub rather than taking the seed', async () => {
-  const seeded: LoadResult = { prs: one, fetchedAt: 'OLD', partialErrors: [] };
+  const seeded: LoadResult = { prs: one, reviewRequests: [], fetchedAt: 'OLD', partialErrors: [] };
   let release = (): void => {};
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
   const loadPrs = withFallback(async () => {
     await gate;
-    return { prs: [], fetchedAt: 'NEW', partialErrors: [] };
+    return { prs: [], reviewRequests: [], fetchedAt: 'NEW', partialErrors: [] };
   }, { initial: seeded });
 
   const pending = loadPrs();
@@ -573,8 +582,8 @@ test('a forced request waits for GitHub rather than taking the seed', async () =
 });
 
 test('the shortcut closes once the fetch settles', async () => {
-  const seeded: LoadResult = { prs: one, fetchedAt: 'OLD', partialErrors: [] };
-  const loadPrs = withFallback(async () => ({ prs: [], fetchedAt: 'NEW', partialErrors: [] }), {
+  const seeded: LoadResult = { prs: one, reviewRequests: [], fetchedAt: 'OLD', partialErrors: [] };
+  const loadPrs = withFallback(async () => ({ prs: [], reviewRequests: [], fetchedAt: 'NEW', partialErrors: [] }), {
     initial: seeded,
   });
 
@@ -596,7 +605,7 @@ test('a cold start with no seed waits for the fetch instead of answering empty',
   });
   const loadPrs = withFallback(async () => {
     await gate;
-    return { prs: one, fetchedAt: 'NEW', partialErrors: [] };
+    return { prs: one, reviewRequests: [], fetchedAt: 'NEW', partialErrors: [] };
   });
 
   const pending = loadPrs();
@@ -611,7 +620,7 @@ test('a cold start with no seed waits for the fetch instead of answering empty',
 });
 
 test('the seed served mid-fetch is not recorded as a success', async () => {
-  const seeded: LoadResult = { prs: one, fetchedAt: 'OLD', partialErrors: [] };
+  const seeded: LoadResult = { prs: one, reviewRequests: [], fetchedAt: 'OLD', partialErrors: [] };
   let release = (): void => {};
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -620,7 +629,7 @@ test('the seed served mid-fetch is not recorded as a success', async () => {
   const loadPrs = withFallback(
     async () => {
       await gate;
-      return { prs: [], fetchedAt: 'NEW', partialErrors: [] };
+      return { prs: [], reviewRequests: [], fetchedAt: 'NEW', partialErrors: [] };
     },
     { initial: seeded, onSuccess: (r) => seen.push(r.fetchedAt) },
   );
@@ -675,7 +684,7 @@ test('two sequential calls served from the same cached object fire onSuccess onc
 });
 
 test('a throwing onSuccess is re-offered the same result on the next call', async () => {
-  const fresh: LoadResult = { prs: one, fetchedAt: 'NEW', partialErrors: [] };
+  const fresh: LoadResult = { prs: one, reviewRequests: [], fetchedAt: 'NEW', partialErrors: [] };
   let calls = 0;
   const seen: string[] = [];
   const loadPrs = withFallback(async () => fresh, {

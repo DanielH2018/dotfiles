@@ -145,6 +145,7 @@ export function listenErrorMessage(err: unknown, port: number): string {
  */
 export type FallbackResult = {
   prs: PrRecord[];
+  reviewRequests: PrRecord[];
   fetchedAt: string;
   partialErrors: string[];
   stale: boolean;
@@ -348,7 +349,13 @@ export function createLoadPrs(
   cache: Cache<LoadResult>,
   opts: FallbackOpts = {},
 ): (opts?: LoadOpts) => Promise<FallbackResult> {
-  return withFallback(createPrLoader(client, cache), opts);
+  // The restored payload seeds the loader's review-request slot as well as withFallback's
+  // retained payload, so a review search that fails right after a restart answers with the
+  // list the operator saw before it rather than an empty one.
+  const loader = createPrLoader(client, cache, {
+    initialReviewRequests: opts.initial?.reviewRequests,
+  });
+  return withFallback(loader, opts);
 }
 
 /**

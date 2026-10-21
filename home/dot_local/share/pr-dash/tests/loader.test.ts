@@ -4,7 +4,18 @@ import { createPrLoader } from '../src/loader.ts';
 import { createClient } from '../src/github.ts';
 import { createCache } from '../src/cache.ts';
 import type { Cache } from '../src/cache.ts';
+import { REVIEW_REQUESTS_ERROR_PREFIX } from '../src/loader.ts';
 import type { LoadResult, LoadPrs } from '../src/loader.ts';
+import { normalize } from '../src/normalize.ts';
+import { AUTHORED_SEARCH, REVIEW_REQUESTED_SEARCH } from '../src/queries.ts';
+
+// A load runs two searches, the operator's own PRs and their review requests, so a stub
+// counting every request counts two per load. These tests count loads, so they count only
+// the authored search's requests.
+function isAuthoredSearch(init: RequestInit | undefined): boolean {
+  const body = JSON.parse(String(init?.body)) as { variables?: { q?: string } };
+  return body.variables?.q === AUTHORED_SEARCH;
+}
 
 function pageResponse(nodes: unknown[]) {
   return {
@@ -36,8 +47,8 @@ test('a cache miss fetches, normalizes, and populates the cache', async () => {
   let calls = 0;
   const client = createClient({
     token: 'tok',
-    fetchImpl: async () => {
-      calls += 1;
+    fetchImpl: async (_url, init) => {
+      if (isAuthoredSearch(init)) calls += 1;
       return pageResponse([RAW_NODE]);
     },
   });
@@ -63,8 +74,8 @@ test('a cache hit does not re-fetch', async () => {
   let calls = 0;
   const client = createClient({
     token: 'tok',
-    fetchImpl: async () => {
-      calls += 1;
+    fetchImpl: async (_url, init) => {
+      if (isAuthoredSearch(init)) calls += 1;
       return pageResponse([RAW_NODE]);
     },
   });
@@ -116,7 +127,7 @@ test('a failed fetch leaves the previously cached value intact', async () => {
 
 test('a cache hit reports the original fetch time, not the time of the read', async () => {
   const cache = createCache<LoadResult>(60_000);
-  const seeded: LoadResult = { prs: [], fetchedAt: '2020-01-01T00:00:00.000Z', partialErrors: [] };
+  const seeded: LoadResult = { prs: [], reviewRequests: [], fetchedAt: '2020-01-01T00:00:00.000Z', partialErrors: [] };
   cache.set(seeded);
 
   const client = createClient({
@@ -135,8 +146,8 @@ test('a forced load bypasses a warm cache and re-fetches', async () => {
   let calls = 0;
   const client = createClient({
     token: 'tok',
-    fetchImpl: async () => {
-      calls += 1;
+    fetchImpl: async (_url, init) => {
+      if (isAuthoredSearch(init)) calls += 1;
       return pageResponse([RAW_NODE]);
     },
   });
@@ -157,8 +168,8 @@ test('a forced load repopulates the cache, so the next poll is a hit', async () 
   let calls = 0;
   const client = createClient({
     token: 'tok',
-    fetchImpl: async () => {
-      calls += 1;
+    fetchImpl: async (_url, init) => {
+      if (isAuthoredSearch(init)) calls += 1;
       return pageResponse([RAW_NODE]);
     },
   });
@@ -178,8 +189,8 @@ test('an unforced load is a poll: force defaults to off', async () => {
   let calls = 0;
   const client = createClient({
     token: 'tok',
-    fetchImpl: async () => {
-      calls += 1;
+    fetchImpl: async (_url, init) => {
+      if (isAuthoredSearch(init)) calls += 1;
       return pageResponse([RAW_NODE]);
     },
   });
@@ -196,8 +207,8 @@ test('two concurrent cache misses produce exactly one fetch', async () => {
   let calls = 0;
   const client = createClient({
     token: 'tok',
-    fetchImpl: async () => {
-      calls += 1;
+    fetchImpl: async (_url, init) => {
+      if (isAuthoredSearch(init)) calls += 1;
       return pageResponse([RAW_NODE]);
     },
   });
@@ -213,8 +224,8 @@ test('a rejected in-flight fetch is not retained, so the next call fetches again
   let calls = 0;
   const client = createClient({
     token: 'tok',
-    fetchImpl: async () => {
-      calls += 1;
+    fetchImpl: async (_url, init) => {
+      if (isAuthoredSearch(init)) calls += 1;
       if (calls === 1) throw new Error('network down');
       return pageResponse([RAW_NODE]);
     },
@@ -234,8 +245,8 @@ test('a force arriving mid-fetch joins it rather than starting a second', async 
   let calls = 0;
   const client = createClient({
     token: 'tok',
-    fetchImpl: async () => {
-      calls += 1;
+    fetchImpl: async (_url, init) => {
+      if (isAuthoredSearch(init)) calls += 1;
       return pageResponse([RAW_NODE]);
     },
   });
@@ -255,8 +266,8 @@ test('a force landing as the fetch settles does not empty the cache', async () =
   let calls = 0;
   const client = createClient({
     token: 'tok',
-    fetchImpl: async () => {
-      calls += 1;
+    fetchImpl: async (_url, init) => {
+      if (isAuthoredSearch(init)) calls += 1;
       return pageResponse([RAW_NODE]);
     },
   });
@@ -291,4 +302,82 @@ test('a force landing as the fetch settles does not empty the cache', async () =
     'a force that joins an in-flight fetch must not discard what that fetch just cached',
   );
   assert.strictEqual(calls, 1);
+});
+
+// The review-request search. Each fake below answers by which search a request names, so
+// the authored and review lists can differ and either search can fail on its own.
+const REVIEW_NODE = {
+  ...RAW_NODE,
+  number: 7,
+  url: 'https://github.com/acme/web/pull/7',
+  repository: { nameWithOwner: 'acme/web', defaultBranchRef: { name: 'main' } },
+};
+
+function searchOf(init: RequestInit | undefined): string | undefined {
+  return (JSON.parse(String(init?.body)) as { variables?: { q?: string } }).variables?.q;
+}
+
+test('reviewRequests come from the review-requested search, apart from prs', async () => {
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async (_url, init) =>
+      pageResponse(searchOf(init) === REVIEW_REQUESTED_SEARCH ? [REVIEW_NODE] : [RAW_NODE]),
+  });
+  const result = await createPrLoader(client, createCache<LoadResult>(60_000))();
+  assert.deepStrictEqual(result.prs.map((pr) => pr.id), ['acme/api#1']);
+  assert.deepStrictEqual(result.reviewRequests.map((pr) => pr.id), ['acme/web#7']);
+  assert.deepStrictEqual(result.partialErrors, []);
+});
+
+test('a failed review search keeps prs and the last review list, and names the failure', async () => {
+  let reviewDown = false;
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async (_url, init) => {
+      if (searchOf(init) !== REVIEW_REQUESTED_SEARCH) return pageResponse([RAW_NODE]);
+      if (reviewDown) throw new Error('search timed out');
+      return pageResponse([REVIEW_NODE]);
+    },
+  });
+  const loadPrs = createPrLoader(client, createCache<LoadResult>(60_000));
+  await loadPrs();
+
+  reviewDown = true;
+  const result = await loadPrs({ force: true });
+  assert.deepStrictEqual(result.prs.map((pr) => pr.id), ['acme/api#1']);
+  assert.deepStrictEqual(result.reviewRequests.map((pr) => pr.id), ['acme/web#7']);
+  assert.strictEqual(result.partialErrors.length, 1);
+  const [reason = ''] = result.partialErrors;
+  assert.ok(reason.startsWith(REVIEW_REQUESTS_ERROR_PREFIX), reason);
+  assert.match(reason, /search timed out/);
+});
+
+test('a review search that fails before any success answers with the restored list', async () => {
+  const restored = normalize([REVIEW_NODE]);
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async (_url, init) => {
+      if (searchOf(init) === REVIEW_REQUESTED_SEARCH) throw new Error('search timed out');
+      return pageResponse([RAW_NODE]);
+    },
+  });
+  const loadPrs = createPrLoader(client, createCache<LoadResult>(60_000), {
+    initialReviewRequests: restored,
+  });
+  const result = await loadPrs();
+  assert.deepStrictEqual(result.reviewRequests, restored);
+  assert.deepStrictEqual(result.prs.map((pr) => pr.id), ['acme/api#1']);
+});
+
+test('a failed authored search still fails the load, whatever the review search did', async () => {
+  // withFallback retains the last good payload only when the load throws, so an authored
+  // failure must keep throwing rather than come back as an empty prs list.
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async (_url, init) => {
+      if (searchOf(init) === REVIEW_REQUESTED_SEARCH) return pageResponse([REVIEW_NODE]);
+      throw new Error('network down');
+    },
+  });
+  await assert.rejects(() => createPrLoader(client, createCache<LoadResult>(60_000))(), /network down/);
 });

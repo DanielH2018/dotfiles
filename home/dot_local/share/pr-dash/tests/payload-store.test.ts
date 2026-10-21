@@ -52,9 +52,11 @@ const RECORD2: PrRecord = {
 // discarded partialErrors — both are real mutations that stayed green against a thinner
 // fixture. partialErrors matters beyond this module too: src/main-lib.ts's withFallback
 // keeps it riding along with a retained payload precisely so a partial fetch never later
-// renders as complete.
+// renders as complete. reviewRequests is non-empty for the same reason: an empty list
+// would round-trip even if read() never returned the field.
 const PAYLOAD: LoadResult = {
   prs: [RECORD, RECORD2],
+  reviewRequests: [RECORD2],
   fetchedAt: '2026-09-15T09:00:00.000Z',
   partialErrors: ['github: rate limited while paging acme/other'],
 };
@@ -241,10 +243,19 @@ for (const [label, contents] of [
 test('an empty payload is valid, not a cold start', async () => {
   // Zero open PRs is a real answer. Treating it as corrupt would refuse to restore the
   // one state the user most wants to see instantly.
-  const empty: LoadResult = { prs: [], fetchedAt: 'T', partialErrors: [] };
+  const empty: LoadResult = { prs: [], reviewRequests: [], fetchedAt: 'T', partialErrors: [] };
   const fs = fakeFs({ '/state/last-payload.json': JSON.stringify(empty) });
   const store = createPayloadStore('/state', fs.seam);
   assert.deepStrictEqual(await store.read(), empty);
+});
+
+test('a payload written before reviewRequests existed restores with an empty review list', async () => {
+  // The payload on disk at upgrade time has no reviewRequests. Rejecting it would make the
+  // first restart after the upgrade start cold, so only that field defaults.
+  const { reviewRequests: _omit, ...older } = PAYLOAD;
+  const fs = fakeFs({ '/state/last-payload.json': JSON.stringify(older) });
+  const store = createPayloadStore('/state', fs.seam);
+  assert.deepStrictEqual(await store.read(), { ...older, reviewRequests: [] });
 });
 
 test('a write failure does not propagate', async () => {

@@ -44,6 +44,7 @@ export type ServerOpts = {
   // timestamp on data that is up to the cache's TTL old.
   loadPrs: (opts?: { force?: boolean }) => Promise<{
     prs: PrRecord[];
+    reviewRequests?: PrRecord[];
     fetchedAt: string;
     stale?: boolean;
     error?: string;
@@ -162,9 +163,13 @@ async function handle(
     // anything else in the query string is an ordinary poll served from the cache. The
     // comparison is the validation: no value from the URL reaches loadPrs, only a boolean.
     const force = url.searchParams.get('refresh') === '1';
-    const { prs, fetchedAt, stale, error, partialErrors, refreshing } = await opts.loadPrs({ force });
+    const { prs, reviewRequests, fetchedAt, stale, error, partialErrors, refreshing } =
+      await opts.loadPrs({ force });
     const body: PrsResponseBody = {
       prs,
+      // Not stacked: a review request is someone else's PR, so its branch refs say nothing
+      // about the operator's own stacks.
+      reviewRequests: reviewRequests ?? [],
       stacks: buildStacks(prs),
       fetchedAt,
       stale: stale ?? false,

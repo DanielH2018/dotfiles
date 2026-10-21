@@ -91,6 +91,17 @@ function looksLikePayload(value: unknown): value is LoadResult {
   return true;
 }
 
+// A payload written before the review-request search existed has no `reviewRequests`, and
+// rejecting it would make the first restart after an upgrade start cold. So the field is
+// read leniently and on its own: absent, not an array, or holding a record that fails the
+// same check `prs` gets, it reads as an empty list, and the rest of the payload stands.
+function reviewRequestsOf(value: Record<string, unknown>): LoadResult['reviewRequests'] {
+  const raw = value['reviewRequests'];
+  if (!Array.isArray(raw)) return [];
+  if (!raw.every((pr) => isRecord(pr) && looksLikeServerSafeRecord(pr))) return [];
+  return raw as LoadResult['reviewRequests'];
+}
+
 /**
  * Persists the last good payload so the next launch can paint before GitHub answers.
  *
@@ -118,7 +129,12 @@ export function createPayloadStore(dir: string, fs: FsSeam = realFs): PayloadSto
         return undefined;
       }
       if (!looksLikePayload(parsed)) return undefined;
-      return { prs: parsed.prs, fetchedAt: parsed.fetchedAt, partialErrors: parsed.partialErrors };
+      return {
+        prs: parsed.prs,
+        reviewRequests: reviewRequestsOf(parsed),
+        fetchedAt: parsed.fetchedAt,
+        partialErrors: parsed.partialErrors,
+      };
     },
 
     async write(result: LoadResult): Promise<void> {

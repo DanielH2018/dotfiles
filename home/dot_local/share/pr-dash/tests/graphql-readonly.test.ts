@@ -48,7 +48,7 @@ test('the search operation in src/queries.ts still opens with the query keyword,
   const stripped = stripComments(readFileSync(QUERIES_TS, 'utf8'));
   assert.match(
     stripped,
-    /`\s*query\(\$cursor: String\) \{/,
+    /`\s*query\(\$q: String!, \$cursor: String\) \{/,
     'expected queries.ts to open its search operation with the explicit query keyword',
   );
 });

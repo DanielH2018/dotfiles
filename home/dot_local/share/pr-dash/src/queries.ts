@@ -13,9 +13,18 @@ export const PR_FIELDS = `
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
 `;
 
+// The two searches the dashboard runs: the PRs the operator opened, and the open PRs waiting
+// on the operator's review. Both go through the one SEARCH operation and the pagination in
+// fetchAllPrs, so a row from either becomes the same PrRecord. `@me` must stay ASCII: GitHub
+// does not read the full-width `＠` as the current-user qualifier.
+export const AUTHORED_SEARCH = 'is:open is:pr author:@me';
+export const REVIEW_REQUESTED_SEARCH = 'is:open is:pr review-requested:@me archived:false';
+
+// The search string is a variable rather than text spliced into the operation, so one
+// operation serves both searches and no search string is ever parsed as GraphQL.
 const SEARCH = `
-query($cursor: String) {
-  search(query: "is:open is:pr author:@me", type: ISSUE, first: 100, after: $cursor) {
+query($q: String!, $cursor: String) {
+  search(query: $q, type: ISSUE, first: 100, after: $cursor) {
     pageInfo { hasNextPage endCursor }
     nodes { ... on PullRequest { ${PR_FIELDS} } }
   }
@@ -45,7 +54,18 @@ export type FetchAllResult = { prs: RawPr[]; errors: string[] };
 // bound would loop forever.
 const MAX_PAGES = 100;
 
-export async function fetchAllPrs(client: Client): Promise<FetchAllResult> {
+/**
+ * Runs one GitHub search to the end of its pagination and returns every row that arrived,
+ * with the GraphQL errors that came with them. `query` defaults to the operator's own open
+ * PRs.
+ *
+ * Throws when nothing usable arrived; returns a partial result, with `errors` naming the
+ * gap, when some rows did.
+ */
+export async function fetchAllPrs(
+  client: Client,
+  query: string = AUTHORED_SEARCH,
+): Promise<FetchAllResult> {
   const all: RawPr[] = [];
   const errors: string[] = [];
   // One upstream failure repeated per affected field reached the banner as "Some PRs are
@@ -67,7 +87,7 @@ export async function fetchAllPrs(client: Client): Promise<FetchAllResult> {
     // Annotated, not inferred: `cursor` is reassigned from this page's endCursor at the
     // bottom of the loop, and without the annotation that circles back through `page` and
     // tsc gives up with an implicit `any` (TS7022).
-    const page: QueryResult<SearchData> = await client.query<SearchData>(SEARCH, { cursor });
+    const page: QueryResult<SearchData> = await client.query<SearchData>(SEARCH, { q: query, cursor });
     addErrors(page.errors);
     const search = page.data.search;
 

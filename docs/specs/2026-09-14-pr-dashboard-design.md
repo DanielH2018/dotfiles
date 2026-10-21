@@ -82,8 +82,9 @@ module rather than inside `app.js` precisely so it can be tested without a DOM.
 ## The GraphQL query
 
 ```graphql
-query($cursor: String) {
-  search(query: "is:open is:pr author:@me", type: ISSUE, first: 100, after: $cursor) {
+# $q is "is:open is:pr author:@me" for the authored list; see the review-request search below.
+query($q: String!, $cursor: String) {
+  search(query: $q, type: ISSUE, first: 100, after: $cursor) {
     pageInfo { hasNextPage endCursor }
     nodes {
       ... on PullRequest {
@@ -99,6 +100,34 @@ query($cursor: String) {
 
 `statusCheckRollup` hangs off the head commit, not off the pull request, which is why the
 query reaches through `commits(last: 1)`.
+
+### The review-request search
+
+Added 2026-10-21. A load runs a second search alongside the first:
+`is:open is:pr review-requested:@me archived:false`, the open PRs waiting on the
+operator's review. The `@me` must be ASCII. GitHub does not read a full-width `＠` as
+the current user, and that search returns nothing instead of failing.
+
+The search string moved out of the query text into a `$q: String!` variable. One
+operation and one pagination loop in `fetchAllPrs` therefore serve both searches. A
+review-request row normalizes into the same PR record as an authored row.
+
+`/api/prs` returns that list as `reviewRequests`, beside `prs`. It is not stacked,
+because a review request is someone else's PR and its refs say nothing about the
+operator's own stacks. The dashboard page does not render it; the new-tab extension
+does.
+
+A failure of the review search never fails or empties `prs`. The loader runs both
+searches with `Promise.allSettled` and rethrows only an authored-search failure, so
+`withFallback` behaves as before. A review-search failure adds an entry to
+`partialErrors` that starts `Review requests did not load: `, and `reviewRequests`
+keeps the last list that search returned. Before its first success in a process, that
+is the restored payload's list, or empty. A payload persisted before this field
+existed restores with an empty review list rather than starting cold.
+
+Every fetch that misses the cache now makes at least two paginated GraphQL searches,
+which doubles the rate-limit cost of a poll and of a forced refresh.
+`FORCE_MIN_INTERVAL_MS` bounds the forced ones as before.
 
 ## The PR record
 

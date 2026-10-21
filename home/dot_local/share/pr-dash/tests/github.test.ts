@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { createClient } from '../src/github.ts';
-import { fetchAllPrs } from '../src/queries.ts';
+import { AUTHORED_SEARCH, fetchAllPrs, REVIEW_REQUESTED_SEARCH } from '../src/queries.ts';
 
 function pageResponse(nodes: unknown[], hasNextPage: boolean, endCursor: string | null) {
   return {
@@ -23,6 +23,23 @@ test('sends the token as a bearer header', async () => {
   });
   await fetchAllPrs(client);
   assert.strictEqual(seenAuth, 'Bearer tok');
+});
+
+test('each search sends its own search string, with an ASCII @me', async () => {
+  // The qualifier must be ASCII `@me`: GitHub does not read the full-width `＠` as the
+  // current user, and that search silently returns nothing rather than failing.
+  assert.ok(REVIEW_REQUESTED_SEARCH.includes('review-requested:@me'), REVIEW_REQUESTED_SEARCH);
+  const sent: unknown[] = [];
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async (_url, init) => {
+      sent.push((JSON.parse(String(init?.body)) as { variables: { q: unknown } }).variables.q);
+      return pageResponse([], false, null);
+    },
+  });
+  await fetchAllPrs(client);
+  await fetchAllPrs(client, REVIEW_REQUESTED_SEARCH);
+  assert.deepStrictEqual(sent, [AUTHORED_SEARCH, REVIEW_REQUESTED_SEARCH]);
 });
 
 test('follows pagination until hasNextPage is false', async () => {
