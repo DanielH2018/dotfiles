@@ -470,12 +470,16 @@ def tree_created(tree_path: str) -> float | None:
     """When was this worktree added? None when git cannot say.
 
     `git worktree add` writes `commondir` into the tree's admin dir once, and no later
-    git command rewrites it, so its mtime is the creation time.
+    git command rewrites it, so its mtime is the creation time. A tree directory that
+    has vanished raises from `subprocess.run` before git starts, and that too is None
+    rather than a traceback that would end the sweep.
     """
-    admin = _git(["rev-parse", "--path-format=absolute", "--git-dir"], cwd=tree_path)
-    if not admin:
-        return None
     try:
+        admin = _git(
+            ["rev-parse", "--path-format=absolute", "--git-dir"], cwd=tree_path
+        )
+        if not admin:
+            return None
         return (Path(admin) / "commondir").stat().st_mtime
     except OSError:
         return None

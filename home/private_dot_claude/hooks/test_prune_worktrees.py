@@ -228,6 +228,10 @@ check(
 # A path git cannot read status for stands in for the shared-index failure: the answer
 # has to be "dirty", because reading a failure as clean is what would delete live work.
 check("is_dirty fails closed when git errors", mod.is_dirty("/nonexistent-path-xyz"))
+check(
+    "tree_created has no answer, not a traceback, for a vanished tree",
+    mod.tree_created("/nonexistent-path-xyz") is None,
+)
 
 # ── end to end ────────────────────────────────────────────────────────────────
 
