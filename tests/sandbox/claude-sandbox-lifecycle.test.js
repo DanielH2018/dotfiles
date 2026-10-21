@@ -50,7 +50,7 @@ function extractFunction(name) {
 }
 
 const FN = skip ? {} : Object.fromEntries(
-  ['build_base', 'resolve_claude_code_version', 'refresh_claude_if_stale',
+  ['build_base', 'prune_replaced_images', 'resolve_claude_code_version', 'refresh_claude_if_stale',
     'built_on_stale_base', 'list_sessions', 'compact_session']
     .map((n) => [n, extractFunction(n)]),
 );
@@ -117,7 +117,7 @@ function buildRun({ force = false, version = '2.1.229' } = {}) {
   const sandboxDir = sandboxWithPin(version);
   const r = drive('build_base', {
     deps: ['resolve_claude_code_version'],
-    env: { SANDBOX_DIR: sandboxDir, STATE_DIR: state, ...RESOLVER_STATE },
+    env: { SANDBOX_DIR: sandboxDir, STATE_DIR: state, IMAGE_LABEL: 'claudebot.managed=true', ...RESOLVER_STATE },
     pre: DOCKER_ECHO,
     args: force ? 'force' : '',
   });
@@ -182,6 +182,25 @@ test('an unreadable pin fails the build rather than installing the newest releas
   assert.strictEqual(r.pinned, null);
 });
 
+test('build_base labels the base so the image a rebuild replaces can be pruned', { skip }, () => {
+  const { argv } = buildRun();
+  assert.strictEqual(argv[argv.indexOf('--label') + 1], 'claudebot.managed=true');
+});
+
+// --- prune_replaced_images ---------------------------------------------------
+
+test('prune_replaced_images removes only dangling images that carry the sandbox label', { skip }, () => {
+  // --all would also take every tagged sandbox image no container is using, which is
+  // every repo's image between launches; the filter keeps other tools' images out.
+  // The function silences docker's output, so the stub writes to a descriptor of its own.
+  const r = drive('prune_replaced_images', {
+    env: { IMAGE_LABEL: 'claudebot.managed=true' },
+    pre: `exec 3>&1\ndocker() { printf 'DOCKERARG:%s\\n' "$@" >&3; }`,
+  });
+  const argv = r.stdout.split('\n').filter((l) => l.startsWith('DOCKERARG:')).map((l) => l.slice(10));
+  assert.deepStrictEqual(argv, ['image', 'prune', '--force', '--filter', 'label=claudebot.managed=true']);
+});
+
 // --- refresh_claude_if_stale -------------------------------------------------
 
 function staleRun({ baseImage = true, version = '2.1.229', installed = null, newImageId = null } = {}) {
@@ -198,7 +217,7 @@ function staleRun({ baseImage = true, version = '2.1.229', installed = null, new
   fs.writeFileSync(idFile, 'sha256:before\n');
   return { state, ...drive('refresh_claude_if_stale', {
     deps: ['build_base', 'resolve_claude_code_version'],
-    env: { SANDBOX_DIR: sandboxDir, STATE_DIR: state, REBUILD: 'false', ...RESOLVER_STATE },
+    env: { SANDBOX_DIR: sandboxDir, STATE_DIR: state, REBUILD: 'false', IMAGE_LABEL: 'claudebot.managed=true', ...RESOLVER_STATE },
     pre: `docker() {
   if [[ "\${1:-}" == "image" ]]; then
     if [[ "\${3:-}" == "--format" ]]; then cat ${q(idFile)}; return 0; fi

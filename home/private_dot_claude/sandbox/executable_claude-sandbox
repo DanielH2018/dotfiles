@@ -25,6 +25,9 @@ AUDIT_BASE="$SANDBOX_DIR/audit"
 SESSIONS_BASE="$SANDBOX_DIR/sessions"
 ARTIFACTS_BASE="$SANDBOX_DIR/artifacts"
 STATE_DIR="$SANDBOX_DIR/state"
+# Every image this script builds carries this label, so prune_replaced_images can find
+# the ones a rebuild left untagged without touching anyone else's images.
+IMAGE_LABEL="claudebot.managed=true"
 # $STATE_DIR is ONE directory shared by every instance — that is what makes a
 # single OAuth login and one Snowflake token serve all of them. The cost is that
 # everything else Claude writes under ~/.claude is pooled too, so a session in
@@ -257,6 +260,15 @@ resolve_claude_code_version() {
   printf '%s' "$CLAUDE_CODE_PINNED"
 }
 
+# Deletes sandbox images that a rebuild left untagged. A rebuild moves the tag to the
+# new image and leaves the old one dangling, and nothing else ever removed it: by
+# 2026-10-21 the per-repo images and the bases they replaced had grown past 30 GB.
+# Without --all, prune takes only dangling images, and never one a container still
+# uses, so a sandbox running on the replaced image keeps it until it exits.
+prune_replaced_images() {
+  docker image prune --force --filter "label=$IMAGE_LABEL" >/dev/null 2>&1 || true
+}
+
 # Builds claudebot:base. "force" (explicit --rebuild-base) additionally busts the
 # Claude Code layer with a timestamp token, to reinstall the same version.
 #
@@ -276,6 +288,7 @@ build_base() {
   fi
   echo "Building claudebot:base (claude-code $version)..."
   docker build -t claudebot:base \
+    --label "$IMAGE_LABEL" \
     --build-arg "CLAUDE_CODE_VERSION=$version" \
     ${refresh_args[@]+"${refresh_args[@]}"} \
     -f "$SANDBOX_DIR/Dockerfile.base" "$SANDBOX_DIR"
@@ -332,6 +345,7 @@ refresh_claude_if_stale() {
 # --- Rebuild base image if requested ---
 if [[ "$REBUILD_BASE" == true ]]; then
   build_base force
+  prune_replaced_images
   [[ -z "$REPO_PATH" ]] && exit 0
   # Base changed — force per-repo rebuild too
   REBUILD=true
@@ -805,8 +819,10 @@ if [[ "$REBUILD" == true ]] || ! docker image inspect "$IMAGE_TAG" &>/dev/null; 
   docker build \
     -f "$DOCKERFILE" \
     -t "$IMAGE_TAG" \
+    --label "$IMAGE_LABEL" \
     --label "claudebot.base-id=$BASE_IMAGE_ID" \
     "$SANDBOX_DIR"
+  prune_replaced_images
 else
   echo ""
   echo "Using cached $IMAGE_TAG (use --rebuild to force)"
