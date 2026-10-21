@@ -4,16 +4,15 @@
 Run: python3 test_prune_artifacts.py
 
 The browser (serve-artifacts.sh) and the sweep (prune-artifacts.sh) both prefix star
-lines with artifact_host_label, and a star counts only while the two agree. They run as
-hooks in whatever environment Claude Code was started from. On macOS the label came
-from `scutil`, which lives in /usr/sbin, so a hook environment without /usr/sbin on
-PATH fell through to `hostname -s`. That name can differ (MacBook-Pro vs
-MacBook-Pro-2), and a sweep run under the other label deleted every starred artifact
-once it aged out.
+lines with artifact_host_label, and a star counts only while the two agree. A sweep
+under any other label matches no star and deletes every starred artifact once it ages
+out. These tests pin the two ways the label could drift: a PATH without /usr/sbin,
+where a bare `scutil` would fall through to `hostname -s`, and a label change that
+leaves star lines under the old name.
 
 Every case runs the real scripts against a temp HOME, with stub `uname`, `hostname`
-and `scutil` that disagree the way that laptop did, so the Darwin branch runs on a
-Linux CI runner too.
+and `scutil` that print different names, so the Darwin branch runs on a Linux CI
+runner too.
 """
 
 import os

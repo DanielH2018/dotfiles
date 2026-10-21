@@ -96,13 +96,19 @@ ARTIFACT_STARS_FILE="${CLAUDE_ARTIFACT_STARS_FILE:-$HOME/.claude/artifact-stars.
 # The label this host's own tree carries: the /a/<host>/ segment the browser serves it
 # under, and the prefix of this host's lines in the star list. The browser and the sweep
 # must agree on it, or a star set in one is invisible to the other. On macOS, `hostname`
-# can follow a DHCP-supplied name or a Bonjour conflict suffix (MacBook-Pro-2), so
-# LocalHostName comes first; it changes only when someone renames the machine.
+# can follow a DHCP-supplied name, so LocalHostName comes first; it changes only when
+# someone renames the machine.
 #
-# scutil is called by absolute path. It lives in /usr/sbin, which is not on PATH in
-# every environment Claude Code is started from, and a bare `scutil` there fell through
-# to `hostname -s`. The browser and the sweep then ran under different labels, and the
-# sweep deleted starred artifacts. ARTIFACT_SCUTIL exists for the tests.
+# scutil is called by absolute path, so the label does not depend on /usr/sbin being on
+# PATH in whatever environment Claude Code was started from. ARTIFACT_SCUTIL exists for
+# the tests.
+#
+# Inside Claude Code's Bash sandbox (Seatbelt), scutil can print a different
+# LocalHostName from the one it prints outside. On one laptop on 2026-10-21 it printed
+# MacBook-Pro sandboxed and MacBook-Pro-2 unsandboxed. The hooks run unsandboxed, so the
+# browser, the sweep and the star list all carry the unsandboxed name. Do not run
+# prune-artifacts.sh from a sandboxed shell: under the other label it matches no star
+# and deletes starred artifacts.
 artifact_host_label() {
   local host="${CLAUDE_ARTIFACTS_HOST:-}"
   if [[ -z "$host" && "$(uname -s)" == Darwin ]]; then
