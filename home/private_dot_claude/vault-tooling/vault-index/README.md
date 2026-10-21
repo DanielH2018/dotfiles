@@ -56,6 +56,15 @@ After that, `build`/`query` set `HF_HUB_OFFLINE=1` and read only the local cache
 they run **fully offline**, including inside the sandbox. (Override with
 `HF_HUB_OFFLINE=0` to allow an online download.)
 
+DuckDB caches extensions per release (`~/.duckdb/extensions/v2.0.0/...`). To
+keep builds inside the sandbox working after `uv.lock` moves DuckDB to a new
+version, re-run prefetch. A build outside the sandbox fetches the extension on
+its own.
+
+The index is written in DuckDB's v1.1.0 storage format, not 2.x's default. The
+claude-sandbox image reads it with its own baked DuckDB, which changes only on
+`claude-sandbox --rebuild-base`, so it can lag the host by a major version.
+
 ## Usage
 
 ```sh

@@ -54,11 +54,14 @@ def search(config: Config, query_text: str, k: int = 8,
                 [qvec, pool],
             ).fetchall()
         ]
+        # DuckDB 2.0 refuses a WHERE that references the alias of a side-effecting
+        # expression such as match_bm25, so the score is computed in a subquery.
         bm25_ids = [
             row[0] for row in con.execute(
                 """
-                SELECT id, fts_main_chunks.match_bm25(id, ?) AS s
-                FROM chunks WHERE s IS NOT NULL ORDER BY s DESC LIMIT ?
+                SELECT id, s FROM (
+                    SELECT id, fts_main_chunks.match_bm25(id, ?) AS s FROM chunks
+                ) WHERE s IS NOT NULL ORDER BY s DESC LIMIT ?
                 """,
                 [query_text, pool],
             ).fetchall()

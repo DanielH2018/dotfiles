@@ -12,6 +12,11 @@ from .config import Config
 from .embedder import Embedder
 
 _EMBED_BATCH = 64
+# The claude-sandbox image reads indexes built on the host with its own baked DuckDB,
+# which moves only on `claude-sandbox --rebuild-base` and so can lag the host's uv.lock.
+# A 1.x reader cannot open a file in DuckDB 2.0's default storage format, so write the
+# oldest format that pyproject.toml's duckdb floor can read.
+_STORAGE_VERSION = "v1.1.0"
 
 
 @dataclass
@@ -25,7 +30,10 @@ class BuildStats:
 
 def _connect(config: Config) -> duckdb.DuckDBPyConnection:
     config.index_path.parent.mkdir(parents=True, exist_ok=True)
-    con = duckdb.connect(str(config.index_path))
+    con = duckdb.connect(
+        str(config.index_path),
+        config={"storage_compatibility_version": _STORAGE_VERSION},
+    )
     con.execute("INSTALL fts")
     con.execute("LOAD fts")
     con.execute(

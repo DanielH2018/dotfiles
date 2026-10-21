@@ -43,6 +43,19 @@ def test_incremental_reembeds_nothing_when_unchanged(built_config, fake_embedder
     assert stats2.skipped == stats2.total_chunks
 
 
+def test_build_writes_storage_a_duckdb_1x_reader_can_open(built_config):
+    # The sandbox image's baked DuckDB can be 1.x while the host builds with 2.x.
+    con = duckdb.connect(str(built_config.index_path), read_only=True)
+    try:
+        tags = con.execute(
+            "SELECT tags FROM duckdb_databases() WHERE database_name = current_database()"
+        ).fetchone()[0]
+    finally:
+        con.close()
+    # 1.x does not report storage_version; only a 2.x run can see the format it wrote.
+    assert tags.get("storage_version", "v1").startswith("v1")
+
+
 def test_query_empty_index_raises(built_config, fake_embedder):
     # wipe the rows out of the already-built index to simulate an empty one
     con = duckdb.connect(str(built_config.index_path))

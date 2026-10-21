@@ -190,9 +190,13 @@ USER claudebot
 ENV VAULT_INDEX_VENV=/opt/vault-index/venv
 ENV VAULT_INDEX_MODEL_CACHE=/opt/vault-index/models
 ARG VAULT_INDEX_MODEL="BAAI/bge-small-en-v1.5"
+# Pinned so a rebuild cannot pull a DuckDB major the mounted vault-index code has not
+# been ported to. Keep it on the major in vault-index's uv.lock.
+# renovate: datasource=pypi depName=duckdb
+ARG DUCKDB_VERSION=2.0.0
 RUN --mount=type=cache,target=/home/claudebot/.cache/pip,uid=1000,gid=1000,sharing=locked \
     python3 -m venv "$VAULT_INDEX_VENV" \
-    && "$VAULT_INDEX_VENV/bin/pip" install fastembed duckdb \
+    && "$VAULT_INDEX_VENV/bin/pip" install fastembed "duckdb==$DUCKDB_VERSION" \
     && mkdir -p "$VAULT_INDEX_MODEL_CACHE" \
     && HF_HUB_OFFLINE=0 "$VAULT_INDEX_VENV/bin/python" -c "import os; from fastembed import TextEmbedding; TextEmbedding('$VAULT_INDEX_MODEL', cache_dir=os.environ['VAULT_INDEX_MODEL_CACHE'])" \
     && "$VAULT_INDEX_VENV/bin/python" -c "import duckdb; c=duckdb.connect(); c.execute('INSTALL fts'); c.close()"
