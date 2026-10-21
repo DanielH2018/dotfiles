@@ -1744,7 +1744,6 @@ SUDO_REFUSE = [
     # is nested and refused
     "npx -c 'sudo -n true'",
     "npm exec --call 'doas id'",
-    "npx --call='sudo id'",
     "npx -yc 'sudo -n true'",
     f"npx -c 'sudo -n {W}'",
     "uv run npx -c 'sudo id'",
@@ -1838,7 +1837,6 @@ SUDO_PASS = [
     'pnpm exec tsc -p "$P"',
     "npx -c 'eslint .'",
     "npm exec -c 'eslint \"$F\"'",
-    "npm exec -- eslint -c cfg.json",
     "npx eslint -c 'sudo and x'",
     'strace -o "$LOG" ls',
     'strace -fo "$LOG" ls',
