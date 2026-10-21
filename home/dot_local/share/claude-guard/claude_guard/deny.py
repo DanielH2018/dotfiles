@@ -48,6 +48,7 @@ denials name the words that matched, with the exclude arguments for a recursive 
 """
 
 import fnmatch
+import itertools
 import posixpath
 import re
 import shlex
@@ -1557,6 +1558,15 @@ SUDO_MSG = (
     "a wrapper or shell in front of sudo, doas, pkexec, su, or an argument with a shell "
     "metacharacter is not that command."
 )
+SUDO_VARIABLE_MSG = (
+    'Blocked: a command word is a variable or a substitution (`"$H"`, `$(…)`), which the '
+    "sudo boundary cannot resolve and so refuses, since it could spell sudo. Spell the path "
+    "as the command word instead."
+)
+# What a command shows the sudo boundary, in rising order: the highest rank found anywhere in
+# the command decides the message, so a real sudo beside a variable command word is still
+# reported as sudo.
+_SUDO_CLEAN, _SUDO_VARIABLE, _SUDO_ESCALATES = 0, 1, 2
 
 
 def _loose_hit(s: str) -> bool:
@@ -1613,10 +1623,10 @@ def _runs_interpreter(argv: list[str]) -> bool:
     return wrapper and any(map(_is_interpreter, names[1:]))
 
 
-def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool) -> bool:
-    """Whether one segment runs an escalator other than the one allowed command line. The
-    allowed line counts only as a whole top-level segment: inside a payload or a
-    substitution it is refused too."""
+def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool) -> int:
+    """The rank of what one segment runs: an escalator other than the one allowed command
+    line, a command word only an expansion names, or neither. The allowed line counts only
+    as a whole top-level segment: inside a payload or a substitution it is refused too."""
     # Bash joins a backslash-newline before it splits words; shlex would keep the newline in
     # the word, so `sudo\<newline> -n true` would read as a command named "sudo\n".
     joined = text.replace("\\\n", "")
@@ -1626,7 +1636,7 @@ def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool
     try:
         words = list(lex)
     except ValueError:
-        return _loose_hit(text)
+        return _SUDO_ESCALATES if _loose_hit(text) else _SUDO_CLEAN
     cmds, redirected, here = _command_lines(words)
     # Bash expands no brace inside quotes, and shlex has removed the quotes by the time a
     # word reaches the brace check. A brace list counts only when one survives in the
@@ -1635,6 +1645,7 @@ def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool
     # keeps its braces and commas outside the quotes.
     bare = _unquoted(joined)
     brace_unquoted = bare is None or _BRACE_LIST.search(bare) is not None
+    found = _SUDO_CLEAN
     for cur in cmds:
         skip = 0
         while skip < len(cur) and (cur[skip] in _KEYWORDS or _ASSIGNMENT.match(cur[skip])):
@@ -1643,16 +1654,14 @@ def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool
         if not argv:
             continue
         name = posixpath.basename(argv[0])
-        # A command word built by expansion, brace or glob could spell an escalator.
-        unknowable = (
-            (any(c in name for c in "$`") and " " not in name)
-            or (brace_unquoted and _BRACE_LIST.search(name))
-            or (
-                any(c in name for c in "*?[")
-                and any(fnmatch.fnmatchcase(e, name) for e in _ESCALATORS)
-            )
+        # A command word built by expansion, brace or glob could spell an escalator. A brace
+        # list or glob that matches one is reported as the escalator it spells; a variable or
+        # substitution is refused under its own message, since it names no escalator itself.
+        variable = any(c in name for c in "$`") and " " not in name
+        spelled = (brace_unquoted and _BRACE_LIST.search(name)) or (
+            any(c in name for c in "*?[") and any(fnmatch.fnmatchcase(e, name) for e in _ESCALATORS)
         )
-        if name in _ESCALATORS or unknowable:
+        if name in _ESCALATORS or spelled or variable:
             allowed = (
                 not nested
                 and argv[0] == "sudo"
@@ -1665,7 +1674,9 @@ def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool
                 and all(_SUDO_ARG.match(a) for a in argv[3:])
             )
             if not allowed:
-                return True
+                if name in _ESCALATORS or spelled:
+                    return _SUDO_ESCALATES
+                found = _SUDO_VARIABLE
             continue
         interpreter = _runs_interpreter(argv)
         # A runner that starts a shell (`uv run bash -c …`, `npx sh -c …`) passes its argv on
@@ -1681,16 +1692,14 @@ def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool
             continue  # a lookup, which runs nothing
         for tok in rest:
             if _loose_hit(tok) if interpreter else posixpath.basename(tok) in _ESCALATORS:
-                return True
+                return _SUDO_ESCALATES
             # env -S 'sudo -n true' glues its payload to the option; bash -c, eval and
             # timeout pass theirs as one word with a space in it.
             payload = tok.removeprefix("--split-string=").removeprefix("-S")
-            if (
-                not interpreter
-                and (payload != tok or any(c in tok for c in " \t\n"))
-                and _sudo_text(payload, depth + 1, True)
-            ):
-                return True
+            if not interpreter and (payload != tok or any(c in tok for c in " \t\n")):
+                found = max(found, _sudo_text(payload, depth + 1, True))
+                if found == _SUDO_ESCALATES:
+                    return found
         bodies = (*heredocs, *here)
         # An interpreter's heredoc or here-string is its program, not shell, so it gets the
         # word search its `-c` argument gets. The shell parse finds no command position in
@@ -1698,28 +1707,41 @@ def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool
         # brace expansion that could spell sudo.
         if interpreter:
             if any(_loose_hit(body) for body in bodies):
-                return True
-        elif any(_sudo_text(body, depth + 1, True) for body in bodies):
-            return True
-    return False
+                return _SUDO_ESCALATES
+        else:
+            for body in bodies:
+                found = max(found, _sudo_text(body, depth + 1, True))
+                if found == _SUDO_ESCALATES:
+                    return found
+    return found
 
 
-def _sudo_text(text: str, depth: int = 0, nested: bool = False) -> bool:
-    """Whether `text`, read as shell, runs an escalator other than the one allowed line. A
-    command the parser refuses is searched word by word instead, which over-refuses."""
+def _sudo_text(text: str, depth: int = 0, nested: bool = False) -> int:
+    """The highest rank anything in `text`, read as shell, reaches: an escalator other than
+    the one allowed line, a command word only an expansion names, or neither. A command the
+    parser refuses is searched word by word instead, which over-refuses."""
     if depth > 4:
-        return True
+        return _SUDO_ESCALATES
     p = parse(text)
     if not p.ok:
-        return _loose_hit(text)
-    return any(_segment_sudo(s.text, s.heredocs, depth, nested) for s in p.segments) or any(
-        _sudo_text(sub, depth, True) for sub in p.substitutions
-    )
+        return _SUDO_ESCALATES if _loose_hit(text) else _SUDO_CLEAN
+    found = _SUDO_CLEAN
+    for rank in itertools.chain(
+        (_segment_sudo(s.text, s.heredocs, depth, nested) for s in p.segments),
+        (_sudo_text(sub, depth, True) for sub in p.substitutions),
+    ):
+        found = max(found, rank)
+        if found == _SUDO_ESCALATES:
+            break
+    return found
 
 
 def sudo_boundary(sc: Scan, target: str) -> Verdict | None:
-    if _sudo_text(sc.command):
+    rank = _sudo_text(sc.command)
+    if rank == _SUDO_ESCALATES:
         return Verdict("deny", "sudo-boundary", SUDO_MSG)
+    if rank == _SUDO_VARIABLE:
+        return Verdict("deny", "sudo-boundary", SUDO_VARIABLE_MSG)
     return None
 
 

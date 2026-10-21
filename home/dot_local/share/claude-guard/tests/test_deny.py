@@ -1740,6 +1740,19 @@ def test_the_takeover_wrapper_line_and_sudo_as_text_is_no_decision(command):
     assert d.deny(command, "", ENV) == d.NONE
 
 
+def test_a_variable_command_word_is_refused_as_a_variable_not_as_sudo():
+    """The guard refuses a command word it cannot resolve, but a reason naming sudo sent the
+    reader looking for a sudo the command never had (2026-10-21, a hook run as `"$H"`)."""
+    v = d.deny('cd ~/vault && "$H"; echo $?', "", ENV)
+    assert (v.kind, v.rule, v.reason) == ("deny", "sudo-boundary", d.SUDO_VARIABLE_MSG)
+    assert "sudo is refused" not in v.reason
+
+
+def test_a_real_sudo_beside_a_variable_command_word_keeps_the_sudo_message():
+    v = d.deny('"$H"; sudo -n true', "", ENV)
+    assert v.reason == d.SUDO_MSG
+
+
 def test_the_sudo_tables_are_not_vacuous():
     assert len(SUDO_REFUSE) >= 100
     assert len(SUDO_PASS) >= 25

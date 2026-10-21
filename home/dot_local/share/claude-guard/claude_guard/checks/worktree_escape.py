@@ -66,8 +66,11 @@ def written_paths(command: str) -> list[str]:
     found = []
     for line in command.splitlines():
         for shape in _WRITE_SHAPES:
-            found.extend(m.group(1) for m in shape.finditer(line))
-    # A heredoc delimiter and a process substitution are not paths; neither is a bare `-`.
+            found.extend(m.group(1).strip("\"'") for m in shape.finditer(line))
+    # A heredoc delimiter and a process substitution are not paths; neither is a bare `-`. A
+    # target led by a variable is unknown, not relative, so it is dropped as an unresolvable
+    # `cd` is. The quotes come off first: `> "$T/n.md"` was once joined onto the `cd`
+    # directory as `$T/n.md`.
     return [p for p in found if p != "-" and not p.startswith(("$", "<", "("))]
 
 
@@ -153,7 +156,7 @@ def verdict(command: str, cwd: str) -> tuple[str, str] | None:
                 return None
             here = os.path.abspath(os.path.join(here, os.path.expanduser(destination)))
             continue
-        targets = [p.strip("\"'") for p in written_paths(segment)]
+        targets = written_paths(segment)
         if targets:
             for target in targets:
                 resolved = target if os.path.isabs(target) else os.path.join(here, target)

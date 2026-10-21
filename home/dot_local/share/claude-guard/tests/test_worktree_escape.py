@@ -81,6 +81,9 @@ ESCAPING_WRITES = [
     "echo x | tee {primary}/README.md",
     "echo x > {primary}/README.md",
     "echo x >> {primary}/README.md",
+    # A quoted target is still a relative write into the `cd` directory.
+    'cd {primary} && printf x > "n.md"',
+    'cd {primary} && printf x > "sub/$T"',
 ]
 
 # Near misses, each one token from a case above. A `cd` outside is not itself a write, and a
@@ -92,6 +95,10 @@ CONTAINED_WRITES = [
     "cd {primary} && grep -rn token .",
     "cd {primary} && cat README.md > /tmp/copy.txt",
     "cd {primary}",
+    # A quoted target led by a variable is unknown, as an unquoted one is: it is not relative
+    # to the `cd` directory. Measured 2026-10-21 with a mktemp dir under $TMPDIR.
+    'cd {primary} && T=$(mktemp -d "$TMPDIR/x.XXXXXX"); printf x > "$T/n.md"',
+    'cd {primary} && printf x > "${{T}}/n.md"',
 ]
 
 
