@@ -88,7 +88,10 @@ vscode "ms-vscode-remote.remote-containers"
 vscode "rust-lang.rust-analyzer"
 vscode "yzhang.markdown-all-in-one"
 cargo "taplo-cli"
-npm "corepack"
+# No `npm` rows. brew bundle runs npm under its own PATH, which holds Homebrew's node
+# (/opt/homebrew/opt/node/bin) and never fnm's, so an npm row fails with "env: node: No such
+# file or directory" here. Global npm packages come from the post-install scripts, which load
+# fnm's node first. corepack itself ships with node.
 
 # Machine-local additions, such as the work overlay's casks, which this public file cannot
 # name. The file is Ruby, so `brew bundle` evaluates the local file in place. chezmoi's
