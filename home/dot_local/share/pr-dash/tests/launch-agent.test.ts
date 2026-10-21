@@ -83,6 +83,28 @@ test('the plist and bin/pr-dash read PR_DASH_WORK_ORGS from the same chezmoi key
   assert.match(binText, /export PR_DASH_WORK_ORGS=/, 'expected bin/pr-dash to export PR_DASH_WORK_ORGS');
 });
 
+test('the plist and bin/pr-dash read PR_DASH_EXTENSION_ORIGINS from the same chezmoi key, guarded by hasKey', () => {
+  // Same shape as the work-orgs test above. The extension ID is machine-local data, never a
+  // literal in this public repo, and the hasKey guard is what renders an empty string — no
+  // extension origin allowed — on a machine that never set the key.
+  const plistExpr =
+    /<key>PR_DASH_EXTENSION_ORIGINS<\/key>\s*<string>([^<]*)<\/string>/.exec(plistText)?.[1];
+  const binExpr = /^EXTENSION_ORIGINS_DEFAULT='([^']*)'$/m.exec(binText)?.[1];
+  assert.ok(plistExpr !== undefined, 'expected a PR_DASH_EXTENSION_ORIGINS string in the plist');
+  assert.ok(binExpr !== undefined, 'expected an EXTENSION_ORIGINS_DEFAULT literal in bin/pr-dash');
+  assert.strictEqual(plistExpr, binExpr);
+  assert.match(
+    plistExpr,
+    /^\{\{\s*if hasKey \. "prDashExtensionOrigins"\s*\}\}\{\{\s*\.prDashExtensionOrigins\s*\}\}\{\{\s*end\s*\}\}$/,
+    'expected the value to be .prDashExtensionOrigins behind a hasKey guard and nothing else',
+  );
+  assert.match(
+    binText,
+    /export PR_DASH_EXTENSION_ORIGINS=/,
+    'expected bin/pr-dash to export PR_DASH_EXTENSION_ORIGINS',
+  );
+});
+
 test('KeepAlive is bare <true/>, with no SuccessfulExit override', () => {
   // The idle exit (main-lib.ts's createIdleExit) exits status 0 by design. A dict form —
   // <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict> — reads that clean

@@ -7,6 +7,7 @@ import assert from 'node:assert';
 import {
   parsePort,
   parseWorkOrgs,
+  parseExtensionOrigins,
   listenErrorMessage,
   expectedHost,
   preloadEnabled,
@@ -127,3 +128,47 @@ for (const raw of [undefined, '', '0', 'true', 'yes']) {
     assert.strictEqual(preloadEnabled(env), false);
   });
 }
+
+// Synthetic IDs from Chrome's a-p alphabet; no real extension ID belongs in this repo.
+const EXT_A = `chrome-extension://${'a'.repeat(32)}`;
+const EXT_P = `chrome-extension://${'p'.repeat(32)}`;
+
+test('an unset or empty PR_DASH_EXTENSION_ORIGINS allows no extension origin', () => {
+  assert.deepStrictEqual(parseExtensionOrigins(undefined), { ok: true, origins: [] });
+  assert.deepStrictEqual(parseExtensionOrigins(''), { ok: true, origins: [] });
+  assert.deepStrictEqual(parseExtensionOrigins(' , '), { ok: true, origins: [] });
+});
+
+test('extension origins are split on commas and trimmed, skipping empty entries', () => {
+  assert.deepStrictEqual(parseExtensionOrigins(` ${EXT_A} ,,${EXT_P}`), {
+    ok: true,
+    origins: [EXT_A, EXT_P],
+  });
+});
+
+test('one malformed extension origin rejects the whole value, naming the entry', () => {
+  // A typo must stop the server rather than be read leniently, so each near-miss of the
+  // real shape is refused: wrong scheme, wrong length, letters outside a-p, digits,
+  // uppercase, a trailing slash, a path, and a wildcard.
+  const bad = [
+    `http://${'a'.repeat(32)}`,
+    `chrome-extension://${'a'.repeat(31)}`,
+    `chrome-extension://${'a'.repeat(33)}`,
+    `chrome-extension://${'q'.repeat(32)}`,
+    `chrome-extension://${'1'.repeat(32)}`,
+    EXT_A.toUpperCase(),
+    `chrome-extension://${'A'.repeat(32)}`,
+    `${EXT_A}/`,
+    `${EXT_A}/newtab.html`,
+    '*',
+    'chrome-extension://*',
+  ];
+  for (const entry of bad) {
+    const r = parseExtensionOrigins(`${EXT_P},${entry}`);
+    assert.strictEqual(r.ok, false, entry);
+    if (!r.ok) {
+      assert.match(r.reason, /PR_DASH_EXTENSION_ORIGINS/);
+      assert.ok(r.reason.includes(`"${entry}"`), r.reason);
+    }
+  }
+});

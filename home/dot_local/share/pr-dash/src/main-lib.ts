@@ -53,6 +53,45 @@ export function parseWorkOrgs(raw: string | undefined): string[] {
     .filter((org) => org !== '');
 }
 
+export type ParsedExtensionOrigins =
+  | { ok: true; origins: string[] }
+  | { ok: false; reason: string };
+
+// A Chrome extension ID is 32 characters from a-p, lowercase: Chrome derives it from a hash
+// and maps each nibble to one letter. Anything else cannot be a real extension origin, so
+// it is a typo, and a typo here must stop the server rather than be read leniently.
+const EXTENSION_ORIGIN_PATTERN = /^chrome-extension:\/\/[a-p]{32}$/;
+
+/**
+ * Reads the extension origins allowed to read `GET /api/prs` from a raw
+ * `PR_DASH_EXTENSION_ORIGINS` value: a comma-separated list such as
+ * `chrome-extension://<id>,chrome-extension://<id>`.
+ *
+ * Unset, empty, or all-whitespace yields an empty list, which accepts no extension origin —
+ * the behaviour on a machine that never configured the variable. Each entry is trimmed and
+ * empty entries are skipped, as in `parseWorkOrgs`, since neither can widen access. Nothing
+ * is lowercased: an entry that does not match `chrome-extension://` plus 32 of a-p exactly
+ * rejects the whole value, with a message naming the variable and the entry, so the caller
+ * can refuse to start.
+ */
+export function parseExtensionOrigins(raw: string | undefined): ParsedExtensionOrigins {
+  if (raw === undefined) return { ok: true, origins: [] };
+  const origins = raw
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== '');
+  const bad = origins.find((entry) => !EXTENSION_ORIGIN_PATTERN.test(entry));
+  if (bad !== undefined) {
+    return {
+      ok: false,
+      reason:
+        `PR_DASH_EXTENSION_ORIGINS entries must each be chrome-extension:// followed by a ` +
+        `32-letter extension ID (a-p, lowercase), but one is "${bad}".`,
+    };
+  }
+  return { ok: true, origins };
+}
+
 /** The port a client omits from an http `Host` header, being the scheme's default. */
 const HTTP_DEFAULT_PORT = 80;
 

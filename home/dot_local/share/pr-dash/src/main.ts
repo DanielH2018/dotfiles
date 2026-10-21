@@ -10,6 +10,7 @@ import {
   createLoadPrs,
   expectedHost,
   listenErrorMessage,
+  parseExtensionOrigins,
   parsePort,
   parseWorkOrgs,
   preloadEnabled,
@@ -23,6 +24,15 @@ if (!parsedPort.ok) {
   process.exit(1);
 }
 const port = parsedPort.port;
+
+// Parsed before anything else runs, so a malformed entry stops the process before it reads
+// the payload store, resolves a token, or listens. A typo in an access allowlist must not
+// start a server whose boundary differs from the one the operator configured.
+const parsedExtensionOrigins = parseExtensionOrigins(process.env['PR_DASH_EXTENSION_ORIGINS']);
+if (!parsedExtensionOrigins.ok) {
+  console.error(parsedExtensionOrigins.reason);
+  process.exit(1);
+}
 
 // Resolved lazily rather than here: under launchd there is no interactive session to answer
 // 1Password's Touch ID prompt at startup, so calling resolveToken before listen made an
@@ -70,6 +80,9 @@ const server = createServer({
   // list — the client then treats every repository as work and the Personal toggle has
   // nothing to hide. The launchd agent takes its value from the rendered plist.
   workOrgs: parseWorkOrgs(process.env['PR_DASH_WORK_ORGS']),
+  // Unset on a machine that never configured it, which accepts no extension origin. The
+  // launchd agent takes its value from the rendered plist.
+  extensionOrigins: parsedExtensionOrigins.origins,
   loadPrs,
   onRequest: () => idleExit.touch(),
 });

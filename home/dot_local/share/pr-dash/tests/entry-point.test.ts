@@ -11,6 +11,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { spawnSync } from 'node:child_process';
+import { createServer as createNetServer } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -26,4 +27,30 @@ test('src/main.ts links its whole import graph under Node', () => {
   assert.doesNotMatch(res.stderr, /ERR_MODULE_NOT_FOUND|Cannot find module/, res.stderr);
   assert.strictEqual(res.status, 1, res.stderr);
   assert.match(res.stderr, /PR_DASH_PORT must be a port number/);
+});
+
+test('src/main.ts refuses to start on a malformed PR_DASH_EXTENSION_ORIGINS', async () => {
+  // A free ephemeral port, never 8770, which the launchd agent may hold. PR_DASH_PRELOAD is
+  // removed so that, if a regression let the server start anyway, it would not resolve a
+  // token and raise a Touch ID prompt during a test run.
+  const probe = createNetServer();
+  await new Promise<void>((r) => probe.listen(0, '127.0.0.1', r));
+  const addr = probe.address();
+  if (addr === null || typeof addr === 'string') throw new Error('no port');
+  await new Promise<void>((r) => probe.close(() => r()));
+
+  const { PR_DASH_PRELOAD: _omit, ...env } = process.env;
+  const res = spawnSync(process.execPath, ['src/main.ts'], {
+    cwd: PACKAGE_ROOT,
+    encoding: 'utf8',
+    env: {
+      ...env,
+      PR_DASH_PORT: String(addr.port),
+      PR_DASH_EXTENSION_ORIGINS: 'chrome-extension://not-an-extension-id',
+    },
+    timeout: 20_000,
+  });
+  assert.strictEqual(res.status, 1, res.stderr);
+  assert.match(res.stderr, /PR_DASH_EXTENSION_ORIGINS entries must each be/);
+  assert.doesNotMatch(res.stdout, /listening/);
 });

@@ -33,6 +33,11 @@ export type ServerOpts = {
   // spend cycles refusing is still activity, not idleness. Optional so every existing
   // caller (every test that builds a ServerOpts without it) keeps compiling.
   onRequest?: () => void;
+  // Chrome extension origins allowed to read `GET /api/prs` cross-origin, each exactly
+  // `chrome-extension://<32 a-p>` — see `parseExtensionOrigins` in main-lib.ts, which
+  // validates them. Absent or empty means no extension origin is accepted, which is the
+  // behaviour before this option existed.
+  extensionOrigins?: readonly string[];
   // loadPrs carries its own fetchedAt rather than this module stamping one at response
   // time: a cache hit must report when the data was actually fetched, not the instant of
   // this particular request, or a client polling every few seconds would see a "just now"
@@ -89,12 +94,16 @@ async function handle(
   // index.html and app.js to a mismatched Host let an attacker's page host the dashboard's
   // own client code, and an absent Host is refused here too rather than defaulted: HTTP/1.1
   // requires it and there is nothing to compare the expectation against without it.
-  const hostCheck = checkHost(req.headers, { host: opts.host });
+  const hostCheck = checkHost(req.headers, {
+    host: opts.host,
+    extensionOrigins: opts.extensionOrigins ?? [],
+  });
   if (!hostCheck.ok) return refuse(res, 403, hostCheck.reason);
 
   // Only reads are served. No route here changes GitHub state, and a cross-origin form
   // POST is already refused above by the Host/Origin check, so this closes nothing
-  // exploitable today; it is here because this is the endpoint surface a later mutating
+  // exploitable today. It is also what refuses a non-GET from an allowlisted extension
+  // origin, which the Host/Origin check lets through. It is here because this is the endpoint surface a later mutating
   // route is added to, and a method gate costs less to add before that route exists than
   // after.
   if (req.method !== 'GET') {
@@ -120,7 +129,17 @@ async function handle(
     return;
   }
 
-  // The shell contains no PR data, and nothing beyond the Host/Origin check above gates it.
+  // An allowlisted extension origin may read `/api/prs` and nothing else: not the page
+  // shell, not `app.js`, not a 404. The guard could only report the match, because it runs
+  // before the target is parsed, so the path rule lives here. A non-GET from that origin
+  // never reaches this point: the method gate above has already answered 405.
+  const { extensionOrigin } = hostCheck;
+  if (extensionOrigin !== undefined && url.pathname !== '/api/prs') {
+    return refuse(res, 403, `origin ${extensionOrigin} may only read /api/prs`);
+  }
+
+  // The shell contains no PR data. Beyond the Host/Origin check above, only the extension
+  // path rule just above gates it, and that rule only ever refuses.
   if (url.pathname === '/' || url.pathname === '/index.html') {
     return serveStatic('index.html', res);
   }
@@ -129,6 +148,16 @@ async function handle(
     // The host was checked at the top of this function, unconditionally and before any
     // route was dispatched, which is the one place it lives. Nothing further gates this
     // route.
+    //
+    // An allowlisted extension origin gets CORS headers naming exactly that origin, never
+    // `*`, so the browser hands the body to that extension and no other page. Set with
+    // `setHeader` before `loadPrs` runs, so the 500 from createServer's catch-all carries
+    // them too: the extension can then read why the load failed (resolveToken's message,
+    // never the token) rather than seeing an opaque network error.
+    if (extensionOrigin !== undefined) {
+      res.setHeader('access-control-allow-origin', extensionOrigin);
+      res.setHeader('vary', 'Origin');
+    }
     // `?refresh=1` is the page's Refresh click, and only that exact value counts —
     // anything else in the query string is an ordinary poll served from the cache. The
     // comparison is the validation: no value from the URL reaches loadPrs, only a boolean.

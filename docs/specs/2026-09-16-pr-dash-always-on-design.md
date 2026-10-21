@@ -133,10 +133,54 @@ Three consequences a reviewer should see stated rather than derive:
 
 Nothing. `checkHost` is the boundary, and the honest description of the posture is that the
 dashboard is readable by anything on this machine that speaks HTTP with a correct `Host`. The
+one browser-side exception is an allowlisted extension origin, which reads `/api/prs` and
+nothing else — see "Extension origins" below. The
 alternative considered and rejected was a persistent secret injected into the page shell the
 server hands out: any local process can fetch that shell, so it would stop nothing determined
 while looking like it does — worse than removal, because it invites a reviewer to believe a
 boundary exists.
+
+## Extension origins
+
+Added 2026-10-21. A Chrome extension's new-tab page shows the PR list beside other local
+tools, so it has to read `/api/prs` from its own origin. Such a page sends
+`Origin: chrome-extension://<id>`, which `checkHost` refused like any other cross-origin
+request.
+
+**The allowlist.** `PR_DASH_EXTENSION_ORIGINS` holds comma-separated origins, each exactly
+`chrome-extension://` followed by 32 letters from `a` to `p`. Both `bin/pr-dash` and the plist
+render it from `prDashExtensionOrigins` in the machine-local `chezmoi.toml`, under `[data]`,
+behind a `hasKey` guard. The extension ID stays out of this repo, which is public. An unset
+or empty value allows no extension origin, so a machine that never sets the key keeps the
+guard exactly as it was. `parseExtensionOrigins` in `main-lib.ts` rejects any malformed
+entry, and `main.ts` then exits 1 before it reads the payload store or listens. A typo must
+stop the server rather than start one whose boundary differs from the one configured.
+
+**What an allowlisted origin gets.** `checkHost` still checks `Host` first and
+unconditionally, so DNS rebinding stays blocked whatever the `Origin`. An `Origin` that
+exactly equals an allowlist entry is then accepted, with no case-folding and no
+`localhost` aliasing, and `checkHost` reports it to the server. The server refuses that
+origin with a 403 on every path except `/api/prs`, including the page shell, `app.js`, and
+a path that would 404. The method gate answers any non-GET with a 405 before that, so the
+origin can make exactly one kind of request: `GET /api/prs`. That response carries
+`Access-Control-Allow-Origin: <that origin>` and `Vary: Origin`, never `*`. The headers are
+set before `loadPrs` runs, so the catch-all `500` carries them too and the extension can
+read why a load failed.
+
+**What this widens.** The local-process threat is unchanged: a local process could already
+forge any `Origin`. The browser threat widens by exactly one named origin, on one route. Code
+running in that extension can now read the PR metadata `/api/prs` returns, and can force
+`?refresh=1`, which spends the operator's GitHub token within `FORCE_MIN_INTERVAL_MS`. A
+request from the extension also counts as activity for the idle exit, and after a token
+expiry or an idle exit its first request resolves the token again, which raises a Touch ID
+prompt. The extension should poll without `?refresh=1`, which only the page's Refresh
+click needs.
+
+**Activation.** launchd reads the plist's environment only at bootstrap, so setting the
+chezmoi key needs the plist header's reload block. `chezmoi apply` alone leaves the running
+agent refusing the extension. An unpacked extension with no `key` in its manifest takes an ID
+derived from its directory path, so moving the folder changes the ID. The server then
+refuses the extension until the key is updated, which fails closed.
 
 ## Lazy token resolution
 
@@ -234,8 +278,11 @@ could not authenticate.
 ## Testing
 
 - `checkSecret` and its tests are deleted, and no test asserts a secret header.
-- `checkHost` keeps every test it has, and gains no exemption: it still runs first, on every
-  path, including the page shell and static assets.
+- `checkHost` keeps every test it has, and still runs first, on every path, including the
+  page shell and static assets. Its one exemption is the extension-origin allowlist, and the
+  tests pin that it covers only `GET /api/prs`, only an exactly listed origin, never a
+  wrong `Host`, and nothing at all when the list is empty. A malformed entry aborts
+  startup.
 - The token resolves once across concurrent first requests, and a failed resolution is retried
   rather than cached.
 - A token is reused inside `TOKEN_MAX_AGE_MS` and resolved again at it, once across concurrent

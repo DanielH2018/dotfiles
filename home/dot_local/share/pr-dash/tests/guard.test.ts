@@ -43,3 +43,20 @@ test('checkHost rejects an empty Host, which carries no host to compare', () => 
   const r = checkHost({ ...good, host: '' }, { host: expected.host });
   assert.strictEqual(r.ok, false);
 });
+
+// The path and CORS halves of the extension allowlist live in server.ts and are tested
+// there. These pin the guard's own half: an exact match is reported, nothing near it is.
+const extension = `chrome-extension://${'a'.repeat(32)}`;
+
+test('reports an allowlisted extension origin instead of refusing it', () => {
+  const r = checkHost({ ...good, origin: extension }, { ...expected, extensionOrigins: [extension] });
+  assert.deepStrictEqual(r, { ok: true, extensionOrigin: extension });
+});
+
+test('matches an extension origin exactly, with no case-folding', () => {
+  const r = checkHost(
+    { ...good, origin: extension.toUpperCase() },
+    { ...expected, extensionOrigins: [extension] },
+  );
+  assert.strictEqual(r.ok, false);
+});

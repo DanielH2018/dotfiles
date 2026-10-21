@@ -78,6 +78,15 @@
 		     every repository then counts as work and the chip stays hidden. -->
 		<key>PR_DASH_WORK_ORGS</key>
 		<string>{{ if hasKey . "prDashWorkOrgs" }}{{ .prDashWorkOrgs }}{{ end }}</string>
+		<!-- The Chrome extension origins allowed to read /api/prs cross-origin, comma-separated,
+		     each chrome-extension://<32-letter id>. The ID stays out of this repo: it comes
+		     from `prDashExtensionOrigins` in the machine-local chezmoi.toml, under [data].
+		     Unset renders an empty string, which accepts no extension origin, and a malformed
+		     entry makes src/main.ts exit at startup rather than serve a wider boundary than
+		     configured. launchd reads this only at bootstrap, so a changed key needs the
+		     reload block in this file's header, not just `chezmoi apply`. -->
+		<key>PR_DASH_EXTENSION_ORIGINS</key>
+		<string>{{ if hasKey . "prDashExtensionOrigins" }}{{ .prDashExtensionOrigins }}{{ end }}</string>
 		<!-- src/token.ts invokes `op` by bare name through execFile, and launchd's default
 		     PATH is just /usr/bin:/bin:/usr/sbin:/sbin. Without /opt/homebrew/bin here, the
 		     first /api/prs comes back as a 500 carrying an ENOENT. -->

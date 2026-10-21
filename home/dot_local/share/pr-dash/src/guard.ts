@@ -1,4 +1,8 @@
-export type GuardResult = { ok: true } | { ok: false; reason: string };
+// `extensionOrigin` is set only when the request's Origin is an exact member of the
+// configured extension allowlist. The guard cannot apply that origin's path restriction
+// itself, because the request target is not parsed yet, so it reports the match and the
+// server enforces the rest — see `handle` in server.ts.
+export type GuardResult = { ok: true; extensionOrigin?: string } | { ok: false; reason: string };
 
 type Headers = Record<string, string | string[] | undefined>;
 
@@ -37,8 +41,17 @@ function originHost(origin: string): string | undefined {
  *
  * An absent `Host` is refused rather than defaulted: HTTP/1.1 requires it, there is nothing
  * to compare without it, and the server has no other host to fall back to.
+ *
+ * The one exception to the `Origin` rule is `expected.extensionOrigins`: an `Origin` equal to
+ * one of its entries is accepted and returned as `extensionOrigin`, so the server can confine
+ * it to `GET /api/prs`. The comparison is exact string equality — no `canonicalHost`, no
+ * case-folding — against entries `parseExtensionOrigins` in main-lib.ts has already
+ * validated. The `Host` check above it is unconditional, whatever the `Origin`.
  */
-export function checkHost(headers: Headers, expected: { host: string }): GuardResult {
+export function checkHost(
+  headers: Headers,
+  expected: { host: string; extensionOrigins?: readonly string[] },
+): GuardResult {
   const host = one(headers['host']);
   if (host === undefined || host === '' || canonicalHost(host) !== canonicalHost(expected.host)) {
     return { ok: false, reason: `unexpected Host: ${String(host)}` };
@@ -49,6 +62,9 @@ export function checkHost(headers: Headers, expected: { host: string }): GuardRe
   // boundary, and this check exists only to reject a *present* cross-origin (or otherwise
   // invalid) Origin, not to require one.
   const origin = one(headers['origin']);
+  if (origin !== undefined && (expected.extensionOrigins ?? []).includes(origin)) {
+    return { ok: true, extensionOrigin: origin };
+  }
   if (origin !== undefined) {
     const originAuthority = originHost(origin);
     if (originAuthority === undefined || canonicalHost(originAuthority) !== canonicalHost(expected.host)) {

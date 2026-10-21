@@ -42,9 +42,16 @@ async function withServer(
   }),
   onRequest?: () => void,
   workOrgs: string[] = [],
+  extensionOrigins: string[] = [],
 ) {
   const port = await freePort();
-  const server = createServer({ host: `127.0.0.1:${port}`, loadPrs, onRequest, workOrgs });
+  const server = createServer({
+    host: `127.0.0.1:${port}`,
+    loadPrs,
+    onRequest,
+    workOrgs,
+    extensionOrigins,
+  });
   await new Promise<void>((r) => server.listen(port, '127.0.0.1', r));
   try {
     await fn(`http://127.0.0.1:${port}`);
@@ -556,4 +563,118 @@ test('a token resolution failure on a cold start reaches the client as a 500 car
     // own comment on why the reference is safe to print but the field's value is not.
     assert.doesNotMatch(body, /ghp_[A-Za-z0-9]+/);
   }, loadPrs);
+});
+
+// Extension-origin allowlist. The IDs are synthetic — 32 of one letter from Chrome's a-p
+// alphabet — so no real extension ID lands in this public repo. Every request goes over a
+// raw socket, because `fetch` does not let a test choose the Origin header.
+const EXTENSION = `chrome-extension://${'a'.repeat(32)}`;
+const OTHER_EXTENSION = `chrome-extension://${'b'.repeat(32)}`;
+
+function getFrom(base: string, path: string, origin: string, host?: string): Promise<string> {
+  const hostHeader = host ?? `127.0.0.1:${new URL(base).port}`;
+  return rawAt(
+    base,
+    `GET ${path} HTTP/1.1\r\nHost: ${hostHeader}\r\nOrigin: ${origin}\r\nConnection: close\r\n\r\n`,
+  );
+}
+
+function withExtensionServer(
+  extensionOrigins: string[],
+  fn: (base: string) => Promise<void>,
+  loadPrs?: Parameters<typeof withServer>[1],
+) {
+  return withServer(fn, loadPrs, undefined, [], extensionOrigins);
+}
+
+test('an allowlisted extension origin reads /api/prs, answered with CORS headers naming that exact origin', async () => {
+  await withExtensionServer([EXTENSION], async (base) => {
+    const response = await getFrom(base, '/api/prs', EXTENSION);
+    assert.match(response, /^HTTP\/1\.1 200 /);
+    assert.match(response, /"partialErrors"/);
+    assert.ok(
+      response.toLowerCase().includes(`\r\naccess-control-allow-origin: ${EXTENSION}\r\n`),
+      response,
+    );
+    assert.match(response, /\r\nvary: Origin\r\n/i);
+    assert.doesNotMatch(response, /access-control-allow-origin: \*/i);
+
+    // The page's own same-origin poll is not a CORS request and gets no CORS header.
+    const port = new URL(base).port;
+    const sameOrigin = await getFrom(base, '/api/prs', `http://127.0.0.1:${port}`);
+    assert.match(sameOrigin, /^HTTP\/1\.1 200 /);
+    assert.doesNotMatch(sameOrigin, /access-control-allow-origin/i);
+  });
+});
+
+test('an allowlisted extension origin is refused on every path except /api/prs', async () => {
+  // The page shell, the client code, a near-miss of the API path, and a path that would 404:
+  // the allowlist opens one route, not the server.
+  await withExtensionServer([EXTENSION], async (base) => {
+    for (const path of ['/', '/index.html', '/app.js', '/api/prs/', '/no-such-file']) {
+      const response = await getFrom(base, path, EXTENSION);
+      assert.match(response, /^HTTP\/1\.1 403 /, `path ${path}`);
+      assert.doesNotMatch(response, /access-control-allow-origin/i, `path ${path}`);
+    }
+  });
+});
+
+test('an allowlisted extension origin is refused a non-GET on /api/prs', async () => {
+  await withExtensionServer([EXTENSION], async (base) => {
+    const port = new URL(base).port;
+    const response = await rawAt(
+      base,
+      `POST /api/prs HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nOrigin: ${EXTENSION}\r\n` +
+        'Content-Length: 0\r\nConnection: close\r\n\r\n',
+    );
+    assert.doesNotMatch(response, /^HTTP\/1\.1 200 /);
+    assert.doesNotMatch(response, /access-control-allow-origin/i);
+  });
+});
+
+test('an extension origin that is not on the allowlist is refused on /api/prs', async () => {
+  await withExtensionServer([EXTENSION], async (base) => {
+    const response = await getFrom(base, '/api/prs', OTHER_EXTENSION);
+    assert.match(response, /^HTTP\/1\.1 403 /);
+    assert.doesNotMatch(response, /access-control-allow-origin/i);
+  });
+});
+
+test('with no extension origins configured, every extension origin is refused', async () => {
+  // The default: a machine that never set PR_DASH_EXTENSION_ORIGINS keeps the guard exactly
+  // as it was before the allowlist existed.
+  await withServer(async (base) => {
+    const response = await getFrom(base, '/api/prs', EXTENSION);
+    assert.match(response, /^HTTP\/1\.1 403 /);
+    assert.match(response, /cross-origin request/);
+  });
+});
+
+test('an allowlisted extension origin still needs the configured Host', async () => {
+  // The Host check is the DNS-rebinding defence, and an allowlisted Origin must not bypass it.
+  await withExtensionServer([EXTENSION], async (base) => {
+    const response = await getFrom(base, '/api/prs', EXTENSION, 'evil.example.com:8770');
+    assert.match(response, /^HTTP\/1\.1 403 /);
+    assert.match(response, /unexpected Host/);
+  });
+});
+
+test('a failed load answers an allowlisted extension origin with a 500 it can read', async () => {
+  // The CORS headers are set before loadPrs runs, so the catch-all's 500 carries them and the
+  // extension sees the failure's message instead of an opaque network error.
+  await withExtensionServer(
+    [EXTENSION],
+    async (base) => {
+      const response = await getFrom(base, '/api/prs', EXTENSION);
+      assert.match(response, /^HTTP\/1\.1 500 /);
+      assert.match(response, /vault is locked/);
+      assert.ok(
+        response.toLowerCase().includes(`\r\naccess-control-allow-origin: ${EXTENSION}\r\n`),
+        response,
+      );
+    },
+    async () => {
+      throw new Error('vault is locked');
+    },
+  );
 });
