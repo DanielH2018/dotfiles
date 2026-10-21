@@ -20,8 +20,8 @@ const { run: spawnScript } = require('../lib/run');
 const ASKPASS = srcPath('dot_local', 'bin', 'executable_tmux-askpass');
 
 // The helper's last line is `timeout ... head -n 1 <&3`, and timeout(1) is GNU coreutils, which
-// a stock Mac does not have and this repo never asks for (not in Brewfile.tmpl, not a row in
-// .chezmoidata/tools.toml). Every path that reaches the bounded read therefore exits 127 there,
+// a stock Mac does not have. Brewfile.tmpl installs coreutils, but a Mac that never ran
+// `brew bundle` still lacks it, and every path that reaches the bounded read exits 127 there,
 // which is the harness reporting a missing tool, not the helper misbehaving.
 //
 // Gated rather than made portable because the helper only ever runs on the headless Linux hosts:
