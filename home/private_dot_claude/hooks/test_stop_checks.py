@@ -166,6 +166,35 @@ check(
     ),
 )
 check(
+    "a CI event or a side session's message does not open a new turn",
+    evaluate(
+        BAD,
+        [
+            user("write the plan"),
+            feedback("[stop-checks:artifact-link-last] x"),
+            user('<ci-monitor-event pr="1">checks failed</ci-monitor-event>'),
+            user('<cross-session-message from="x">done</cross-session-message>'),
+            assistant(BAD),
+        ],
+    )
+    is None,
+)
+check(
+    "an operator prompt that opens with a system reminder still opens a new turn",
+    tagged(
+        evaluate(
+            BAD,
+            [
+                user("write the plan"),
+                feedback("[stop-checks:artifact-link-last] x"),
+                user("<system-reminder>context</system-reminder>\nnow the second plan"),
+                assistant(BAD),
+            ],
+        ),
+        "artifact-link-last",
+    ),
+)
+check(
     "another hook's feedback this turn does not silence this check",
     tagged(
         evaluate(

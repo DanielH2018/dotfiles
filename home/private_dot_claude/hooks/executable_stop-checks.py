@@ -82,6 +82,18 @@ import hook_input  # noqa: E402
 TAG = "[stop-checks:{}]"
 FEEDBACK_PREFIX = "Stop hook feedback:"
 
+# Messages the app or another session sends into the conversation. Each opens a turn the
+# operator did not, so the walk back to the operator's prompt reads past them. Without
+# this, a CI event or a side session's report reset every turn check: on 2026-10-21
+# git-state blocked one session six times in ten minutes, three of them after such a
+# message. A `<system-reminder>` is not here: it can open the operator's own prompt.
+AUTOMATED_TURN_PREFIXES = (
+    "<ci-monitor-event",
+    "<task-notification",
+    "<cross-session-message",
+    "<side-sessions-event",
+)
+
 # Read at most this much of the transcript from the end when walking back to the start
 # of the turn. The turn sits at the tail; a whole-file parse would cost seconds on a
 # long session for nothing.
@@ -200,6 +212,8 @@ class Turn:
                 continue
             if text.startswith(FEEDBACK_PREFIX):
                 feedback.append(text)
+                continue
+            if text.lstrip().startswith(AUTOMATED_TURN_PREFIXES):
                 continue
             break  # the operator's prompt that opened this turn
         self._turn_feedback = feedback
