@@ -36,6 +36,13 @@
 # --no-loki is for a machine with no otelq or no reachable Loki. Without it a missing
 # otelq is exit 3, could-not-evaluate, the same as a missing gitleaks: skipping a store
 # silently is the failure this tool exists to prevent.
+#
+# macOS is the exception: Loki is off there by default, and the verdict says so. The work
+# Mac has no Loki by design: the org's managed settings send its telemetry, metrics only, to
+# Lithic's collector, and its local stack was removed on 2026-10-20 (home/claude-otel/
+# README.md, "The org override on the work Mac"). There is no second store to cover, so
+# defaulting to Loki only made every SessionEnd scan fail 24 hourly slices. --loki still
+# turns it back on, for a Mac that runs its own collector.
 #   claude-transcript-scan --clear-pending    # dismiss the statusline alert WITHOUT baselining anything
 #
 # Exit 0 clean or nothing new, 1 NEW findings, 2 usage error, 3 could-not-evaluate. 3 is
@@ -92,7 +99,14 @@ CLEAR=0
 # printed a clean verdict for a store it never opened. "The obvious invocation does less
 # than the timer" is the same could-not-run-reads-as-clean failure this tool exists to
 # prevent. --no-loki is the explicit way out, for a machine with no otelq or no Loki.
+# On macOS the default is off; see the header. CLAUDE_TRANSCRIPT_SCAN_OS stands in for
+# uname in the tests.
 LOKI=1
+LOKI_SKIP_WHY=--no-loki
+if [ "${CLAUDE_TRANSCRIPT_SCAN_OS:-$(uname -s)}" = Darwin ]; then
+  LOKI=0
+  LOKI_SKIP_WHY="no Loki on macOS; --loki to scan it"
+fi
 
 while [ $# -gt 0 ]; do
   case $1 in
@@ -102,7 +116,7 @@ while [ $# -gt 0 ]; do
     --accept-baseline) ACCEPT=1; shift ;;
     --paranoid) PARANOID=1; shift ;;
     --loki) LOKI=1; shift ;;          # kept: still accepted, now the default
-    --no-loki) LOKI=0; shift ;;
+    --no-loki) LOKI=0; LOKI_SKIP_WHY=--no-loki; shift ;;
     --clear-pending) CLEAR=1; shift ;;
     -h|--help) sed -n '2,57p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "claude-transcript-scan: unknown argument: $1" >&2; exit 2 ;;
@@ -322,7 +336,7 @@ _n_files=$(printf '%s\n' "$FILES" | grep -c . || true)
 if [ "$LOKI" = 1 ]; then
   echo "claude-transcript-scan: scanning ${_n_files} transcript(s) and ${SINCE_H} hourly Loki slice(s)"
 else
-  echo "claude-transcript-scan: scanning ${_n_files} transcript(s); Loki skipped (--no-loki)"
+  echo "claude-transcript-scan: scanning ${_n_files} transcript(s); Loki skipped (${LOKI_SKIP_WHY})"
 fi
 
 # Section headers print unconditionally, before their arm runs. A header with nothing under

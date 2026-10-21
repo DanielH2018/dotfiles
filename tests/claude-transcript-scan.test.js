@@ -628,6 +628,38 @@ test('--no-loki says so in the verdict rather than looking complete', { skip }, 
     'a skipped store must not appear as covered');
 });
 
+test('macOS skips Loki by default, says why, and --loki still turns it on', { skip }, () => {
+  // The work Mac has no Loki by design (org telemetry override), so defaulting to Loki there
+  // only failed every slice. Spawned directly: run() would add --no-loki and hide the default.
+  const sb = sandbox();
+  // jq and gitleaks stay on PATH; otelq does not, so the --loki half never reaches a real Loki.
+  const noOtelq = process.env.PATH.split(':').filter((d) => !fs.existsSync(path.join(d, 'otelq'))).join(':');
+  const scan = (args) => spawnSync('bash', [SCANNER, ...args], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      PATH: noOtelq,
+      CLAUDE_TRANSCRIPT_SCAN_OS: 'Darwin',
+      CLAUDE_TRANSCRIPT_ROOT: path.join(sb.dir, 'projects'),
+      CLAUDE_TRANSCRIPT_LEAK_LOG: sb.log,
+      CLAUDE_TRANSCRIPT_LEAK_BASELINE: sb.baseline,
+      CLAUDE_TRANSCRIPT_GITLEAKS_CONFIG: sb.glConfig,
+      CLAUDE_TRANSCRIPT_LEAK_PENDING: sb.pending,
+      GITLEAKS_BIN: GITLEAKS,
+    },
+  });
+  const clean = path.join(sb.projects, 'clean.jsonl');
+  const off = scan(['--session', clean]);
+  assert.strictEqual(off.status, 0, off.stderr);
+  assert.match(off.stdout, /Loki skipped \(no Loki on macOS/, 'the default skip names its reason');
+  assert.doesNotMatch(off.stdout, /scanned in transcripts\+loki/, 'a skipped store is not claimed');
+  // The rejecting half: --loki overrides the platform default. PATH holds no otelq, so a
+  // scan that really tried Loki reports could-not-evaluate rather than skipping it.
+  const on = scan(['--loki', '--session', clean]);
+  assert.strictEqual(on.status, 3, '--loki makes Loki required on macOS too');
+  assert.match(on.stderr, /otelq unavailable — did not scan Loki/, 'it tried Loki rather than skipping it');
+});
+
 test('an hourly slice asks for an hourly WIDTH, not a window back to now', { skip }, () => {
   // The bug that made this whole area wrong. --since is the window WIDTH and --until moves
   // its END, so a slice is `--since <width> --until Nh`. It read `--since ${h}h` until
