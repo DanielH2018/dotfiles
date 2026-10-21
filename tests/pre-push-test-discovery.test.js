@@ -26,7 +26,7 @@ const hookText = fs.readFileSync(HOOK, 'utf8');
 
 const trackedTests = execFileSync(
   'git',
-  ['ls-files', '*.test.js', '*.test.mjs', '*.test.ts'],
+  ['ls-files', '*.test.js', '*.test.mjs', '*.test.cjs', '*.test.ts'],
   { cwd: repoPath() },
 )
   .toString()
@@ -36,7 +36,7 @@ const trackedTests = execFileSync(
 test('the hook derives its test list from git rather than node discovery', () => {
   assert.match(
     hookText,
-    /TEST_FILES=\$\(git ls-files '\*\.test\.js' '\*\.test\.mjs' '\*\.test\.ts'\)/,
+    /TEST_FILES=\$\(git ls-files '\*\.test\.js' '\*\.test\.mjs' '\*\.test\.cjs' '\*\.test\.ts'\)/,
     'bin/gate must build the unit-test file list with git ls-files',
   );
 });

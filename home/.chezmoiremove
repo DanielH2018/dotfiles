@@ -163,3 +163,7 @@ Scripts/wslhost-interop-reaper/wslhost-interop-reaper-hidden.vbs
 .config/wezterm/wezterm.lua
 .local/bin/wezterm-pane-ssh
 .config/ghostty/config
+
+# Merged into security-audit (its DISTILL-SCAN.md companion) on 2026-10-21, after six weeks
+# with no invocation.
+.claude/skills/distill-scan

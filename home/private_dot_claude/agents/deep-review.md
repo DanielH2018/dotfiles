@@ -59,5 +59,5 @@ Close with what I did **not** cover, so the gap is visible rather than assumed a
 ## See also
 
 - `root-cause` — when a failure already exists and needs diagnosis rather than discovery.
-- `security-sweep` skill — parallel multi-dimension sweep with adversarial verification, for when one reviewer isn't enough.
+- `security-audit` skill — its diff review runs the `security-sweep` workflow, a parallel multi-dimension sweep with adversarial verification, for when one reviewer isn't enough.
 - `simplify` skill — quality and reuse cleanups, deliberately out of scope here.

@@ -22,7 +22,7 @@ if match="$(printf '%s\n' "$added" | grep -nEi "$patterns" || true)" && [[ -n "$
   exit 1
 fi
 
-# External patterns (distill-scan → .claude/scan-patterns.json), layered on top of the
+# External patterns (security-audit distill mode → .claude/scan-patterns.json), layered on top of the
 # built-ins above. Skipped when node is unavailable — the built-in scan still runs.
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 if command -v node >/dev/null 2>&1 && [[ -f "$HOOK_DIR/secrets-check.js" ]]; then

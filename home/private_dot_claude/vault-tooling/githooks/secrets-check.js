@@ -4,7 +4,7 @@
  *
  * The pre-commit hook enforces a fixed set of built-in credential patterns in bash.
  * This script adds repo-specific patterns on top of those built-ins, loaded from
- * .claude/scan-patterns.json (produced by the distill-scan skill). It scans the same
+ * .claude/scan-patterns.json (produced by the security-audit skill's distill mode). It scans the same
  * staged added lines and blocks the commit on a match, honoring VAULT_ALLOW_SECRET=1.
  *
  * Only the first EXTERNAL_MAX_LINE chars of each line are tested, and every pattern is
@@ -19,7 +19,7 @@ const path = require("path");
 const EXTERNAL_MAX_LINE = 2000;
 
 // Reject the classic ReDoS shapes and absurd bounded repeats. This is a heuristic
-// (it mirrors the examples distill-scan validates against), not a complete prover.
+// (it mirrors the examples security-audit's distill mode validates against), not a complete prover.
 function isSafeRegex(src) {
     if (typeof src !== "string" || src === "") return false;
     if (/\([^)]*[+*][^)]*\)[?*+]/.test(src)) return false; // (a+)+ (.*)* (ab+)*

@@ -1,6 +1,6 @@
 ---
 name: security-audit
-description: Security guidance and vulnerability review for codebases, APIs, services, CLI tools, libraries, and daemons. Use for security questions, focused reviews, vulnerability research, security audits, or pen tests. Run the complete workflow only for explicit codebase audit or pen-test requests, full/comprehensive/end-to-end reviews, or requested report artifacts.
+description: Security review, from one diff to a whole codebase, plus turning its findings into pre-commit scan rules. Use on "security review this", "is this change safe", "check this diff for vulnerabilities", a security question about code, an audit or pen test of a repo or service, a request for a security report, and "turn these findings into a scan rule" or "make this a pre-commit check". Runs the full six-phase audit only on an explicit audit, pen-test, full-review or report request.
 ---
 
 # Security Audit
@@ -9,12 +9,32 @@ Find vulnerabilities that violate a real trust boundary, then give owners the so
 
 ## Operating modes
 
-This skill is guidance by default. Loading it does not authorize the complete audit workflow or file creation.
+This skill is guidance by default. Loading it does not authorize the complete audit workflow or file creation. Pick one mode from the request:
 
-- **Guidance mode**: For security questions, focused reviews, methodology, triage, or investigation of specific findings, use only the relevant parts of this skill. Do not automatically run all six phases, create an output directory, or write audit artifacts. You may launch focused agents when useful; they return results to the current task.
-- **Full audit mode**: Use the complete workflow when the user explicitly asks to audit or pen-test a codebase, asks for a full, comprehensive, or end-to-end security review, or requests report artifacts. Run all six phases and write the files defined below.
+| Request | Mode |
+|---|---|
+| A security question, a finding to triage, a focused look at one function or path | Guidance |
+| "Security review this diff / branch / PR" | Diff review |
+| "Audit" or "pen-test" a codebase, a full or end-to-end review, report artifacts | Full audit |
+| "Turn these findings into a scan rule", "make this a pre-commit check" | Distill |
 
-If the request could mean either mode, ask one focused question before creating files or starting the complete workflow.
+- **Guidance mode**: Use only the relevant parts of this skill. Do not automatically run all six phases, create an output directory, or write audit artifacts. You may launch focused agents when useful; they return results to the current task.
+- **Diff review mode**: Review changed code, not the whole repository. Follow [Diff review](#diff-review) below. It writes no files.
+- **Full audit mode**: Run all six phases and write the files defined below.
+- **Distill mode**: Convert concrete findings into validated line-oriented regexes for the repo's pre-commit scan with [DISTILL-SCAN.md](DISTILL-SCAN.md). It needs findings to start from; with none, run a diff review first.
+
+If the request could mean two modes, ask one focused question before creating files or starting a workflow.
+
+## Diff review
+
+A diff review has two depths. Choose by the change's stakes, not its size.
+
+1. **One reviewer** — the default. Dispatch the `deep-review` agent on the diff or branch. It reports every finding with a confidence and severity score, unfiltered.
+2. **Parallel sweep** — for a change that touches authentication, cryptography, card data, network-message parsing, secrets, or a balance or limit path. Run the `security-sweep` workflow with the Workflow tool. This skill's instruction is the opt-in the Workflow tool requires. The workflow runs one reviewer per security dimension (authz, crypto, exposure, input, secrets, concurrency), then adversarially verifies each high or critical finding. Its args are all optional: `{ref: "A..B"}` for a commit range, or `{paths: [...]}` for an explicit file set. With neither, it reviews changes against `origin/main...HEAD`.
+
+Apply the evidence bar under [Core principles](#core-principles) to the results before reporting them. A finding with no reachable boundary violation is a hardening note, not a vulnerability. The diff review is done when every reported finding names a file and line, a reachability, and either a source-grounded path or the exact missing fact.
+
+After the review, offer distill mode for any finding that describes a recurring pattern rather than a one-off.
 
 ## Platform terminology
 
