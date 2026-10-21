@@ -27,6 +27,7 @@ from claude_worktree import (
     pr_head_says_merged,
     process_holds,
     session_is_alive,
+    tree_roots,
 )
 
 # --- session_is_alive ---------------------------------------------------------------
@@ -385,20 +386,18 @@ def test_holds_tree_matches_the_tree_and_below_but_not_a_prefix_sibling():
 
 
 @linux_only
-def test_holders_command_names_a_process_by_its_project_dir(tmp_path, monkeypatch):
+def test_a_real_process_holds_a_tree_by_its_project_dir(tmp_path, monkeypatch):
     tree = tmp_path / "tree"
     tree.mkdir()
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tree))
     sleeper = subprocess.Popen(["sleep", "30"], cwd="/")
     monkeypatch.delenv("CLAUDE_PROJECT_DIR")
     try:
-        out = subprocess.run(
-            [sys.executable, claude_worktree.__file__, "holders", str(tree)],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout
+        roots = tree_roots(str(tree))
+        holds = [
+            (pid, how) for pid, held, how in process_holds() if holds_tree(held, roots)
+        ]
     finally:
         sleeper.kill()
         sleeper.wait()
-    assert f"{sleeper.pid}\tCLAUDE_PROJECT_DIR" in out.splitlines()
+    assert (sleeper.pid, "CLAUDE_PROJECT_DIR") in holds
