@@ -1,0 +1,145 @@
+{
+  "_comment": [
+    "Host/Origin cases shared by pr-dash's checkHost (home/dot_local/share/pr-dash/tests/guard.test.ts)",
+    "and the artifact server's check_host (home/private_dot_claude/hooks/test_host_guard.py), so the",
+    "two DNS-rebinding guards cannot drift. pr-dash is called with { host: expected_host }; the",
+    "artifact server with the one allowed origin http://<expected_host>, which is the same rule.",
+    "null means the header is absent. pr-dash's extension-origin allowlist has no counterpart in the",
+    "artifact server, so its cases stay in guard.test.ts."
+  ],
+  "vectors": [
+    {
+      "name": "accepts a well-formed same-origin request",
+      "expected_host": "127.0.0.1:8770",
+      "host": "127.0.0.1:8770",
+      "origin": "http://127.0.0.1:8770",
+      "allow": true
+    },
+    {
+      "name": "accepts an absent Origin, which same-origin GETs omit",
+      "expected_host": "127.0.0.1:8770",
+      "host": "127.0.0.1:8770",
+      "origin": null,
+      "allow": true
+    },
+    {
+      "name": "accepts a localhost Host against a 127.0.0.1 expectation",
+      "expected_host": "127.0.0.1:8770",
+      "host": "localhost:8770",
+      "origin": null,
+      "allow": true
+    },
+    {
+      "name": "accepts a 127.0.0.1 Host against a localhost expectation",
+      "expected_host": "localhost:8770",
+      "host": "127.0.0.1:8770",
+      "origin": null,
+      "allow": true
+    },
+    {
+      "name": "accepts a localhost Origin against a 127.0.0.1 expectation",
+      "expected_host": "127.0.0.1:8770",
+      "host": "127.0.0.1:8770",
+      "origin": "http://localhost:8770",
+      "allow": true
+    },
+    {
+      "name": "rejects an attacker hostname resolved to loopback",
+      "expected_host": "127.0.0.1:8770",
+      "host": "evil.example.com:8770",
+      "origin": null,
+      "allow": false
+    },
+    {
+      "name": "rejects a hostname that only starts with localhost",
+      "expected_host": "127.0.0.1:8770",
+      "host": "localhost.evil.com:8770",
+      "origin": null,
+      "allow": false
+    },
+    {
+      "name": "rejects a hostname that only ends with localhost",
+      "expected_host": "127.0.0.1:8770",
+      "host": "notlocalhost:8770",
+      "origin": null,
+      "allow": false
+    },
+    {
+      "name": "rejects an uppercase LOCALHOST, since nothing is case-folded",
+      "expected_host": "127.0.0.1:8770",
+      "host": "LOCALHOST:8770",
+      "origin": null,
+      "allow": false
+    },
+    {
+      "name": "rejects the right address on another port",
+      "expected_host": "127.0.0.1:8770",
+      "host": "127.0.0.1:9999",
+      "origin": null,
+      "allow": false
+    },
+    {
+      "name": "rejects a Host with no port when a port is expected",
+      "expected_host": "127.0.0.1:8770",
+      "host": "127.0.0.1",
+      "origin": null,
+      "allow": false
+    },
+    {
+      "name": "rejects an empty Host",
+      "expected_host": "127.0.0.1:8770",
+      "host": "",
+      "origin": null,
+      "allow": false
+    },
+    {
+      "name": "rejects an absent Host",
+      "expected_host": "127.0.0.1:8770",
+      "host": null,
+      "origin": null,
+      "allow": false
+    },
+    {
+      "name": "rejects a cross-origin request with a correct Host",
+      "expected_host": "127.0.0.1:8770",
+      "host": "127.0.0.1:8770",
+      "origin": "https://evil.example.com",
+      "allow": false
+    },
+    {
+      "name": "rejects an https Origin for an http host",
+      "expected_host": "127.0.0.1:8770",
+      "host": "127.0.0.1:8770",
+      "origin": "https://127.0.0.1:8770",
+      "allow": false
+    },
+    {
+      "name": "rejects an Origin carrying a path",
+      "expected_host": "127.0.0.1:8770",
+      "host": "127.0.0.1:8770",
+      "origin": "http://127.0.0.1:8770/",
+      "allow": false
+    },
+    {
+      "name": "rejects an Origin with userinfo pointing elsewhere",
+      "expected_host": "127.0.0.1:8770",
+      "host": "127.0.0.1:8770",
+      "origin": "http://127.0.0.1:8770@evil.example.com",
+      "allow": false
+    },
+    {
+      "name": "rejects an uppercase Origin scheme",
+      "expected_host": "127.0.0.1:8770",
+      "host": "127.0.0.1:8770",
+      "origin": "HTTP://127.0.0.1:8770",
+      "allow": false
+    },
+    {
+      "name": "rejects the opaque null Origin",
+      "expected_host": "127.0.0.1:8770",
+      "host": "127.0.0.1:8770",
+      "origin": "null",
+      "allow": false
+    }
+  ]
+}

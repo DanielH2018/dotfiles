@@ -30,7 +30,7 @@ taxonomy and the metadata parsers, and `_gui_html.py` holds the page served at `
 Local copy: vendored from DanielH2018/Server ansible/roles/k8s/artifacts/files/ at 977d9bf3ab41
 and started by serve-artifacts.sh on each workstation. The star list (StarStore, POST
 /api/star) was ported from upstream later, in DanielH2018/Server#4430. It differs from upstream
-in five places:
+in six places:
 
 - It binds ARTIFACTS_BIND, default 127.0.0.1. Upstream binds 0.0.0.0 inside a pod; a laptop
   must never serve these documents to the LAN.
@@ -43,6 +43,10 @@ in five places:
   ARTIFACTS_REPOS_FILE, and the GUI filters and sorts on it. Upstream has no such field.
 - ARTIFACTS_STARS_READONLY=1 shows the star list without letting the GUI change it.
   serve-artifacts.sh sets it on the k3s nodes, where the cluster's browser owns the list.
+- Every request must carry a Host, and any Origin, from ARTIFACTS_ALLOWED_ORIGINS, so a
+  DNS-rebound page cannot read a loopback server (host_guard.py). The default is
+  http://127.0.0.1:<ARTIFACTS_PORT>, which `localhost` also matches. The pod would need
+  its public and LAN names listed there, and its probes a matching Host header.
 """
 
 from __future__ import annotations
@@ -60,8 +64,8 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 # Flat siblings in the same directory, mounted together at /app from one ConfigMap, so a
-# plain import resolves both under `python3 /app/artifact_server.py` and under the tests'
-# path insert. Neither module imports back.
+# plain import resolves each under `python3 /app/artifact_server.py` and under the tests'
+# path insert. None of them imports back.
 from _gui_html import GUI_HTML
 from artifact_meta import (
     apply_metadata,
@@ -70,6 +74,7 @@ from artifact_meta import (
     parse_markdown,
     slug_title,
 )
+from host_guard import Allowed, check_host, parse_allowed_origins
 
 ROOT = Path(os.environ.get("ARTIFACTS_ROOT", "/srv/artifacts"))
 PORT = int(os.environ.get("ARTIFACTS_PORT", "8080"))
@@ -80,6 +85,11 @@ LOCAL_HOST = os.environ.get("ARTIFACTS_LOCAL_HOST", "")
 REPOS_FILE = os.environ.get("ARTIFACTS_REPOS_FILE", "")
 STARS_FILE = os.environ.get("ARTIFACTS_STARS_FILE", "")
 STARS_READONLY = os.environ.get("ARTIFACTS_STARS_READONLY", "") == "1"
+# Comma-separated origins whose Host and Origin this server answers to (host_guard.py).
+# Behind a reverse proxy, list every name the proxy forwards with its Host intact.
+ALLOWED_ORIGINS = os.environ.get(
+    "ARTIFACTS_ALLOWED_ORIGINS", f"http://127.0.0.1:{PORT}"
+)
 # A star request carries one host and one relpath, so anything larger is not one.
 MAX_STAR_BODY = 4096
 
@@ -376,11 +386,14 @@ class Handler(BaseHTTPRequestHandler):
     Attributes:
         cache: The shared IndexCache instance serving /api/index.json.
         stars: The star list POST /api/star changes; None turns starring off.
+        allowed_origins: The origins every request's Host and Origin must match; empty
+            refuses every request.
     """
 
     server_version = "artifacts/1.0"
     cache: IndexCache = None  # type: ignore[assignment]
     stars: StarStore | None = None
+    allowed_origins: tuple[Allowed, ...] = ()
 
     # `format` shadows the builtin, and is the parameter name BaseHTTPRequestHandler.log_message
     # declares — renaming it makes this an incompatible override.
@@ -404,6 +417,20 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
+
+    def parse_request(self) -> bool:
+        """Refuses a request whose Host or Origin is not allowed, whatever its method.
+
+        Runs before any do_* method, so no route can be reached without the check.
+        """
+        if not super().parse_request():
+            return False
+        reason = check_host(self.headers, self.allowed_origins)
+        if reason is not None:
+            self.close_connection = True
+            self._send(403, f"{reason}\n".encode(), "text/plain; charset=utf-8")
+            return False
+        return True
 
     def do_HEAD(self) -> None:
         self.do_GET()
@@ -506,6 +533,10 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    try:
+        Handler.allowed_origins = tuple(parse_allowed_origins(ALLOWED_ORIGINS))
+    except ValueError as err:
+        raise SystemExit(f"ARTIFACTS_ALLOWED_ORIGINS: {err}") from err
     if STARS_FILE:
         Handler.stars = StarStore(Path(STARS_FILE), writable=not STARS_READONLY)
     Handler.cache = IndexCache(ROOT, Handler.stars)

@@ -6,11 +6,12 @@ Run: python3 test_artifact_server.py
 Upstream (DanielH2018/Server) tests the index, metadata and /a/<host>/ routing.
 This covers only what the local copy adds: the bare /<relpath> route that keeps
 link-artifact.sh's URLs working, a root laid out the way serve-artifacts.sh lays
-it out (one symlink per host), the loopback default bind, and the star list's
-read-only mode. One star round trip also runs here, because the port to 3.9 is
-local and upstream's tests never execute it.
+it out (one symlink per host), the loopback default bind, the Host/Origin guard
+on a live server, and the star list's read-only mode. One star round trip also
+runs here, because the port to 3.9 is local and upstream's tests never execute it.
 """
 
+import http.client
 import json
 import os
 import shutil
@@ -33,6 +34,22 @@ def get(base, path):
             return resp.status, resp.read()
     except urllib.error.HTTPError as err:
         return err.code, b""
+
+
+def status_with(port, method, path, headers):
+    """Return the status of a request sent with exactly the given Host and Origin.
+
+    urllib always writes its own Host, so a forged one needs http.client.
+    """
+    conn = http.client.HTTPConnection("127.0.0.1", port)
+    try:
+        conn.putrequest(method, path, skip_host=True)
+        for key, value in headers.items():
+            conn.putheader(key, value)
+        conn.endheaders()
+        return conn.getresponse().status
+    finally:
+        conn.close()
 
 
 def post_star(base, payload, ctype="application/json"):
@@ -70,7 +87,8 @@ def main():
         f.write("plan.html\told-repo\nplan.html\tmyrepo\n")
 
     # The module reads its configuration at import time, as it does under the hook.
-    os.environ.pop("ARTIFACTS_BIND", None)
+    for name in ("ARTIFACTS_BIND", "ARTIFACTS_PORT", "ARTIFACTS_ALLOWED_ORIGINS"):
+        os.environ.pop(name, None)
     os.environ["ARTIFACTS_ROOT"] = root
     os.environ["ARTIFACTS_LOCAL_HOST"] = HOST
     os.environ["ARTIFACTS_REPOS_FILE"] = repos_file
@@ -82,14 +100,23 @@ def main():
         "binds loopback when ARTIFACTS_BIND is unset",
         artifact_server.BIND == "127.0.0.1",
     )
+    check(
+        "allows only the loopback origin on its own port by default",
+        artifact_server.ALLOWED_ORIGINS == "http://127.0.0.1:8080",
+    )
 
     artifact_server.Handler.cache = artifact_server.IndexCache(artifact_server.ROOT)
     server = artifact_server.ThreadingHTTPServer(
         ("127.0.0.1", 0), artifact_server.Handler
     )
     artifact_server.Handler.log_message = lambda *args: None
+    port = server.server_address[1]
+    # main() derives the list from ARTIFACTS_PORT; this server took a free port instead.
+    artifact_server.Handler.allowed_origins = tuple(
+        artifact_server.parse_allowed_origins(f"http://127.0.0.1:{port}")
+    )
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    base = f"http://127.0.0.1:{server.server_address[1]}"
+    base = f"http://127.0.0.1:{port}"
 
     try:
         status, body = get(base, "/plan.html")
@@ -115,6 +142,35 @@ def main():
 
         status, _ = get(base, "/../secret.txt")
         check("a literal .. on the bare route is refused", status == 404)
+
+        check(
+            "a rebound hostname is refused before any route",
+            status_with(port, "GET", "/plan.html", {"Host": f"evil.example:{port}"})
+            == 403,
+        )
+        check(
+            "a rebound hostname cannot reach the star endpoint",
+            status_with(port, "POST", "/api/star", {"Host": f"evil.example:{port}"})
+            == 403,
+        )
+        check(
+            "a cross-origin request with the right Host is refused",
+            status_with(
+                port,
+                "GET",
+                "/api/index.json",
+                {"Host": f"127.0.0.1:{port}", "Origin": "https://evil.example"},
+            )
+            == 403,
+        )
+        check(
+            "a request with no Host is refused",
+            status_with(port, "GET", "/healthz", {}) == 403,
+        )
+        check(
+            "a localhost Host on the server's port is served",
+            status_with(port, "GET", "/healthz", {"Host": f"localhost:{port}"}) == 200,
+        )
 
         status, _ = get(base, "/api/nope")
         check("an unknown /api/ path is not looked up in the tree", status == 404)
