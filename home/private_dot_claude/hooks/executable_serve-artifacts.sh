@@ -41,7 +41,7 @@ SERVER="$HOME/.claude/hooks/artifact-server/artifact_server.py"
 LOG="$HOME/.claude/.artifacts-server.log"
 # The server reads one subdirectory per host under its root, because upstream mounts every
 # host's tree side by side. A workstation has one tree, so the root holds one symlink to it.
-ROOT="$HOME/.claude/.artifacts-root"
+ROOT="$ARTIFACT_SERVER_ROOT"
 # The same label link-artifact.sh puts in /a/<host>/ links, and prune-artifacts.sh looks
 # for in the star list.
 HOST=$(artifact_host_label)
@@ -61,6 +61,10 @@ stamp=$(
 )
 
 mkdir -p "$DIR" "$ROOT"
+# The old link's name is the only record of the label older star lines carry, so move
+# them before deleting it. prune-artifacts.sh has already done this at session start; a
+# star clicked in the old server since then is what this pass catches.
+artifact_migrate_stars "$HOST"
 # A link left under an older label would list every artifact twice, once per label.
 find "$ROOT" -mindepth 1 -maxdepth 1 -type l ! -name "$HOST" -delete 2>/dev/null
 ln -sfn "$DIR" "$ROOT/$HOST"

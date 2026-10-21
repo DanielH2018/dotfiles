@@ -32,6 +32,9 @@ HOST=$(artifact_host_label)
 # artifacts have to outlive the window.
 [[ "$DAYS" == "0" ]] && exit 0
 
+# Stars written under a label the browser published before keep counting after it changes.
+artifact_migrate_stars "$HOST"
+
 # A star list that exists but cannot be read would look empty, and an empty list releases
 # every starred artifact. Skip the artifact sweep instead; a later session runs it.
 if [[ -d "$DIR" ]] && [[ ! -e "$STARS" || -r "$STARS" ]]; then

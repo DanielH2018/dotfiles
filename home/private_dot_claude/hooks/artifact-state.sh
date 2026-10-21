@@ -96,12 +96,57 @@ ARTIFACT_STARS_FILE="${CLAUDE_ARTIFACT_STARS_FILE:-$HOME/.claude/artifact-stars.
 # The label this host's own tree carries: the /a/<host>/ segment the browser serves it
 # under, and the prefix of this host's lines in the star list. The browser and the sweep
 # must agree on it, or a star set in one is invisible to the other. On macOS, `hostname`
-# can follow a DHCP-supplied name, so LocalHostName comes first; it changes only when
-# someone renames the machine.
+# can follow a DHCP-supplied name or a Bonjour conflict suffix (MacBook-Pro-2), so
+# LocalHostName comes first; it changes only when someone renames the machine.
+#
+# scutil is called by absolute path. It lives in /usr/sbin, which is not on PATH in
+# every environment Claude Code is started from, and a bare `scutil` there fell through
+# to `hostname -s`. The browser and the sweep then ran under different labels, and the
+# sweep deleted starred artifacts. ARTIFACT_SCUTIL exists for the tests.
 artifact_host_label() {
   local host="${CLAUDE_ARTIFACTS_HOST:-}"
   if [[ -z "$host" && "$(uname -s)" == Darwin ]]; then
-    host=$(scutil --get LocalHostName 2>/dev/null)
+    host=$("${ARTIFACT_SCUTIL:-/usr/sbin/scutil}" --get LocalHostName 2>/dev/null)
   fi
   printf '%s' "${host:-$(hostname -s 2>/dev/null || echo local)}"
+}
+
+# The browser's root: one symlink to this host's tree, named for the label the browser
+# publishes under /a/<host>/. serve-artifacts.sh writes it, so its name is the label the
+# star list's lines for this host were written under.
+ARTIFACT_SERVER_ROOT="$HOME/.claude/.artifacts-root"
+
+# Moves this host's star lines from any label the browser published before to the
+# current one, so a label change does not release every star at the next sweep. The old
+# labels are the root's other symlinks. Lines for other hosts are left as they are, and
+# a line that already exists under the new label is not duplicated.
+#
+# Does nothing where the list is read-only to this host (CLAUDE_ARTIFACTS_BASE_URL: the
+# cluster's browser owns it) or cannot be read and rewritten. Call it before anything
+# reads the list for this host: prune-artifacts.sh runs before serve-artifacts.sh at
+# session start.
+artifact_migrate_stars() {
+  local host="$1" stars="$ARTIFACT_STARS_FILE" old olds=() tmp
+  [[ -n "${CLAUDE_ARTIFACTS_BASE_URL:-}" ]] && return 0
+  [[ -f "$stars" && -r "$stars" && -w "$stars" && -w "${stars%/*}" ]] || return 0
+  [[ -d "$ARTIFACT_SERVER_ROOT" ]] || return 0
+  while IFS= read -r -d '' old; do
+    old="${old##*/}"
+    [[ "$old" != "$host" ]] && olds+=("$old")
+  done < <(find "$ARTIFACT_SERVER_ROOT" -mindepth 1 -maxdepth 1 -type l -print0 2>/dev/null)
+  ((${#olds[@]})) || return 0
+  # A temp file beside the list and a rename, the way the browser's StarStore writes it,
+  # so a reader never sees half a list.
+  tmp=$(mktemp "${stars%/*}/.stars.XXXXXX") || return 0
+  if awk -v host="$host" -v olds="$(printf '%s\n' "${olds[@]}")" '
+    BEGIN { n = split(olds, o, "\n"); for (i = 1; i <= n; i++) if (o[i] != "") old[o[i]] = 1 }
+    {
+      line = $0
+      slash = index(line, "/")
+      if (slash > 1 && (substr(line, 1, slash - 1) in old)) line = host substr(line, slash)
+      if (!(line in seen)) { seen[line] = 1; print line }
+    }' "$stars" >"$tmp"; then
+    cmp -s "$tmp" "$stars" || { chmod 644 "$tmp" && mv -f "$tmp" "$stars"; }
+  fi
+  rm -f "$tmp"
 }
