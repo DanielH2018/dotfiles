@@ -22,14 +22,21 @@ const tracked = execFileSync('git', ['ls-files', '-z', '--', '.'], { cwd: srcPat
 
 const hookFiles = tracked.filter((f) => path.basename(path.dirname(f)) === 'githooks');
 
-test('the tree has a githooks/ source directory to check', () => {
-  assert.ok(hookFiles.length > 0, 'no githooks/ directory under home/; this test checks nothing');
+// chezmoi reads attribute prefixes in a fixed order, and these four come before
+// `executable_`, so `private_executable_pre-commit` is executable too.
+const EXECUTABLE = /^((encrypted|private|readonly|empty)_)*executable_/;
+
+// A named member, not a count: secrets-check.js alone would make the census non-empty
+// while the hooks this test exists for had moved out from under it.
+test('the census reaches the vault pre-commit hook', () => {
+  assert.ok(hookFiles.includes('private_dot_claude/vault-tooling/githooks/executable_pre-commit'),
+    `vault pre-commit hook not among ${JSON.stringify(hookFiles)}; this test checks nothing`);
 });
 
 test('every hook in a githooks/ source directory deploys executable', () => {
   const missing = hookFiles.filter((f) => {
     const name = path.basename(f);
-    return !name.endsWith('.js') && !name.startsWith('executable_');
+    return !name.endsWith('.js') && !EXECUTABLE.test(name);
   });
   assert.deepStrictEqual(missing, [], 'add the executable_ prefix, or git skips the deployed hook');
 });
