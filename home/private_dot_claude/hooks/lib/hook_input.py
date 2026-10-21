@@ -10,11 +10,10 @@ None is kept apart from a valid `{}` on purpose. enterworktree-name-guard.py def
 garbage on stdin also read as `{}`, the guard would deny on its own parse failure
 instead of failing open.
 
-Each hook imports this module from its own directory, which Python puts first on
-sys.path for a script run by path. That holds in the source tree, where hooks run as
-executable_*.py, and in ~/.claude/hooks, where chezmoi strips the prefix. A
-single-file `chezmoi apply` of a hook without this module raises ImportError, so
-apply the hooks directory as a whole.
+Each hook puts lib/ beside itself first on sys.path and imports this module from
+there. That holds in the source tree, where hooks run as executable_*.py, and in
+~/.claude/hooks, where chezmoi strips the prefix. A single-file `chezmoi apply` of a
+hook without this module raises ImportError, so apply the hooks directory as a whole.
 
 Typical usage example:
 

@@ -22,7 +22,7 @@ set -u
 
 command -v chezmoi >/dev/null 2>&1 || exit 0
 # shellcheck source=/dev/null
-. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/lib/hook-input.sh}"
 hook_read_input
 hook_require_jq noop || exit 0
 
@@ -61,7 +61,7 @@ emit() {
 #
 # A missing library is reported rather than run around: this file may be managed, and if it
 # is, the next apply reverts the edit unless someone re-syncs it.
-RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/run-bounded.sh}"
+RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/lib/run-bounded.sh}"
 # shellcheck source=/dev/null
 if ! . "$RUN_BOUNDED_PATH" 2>/dev/null || ! command -v run_bounded >/dev/null 2>&1; then
   emit "chezmoi-guard: cannot load $RUN_BOUNDED_PATH, so $FILE was not checked against the chezmoi source -- not evaluated. If it is managed, run \`chezmoi add $FILE\`."
@@ -76,7 +76,7 @@ T_CHATTR=${CHEZMOI_GUARD_TIMEOUT_S:-2}
 # source-path below, which stays the authority. After the library load, because the
 # cache refresh runs through run_bounded too (#657).
 # shellcheck source=/dev/null
-. "${BASH_SOURCE[0]%/*}/chezmoi-managed-lib.sh"
+. "${BASH_SOURCE[0]%/*}/lib/chezmoi-managed-lib.sh"
 chezmoi_managed_skip "$FILE" && exit 0
 
 # source-path exits non-zero when the file isn't managed by chezmoi. Its stderr is dropped

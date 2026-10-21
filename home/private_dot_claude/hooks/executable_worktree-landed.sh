@@ -58,11 +58,11 @@
 set -u
 
 # shellcheck source=/dev/null
-. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/lib/hook-input.sh}"
 # The one network call below goes through run_bounded like every other hook child (#581). A
 # missing library is a broken install: say so and exit 1, which the harness reports as a
 # non-blocking hook error. Staying silent would read exactly like "nothing has landed".
-RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/run-bounded.sh}"
+RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/lib/run-bounded.sh}"
 # shellcheck source=/dev/null
 if ! . "$RUN_BOUNDED_PATH" 2>/dev/null || ! command -v run_bounded >/dev/null 2>&1; then
   printf 'worktree-landed: cannot load %s; the landed-worktree check did not run\n' \

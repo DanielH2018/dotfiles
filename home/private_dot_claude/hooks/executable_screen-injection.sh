@@ -25,7 +25,7 @@
 set -u
 
 # shellcheck source=/dev/null
-. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/lib/hook-input.sh}"
 hook_read_input
 # shellcheck disable=SC2016  # jq's own $o, not a shell expansion; shellcheck only
 # knows to suppress this when the literal goes straight to `jq`, not through a helper.

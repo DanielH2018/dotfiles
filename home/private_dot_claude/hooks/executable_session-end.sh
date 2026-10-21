@@ -10,7 +10,7 @@
 set -u
 
 # shellcheck source=/dev/null
-. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/lib/hook-input.sh}"
 hook_read_input
 
 # ── Scan the finished transcript for credentials that reached it ───────────

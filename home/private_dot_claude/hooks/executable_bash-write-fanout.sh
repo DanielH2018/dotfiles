@@ -46,7 +46,7 @@ set -u
 case "${CLAUDE_BASH_WRITE_FANOUT:-1}" in 0) exit 0 ;; esac
 
 # shellcheck source=/dev/null
-. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/lib/hook-input.sh}"
 hook_read_input
 hook_require_jq noop || exit 0
 
@@ -109,7 +109,7 @@ BACKSLASH=$'\x5c'
 # "unreadable" and fan out nothing. The library is sourced here, ahead of its first use;
 # a missing one is reported as a block further down, before any downstream hook runs.
 GUARD_SHARE="${CLAUDE_GUARD_HOME:-${HOME:-}/.local/share/claude-guard}"
-RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-$HOOK_DIR/run-bounded.sh}"
+RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-$HOOK_DIR/lib/run-bounded.sh}"
 # shellcheck source=/dev/null
 . "$RUN_BOUNDED_PATH" 2>/dev/null
 

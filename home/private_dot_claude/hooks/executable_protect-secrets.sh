@@ -21,7 +21,7 @@ set -u
 # `deny` because an unparsed input tells us nothing about which file is being touched —
 # denying would block every Read/Edit/Write in the session, not just the guarded ones.
 # shellcheck source=/dev/null
-. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/lib/hook-input.sh}"
 hook_read_input
 hook_require_jq ask "protect-secrets: jq is unavailable, so the secret-file rules could not be evaluated. Check the path yourself before allowing." || exit 0
 

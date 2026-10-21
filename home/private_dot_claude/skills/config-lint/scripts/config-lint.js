@@ -132,7 +132,7 @@ function stripShellComments(text) {
 
 // A name a scanned file defines as a shell function (`name() { ... }` or
 // `function name { ... }`) is not a binary dependency at all -- it is a local
-// helper, callable without ever touching PATH. run_bounded (run-bounded.sh),
+// helper, callable without ever touching PATH. run_bounded (lib/run-bounded.sh),
 // hook_field (hook-input.sh) and oc_mark (outcome-lib.sh) are all guarded at
 // their OWN call sites with `command -v run_bounded` / `which`-shaped idioms
 // (the same idioms a real binary dependency uses), which is what put them in
@@ -304,14 +304,18 @@ function commandExists(tool) {
     return r.status === 0;
 }
 
+// The hooks and the libraries they source from hooks/lib/: the libraries define the
+// helpers (run_bounded, hook_field, oc_mark) that extractShellFunctionNames must see.
 function readHookScripts(hooksDir) {
-    if (!fs.existsSync(hooksDir)) return [];
-    return fs.readdirSync(hooksDir, { withFileTypes: true })
-        .filter(d => d.isFile() && /\.(sh|bash)$/.test(d.name))
-        .map(d => {
-            const p = path.join(hooksDir, d.name);
-            return { path: p, text: fs.readFileSync(p, "utf8") };
-        });
+    return [hooksDir, path.join(hooksDir, "lib")].flatMap(dir => {
+        if (!fs.existsSync(dir)) return [];
+        return fs.readdirSync(dir, { withFileTypes: true })
+            .filter(d => d.isFile() && /\.(sh|bash)$/.test(d.name))
+            .map(d => {
+                const p = path.join(dir, d.name);
+                return { path: p, text: fs.readFileSync(p, "utf8") };
+            });
+    });
 }
 
 function listSkillNames(skillsDir) {
@@ -444,7 +448,7 @@ module.exports = {
     diffPlugins, extractHookCommands, extractPaths, parseIncludes,
     findDuplicateSkills, checkBloat, extractBinaryDeps, checkBinaryDeps, audit,
     extractPermissionDeps, extractPathDeps, checkPathDeps,
-    extractShellFunctionNames, enumeratePluginSkills,
+    extractShellFunctionNames, enumeratePluginSkills, readHookScripts,
     BLOAT_MAX_BYTES, BLOAT_MAX_LINES,
 };
 

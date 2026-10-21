@@ -14,7 +14,7 @@ const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
 const { srcPath } = require('../lib/paths');
 
-const LIB = srcPath('private_dot_claude', 'hooks', 'outcome-lib.sh');
+const LIB = srcPath('private_dot_claude', 'hooks', 'lib', 'outcome-lib.sh');
 
 const skip = skipUnless('bash', 'jq');
 

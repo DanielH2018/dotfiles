@@ -6,7 +6,7 @@ const { spawnSync } = require('node:child_process');
 const { skipUnless } = require('../lib/probe');
 const { srcPath } = require('../lib/paths');
 
-const LIB = srcPath('private_dot_claude', 'hooks', 'hook-input.sh');
+const LIB = srcPath('private_dot_claude', 'hooks', 'lib', 'hook-input.sh');
 
 const skip = skipUnless('bash', 'jq');
 

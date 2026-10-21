@@ -167,3 +167,14 @@ Scripts/wslhost-interop-reaper/wslhost-interop-reaper-hidden.vbs
 # Merged into security-audit (its DISTILL-SCAN.md companion) on 2026-10-21, after six weeks
 # with no invocation.
 .claude/skills/distill-scan
+
+# The sourced libraries moved into ~/.claude/hooks/lib/. hook-input.sh stays at the old path
+# as a shim for hooks outside this repo; the rest would otherwise linger as stale copies that
+# hide any caller still sourcing the old path.
+.claude/hooks/identity.sh
+.claude/hooks/outcome-lib.sh
+.claude/hooks/run-bounded.sh
+.claude/hooks/reap-origin-lib.sh
+.claude/hooks/chezmoi-managed-lib.sh
+.claude/hooks/artifact-state.sh
+.claude/hooks/hook_input.py

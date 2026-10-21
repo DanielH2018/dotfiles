@@ -39,7 +39,7 @@ def run_hook(file_path, job, cwd):
     if cwd is not None:
         payload_obj["cwd"] = cwd
     payload = json.dumps(payload_obj)
-    env = dict(os.environ, HOOK_INPUT_LIB=os.path.join(HERE, "hook-input.sh"))
+    env = dict(os.environ, HOOK_INPUT_LIB=os.path.join(HERE, "lib", "hook-input.sh"))
     if job:
         env["CLAUDE_JOB_DIR"] = "/tmp/fake-job-dir"
     else:

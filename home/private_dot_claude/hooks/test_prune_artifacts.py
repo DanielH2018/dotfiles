@@ -27,7 +27,7 @@ HERE = Path(__file__).resolve().parent
 PRUNE = HERE / "executable_prune-artifacts.sh"
 if not PRUNE.exists():  # deployed copy drops chezmoi's mode prefix
     PRUNE = HERE / "prune-artifacts.sh"
-LIB = HERE / "artifact-state.sh"
+LIB = HERE / "lib" / "artifact-state.sh"
 
 LOCAL_HOST_NAME = "fakehost"  # what scutil --get LocalHostName prints
 SHORT_HOSTNAME = "fakehost-2"  # what hostname -s prints

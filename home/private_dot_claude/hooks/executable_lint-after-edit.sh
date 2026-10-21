@@ -68,7 +68,7 @@ while (my $line = <>) {
 exit($bad ? 1 : 0);
 '
 
-LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" >/dev/null 2>&1 && pwd)"
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" >/dev/null 2>&1 && pwd)/lib"
 # run-bounded.sh is required, not optional. Without it this hook used to define its own
 # unbounded run_bounded() and run every linter with no ceiling -- the very thing M10 exists to
 # forbid, and a second copy of the primitive that drifted from the real one (#581). A missing

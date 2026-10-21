@@ -20,10 +20,10 @@
 set -u
 
 # shellcheck source=/dev/null
-. "${ARTIFACT_STATE_LIB:-${BASH_SOURCE[0]%/*}/artifact-state.sh}"
+. "${ARTIFACT_STATE_LIB:-${BASH_SOURCE[0]%/*}/lib/artifact-state.sh}"
 
 DIR="${CLAUDE_ARTIFACTS_DIR:-$HOME/.claude/artifacts}"
-STATE="${CLAUDE_ARTIFACT_STATE_DIR:-$HOME/.claude/logs/artifact-state}"
+STATE="$ARTIFACT_STATE_DIR"
 DAYS="${CLAUDE_ARTIFACT_RETENTION_DAYS:-7}"
 STARS="$ARTIFACT_STARS_FILE"
 HOST=$(artifact_host_label)

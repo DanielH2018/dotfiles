@@ -278,10 +278,9 @@ with tempfile.TemporaryDirectory() as tmp:
     hookdir = root / "hookdir"
     hookdir.mkdir()
     (hookdir / "bash-write-fanout.sh").write_text(HOOK.read_text())
-    (hookdir / "hook-input.sh").write_text((HOOK.parent / "hook-input.sh").read_text())
-    (hookdir / "run-bounded.sh").write_text(
-        (HOOK.parent / "run-bounded.sh").read_text()
-    )
+    (hookdir / "lib").mkdir()
+    for lib in ("hook-input.sh", "run-bounded.sh"):
+        (hookdir / "lib" / lib).write_text((HOOK.parent / "lib" / lib).read_text())
     stub = hookdir / "lint-after-edit.sh"
     stub.write_text(
         "#!/bin/bash\ncat >/dev/null\n"

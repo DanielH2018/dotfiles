@@ -69,7 +69,7 @@ set -u
 MODE=${1:-pre}
 command -v chezmoi >/dev/null 2>&1 || exit 0
 # shellcheck source=/dev/null
-. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/lib/hook-input.sh}"
 hook_read_input
 hook_require_jq noop || exit 0
 
@@ -102,7 +102,7 @@ esac
 # Loaded after the prefilter, so a Bash call that never names chezmoi pays nothing. A
 # missing library is not fatal here. The parser needs it, so without it the text fallback
 # decides. Only an apply then asks, below, since no chezmoi call can run bounded.
-RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/run-bounded.sh}"
+RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/lib/run-bounded.sh}"
 NO_RB=''
 # shellcheck source=/dev/null
 if ! . "$RUN_BOUNDED_PATH" 2>/dev/null || ! command -v run_bounded >/dev/null 2>&1; then

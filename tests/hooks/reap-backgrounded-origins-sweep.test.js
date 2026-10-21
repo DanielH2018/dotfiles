@@ -15,7 +15,7 @@ const { skipUnless } = require('../lib/probe');
 const { srcPath } = require('../lib/paths');
 
 const HOOKS_DIR = srcPath('private_dot_claude', 'hooks');
-const LIB = path.join(HOOKS_DIR, 'reap-origin-lib.sh');
+const LIB = path.join(HOOKS_DIR, 'lib', 'reap-origin-lib.sh');
 const SWEEP = srcPath('dot_local', 'bin', 'executable_reap-backgrounded-origins-sweep');
 
 const skip = skipUnless('bash', 'jq');
@@ -81,7 +81,7 @@ function runSweep(env) {
   execFileSync('bash', [SWEEP], {
     env: {
       ...process.env, REAP_LIB: LIB, CLAUDE_SESSIONS_DIR: env.sdir, REAP_PROC_DIR: env.pdir,
-      IDENTITY_LIB: path.join(HOOKS_DIR, 'identity.sh'), IDENTITY_PROC_DIR: env.pdir,
+      IDENTITY_LIB: path.join(HOOKS_DIR, 'lib', 'identity.sh'), IDENTITY_PROC_DIR: env.pdir,
       AGENT_VIEW_DIR: env.avdir, REAP_KILLCMD: env.killcmd, REAP_LOG: env.log,
       REAP_ROSTER: env.roster,
     }, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],

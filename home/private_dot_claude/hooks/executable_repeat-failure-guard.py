@@ -37,7 +37,9 @@ import sys
 import time
 from pathlib import Path
 
-import hook_input
+# The shared modules live in lib/ beside this hook, deployed or in the source tree.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "lib"))
+import hook_input  # noqa: E402
 
 THRESHOLD = 2
 STALE_SECONDS = 2 * 24 * 3600

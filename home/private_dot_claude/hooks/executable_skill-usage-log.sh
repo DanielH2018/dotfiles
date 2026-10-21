@@ -41,7 +41,7 @@
 # on existing on every host; Loki is a bonus query surface on the hosts where it runs.
 set -u
 
-LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" >/dev/null 2>&1 && pwd)"
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" >/dev/null 2>&1 && pwd)/lib"
 # run-bounded.sh is required. This file used to define its own unbounded run_bounded() when
 # the library did not source, a second copy of the primitive that bounded nothing (#581). The
 # fire-count record does not depend on it, so a missing library still writes the row -- with

@@ -21,7 +21,7 @@ const { scratch } = require('../lib/tmp');
 
 const HOOKS = srcPath('private_dot_claude', 'hooks');
 const HOOK = path.join(HOOKS, 'executable_warp-session-title.sh');
-const LIB = path.join(HOOKS, 'hook-input.sh');
+const LIB = path.join(HOOKS, 'lib', 'hook-input.sh');
 
 const skip = skipUnless('bash', 'jq');
 

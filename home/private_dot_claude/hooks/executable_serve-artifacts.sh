@@ -33,7 +33,7 @@
 set -u
 
 # shellcheck source=/dev/null
-. "${ARTIFACT_STATE_LIB:-${BASH_SOURCE[0]%/*}/artifact-state.sh}"
+. "${ARTIFACT_STATE_LIB:-${BASH_SOURCE[0]%/*}/lib/artifact-state.sh}"
 
 PORT="${CLAUDE_ARTIFACTS_PORT:-8181}"
 DIR="$HOME/.claude/artifacts"
@@ -45,7 +45,7 @@ ROOT="$ARTIFACT_SERVER_ROOT"
 # The same label link-artifact.sh puts in /a/<host>/ links, and prune-artifacts.sh looks
 # for in the star list.
 HOST=$(artifact_host_label)
-REPOS_FILE="${CLAUDE_ARTIFACT_STATE_DIR:-$HOME/.claude/logs/artifact-state}/repos.tsv"
+REPOS_FILE="$ARTIFACT_REPOS_FILE"
 # Where CLAUDE_ARTIFACTS_BASE_URL is set, the cluster's browser is the one the links open
 # and this server is only its fallback. The cluster owns the star list there and the sync
 # overwrites daniel-server's copy, so this server shows stars but does not set them.

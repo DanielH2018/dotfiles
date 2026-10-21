@@ -36,7 +36,7 @@
 set -u
 
 # shellcheck source=/dev/null
-. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/lib/hook-input.sh}"
 hook_read_input
 
 # idle_prompt reaches this hook only for a BACKGROUND JOB, never for a session you are sitting

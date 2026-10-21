@@ -13,7 +13,7 @@
 # non-blocking hook error, as auto-format.sh does.
 set -u
 
-RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/run-bounded.sh}"
+RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/lib/run-bounded.sh}"
 # shellcheck source=/dev/null
 if ! . "$RUN_BOUNDED_PATH" 2>/dev/null || ! command -v run_bounded >/dev/null 2>&1; then
   printf 'check-update: cannot load %s; the Claude Code version was not checked\n' "$RUN_BOUNDED_PATH" >&2

@@ -83,7 +83,7 @@ set -u
 mode="${1:-post}"
 
 # shellcheck source=/dev/null
-. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/lib/hook-input.sh}"
 hook_read_input
 
 cmd=$(hook_field '.tool_input.command // empty')
@@ -142,7 +142,7 @@ landcmd='(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+
 # the parser is optional here, so it is skipped rather than run unbounded.
 GUARD_SHARE="${CLAUDE_GUARD_HOME:-${HOME:-}/.local/share/claude-guard}"
 # shellcheck source=/dev/null
-. "${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/run-bounded.sh}" 2>/dev/null
+. "${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/lib/run-bounded.sh}" 2>/dev/null
 
 parsed_verdict() {
   command -v run_bounded >/dev/null 2>&1 || return 1
@@ -231,7 +231,7 @@ esac
 session=$(hook_field '.session_id // empty')
 
 # shellcheck source=/dev/null
-. "${ARTIFACT_STATE_LIB:-${BASH_SOURCE[0]%/*}/artifact-state.sh}"
+. "${ARTIFACT_STATE_LIB:-${BASH_SOURCE[0]%/*}/lib/artifact-state.sh}"
 
 # DECIDED: the git calls from here down run without run_bounded (#657). They are local
 # plumbing (rev-parse, log over refs already on disk; no fetch, no network), and they only

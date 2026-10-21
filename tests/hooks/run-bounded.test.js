@@ -13,8 +13,8 @@ const { skipUnless } = require('../lib/probe');
 const { scratch } = require('../lib/tmp');
 const { srcPath } = require('../lib/paths');
 
-const LIB = srcPath('private_dot_claude', 'hooks', 'run-bounded.sh');
-const OUTCOME_LIB = srcPath('private_dot_claude', 'hooks', 'outcome-lib.sh');
+const LIB = srcPath('private_dot_claude', 'hooks', 'lib', 'run-bounded.sh');
+const OUTCOME_LIB = srcPath('private_dot_claude', 'hooks', 'lib', 'outcome-lib.sh');
 
 const skip = skipUnless('bash', 'timeout');
 

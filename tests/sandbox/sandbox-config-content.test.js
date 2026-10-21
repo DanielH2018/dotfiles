@@ -181,8 +181,9 @@ test('settings.json is mounted read-only at its live path, not copied into the w
 test('every hook is mounted read-only at its live ~/.claude/hooks path', () => {
   const hooks = MOUNTS.filter(([t]) => t.startsWith('/home/claudebot/.claude/hooks/'));
   // A floor, not a count: it catches a mount silently dropped, and any deliberate removal
-  // has to come here and say so. Was 7 until suggest-artifact.sh was deleted 2026-08-21.
-  assert.ok(hooks.length >= 6, `expected the full hook set mounted live, found ${hooks.length}`);
+  // has to come here and say so. Was 7 until suggest-artifact.sh was deleted 2026-08-21, and
+  // 6 until the two per-file library mounts became one mount of hooks/lib/ on 2026-10-21.
+  assert.ok(hooks.length >= 5, `expected the full hook set mounted live, found ${hooks.length}`);
   for (const [target, mode] of hooks) {
     assert.strictEqual(mode, 'ro', `${target} must be mounted :ro — a writable guard hook is no guard`);
   }
@@ -339,9 +340,9 @@ test('the sandbox Python stays ruff-clean', { skip: ruffSkip }, () => {
 });
 
 test('every library a mounted hook sources is mounted beside it', () => {
-  // The sandbox mounts hooks one file at a time, so a hook that sources a sibling library
-  // (`. "${..._LIB:-${BASH_SOURCE[0]%/*}/lib.sh}"`) finds nothing unless that library has a
-  // mount of its own. bash does not stop on a failed `.`: the hook runs on with the library's
+  // The sandbox mounts hooks one file at a time, so a hook that sources a library
+  // (`. "${..._LIB:-${BASH_SOURCE[0]%/*}/lib/x.sh}"`) finds nothing unless that library, or
+  // the lib/ directory holding it, has a mount of its own. bash does not stop on a failed `.`: the hook runs on with the library's
   // functions undefined, which for a guard hook means deciding nothing, silently.
   const HOOKS_DIR = path.join(SANDBOX_DIR, '..', 'hooks');
   const mounted = new Set(MOUNTS.map(([t]) => t));
@@ -349,17 +350,20 @@ test('every library a mounted hook sources is mounted beside it', () => {
   for (const [target] of MOUNTS) {
     if (!target.startsWith('/home/claudebot/.claude/hooks/')) continue;
     const name = path.basename(target);
-    const src = [`executable_${name}`, name].map((f) => path.join(HOOKS_DIR, f)).find((f) => fs.existsSync(f));
+    const src = [`executable_${name}`, name].map((f) => path.join(HOOKS_DIR, f))
+      .find((f) => fs.existsSync(f) && fs.statSync(f).isFile());
     if (!src) continue;
-    for (const m of fs.readFileSync(src, 'utf8').matchAll(/^\. "\$\{[A-Z_]+:-\$\{BASH_SOURCE\[0\]%\/\*\}\/([\w.-]+\.sh)\}"/gm)) {
+    for (const m of fs.readFileSync(src, 'utf8').matchAll(/^\. "\$\{[A-Z_]+:-\$\{BASH_SOURCE\[0\]%\/\*\}\/([\w./-]+\.sh)\}"/gm)) {
       needed.set(m[1], name);
     }
   }
   // Non-vacuity: protect-secrets.sh sources hook-input.sh, so an empty census means the
   // pattern above stopped matching, not that nothing needs mounting.
-  assert.ok(needed.has('hook-input.sh'), `the census found no hook-input.sh consumer: ${[...needed.keys()]}`);
+  assert.ok(needed.has('lib/hook-input.sh'), `the census found no lib/hook-input.sh consumer: ${[...needed.keys()]}`);
   for (const [lib, by] of needed) {
-    assert.ok(mounted.has(`/home/claudebot/.claude/hooks/${lib}`),
+    const dir = path.dirname(lib);
+    assert.ok(mounted.has(`/home/claudebot/.claude/hooks/${lib}`)
+      || (dir !== '.' && mounted.has(`/home/claudebot/.claude/hooks/${dir}`)),
       `${by} sources ${lib}, which is not mounted at /home/claudebot/.claude/hooks/${lib}`);
   }
 });

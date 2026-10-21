@@ -16,7 +16,7 @@ set -u
 # shellcheck disable=SC1091  # optional per-host env, not present in the chezmoi tree
 [ -f "$HOME/.config/claude/local.env" ] && . "$HOME/.config/claude/local.env"
 # shellcheck source=/dev/null
-. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/lib/hook-input.sh}"
 hook_read_input
 
 FILE_PATH=$(hook_field '.tool_input.file_path // empty')
@@ -30,7 +30,7 @@ FILE_PATH=$(hook_field '.tool_input.file_path // empty')
 # hook error and says nothing about which tool hung. A missing library is a broken
 # install: say so and exit 1, which the harness reports as a non-blocking hook error,
 # rather than run the formatters with no bound.
-RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/run-bounded.sh}"
+RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/lib/run-bounded.sh}"
 # shellcheck source=/dev/null
 if ! . "$RUN_BOUNDED_PATH" 2>/dev/null || ! command -v run_bounded >/dev/null 2>&1; then
   printf 'auto-format: cannot load %s; %s left unformatted\n' \

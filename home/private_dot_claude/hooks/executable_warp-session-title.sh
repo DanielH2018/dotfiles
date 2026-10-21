@@ -73,7 +73,7 @@ fi
 exec 3>"$tty_out" 2>/dev/null || exit 0
 
 # shellcheck source=/dev/null
-source "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+source "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/lib/hook-input.sh}"
 hook_read_input
 
 # Headless sdk invocations (the remember plugin's summarizers, and anything else driving

@@ -23,7 +23,7 @@ const { srcPath } = require('../lib/paths');
 
 const HOOKS_DIR = srcPath('private_dot_claude', 'hooks');
 const HOOK = path.join(HOOKS_DIR, 'executable_reap-backgrounded-origin.sh');
-const LIB = path.join(HOOKS_DIR, 'reap-origin-lib.sh');
+const LIB = path.join(HOOKS_DIR, 'lib', 'reap-origin-lib.sh');
 const SRC = fs.readFileSync(HOOK, 'utf8') + '\n' + fs.readFileSync(LIB, 'utf8');
 
 const skip = skipUnless('bash', 'jq');
@@ -60,7 +60,7 @@ function run(env, cmdline, ownSid = 'FORK-SID') {
     ...process.env,
     REAP_CMDLINE_SOURCE: cmdline,
     REAP_LIB: LIB,
-    IDENTITY_LIB: path.join(HOOKS_DIR, 'identity.sh'),
+    IDENTITY_LIB: path.join(HOOKS_DIR, 'lib', 'identity.sh'),
     IDENTITY_PROC_DIR: env.procdir,
     CLAUDE_SESSIONS_DIR: env.sdir,
     AGENT_VIEW_DIR: env.avdir,

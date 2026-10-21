@@ -18,7 +18,7 @@
 set -u
 
 # shellcheck source=/dev/null
-. "${REAP_LIB:-$HOME/.claude/hooks/reap-origin-lib.sh}"
+. "${REAP_LIB:-$HOME/.claude/hooks/lib/reap-origin-lib.sh}"
 
 proc_dir="${REAP_PROC_DIR:-/proc}"
 

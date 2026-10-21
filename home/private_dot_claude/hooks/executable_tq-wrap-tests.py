@@ -39,7 +39,9 @@ import shutil
 import stat
 import sys
 
-import hook_input
+# The shared modules live in lib/ beside this hook, deployed or in the source tree.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "lib"))
+import hook_input  # noqa: E402
 
 # Shell syntax that can sit inside one simple command. A redirect, an expansion or
 # a subshell is not an argv tq can wrap, so any of these leaves the command alone.

@@ -15,7 +15,7 @@ set -u
 # PreCompact's payload goes to the user, not to the model, so without this branch the
 # post-compaction context has no branch, push state or dirty-file list at all.
 # shellcheck source=/dev/null
-. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/lib/hook-input.sh}"
 hook_read_input
 SOURCE=$(hook_field '.source // "startup"')
 case "$SOURCE" in
@@ -38,7 +38,7 @@ esac
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 
 # Loaded once for the two bounded children below: the shim run and `git status`.
-RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/run-bounded.sh}"
+RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/lib/run-bounded.sh}"
 RB_LOADED=0
 # shellcheck source=/dev/null
 . "$RUN_BOUNDED_PATH" 2>/dev/null && command -v run_bounded >/dev/null 2>&1 && RB_LOADED=1

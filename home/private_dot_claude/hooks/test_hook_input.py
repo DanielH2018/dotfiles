@@ -4,7 +4,7 @@
 Run: python3 test_hook_input.py
 
 read_event() and emit_decision() touch the real stdin and stdout, so those cases run a
-child interpreter with this directory on sys.path, the way a hook imports the module.
+child interpreter with lib/ on sys.path, the way a hook imports the module.
 """
 
 import json
@@ -14,8 +14,8 @@ import sys
 
 from _testkit import check, finish
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
+LIB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib")
+sys.path.insert(0, LIB)
 
 import hook_input  # noqa: E402
 
@@ -26,7 +26,7 @@ def child(code, stdin=""):
         input=stdin,
         capture_output=True,
         text=True,
-        cwd=HERE,
+        cwd=LIB,
     )
 
 
@@ -50,7 +50,7 @@ p = subprocess.run(
     stdin=subprocess.DEVNULL,
     capture_output=True,
     text=True,
-    cwd=HERE,
+    cwd=LIB,
 )
 check("read_event fails open on empty stdin", p.stdout.strip() == "None")
 

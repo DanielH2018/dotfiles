@@ -25,6 +25,10 @@
 
 # shellcheck disable=SC2034  # read by the hooks that source this
 ARTIFACT_STATE_DIR="${CLAUDE_ARTIFACT_STATE_DIR:-$HOME/.claude/logs/artifact-state}"
+# One `<artifact relpath>\t<repo name>` line per repo change: link-artifact.sh appends,
+# serve-artifacts.sh hands the path to the browser, which filters by it.
+# shellcheck disable=SC2034
+ARTIFACT_REPOS_FILE="$ARTIFACT_STATE_DIR/repos.tsv"
 
 artifact_hash_dir() {
   local d

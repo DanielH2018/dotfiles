@@ -176,7 +176,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-import hook_input
+# The shared modules live in lib/ beside this hook, deployed or in the source tree.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "lib"))
+import hook_input  # noqa: E402
 
 # The readers this hook shares with the server repo's pruner — the porcelain parser,
 # the lock-liveness check, the cherry and merge-tree verdicts, the default-ref lookup,

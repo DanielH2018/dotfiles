@@ -24,9 +24,9 @@ set -u
 # Shared detection + reap lives in the lib (single source of truth with the periodic sweep).
 # REAP_LIB seam lets tests point at the in-repo copy.
 # shellcheck source=/dev/null
-. "${REAP_LIB:-$HOME/.claude/hooks/reap-origin-lib.sh}"
+. "${REAP_LIB:-$HOME/.claude/hooks/lib/reap-origin-lib.sh}"
 # shellcheck source=/dev/null
-. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/lib/hook-input.sh}"
 hook_read_input
 
 own_sid=$(hook_field '.session_id // ""')

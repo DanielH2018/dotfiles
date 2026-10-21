@@ -32,7 +32,9 @@
 set -u
 
 # shellcheck source=/dev/null
-. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/lib/hook-input.sh}"
+# shellcheck source=/dev/null
+. "${ARTIFACT_STATE_LIB:-${BASH_SOURCE[0]%/*}/lib/artifact-state.sh}"
 hook_read_input
 path=$(hook_field '.tool_input.file_path // .tool_response.filePath // empty')
 [ -z "$path" ] && exit 0
@@ -85,7 +87,7 @@ if common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) &
     /artifacts/*) art_rel="${path#/artifacts/}" ;;
     *) art_rel="${path#*/.claude/artifacts/}" ;;
   esac
-  repos_file="${CLAUDE_ARTIFACT_STATE_DIR:-$HOME/.claude/logs/artifact-state}/repos.tsv"
+  repos_file="$ARTIFACT_REPOS_FILE"
   if mkdir -p "${repos_file%/*}" 2>/dev/null; then
     last=$(awk -F'\t' -v r="$art_rel" '$1 == r { last = $2 } END { print last }' "$repos_file" 2>/dev/null)
     if [ "$last" != "$repo_name" ]; then
@@ -186,8 +188,6 @@ fi
 # just worktree — see artifact-refresh.sh — so this clears the session-scoped file;
 # the bare worktree-slug file from before that fix is also removed as leftover cleanup.
 if [[ "$path" == *.html ]]; then
-  # shellcheck source=/dev/null
-  . "${ARTIFACT_STATE_LIB:-${BASH_SOURCE[0]%/*}/artifact-state.sh}"
   session=$(hook_field '.session_id // empty')
   if wt=$(artifact_worktree_slug) && repo=$(artifact_repo_slug) && mkdir -p "$ARTIFACT_STATE_DIR" 2>/dev/null; then
     sesskey=$(artifact_session_key "$wt" "$session") || sesskey="$wt"

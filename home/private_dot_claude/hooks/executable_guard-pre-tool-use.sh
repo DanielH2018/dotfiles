@@ -66,7 +66,7 @@
 # lookup and 6s for the judge, inside the 10s. CLAUDE_GUARD_TIMEOUT_S sets both, for the
 # tests. Any RB_STATUS other than `ok` is could-not-evaluate and takes `fail`, and so does a
 # non-zero exit from either child. A missing run-bounded.sh is `fail` too: the judge cannot
-# run bounded, so it does not run. The sandbox mounts the library beside this file for that
+# run bounded, so it does not run. The sandbox mounts lib/ beside this file for that
 # reason (sandbox/executable_claude-sandbox).
 set -u
 : "${CLAUDE_GUARD_FAIL_CLOSED:=0}"
@@ -87,12 +87,12 @@ fail() {
 # read. A missing library is the same "cannot run" case as a missing interpreter, so it
 # takes the fail path above rather than letting the Python side read an empty stdin.
 # shellcheck source=/dev/null
-. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}" 2>/dev/null || fail
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/lib/hook-input.sh}" 2>/dev/null || fail
 hook_read_input
 SHARE="${CLAUDE_GUARD_HOME:-${HOME:-}/.local/share/claude-guard}"
 [ -f "$SHARE/claude_guard/cli.py" ] || fail
 # shellcheck source=/dev/null
-. "${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/run-bounded.sh}" 2>/dev/null || fail
+. "${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/lib/run-bounded.sh}" 2>/dev/null || fail
 command -v run_bounded >/dev/null 2>&1 || fail
 T_FIND=${CLAUDE_GUARD_TIMEOUT_S:-2}
 T_JUDGE=${CLAUDE_GUARD_TIMEOUT_S:-6}

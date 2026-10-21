@@ -26,7 +26,9 @@ permission flow.
 import os
 import sys
 
-import hook_input
+# The shared modules live in lib/ beside this hook, deployed or in the source tree.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "lib"))
+import hook_input  # noqa: E402
 
 
 def denial(tool_input: dict, prefix: str) -> str | None:

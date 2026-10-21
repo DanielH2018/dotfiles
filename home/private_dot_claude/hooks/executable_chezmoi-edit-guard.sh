@@ -37,7 +37,7 @@ set -u
 
 command -v chezmoi >/dev/null 2>&1 || exit 0
 # shellcheck source=/dev/null
-. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/lib/hook-input.sh}"
 hook_read_input
 # After the read, not before: a hook that exits with its stdin unread can hand the writer
 # an EPIPE, which the test runner reports as a failure under load.
@@ -76,13 +76,13 @@ esac
 # run-bounded.sh is loaded first, because the cache refresh in chezmoi-managed-lib.sh runs
 # through it too. The two bounds share this hook's 10s: the lib's 2s for `chezmoi managed`,
 # then 3s for source-path. CHEZMOI_EDIT_GUARD_TIMEOUT_S sets the second, for the tests.
-RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/run-bounded.sh}"
+RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/lib/run-bounded.sh}"
 # shellcheck source=/dev/null
 if ! . "$RUN_BOUNDED_PATH" 2>/dev/null || ! command -v run_bounded >/dev/null 2>&1; then
   ask "cannot load $RUN_BOUNDED_PATH, so chezmoi was not asked"
 fi
 # shellcheck source=/dev/null
-. "${BASH_SOURCE[0]%/*}/chezmoi-managed-lib.sh"
+. "${BASH_SOURCE[0]%/*}/lib/chezmoi-managed-lib.sh"
 chezmoi_managed_skip "$FILE" && exit 0
 
 # Its stderr is dropped inside the child, because run_bounded merges the two streams and

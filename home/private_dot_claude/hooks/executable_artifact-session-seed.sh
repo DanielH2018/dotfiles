@@ -38,13 +38,13 @@
 set -u
 
 # shellcheck source=/dev/null
-. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/lib/hook-input.sh}"
 hook_read_input
 session=$(hook_field '.session_id // empty')
 [[ -n "$session" ]] || exit 0
 
 # shellcheck source=/dev/null
-. "${ARTIFACT_STATE_LIB:-${BASH_SOURCE[0]%/*}/artifact-state.sh}"
+. "${ARTIFACT_STATE_LIB:-${BASH_SOURCE[0]%/*}/lib/artifact-state.sh}"
 
 # DECIDED: the git calls here run without run_bounded (#661). They are local plumbing
 # (rev-parse; no fetch, no network) that never walks the working tree. A bound would add a
