@@ -23,9 +23,10 @@ Fails open: unreadable input prints nothing, which leaves the call to the normal
 permission flow.
 """
 
-import json
 import os
 import sys
+
+import hook_input
 
 
 def denial(tool_input: dict, prefix: str) -> str | None:
@@ -45,31 +46,14 @@ def denial(tool_input: dict, prefix: str) -> str | None:
 
 
 def main() -> int:
-    try:
-        payload = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
+    event = hook_input.read_event()
+    if event is None or event.get("tool_name", "EnterWorktree") != "EnterWorktree":
         return 0
-    if (
-        not isinstance(payload, dict)
-        or payload.get("tool_name", "EnterWorktree") != "EnterWorktree"
-    ):
-        return 0
-    tool_input = payload.get("tool_input")
     reason = denial(
-        tool_input if isinstance(tool_input, dict) else {},
-        os.environ.get("CLAUDE_WORKTREE_PREFIX", ""),
+        hook_input.tool_input(event), os.environ.get("CLAUDE_WORKTREE_PREFIX", "")
     )
     if reason:
-        json.dump(
-            {
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason": reason,
-                }
-            },
-            sys.stdout,
-        )
+        hook_input.emit_decision("deny", reason)
     return 0
 
 

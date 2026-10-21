@@ -151,7 +151,6 @@ Opt out entirely by setting CLAUDE_WORKTREE_AUTOPRUNE=0 in the environment.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import select
 import subprocess
@@ -159,6 +158,8 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+import hook_input
 
 # The readers this hook shares with the server repo's pruner — the porcelain parser,
 # the lock-liveness check, the cherry and merge-tree verdicts, the default-ref lookup,
@@ -445,13 +446,13 @@ def session_dirs(stdin_wait: float = 0.5) -> list[Path]:
         inherited pipe that never closes must not hang the sweep.
     """
     dirs = [Path.cwd()]
-    payload: object = None
+    payload = None
     try:
         if not sys.stdin.isatty() and select.select([sys.stdin], [], [], stdin_wait)[0]:
-            payload = json.loads(sys.stdin.read() or "null")
+            payload = hook_input.parse_event(sys.stdin.read())
     except (OSError, ValueError):
         payload = None
-    input_cwd = payload.get("cwd") if isinstance(payload, dict) else None
+    input_cwd = payload.get("cwd") if payload is not None else None
     if isinstance(input_cwd, str) and input_cwd:
         dirs.append(Path(input_cwd))
         if Path(input_cwd).resolve() != dirs[0].resolve():

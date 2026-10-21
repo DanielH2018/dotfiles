@@ -37,6 +37,8 @@ import sys
 import time
 from pathlib import Path
 
+import hook_input
+
 THRESHOLD = 2
 STALE_SECONDS = 2 * 24 * 3600
 
@@ -100,11 +102,8 @@ def message(tool_name: str, count: int) -> str:
 
 
 def main() -> int:
-    try:
-        payload = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
-        return 0
-    if not isinstance(payload, dict) or payload.get("is_interrupt"):
+    payload = hook_input.read_event()
+    if payload is None or payload.get("is_interrupt"):
         return 0
     tool_name = str(payload.get("tool_name") or "")
     session = str(payload.get("session_id") or "")

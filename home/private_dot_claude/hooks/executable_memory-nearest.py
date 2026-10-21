@@ -53,6 +53,8 @@ import re
 import sys
 from pathlib import Path
 
+import hook_input
+
 THRESHOLD = 0.25
 LIMIT = 3
 
@@ -208,11 +210,13 @@ def main() -> int:
 
     if os.environ.get("CLAUDE_MEMORY_NEAREST") == "0":
         return 0
+    event = hook_input.read_event()
+    if event is None:
+        return 0
     try:
-        event = json.load(sys.stdin)
-        tool_input = event.get("tool_input") or {}
-        file_path = tool_input.get("file_path")
-        content = tool_input.get("content")
+        fields = hook_input.tool_input(event)
+        file_path = fields.get("file_path")
+        content = fields.get("content")
         if not (isinstance(file_path, str) and isinstance(content, str)):
             return 0
         config_dir = Path(

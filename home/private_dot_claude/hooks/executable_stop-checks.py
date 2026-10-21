@@ -75,6 +75,8 @@ import re
 import sys
 from pathlib import Path
 
+import hook_input
+
 TAG = "[stop-checks:{}]"
 FEEDBACK_PREFIX = "Stop hook feedback:"
 
@@ -728,11 +730,8 @@ def evaluate(payload: dict, env: dict) -> str | None:
 def main() -> int:
     if os.environ.get("CLAUDE_STOP_CHECKS") == "0":
         return 0
-    try:
-        payload = json.load(sys.stdin)
-    except (ValueError, OSError):
-        return 0
-    if not isinstance(payload, dict):
+    payload = hook_input.read_event()
+    if payload is None:
         return 0
     reason = evaluate(payload, dict(os.environ))
     if reason:

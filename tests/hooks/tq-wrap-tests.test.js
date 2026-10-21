@@ -238,6 +238,17 @@ test('unreadable input fails open rather than erroring', { skip }, () => {
   }
 });
 
+// JSON that is not an object once reached payload.get() outside the hook's try and exited 1
+// with a traceback. hook_input.read_event() reads it as no payload at all.
+test('a payload that is JSON but not an object fails open', { skip }, () => {
+  for (const raw of ['[]', '"Bash"', '42']) {
+    const r = runHook(null, { raw });
+    assert.strictEqual(r.status, 0, `exited ${r.status} on ${raw}: ${r.stderr}`);
+    assert.strictEqual(r.stdout.trim(), '');
+    assert.strictEqual(r.stderr, '');
+  }
+});
+
 test('an unparseable command fails open', { skip }, () => {
   // Unbalanced quotes: the shell may still accept it, so the hook must not
   // guess at what it means.

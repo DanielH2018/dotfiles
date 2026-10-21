@@ -39,6 +39,8 @@ import shutil
 import stat
 import sys
 
+import hook_input
+
 # Shell syntax that can sit inside one simple command. A redirect, an expansion or
 # a subshell is not an argv tq can wrap, so any of these leaves the command alone.
 # Whether the command IS one simple command is claude_guard.segment's call, not a
@@ -161,15 +163,10 @@ def rewrite(command, cwd=""):
 
 
 def main():
-    try:
-        payload = json.load(sys.stdin)
-    except Exception:  # noqa: BLE001 — fail open; see below
+    payload = hook_input.read_event()
+    if payload is None or payload.get("tool_name") != "Bash":
         return
-    if payload.get("tool_name") != "Bash":
-        return
-    tool_input = payload.get("tool_input")
-    if not isinstance(tool_input, dict):
-        tool_input = {}
+    tool_input = hook_input.tool_input(payload)
     command = tool_input.get("command") or ""
     try:
         updated = rewrite(command, payload.get("cwd") or "")
