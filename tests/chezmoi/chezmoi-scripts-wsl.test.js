@@ -3,7 +3,8 @@
 // The suite is split by the guard each script renders behind, so a file's skip gate is the
 // one its scripts share: chezmoi-scripts.test.js (the render sweep and the os-unix scripts),
 // chezmoi-scripts-wsl.test.js (os-linux/wsl), chezmoi-scripts-linux.test.js (os-linux, any
-// profile) and chezmoi-scripts-workstation.test.js (os-linux, workstation and desktop only).
+// profile), chezmoi-scripts-workstation.test.js (os-linux, workstation and desktop only) and
+// chezmoi-scripts-darwin.test.js (os-darwin).
 // The sandbox helpers, the skip gates and the shared sudo stub are tests/lib/chezmoi-scripts.js.
 const { test } = require('node:test');
 const assert = require('node:assert');
