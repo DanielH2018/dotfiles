@@ -87,11 +87,5 @@ else
   REASON="Blocked: $FILE is in a shared git checkout outside .claude/worktrees/, and this is a background job (CLAUDE_JOB_DIR set). Retry EnterWorktree once. If it fails again, make no edits -- report the failure and stop."
 fi
 
-jq -n --arg reason "$REASON" '{
-  hookSpecificOutput: {
-    hookEventName: "PreToolUse",
-    permissionDecision: "deny",
-    permissionDecisionReason: $reason
-  }
-}'
+hook_deny "$REASON"
 exit 0

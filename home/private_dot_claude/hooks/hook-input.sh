@@ -85,3 +85,23 @@ hook_require_jq() {
   fi
   return 1
 }
+
+# hook_deny <reason> / hook_ask <reason>
+#   Print a PreToolUse permission decision with the given reason. Never calls exit:
+#   the caller exits 0 after it, as with hook_require_jq. Both build the JSON with
+#   `jq -n --arg`, because a reason routinely carries payload data (a file path, the
+#   command being run) and printf would inline it unescaped. So unlike
+#   hook_require_jq's printf, these need jq: call hook_require_jq before the first one.
+#   guard-pre-tool-use.sh keeps its own printf decisions on purpose, since they are
+#   the path taken when the interpreter, and possibly jq, is missing.
+_hook_decision() {
+  jq -n --arg decision "$1" --arg reason "$2" '{
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: $decision,
+      permissionDecisionReason: $reason
+    }
+  }'
+}
+hook_deny() { _hook_decision deny "$1"; }
+hook_ask() { _hook_decision ask "$1"; }

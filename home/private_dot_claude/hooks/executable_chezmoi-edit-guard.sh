@@ -48,13 +48,7 @@ FILE=$(hook_field '.tool_input.file_path // .tool_input.notebook_path // empty')
 [ -n "$FILE" ] || exit 0
 
 ask() {
-  jq -n --arg reason "chezmoi-edit-guard: $1 -- not evaluated, so it is unknown whether $FILE is rendered from a template or script source. If it is, a hand edit is reverted by the next \`chezmoi apply\`: check with \`chezmoi source-path $FILE\`. Starting the session with CHEZMOI_EDIT_GUARD=off turns this guard off." '{
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "ask",
-      permissionDecisionReason: $reason
-    }
-  }'
+  hook_ask "chezmoi-edit-guard: $1 -- not evaluated, so it is unknown whether $FILE is rendered from a template or script source. If it is, a hand edit is reverted by the next \`chezmoi apply\`: check with \`chezmoi source-path $FILE\`. Starting the session with CHEZMOI_EDIT_GUARD=off turns this guard off."
   exit 0
 }
 
@@ -117,11 +111,5 @@ else
 Edit the source instead (in your worktree's copy when you are in one), then run: chezmoi apply $FILE"
 fi
 
-jq -n --arg reason "$REASON" '{
-  hookSpecificOutput: {
-    hookEventName: "PreToolUse",
-    permissionDecision: "deny",
-    permissionDecisionReason: $reason
-  }
-}'
+hook_deny "$REASON"
 exit 0

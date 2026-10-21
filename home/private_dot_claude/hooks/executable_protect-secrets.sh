@@ -29,13 +29,7 @@ FILE_PATH=$(hook_field '.tool_input.file_path // empty')
 [ -z "$FILE_PATH" ] && exit 0
 
 deny() {
-  jq -n --arg reason "$1" '{
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: $reason
-    }
-  }'
+  hook_deny "$1"
   exit 0
 }
 

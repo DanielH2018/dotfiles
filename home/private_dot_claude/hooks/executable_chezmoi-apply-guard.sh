@@ -396,15 +396,9 @@ OVERRIDE="${COMMAND:0:$OFFSET}CHEZMOI_APPLY_GUARD=off ${COMMAND:$OFFSET}"
 # A check this hook could not complete. The apply stops for a human rather than going
 # through unchecked, and the override is named for when the operator decides to go ahead.
 ask() {
-  jq -n --arg reason "chezmoi-apply-guard: $1 -- not evaluated, so it is unknown whether this apply reverts a file something other than chezmoi wrote, or deploys from a source checkout behind origin/main. Check \`chezmoi status\` before approving. To skip the guard:
+  hook_ask "chezmoi-apply-guard: $1 -- not evaluated, so it is unknown whether this apply reverts a file something other than chezmoi wrote, or deploys from a source checkout behind origin/main. Check \`chezmoi status\` before approving. To skip the guard:
 
-  ${OVERRIDE}" '{
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "ask",
-      permissionDecisionReason: $reason
-    }
-  }'
+  ${OVERRIDE}"
   exit 0
 }
 
@@ -467,13 +461,7 @@ $DIFF"
 fi
 
 deny() {
-  jq -n --arg reason "$1" '{
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: $reason
-    }
-  }'
+  hook_deny "$1"
   exit 0
 }
 
@@ -584,11 +572,5 @@ If the diff REMOVES things the source never had, another job owns that file — 
 
   ${OVERRIDE}"
 
-jq -n --arg reason "$REASON" '{
-  hookSpecificOutput: {
-    hookEventName: "PreToolUse",
-    permissionDecision: "deny",
-    permissionDecisionReason: $reason
-  }
-}'
+hook_deny "$REASON"
 exit 0
