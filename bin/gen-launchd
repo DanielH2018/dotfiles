@@ -1,0 +1,62 @@
+#!/usr/bin/env node
+'use strict';
+// gen-launchd — render scheduled/*.plist.tmpl from scheduled/launchd.json.
+//
+// The output stays a chezmoi template outside home/, so nothing about activation changes:
+// each file's header still carries the execute-template and launchctl commands that render
+// and load it by hand. What changes is that the definition lives in one manifest with a
+// schema (documented at the top of gen-launchd-lib.js), shared with work-laptop-config's
+// launchd.json, instead of in hand-written XML.
+//
+// Only the jobs in the manifest are generated. The other scheduled/ templates are still
+// hand-written until each one is migrated; a template that carries the generated header but
+// has no manifest entry is an error, since nothing would keep it current.
+//
+// Usage:
+//   gen-launchd            rewrite every template the manifest names
+//   gen-launchd --check    render to memory and exit non-zero when a committed template
+//                          differs (tests/gen-launchd.test.js runs this against the real tree)
+
+const fs = require('node:fs');
+const path = require('node:path');
+const lib = require('./gen-launchd-lib.js');
+const { reportCheck } = require('./gen-lib.js');
+
+const REPO_ROOT = path.resolve(__dirname, '..');
+const MANIFEST = path.join(REPO_ROOT, 'scheduled', 'launchd.json');
+const SCHEDULED = path.join(REPO_ROOT, 'scheduled');
+
+function main() {
+  const check = process.argv.includes('--check');
+  const rendered = lib.renderManifest(JSON.parse(fs.readFileSync(MANIFEST, 'utf8')));
+  let ok = true;
+
+  for (const { plist, text } of rendered) {
+    const abs = path.join(REPO_ROOT, plist);
+    const committed = fs.existsSync(abs) ? fs.readFileSync(abs, 'utf8') : '';
+    if (check) {
+      ok = reportCheck({ tool: 'gen-launchd', rel: plist }, text, committed) && ok;
+    } else if (text !== committed) {
+      fs.writeFileSync(abs, text);
+      process.stdout.write(`gen-launchd: wrote ${plist}.\n`);
+    }
+  }
+
+  const listed = new Set(rendered.map((r) => r.plist));
+  for (const name of fs.readdirSync(SCHEDULED)) {
+    const rel = `scheduled/${name}`;
+    if (!name.endsWith('.plist.tmpl') || listed.has(rel)) continue;
+    if (fs.readFileSync(path.join(SCHEDULED, name), 'utf8').includes(lib.GENERATED_MARK)) {
+      process.stderr.write(`gen-launchd: ${rel} says it is generated, but scheduled/launchd.json has no entry for it.\n`);
+      ok = false;
+    }
+  }
+  if (!ok) process.exit(1);
+}
+
+try {
+  main();
+} catch (e) {
+  process.stderr.write(`${e.message}\n`);
+  process.exit(1);
+}

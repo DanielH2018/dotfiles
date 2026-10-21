@@ -32,7 +32,10 @@ GitHub release binary.
 - `scheduled/` — launchd job definitions (not deployed). Deliberately outside `home/`: these
   must not be copied into `~/Library/LaunchAgents` by an apply, since the catch-up agent
   globs that directory and would replay a job that is meant to be inactive. Each plist
-  documents its own activate/deactivate commands.
+  documents its own activate/deactivate commands. A job listed in
+  `scheduled/launchd.json` is generated: edit the manifest, then run `bin/gen-launchd`
+  (`--check` fails CI on drift). The schema is at the top of `bin/gen-launchd-lib.js`, and
+  work-laptop-config's `launchd.json` shares it. The other templates are still hand-written.
 - `tests/` — unit tests (not deployed); run the full suite with `node --test`, which
   discovers them recursively. Grouped by subject (`agentview/`, `sandbox/`, `hooks/`,
   `install/`, `chezmoi/`, `terminal/`, `shell/`, `tmux/`, `tq/`, `evals/`,
