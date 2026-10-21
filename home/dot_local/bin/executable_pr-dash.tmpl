@@ -22,7 +22,7 @@ export PR_DASH_PRELOAD=1
 # environment applies.
 WORK_ORGS_DEFAULT='{{ if hasKey . "prDashWorkOrgs" }}{{ .prDashWorkOrgs }}{{ end }}'
 export PR_DASH_WORK_ORGS="${PR_DASH_WORK_ORGS-$WORK_ORGS_DEFAULT}"
-# The Chrome extension origins allowed to read /api/prs, from `prDashExtensionOrigins` in
+# The Chrome extension origins allowed to read /api/prs and /api/planka, from `prDashExtensionOrigins` in
 # the same machine-local chezmoi.toml, rendered the same way as WORK_ORGS_DEFAULT above. The
 # extension ID stays out of this repo, which is public. Unset renders as an empty string,
 # which accepts no extension origin; a malformed entry makes the server refuse to start.

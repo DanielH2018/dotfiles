@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { connect, createServer as createNetServer } from 'node:net';
-import { createServer, serveStatic } from '../src/server.ts';
+import { createServer, serveStatic, type ServerOpts } from '../src/server.ts';
+import type { PlankaBoard } from '../src/planka.ts';
 import { createCache } from '../src/cache.ts';
 import { createLazyClient, createLazyToken, createLoadPrs } from '../src/main-lib.ts';
 import type { LoadResult } from '../src/loader.ts';
@@ -43,6 +44,7 @@ async function withServer(
   onRequest?: () => void,
   workOrgs: string[] = [],
   extensionOrigins: string[] = [],
+  loadPlanka?: ServerOpts['loadPlanka'],
 ) {
   const port = await freePort();
   const server = createServer({
@@ -51,6 +53,7 @@ async function withServer(
     onRequest,
     workOrgs,
     extensionOrigins,
+    loadPlanka,
   });
   await new Promise<void>((r) => server.listen(port, '127.0.0.1', r));
   try {
@@ -601,8 +604,9 @@ function withExtensionServer(
   extensionOrigins: string[],
   fn: (base: string) => Promise<void>,
   loadPrs?: Parameters<typeof withServer>[1],
+  loadPlanka?: ServerOpts['loadPlanka'],
 ) {
-  return withServer(fn, loadPrs, undefined, [], extensionOrigins);
+  return withServer(fn, loadPrs, undefined, [], extensionOrigins, loadPlanka);
 }
 
 test('an allowlisted extension origin reads /api/prs, answered with CORS headers naming that exact origin', async () => {
@@ -625,11 +629,11 @@ test('an allowlisted extension origin reads /api/prs, answered with CORS headers
   });
 });
 
-test('an allowlisted extension origin is refused on every path except /api/prs', async () => {
-  // The page shell, the client code, a near-miss of the API path, and a path that would 404:
-  // the allowlist opens one route, not the server.
+test('an allowlisted extension origin is refused on every path except /api/prs and /api/planka', async () => {
+  // The page shell, the client code, near-misses of the API paths, and a path that would
+  // 404: the allowlist opens two routes, not the server.
   await withExtensionServer([EXTENSION], async (base) => {
-    for (const path of ['/', '/index.html', '/app.js', '/api/prs/', '/no-such-file']) {
+    for (const path of ['/', '/index.html', '/app.js', '/api/prs/', '/api/planka/', '/no-such-file']) {
       const response = await getFrom(base, path, EXTENSION);
       assert.match(response, /^HTTP\/1\.1 403 /, `path ${path}`);
       assert.doesNotMatch(response, /access-control-allow-origin/i, `path ${path}`);
@@ -650,11 +654,13 @@ test('an allowlisted extension origin is refused a non-GET on /api/prs', async (
   });
 });
 
-test('an extension origin that is not on the allowlist is refused on /api/prs', async () => {
+test('an extension origin that is not on the allowlist is refused on /api/prs and /api/planka', async () => {
   await withExtensionServer([EXTENSION], async (base) => {
-    const response = await getFrom(base, '/api/prs', OTHER_EXTENSION);
-    assert.match(response, /^HTTP\/1\.1 403 /);
-    assert.doesNotMatch(response, /access-control-allow-origin/i);
+    for (const path of ['/api/prs', '/api/planka']) {
+      const response = await getFrom(base, path, OTHER_EXTENSION);
+      assert.match(response, /^HTTP\/1\.1 403 /, `path ${path}`);
+      assert.doesNotMatch(response, /access-control-allow-origin/i, `path ${path}`);
+    }
   });
 });
 
@@ -695,4 +701,56 @@ test('a failed load answers an allowlisted extension origin with a 500 it can re
       throw new Error('vault is locked');
     },
   );
+});
+
+const board: PlankaBoard = {
+  boardId: '100',
+  boardName: 'Board',
+  included: {
+    lists: [{ id: '1', name: 'In Progress' }],
+    cards: [{ id: '10', name: 'Card', listId: '1', position: 1, listChangedAt: null }],
+  },
+};
+
+test('an allowlisted extension origin reads /api/planka, answered with CORS headers naming that exact origin', async () => {
+  await withExtensionServer(
+    [EXTENSION],
+    async (base) => {
+      const response = await getFrom(base, '/api/planka', EXTENSION);
+      assert.match(response, /^HTTP\/1\.1 200 /);
+      assert.ok(
+        response.toLowerCase().includes(`\r\naccess-control-allow-origin: ${EXTENSION}\r\n`),
+        response,
+      );
+      assert.match(response, /\r\nvary: Origin\r\n/i);
+      assert.ok(response.includes(JSON.stringify(board)), response);
+    },
+    undefined,
+    async () => ({ board }),
+  );
+});
+
+test('a failed Planka load answers an allowlisted extension origin with a 502 it can read', async () => {
+  await withExtensionServer(
+    [EXTENSION],
+    async (base) => {
+      const response = await getFrom(base, '/api/planka', EXTENSION);
+      assert.match(response, /^HTTP\/1\.1 502 /);
+      assert.match(response, /"error":"planka: no usable config"/);
+      assert.ok(
+        response.toLowerCase().includes(`\r\naccess-control-allow-origin: ${EXTENSION}\r\n`),
+        response,
+      );
+    },
+    undefined,
+    async () => ({ error: 'planka: no usable config' }),
+  );
+});
+
+test('/api/planka answers 502 with a reason when the server has no Planka loader', async () => {
+  await withServer(async (base) => {
+    const res = await fetch(`${base}/api/planka`);
+    assert.strictEqual(res.status, 502);
+    assert.deepStrictEqual(await res.json(), { error: 'Planka is not configured in pr-dash' });
+  });
 });

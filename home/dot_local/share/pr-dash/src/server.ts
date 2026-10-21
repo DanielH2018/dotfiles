@@ -4,6 +4,7 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkHost } from './guard.ts';
 import { buildStacks } from './stacks.ts';
+import type { PlankaResult } from './planka.ts';
 import type { PrRecord, StackNode } from './types.ts';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../public/', import.meta.url));
@@ -33,7 +34,8 @@ export type ServerOpts = {
   // spend cycles refusing is still activity, not idleness. Optional so every existing
   // caller (every test that builds a ServerOpts without it) keeps compiling.
   onRequest?: () => void;
-  // Chrome extension origins allowed to read `GET /api/prs` cross-origin, each exactly
+  // Chrome extension origins allowed to read `GET /api/prs` and `GET /api/planka`
+  // cross-origin (see EXTENSION_PATHS), each exactly
   // `chrome-extension://<32 a-p>` — see `parseExtensionOrigins` in main-lib.ts, which
   // validates them. Absent or empty means no extension origin is accepted, which is the
   // behaviour before this option existed.
@@ -51,7 +53,15 @@ export type ServerOpts = {
     partialErrors?: string[];
     refreshing?: boolean;
   }>;
+  // Backs `GET /api/planka` — see createLoadPlanka in planka.ts. Optional, like
+  // onRequest, so a ServerOpts built without it still compiles; unset answers that route
+  // with a 502 saying Planka is not configured.
+  loadPlanka?: () => Promise<PlankaResult>;
 };
+
+// The only paths an allowlisted extension origin may read. The new tab's work panels need
+// these two and nothing else, so the page shell, app.js and every 404 stay refused.
+const EXTENSION_PATHS: ReadonlySet<string> = new Set(['/api/prs', '/api/planka']);
 
 // Derived from opts.loadPrs's own return type rather than restating it: a hand-maintained
 // copy closes the omission this round found (`refreshing` dropped at the wire) but not the
@@ -130,13 +140,13 @@ async function handle(
     return;
   }
 
-  // An allowlisted extension origin may read `/api/prs` and nothing else: not the page
-  // shell, not `app.js`, not a 404. The guard could only report the match, because it runs
+  // An allowlisted extension origin may read EXTENSION_PATHS and nothing else: not the
+  // page shell, not `app.js`, not a 404. The guard could only report the match, because it runs
   // before the target is parsed, so the path rule lives here. A non-GET from that origin
   // never reaches this point: the method gate above has already answered 405.
   const { extensionOrigin } = hostCheck;
-  if (extensionOrigin !== undefined && url.pathname !== '/api/prs') {
-    return refuse(res, 403, `origin ${extensionOrigin} may only read /api/prs`);
+  if (extensionOrigin !== undefined && !EXTENSION_PATHS.has(url.pathname)) {
+    return refuse(res, 403, `origin ${extensionOrigin} may only read ${[...EXTENSION_PATHS].join(' and ')}`);
   }
 
   // The shell contains no PR data. Beyond the Host/Origin check above, only the extension
@@ -180,6 +190,23 @@ async function handle(
     };
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify(body));
+    return;
+  }
+
+  if (url.pathname === '/api/planka') {
+    // CORS headers go on before the load for the same reason as on /api/prs: the
+    // extension must be able to read the `error` of a failed answer.
+    if (extensionOrigin !== undefined) {
+      res.setHeader('access-control-allow-origin', extensionOrigin);
+      res.setHeader('vary', 'Origin');
+    }
+    // Nothing from the URL reaches the loader: the board is whichever one the planka
+    // CLI's own config names. A failure is a 502, since pr-dash is answering for an
+    // upstream it could not read, and the body carries the reason.
+    const result = opts.loadPlanka ? await opts.loadPlanka() : { error: 'Planka is not configured in pr-dash' };
+    if (result.error !== undefined) return refuse(res, 502, result.error);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(result.board));
     return;
   }
 

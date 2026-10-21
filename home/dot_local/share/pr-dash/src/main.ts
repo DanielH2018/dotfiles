@@ -3,6 +3,7 @@ import { createClient } from './github.ts';
 import type { LoadResult } from './loader.ts';
 import { resolveToken } from './token.ts';
 import { createCache } from './cache.ts';
+import { createLoadPlanka } from './planka.ts';
 import {
   createIdleExit,
   createLazyClient,
@@ -84,6 +85,9 @@ const server = createServer({
   // launchd agent takes its value from the rendered plist.
   extensionOrigins: parsedExtensionOrigins.origins,
   loadPrs,
+  // Spawns the planka CLI per request, never at startup, so a machine without it pays
+  // nothing until something asks for /api/planka.
+  loadPlanka: createLoadPlanka(),
   onRequest: () => idleExit.touch(),
 });
 // Attached before listen(): without a handler, an occupied port reaches Node's default
