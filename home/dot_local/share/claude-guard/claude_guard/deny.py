@@ -1607,10 +1607,11 @@ def _takes(one: str = "", two: str = "") -> dict[str, int]:
     return dict.fromkeys(one.split(), 1) | dict.fromkeys(two.split(), 2)
 
 
-# Where each executor's command word sits: the options that take a separate value (a glued
-# `-n5` or `--signal=KILL` is one word already), and how many plain arguments come before the
-# command (`timeout 5`, `flock FILE`). find is absent: its commands follow `-exec` and kin.
-# script is absent too, since it takes its command only as the `-c` payload.
+# Where each executor's command word sits: the options that take a separate value, and how
+# many plain arguments come before the command (`timeout 5`, `flock FILE`). A glued `-n5` or
+# `--signal=KILL` is one word; a short-option cluster is read as getopt reads it. find is
+# absent: its commands follow `-exec` and kin. script is absent too, since it takes its
+# command only as the `-c` payload.
 _EXECUTOR_ARGS: dict[str, tuple[dict[str, int], int]] = {
     "command": (_takes(), 0),
     "builtin": (_takes(), 0),
@@ -1670,6 +1671,44 @@ _EXECUTOR_ARGS: dict[str, tuple[dict[str, int], int]] = {
     "fakeroot": (_takes("-l -s -i --lib --faked"), 0),
     "sshpass": (_takes("-p -f -d -P"), 0),
 }  # fmt: skip
+_UV_TAKES = _takes(
+    "--extra --no-extra --group --no-group --only-group --no-editable-package --env-file -w "
+    "--with --with-editable --with-requirements --package --python-platform --index "
+    "--default-index -i --index-url --extra-index-url -f --find-links --index-strategy "
+    "--keyring-provider -P --upgrade-package --upgrade-group --resolution --prerelease "
+    "--prerelease-package --fork-strategy --exclude-newer --exclude-newer-package "
+    "--no-sources-package --reinstall-package --link-mode -C --config-setting "
+    "--config-settings-package --no-build-isolation-package --no-build-package "
+    "--no-binary-package --cache-dir --refresh-package -p --python --color "
+    "--allow-insecure-host --directory --project --config-file --from -c --constraints -b "
+    "--build-constraints --overrides --torch-backend"
+)  # fmt: skip
+_NPM_TAKES = _takes(
+    "-p --package -w --workspace --prefix --userconfig --registry --cache --loglevel"
+)
+_PNPM_TAKES = _takes(
+    "-C --dir -F --filter --workspace-concurrency --reporter --resume-from --package --allow-build"
+)
+_BUN_TAKES = _takes("-p --package")
+# Runners that exec a program named by a later word, keyed by the words that select that mode,
+# with the options that take a separate value. The options before a subcommand are skipped
+# with the same table, so `uv -q run` and `pnpm -C dir exec` match too. The uv and npm tables
+# come from their `--help`; pnpm, yarn and bun are not installed here, so theirs come from
+# their docs. `npx -c` takes a command line, which this table reads as an option value only.
+_RUNNER_ARGS: dict[tuple[str, ...], dict[str, int]] = {
+    ("uv", "run"): _UV_TAKES,
+    ("uv", "tool", "run"): _UV_TAKES,
+    ("uvx",): _UV_TAKES,
+    ("npx",): _NPM_TAKES,
+    ("npm", "exec"): _NPM_TAKES,
+    ("pnpm", "exec"): _PNPM_TAKES,
+    ("pnpm", "dlx"): _PNPM_TAKES,
+    ("pnpx",): _PNPM_TAKES,
+    ("yarn", "exec"): _BUN_TAKES,
+    ("yarn", "dlx"): _BUN_TAKES,
+    ("bunx",): _BUN_TAKES,
+    ("bun", "x"): _BUN_TAKES,
+}
 _FIND_EXEC = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
 # Interpreters whose argument is code: `os.system('sudo ...')` has no command position to find.
 _INTERPRETERS = frozenset(
@@ -1762,16 +1801,52 @@ def _names_by_expansion(word: str) -> bool:
     return any(c in name for c in "$`") and " " not in name
 
 
+def _past_options(argv: list[str], i: int, takes: dict[str, int]) -> int:
+    """The index of the first word from `i` on that is neither an option nor an option's
+    value, past a `--` that ends the options.
+
+    A short-option cluster is read left to right as getopt reads it: in `-fo FILE` the `o`
+    takes a value and is the last letter, so FILE is its value, while in `-oL` the `L` is.
+    """
+    while i < len(argv) and argv[i].startswith("-") and len(argv[i]) > 1:
+        word = argv[i]
+        i += 1
+        if word == "--":
+            break
+        if word in takes:
+            i += takes[word]
+        elif not word.startswith("--"):
+            for j, letter in enumerate(word[1:], 2):
+                if f"-{letter}" in takes:
+                    if j == len(word):
+                        i += takes[f"-{letter}"]
+                    break
+    return i
+
+
+def _runner_command(argv: list[str]) -> int | None:
+    """The index of the word the runner `argv` runs as its command (`uv run --with foo X`),
+    or None when `argv` starts no runner mode that execs a program."""
+    head = posixpath.basename(argv[0])
+    for prefix, takes in _RUNNER_ARGS.items():
+        if prefix[0] != head:
+            continue
+        i = 1
+        for word in prefix[1:]:
+            i = _past_options(argv, i, takes)
+            if i >= len(argv) or argv[i] != word:
+                break
+            i += 1
+        else:
+            return _past_options(argv, i, takes)
+    return None
+
+
 def _executor_command(argv: list[str]) -> int:
     """The index of the word the executor `argv[0]` runs as its command, past its options,
     their values, its leading plain arguments and, for env, its assignments."""
     takes, plain = _EXECUTOR_ARGS[posixpath.basename(argv[0])]
-    i = 1
-    while i < len(argv) and argv[i].startswith("-") and len(argv[i]) > 1:
-        if argv[i] == "--":
-            i += 1
-            break
-        i += 1 + takes.get(argv[i], 0)
+    i = _past_options(argv, 1, takes)
     if posixpath.basename(argv[0]) == "env":
         while i < len(argv) and _ASSIGNMENT.match(argv[i]):
             i += 1
@@ -1779,13 +1854,17 @@ def _executor_command(argv: list[str]) -> int:
 
 
 def _runs_variable(argv: list[str]) -> bool:
-    """Whether the executor chain `argv` runs a command only an expansion names: `env $X`,
-    `timeout 5 nice "$X"`, `find . -exec $X {} +`. An expansion in an option value, a leading
-    plain argument or the command's own arguments names nothing, so `timeout "$T" git log
-    "$REV"` and `find . -name "$P"` run no variable."""
+    """Whether the executor or runner chain `argv` runs a command only an expansion names:
+    `env $X`, `timeout 5 nice "$X"`, `find . -exec $X {} +`, `uv run --with foo "$X"`. An
+    expansion in an option value, a leading plain argument or the command's own arguments
+    names nothing, so `timeout "$T" git log "$REV"`, `find . -name "$P"` and `uv run pytest
+    -k "$K"` run no variable."""
     name = posixpath.basename(argv[0])
+    runner = _runner_command(argv)
     if name == "find":
         tails = [argv[i + 1 :] for i, w in enumerate(argv) if w in _FIND_EXEC]
+    elif runner is not None:
+        tails = [argv[runner:]]
     elif name in _EXECUTOR_ARGS:
         tails = [argv[_executor_command(argv) :]]
     else:
@@ -1855,6 +1934,10 @@ def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool
         runs_shell = name in _HOST_RUNNERS and any(
             posixpath.basename(w) in _SHELLS for w in argv[1:]
         )
+        # A runner's command word is checked here, before the executor gate below: past it,
+        # every word is searched for an escalator, so `uv run pytest -k sudo` would be refused.
+        if _runner_command(argv) is not None and _runs_variable(argv):
+            found = max(found, _SUDO_VARIABLE)
         if not (interpreter or runs_shell or name in _SHELLS or name in _EXECUTORS):
             continue
         rest = argv[1:]

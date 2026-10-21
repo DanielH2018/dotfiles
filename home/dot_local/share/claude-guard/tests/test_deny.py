@@ -1556,6 +1556,30 @@ SUDO_EXECUTOR_VARIABLE = [
     "flock /tmp/l $X -n true",
     "watch -n 2 $X",
     'X=$(which sudo) && timeout 5 "$X" -n true',
+    # a runner execs its command word as an executor does
+    'uv run "$X" -n true',
+    "uv run --with foo $X",
+    "uv run --python 3.12 $X",
+    "uv run -p 3.12 -- $X",
+    "uv -q run $X",
+    "uv --directory d run $X",
+    "uv tool run --from pkg $X",
+    "uvx --with foo $X",
+    "npx $X",
+    "npx -p pkg $X",
+    "npm exec -- $X",
+    "pnpm exec $X",
+    "pnpm -C dir exec $X",
+    "pnpm dlx $X",
+    "bunx $X",
+    "yarn dlx -p pkg $X",
+    "env uv run $X",
+    "timeout 5 npx $X",
+    "uv run timeout 5 $X",
+    # a short-option cluster whose last letter takes a value takes the next word with it
+    "strace -fo LOG $X",
+    "timeout -vs KILL 5 $X",
+    "xargs -0I {} $X {}",
 ]
 
 SUDO_REFUSE = [
@@ -1792,6 +1816,16 @@ SUDO_PASS = [
     'stdbuf -o "$M" cat',
     'stdbuf -oL tail -f "$F"',
     "env $HOME/bin/tool --help",
+    'uv run pytest -k "$K"',
+    "uv run pytest -k sudo tests",
+    'uv run --with "$PKG" pytest',
+    'uv run --python "$PY" pytest',
+    'npx eslint "$F"',
+    'npx -p "$PKG" eslint .',
+    'pnpm exec tsc -p "$P"',
+    'strace -o "$LOG" ls',
+    'strace -fo "$LOG" ls',
+    'xargs -0I {} cp {} "$DEST"',
 ]
 
 
