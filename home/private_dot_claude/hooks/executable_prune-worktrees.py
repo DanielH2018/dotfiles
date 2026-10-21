@@ -77,6 +77,22 @@ only then judged by ancestry, so the empty trees of read-only sessions still go.
 landed branch has at least one more entry, such as a commit, a rebase or a reset, and
 is unaffected.
 
+A branch with no reflog at all is the desktop app's. It cuts `claude/*` branches
+without writing a reflog, and it does not lock the tree either. Reading that as "not
+fresh" removed live trees: on 2026-10-21 at 17:46 several sessions started together,
+each sweep kept only its own tree, and each removed the others' trees because they sat
+at main's tip. Off Linux the process scan is empty, so nothing else stopped it. git
+writes a branch's first reflog entry the first time it moves the branch, so an empty
+reflog still means the tip never moved. The creation time then comes from the tree's
+admin dir, `.git/worktrees/<name>/commondir`, which `git worktree add` writes once.
+
+Sweeps that start together also race each other. In the 2026-10-20 20:29 burst, six
+sweeps removed the same trees in the same second. One removal of each succeeded, and
+the others failed with errors such as "contains modified or untracked files" and "is not
+a working tree" while the first was still deleting. A `--prune` run therefore takes
+`PRUNE_LOCK` in the git common dir without waiting. A sweep that cannot get it exits
+silently, because the sweep that holds it does the same work.
+
 Merged-ness is judged against the local `origin/<default>` ref as it already stands, so
 a stale ref makes it keep a tree it could have removed — never the reverse.
 
@@ -151,6 +167,7 @@ Opt out entirely by setting CLAUDE_WORKTREE_AUTOPRUNE=0 in the environment.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import os
 import select
 import subprocess
@@ -228,6 +245,10 @@ BUSY_PREFIX = "busy:"
 # ancestry. A week covers a session that idles before its first commit; past it, an
 # untouched tree is a read-only session's leftover and is judged like any other.
 FRESH_GRACE_S = 7 * 24 * 3600
+
+# Held by a --prune run for its whole sweep, in the git common dir so every worktree of
+# the repo contends for the same file.
+PRUNE_LOCK = "claude-prune-worktrees.lock"
 
 LOG_PATH = (
     Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
@@ -396,15 +417,27 @@ def is_merged(repo: str, head: str, target: str) -> bool:
     return result.returncode == 0
 
 
-def is_fresh(repo: str, branch: str, now: float | None = None) -> bool:
+def is_fresh(
+    repo: str, branch: str, now: float | None = None, tree_path: str | None = None
+) -> bool:
     """Has this branch stayed where it was created, within the last FRESH_GRACE_S?
 
     Only meaningful for a branch whose tip is already an ancestor of the default
     branch, which is the one case where "never moved" changes the verdict. Reads the
-    branch's reflog. Anything other than exactly one `branch: Created from`
-    entry reads as not fresh: a missing or expired reflog then falls back to ancestry,
-    which is how this hook behaved before the check existed.
+    branch's reflog. Exactly one `branch: Created from` entry is fresh, timed by that
+    entry. No entry at all is fresh when `tree_path` is given, timed by the tree's
+    admin dir (see `tree_created`): that is a desktop-app branch git has never moved.
+    Anything else reads as not fresh and falls back to ancestry, which is how this
+    hook behaved before the check existed. An orphan branch has no tree to time, so its
+    empty reflog still reads as not fresh.
+
+    Args:
+      repo: The primary checkout.
+      branch: The branch's short name.
+      now: The current time, for tests.
+      tree_path: The worktree the branch is checked out in, if any.
     """
+    now = time.time() if now is None else now
     # The entry's own time comes from the selector, `<ref>@{<unix>}` under
     # --date=unix. `%ct` would be the tip commit's date, which for a branch that never
     # moved is when main's tip was committed, not when the branch was created.
@@ -418,6 +451,9 @@ def is_fresh(repo: str, branch: str, now: float | None = None) -> bool:
         ],
         cwd=repo,
     ).splitlines()
+    if not entries and tree_path is not None:
+        created = tree_created(tree_path)
+        return created is not None and now - created < FRESH_GRACE_S
     if len(entries) != 1:
         return False
     selector, _, subject = entries[0].partition("\t")
@@ -427,7 +463,22 @@ def is_fresh(repo: str, branch: str, now: float | None = None) -> bool:
         created = int(selector.rpartition("@{")[2].rstrip("}"))
     except ValueError:
         return False
-    return (time.time() if now is None else now) - created < FRESH_GRACE_S
+    return now - created < FRESH_GRACE_S
+
+
+def tree_created(tree_path: str) -> float | None:
+    """When was this worktree added? None when git cannot say.
+
+    `git worktree add` writes `commondir` into the tree's admin dir once, and no later
+    git command rewrites it, so its mtime is the creation time.
+    """
+    admin = _git(["rev-parse", "--path-format=absolute", "--git-dir"], cwd=tree_path)
+    if not admin:
+        return None
+    try:
+        return (Path(admin) / "commondir").stat().st_mtime
+    except OSError:
+        return None
 
 
 def session_dirs(stdin_wait: float = 0.5) -> list[Path]:
@@ -499,6 +550,31 @@ def log(message: str) -> None:
             handle.write(f"{stamp} {message}\n")
     except OSError:
         pass
+
+
+_held_locks: list[int] = []
+
+
+def take_prune_lock(common_dir: Path) -> bool:
+    """Take PRUNE_LOCK without waiting. False when another sweep holds it.
+
+    A lock file that cannot be opened returns True: the race only costs log noise, and a
+    sweep that stood aside for an unreadable file would never prune at all.
+    """
+    try:
+        fd = os.open(common_dir / PRUNE_LOCK, os.O_RDWR | os.O_CREAT, 0o644)
+    except OSError:
+        return True
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return False
+    except OSError:
+        os.close(fd)
+        return True
+    _held_locks.append(fd)
+    return True
 
 
 def remove(repo: str, tree: Worktree) -> tuple[bool, str]:
@@ -649,6 +725,10 @@ def main() -> int:
             print(f"skipped: {repo} prunes its own worktrees with {OWN_PRUNER}")
         return 0
 
+    # Held until the process exits; the module docstring says why a second sweep skips.
+    if args.prune and not take_prune_lock(Path(common_dir)):
+        return 0
+
     trees = parse_worktree_list(_git(["worktree", "list", "--porcelain"], cwd=repo))
     # The first entry is the checkout the others hang off; it is not a session worktree.
     # Only trees under .claude/worktrees/ are ours — one the operator made by hand
@@ -678,7 +758,11 @@ def main() -> int:
         # Fresh only matters where ancestry would remove the tree: a never-moved branch
         # cut from a commit main lacks is judged by the cherry and merge-tree tests.
         ancestor = bool(target) and is_merged(repo, tree.head, target)
-        fresh = ancestor and tree.branch is not None and is_fresh(repo, tree.branch)
+        fresh = (
+            ancestor
+            and tree.branch is not None
+            and is_fresh(repo, tree.branch, tree_path=tree.path)
+        )
         merged = ancestor and not fresh
         # The cherry test costs a patch-id walk per branch, so it only runs once the
         # cheap ancestor test has already failed — which is the only case it can change.

@@ -13,6 +13,7 @@ a worktree is locked, and Claude Code locks every session worktree, so a version
 never unlocks passes every unit test and removes nothing at all.
 """
 
+import fcntl
 import importlib.util
 import json
 import os
@@ -310,6 +311,9 @@ def build_repo(root):
     # fresh: cut at main's tip and never moved, so it passes the ancestry test before
     # its session has made a single commit
     git(["worktree", "add", "-q", "-b", "wt-fresh", str(trees / "fresh")], repo)
+    # The desktop app's fresh tree: the same, but its branch has no reflog at all.
+    git(["worktree", "add", "-q", "-b", "claude/desktop", str(trees / "desktop")], repo)
+    (repo / ".git" / "logs" / "refs" / "heads" / "claude" / "desktop").unlink()
     return repo, trees
 
 
@@ -363,6 +367,22 @@ with tempfile.TemporaryDirectory() as tmp:
     )
     own.unlink()
 
+    # Another sweep holding the lock: this one stands aside, silently.
+    lock_fd = os.open(repo / ".git" / mod.PRUNE_LOCK, os.O_RDWR | os.O_CREAT)
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    contended = subprocess.run(
+        [sys.executable, str(SCRIPT), "--prune"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    os.close(lock_fd)
+    check(
+        "a sweep that finds the lock held removes nothing and says nothing",
+        (trees / "merged").exists() and contended.stdout == "",
+    )
+
     pruned = subprocess.run(
         [sys.executable, str(SCRIPT), "--prune"],
         cwd=repo,
@@ -382,6 +402,19 @@ with tempfile.TemporaryDirectory() as tmp:
         "keeps a fresh tree at main's tip and its branch",
         (trees / "fresh").exists()
         and git(["branch", "--list", "wt-fresh"], repo).stdout.strip() != "",
+    )
+    check(
+        "keeps a fresh tree whose branch has no reflog",
+        (trees / "desktop").exists(),
+    )
+    check(
+        "judges a no-reflog tree by ancestry once it is past the grace period",
+        not mod.is_fresh(
+            str(repo),
+            "claude/desktop",
+            now=time.time() + mod.FRESH_GRACE_S + 60,
+            tree_path=str(trees / "desktop"),
+        ),
     )
     check("reports what it removed", "wt-merged" in pruned.stdout)
     log = (root / "cfg" / "logs" / "sessions.log").read_text()
