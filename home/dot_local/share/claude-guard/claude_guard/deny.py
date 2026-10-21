@@ -48,10 +48,13 @@ denials name the words that matched, with the exclude arguments for a recursive 
 """
 
 import fnmatch
+import io
 import itertools
 import posixpath
 import re
 import shlex
+import tokenize
+from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
@@ -992,10 +995,11 @@ _SECRET_NAME_WORDS = frozenset(
 # An interpreter's read of one variable, the name captured: Python `os.environ[…]`,
 # `.environ.get(…)` and `getenv(…)`, Node `process.env.X` and `process.env[…]`, Ruby
 # `ENV[…]` and `ENV.fetch(…)`, Perl `$ENV{…}`, Deno `Deno.env.get(…)`. Matched on the raw
-# command, so the quotes around the name are optional.
+# command, so the quotes around the name are optional, and so is the backslash a double-quoted
+# `-c` argument puts before an inner quote (`os.environ[\"X\"]`).
 _ENV_ACCESS = re.compile(
     r"(?:\benvironb?(?:\.get|\.pop|\.setdefault)?\s*[\[(]|\bgetenv\s*\(|\bprocess\.env\s*\[|"
-    r"\bENV\s*\[|\bENV\.fetch\s*\(|\$ENV\{|\bDeno\.env\.get\s*\()\s*b?[\"']?"
+    r"\bENV\s*\[|\bENV\.fetch\s*\(|\$ENV\{|\bDeno\.env\.get\s*\()\s*b?\\?[\"']?"
     r"([A-Za-z_][A-Za-z0-9_]*)|\bprocess\.env\.([A-Za-z_][A-Za-z0-9_]*)"
 )
 _PRINTENV = re.compile(
@@ -1006,6 +1010,63 @@ _PRINTENV = re.compile(
 def _secret_name(name: str) -> bool:
     words = re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+", name)
     return any(w.upper() in _SECRET_NAME_WORDS for w in words)
+
+
+# A Python program that only names an accessor inside a string literal, such as an edit script
+# writing `os.environ["PLANKA_PASSWORD"]` into source, reads nothing (the 2026-10-21 denial). A
+# program that can run a string as code keeps every match: `exec("…os.environ['X']…")` reads.
+_RUNS_STRING = re.compile(
+    r"\b(?:exec|eval|compile|system|popen|subprocess|spawn\w*|execv\w*|execl\w*|run|call)\s*\("
+)
+_LITERAL_TOKENS = frozenset(
+    t
+    for t in (
+        tokenize.STRING,
+        getattr(tokenize, "FSTRING_MIDDLE", None),
+        getattr(tokenize, "TSTRING_MIDDLE", None),
+    )
+    if t is not None
+)
+
+
+def _python_programs(command: str) -> list[str]:
+    """The heredoc bodies and `-c` arguments of `command`: the texts that may be Python."""
+    p = parse(command)
+    if not p.ok:
+        return []
+    programs = [body for seg in p.segments for body in seg.heredocs]
+    for seg in p.segments:
+        try:
+            words = shlex.split(seg.text)
+        except ValueError:
+            continue
+        programs += [words[i + 1] for i, w in enumerate(words[:-1]) if w == "-c"]
+    return programs
+
+
+def _env_names_only_in_strings(command: str) -> Counter[str]:
+    """How many times each variable name's accessor sits inside a Python string literal of a
+    program in `command`, for programs that tokenize as Python and run no string as code."""
+    found: Counter[str] = Counter()
+    for program in _python_programs(command):
+        if _RUNS_STRING.search(program):
+            continue
+        try:
+            tokens = list(tokenize.generate_tokens(io.StringIO(program).readline))
+        except tokenize.TokenError, SyntaxError:
+            continue
+        starts = [0]
+        for line in program.splitlines(keepends=True):
+            starts.append(starts[-1] + len(line))
+        spans = [
+            (starts[t.start[0] - 1] + t.start[1], starts[t.end[0] - 1] + t.end[1])
+            for t in tokens
+            if t.type in _LITERAL_TOKENS
+        ]
+        for m in _ENV_ACCESS.finditer(program):
+            if any(a <= m.start() < b for a, b in spans):
+                found[m.group(1) or m.group(2)] += 1
+    return found
 
 
 def secret_env(sc: Scan, target: str) -> Verdict | None:
@@ -1021,7 +1082,8 @@ def secret_env(sc: Scan, target: str) -> Verdict | None:
     for m in _PRINTENV.finditer(sc.command):
         names += [w.strip("\"'") for w in m.group(1).split() if not w.startswith("-")]
     if bdb_re(sc.scan, _INTERPRETER_WORD):
-        names += [a or b for a, b in _ENV_ACCESS.findall(sc.command)]
+        accessed = Counter(a or b for a, b in _ENV_ACCESS.findall(sc.command))
+        names += list((accessed - _env_names_only_in_strings(sc.command)).elements())
     secrets = list(dict.fromkeys(n for n in names if _secret_name(n)))[:5]
     if not secrets:
         return None

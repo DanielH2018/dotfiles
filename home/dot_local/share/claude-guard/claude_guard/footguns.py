@@ -189,10 +189,28 @@ _RULES = (
 )
 
 
+# pgrep's exit status or captured output used as a check: a loop or `if` condition, an
+# `&&`/`||` chain, or a substitution. That is where the self-match reads as "still running".
+_PGREP_AS_CHECK = re.compile(
+    r"\b(?:while|until|if)\b[^;]*\bpgrep\b|\bpgrep\b[^;]*(?:&&|\|\|)|\$\([^)]*\bpgrep\b"
+)
+
+
+def _is_listing(stage: list[str]) -> bool:
+    """Whether a pgrep stage prints each match (`-l`, `-a`). Its own shell then shows up as one
+    more printed line the reader can see, not as a silently wrong yes or count."""
+    return bool(_short_flags(stage) & {"l", "a"}) or any(
+        w in ("--list-name", "--list-full") for w in stage
+    )
+
+
 def footgun(command: str) -> Verdict | None:
     """A deny naming the first footgun `command` trips, or None."""
+    as_check = _PGREP_AS_CHECK.search(command) is not None
     for stage in _stages(command) or []:
         for rule, check in _RULES:
+            if rule == "pgrep-self-match" and _is_listing(stage) and not as_check:
+                continue
             found = check(stage)
             if found:
                 return Verdict("deny", rule, found)

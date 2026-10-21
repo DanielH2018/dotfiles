@@ -749,6 +749,11 @@ SECRET_ENV_READS = [
     "ruby -e 'puts ENV[\"STRIPE_SECRET\"]'",
     "perl -e 'print $ENV{CLAUDE_CODE_OAUTH_TOKEN}'",
     "cat > x.py <<'EOF'\nimport os\nprint(os.environ['API_TOKEN'])\nEOF\npython3 x.py",
+    # a string the program itself runs as code
+    'python3 -c "exec(\'import os; print(os.environ[\\"API_TOKEN\\"])\')"',
+    "python3 - <<'EOF'\nimport subprocess\n"
+    "subprocess.run(['python3', '-c', 'import os; print(os.environ[\"API_TOKEN\"])'])\nEOF",
+    "python3 - <<'EOF'\nimport os\nprint(f\"{os.environ['API_TOKEN']}\")\nEOF",
 ]
 PLAIN_ENV_READS = [
     "printenv HOME",
@@ -759,6 +764,10 @@ PLAIN_ENV_READS = [
     "grep -n \"os.environ\\['API_TOKEN'\\]\" src/app.py",
     'curl -H "Authorization: Bearer $GITHUB_TOKEN" https://api.example.com',
     "man printenv",
+    # an edit script that writes the accessor into source as text
+    "python3 - <<'EOF'\nfrom pathlib import Path\np = Path('planka.py')\n"
+    "p.write_text(p.read_text().replace('PW', 'os.environ[\"PLANKA_PASSWORD\"]'))\nEOF",
+    'python3 -c "print(\'use os.getenv(\\"DB_PASSWORD\\") here\')"',
 ]
 
 

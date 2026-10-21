@@ -106,6 +106,16 @@ def test_a_character_class_pattern_is_clean():
     assert footgun("pgrep -f 'b2_[w]ipe_prefixes'") is None
 
 
+def test_a_one_shot_pgrep_listing_is_clean():
+    assert footgun("pgrep -fl 'Google Chrome' | head") is None
+    assert footgun("pgrep -af chrome-headless") is None
+
+
+def test_a_pgrep_listing_used_as_a_check_is_denied():
+    assert rule("while pgrep -fl b2_wipe_prefixes; do sleep 15; done") == "pgrep-self-match"
+    assert rule("pgrep -fa b2_wipe_prefixes && echo up") == "pgrep-self-match"
+
+
 def test_pgrep_without_dash_f_is_clean():
     assert footgun("pgrep sshd") is None
 
