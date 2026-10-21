@@ -54,7 +54,8 @@ function extractFunction(name) {
 
 const FN = skip ? {} : Object.fromEntries(
   ['resolve_session_context', 'add_host_integration_mounts', 'add_sibling_repo_mounts',
-    'run_oauth_if_needed', 'resolve_main_ref', 'build_repo_snapshot']
+    'run_oauth_if_needed', 'resolve_main_ref', 'build_repo_snapshot', 'prune_repo_snapshots',
+    'prune_orphan_snapshots']
     .map((n) => [n, extractFunction(n)]),
 );
 
@@ -351,7 +352,7 @@ function reposFixture() {
 
 function reposRun(f, over = {}) {
   return drive('add_sibling_repo_mounts', {
-    deps: ['resolve_main_ref', 'build_repo_snapshot'],
+    deps: ['resolve_main_ref', 'build_repo_snapshot', 'prune_repo_snapshots', 'prune_orphan_snapshots'],
     env: {
       NO_REPOS: 'false',
       REPOS_LIVE: 'false',
