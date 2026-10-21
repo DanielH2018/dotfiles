@@ -1515,7 +1515,42 @@ def test_the_whole_corpus_is_not_silently_small():
 
 W = "/usr/local/sbin/homelab-takeover-check"
 
+# An executor runs its command word as the shell would, so an expansion in that word is
+# refused as a bare `$X -n true` is, under the variable message.
+SUDO_EXECUTOR_VARIABLE = [
+    "X=sudo; env $X -n true",
+    'X=sudo; env "$X" -n true',
+    "X=sudo; timeout 5 $X -n true",
+    "X=sudo; nohup $X -n true",
+    "X=sudo; exec $X -n true",
+    "X=sudo; command $X -n true",
+    "X=sudo; xargs $X -n true < /dev/null",
+    "X=sudo; find . -maxdepth 0 -exec $X -n true ';'",
+    "env $(echo sudo) -n true",
+    "env `echo sudo` -n true",
+    "env ${X} -n true",
+    'env -i PATH=/usr/bin "$X" -n true',
+    "env -u HOME -- $X -n true",
+    "exec -a name $X -n true",
+    "timeout -s KILL 5 $X -n true",
+    'timeout --signal=KILL 5s "$X" -n true',
+    "nice $X -n true",
+    "nice -n 5 $X -n true",
+    "xargs -I {} $X {}",
+    "xargs -n 1 -P 4 $X",
+    'find . -execdir "$X" {} +',
+    "find /tmp -name x -ok $X {} ';'",
+    "nohup env $X -n true",
+    "timeout 5 nice -n 3 $X",
+    "setsid $X",
+    "stdbuf -o L $X",
+    "flock /tmp/l $X -n true",
+    "watch -n 2 $X",
+    'X=$(which sudo) && timeout 5 "$X" -n true',
+]
+
 SUDO_REFUSE = [
+    *SUDO_EXECUTOR_VARIABLE,
     # another option or order
     f"sudo {W}",
     f"sudo -E -n {W}",
@@ -1726,6 +1761,28 @@ SUDO_PASS = [
     "pytest -k 'sudo and boundary' tests",
     "docker run --rm alpine sh -c 'adduser -D dev; su dev -c id'",
     "ls -la",
+    # an executor's option value, leading argument or command argument is no command word
+    'find . -name "$P"',
+    'find "$DIR" -name x -print',
+    'find . -exec grep -l "$P" {} +',
+    'timeout 5 git log "$REV"',
+    'timeout "$T" git status',
+    'timeout 5 python3 "$S"',
+    'env FOO="$BAR" make',
+    'env -u "$V" make',
+    'env -u HOME git log "$REV"',
+    'exec git log "$REV"',
+    'command -v "$X"',
+    'nohup ./run.sh "$ARG" &',
+    'nice -n 5 make -j"$N"',
+    'nice -n "$PRIO" make',
+    'xargs -I {} cp {} "$DEST"',
+    'xargs -n "$N" echo',
+    'xargs -n 1 echo "$X"',
+    'flock "$LOCK" make',
+    'stdbuf -o "$M" cat',
+    'stdbuf -oL tail -f "$F"',
+    "env $HOME/bin/tool --help",
 ]
 
 
@@ -1746,6 +1803,11 @@ def test_a_variable_command_word_is_refused_as_a_variable_not_as_sudo():
     v = d.deny('cd ~/vault && "$H"; echo $?', "", ENV)
     assert (v.kind, v.rule, v.reason) == ("deny", "sudo-boundary", d.SUDO_VARIABLE_MSG)
     assert "sudo is refused" not in v.reason
+
+
+@pytest.mark.parametrize("command", SUDO_EXECUTOR_VARIABLE)
+def test_a_variable_an_executor_runs_is_refused_as_a_variable(command):
+    assert d.deny(command, "", ENV).reason == d.SUDO_VARIABLE_MSG
 
 
 def test_a_real_sudo_beside_a_variable_command_word_keeps_the_sudo_message():

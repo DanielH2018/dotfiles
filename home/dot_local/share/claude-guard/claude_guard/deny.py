@@ -1539,6 +1539,76 @@ _EXECUTORS = frozenset(
         "script", "entr", "sg", "systemd-run", "firejail", "bwrap", "fakeroot", "sshpass",
     }
 )  # fmt: skip
+
+
+def _takes(one: str = "", two: str = "") -> dict[str, int]:
+    return dict.fromkeys(one.split(), 1) | dict.fromkeys(two.split(), 2)
+
+
+# Where each executor's command word sits: the options that take a separate value (a glued
+# `-n5` or `--signal=KILL` is one word already), and how many plain arguments come before the
+# command (`timeout 5`, `flock FILE`). find is absent: its commands follow `-exec` and kin.
+# script is absent too, since it takes its command only as the `-c` payload.
+_EXECUTOR_ARGS: dict[str, tuple[dict[str, int], int]] = {
+    "command": (_takes(), 0),
+    "builtin": (_takes(), 0),
+    "exec": (_takes("-a"), 0),
+    "env": (_takes("-u -C -S -P --unset --chdir --split-string"), 0),
+    "nohup": (_takes(), 0),
+    "setsid": (_takes(), 0),
+    "time": (_takes("-f -o --format --output"), 0),
+    "nice": (_takes("-n --adjustment"), 0),
+    "ionice": (_takes("-c -n --class --classdata"), 0),
+    "timeout": (_takes("-s -k --signal --kill-after"), 1),
+    "stdbuf": (_takes("-i -o -e --input --output --error"), 0),
+    "xargs": (_takes(
+        "-I -J -R -n -L -P -s -d -E -a --max-args --max-lines --max-procs --max-chars "
+        "--delimiter --eof --arg-file --process-slot-var"
+    ), 0),
+    "watch": (_takes("-n --interval"), 0),
+    "flock": (_takes("-w -E --timeout --conflict-exit-code"), 1),
+    "chroot": (_takes("--userspec --groups"), 1),
+    "setpriv": (_takes(
+        "--reuid --regid --ruid --euid --rgid --egid --groups --inh-caps --ambient-caps "
+        "--bounding-set --securebits --pdeathsig --selinux-label --apparmor-profile "
+        "--landlock-access --landlock-rule --seccomp-filter"
+    ), 0),
+    "taskset": (_takes(), 1),
+    "chrt": (_takes("-T -P -D --sched-runtime --sched-period --sched-deadline"), 1),
+    "unshare": (_takes(
+        "-S -G -R -w --setuid --setgid --root --wd --map-user --map-group --map-users "
+        "--map-groups --propagation --setgroups"
+    ), 0),
+    "nsenter": (_takes("-t -S -G --target --setuid --setgid"), 0),
+    "runuser": (_takes("-u -g -G -s -w --user --group --supp-group --shell"), 0),
+    "parallel": (_takes(
+        "-j -S -a -d -I -n -N -L --jobs --sshlogin --arg-file --colsep --delimiter "
+        "--replace --joblog --results --tmpdir --max-args"
+    ), 0),
+    "strace": (_takes("-o -e -p -s -u -E -a -b -I -O -P -S -X"), 0),
+    "ltrace": (_takes("-o -e -p -s -u -a -A -D -F -l -n -x"), 0),
+    "unbuffer": (_takes(), 0),
+    "entr": (_takes(), 0),
+    "sg": (_takes(), 1),
+    "systemd-run": (_takes(
+        "-u -p -E -M -H --unit --property --setenv --machine --host --description --slice "
+        "--uid --gid --working-directory --nice --service-type --path-property "
+        "--socket-property --timer-property --on-active --on-boot --on-startup "
+        "--on-unit-active --on-unit-inactive --on-calendar"
+    ), 0),
+    "firejail": (_takes(), 0),
+    "bwrap": (_takes(
+        "--chdir --unsetenv --lock-file --sync-fd --uid --gid --hostname --info-fd "
+        "--json-status-fd --userns-block-fd --seccomp --add-seccomp-fd --exec-label "
+        "--file-label --remount-ro --proc --dev --tmpfs --mqueue --dir --block-fd --perms "
+        "--size --argv0 --userns --userns2 --pidns --overlay-src",
+        two="--setenv --bind --bind-try --dev-bind --dev-bind-try --ro-bind --ro-bind-try "
+        "--symlink --file --bind-data --ro-bind-data --chmod",
+    ), 0),
+    "fakeroot": (_takes("-l -s -i --lib --faked"), 0),
+    "sshpass": (_takes("-p -f -d -P"), 0),
+}  # fmt: skip
+_FIND_EXEC = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
 # Interpreters whose argument is code: `os.system('sudo ...')` has no command position to find.
 _INTERPRETERS = frozenset(
     {
@@ -1623,6 +1693,44 @@ def _runs_interpreter(argv: list[str]) -> bool:
     return wrapper and any(map(_is_interpreter, names[1:]))
 
 
+def _names_by_expansion(word: str) -> bool:
+    """Whether only a variable or substitution names the program `word` runs. A word with a
+    space in it is a quoted payload, which the caller parses as shell instead."""
+    name = posixpath.basename(word)
+    return any(c in name for c in "$`") and " " not in name
+
+
+def _executor_command(argv: list[str]) -> int:
+    """The index of the word the executor `argv[0]` runs as its command, past its options,
+    their values, its leading plain arguments and, for env, its assignments."""
+    takes, plain = _EXECUTOR_ARGS[posixpath.basename(argv[0])]
+    i = 1
+    while i < len(argv) and argv[i].startswith("-") and len(argv[i]) > 1:
+        if argv[i] == "--":
+            i += 1
+            break
+        i += 1 + takes.get(argv[i], 0)
+    if posixpath.basename(argv[0]) == "env":
+        while i < len(argv) and _ASSIGNMENT.match(argv[i]):
+            i += 1
+    return i + plain
+
+
+def _runs_variable(argv: list[str]) -> bool:
+    """Whether the executor chain `argv` runs a command only an expansion names: `env $X`,
+    `timeout 5 nice "$X"`, `find . -exec $X {} +`. An expansion in an option value, a leading
+    plain argument or the command's own arguments names nothing, so `timeout "$T" git log
+    "$REV"` and `find . -name "$P"` run no variable."""
+    name = posixpath.basename(argv[0])
+    if name == "find":
+        tails = [argv[i + 1 :] for i, w in enumerate(argv) if w in _FIND_EXEC]
+    elif name in _EXECUTOR_ARGS:
+        tails = [argv[_executor_command(argv) :]]
+    else:
+        return False
+    return any(tail and (_names_by_expansion(tail[0]) or _runs_variable(tail)) for tail in tails)
+
+
 def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool) -> int:
     """The rank of what one segment runs: an escalator other than the one allowed command
     line, a command word only an expansion names, or neither. The allowed line counts only
@@ -1657,7 +1765,7 @@ def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool
         # A command word built by expansion, brace or glob could spell an escalator. A brace
         # list or glob that matches one is reported as the escalator it spells; a variable or
         # substitution is refused under its own message, since it names no escalator itself.
-        variable = any(c in name for c in "$`") and " " not in name
+        variable = _names_by_expansion(argv[0])
         spelled = (brace_unquoted and _BRACE_LIST.search(name)) or (
             any(c in name for c in "*?[") and any(fnmatch.fnmatchcase(e, name) for e in _ESCALATORS)
         )
@@ -1690,6 +1798,10 @@ def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool
         rest = argv[1:]
         if name in ("command", "builtin") and rest[:1] in (["-v"], ["-V"], ["-pv"], ["-pV"]):
             continue  # a lookup, which runs nothing
+        # An executor runs its command word as the shell would run it at command position,
+        # so an expansion there is as unresolvable as a bare `$X -n true`.
+        if _runs_variable(argv):
+            found = max(found, _SUDO_VARIABLE)
         for tok in rest:
             if _loose_hit(tok) if interpreter else posixpath.basename(tok) in _ESCALATORS:
                 return _SUDO_ESCALATES
