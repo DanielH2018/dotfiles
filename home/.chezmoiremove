@@ -168,9 +168,10 @@ Scripts/wslhost-interop-reaper/wslhost-interop-reaper-hidden.vbs
 # with no invocation.
 .claude/skills/distill-scan
 
-# The sourced libraries moved into ~/.claude/hooks/lib/. hook-input.sh stays at the old path
-# as a shim for hooks outside this repo; the rest would otherwise linger as stale copies that
-# hide any caller still sourcing the old path.
+# The sourced libraries moved into ~/.claude/hooks/lib/ (#907). Stale copies would otherwise
+# hide any caller still sourcing the old path. hook-input.sh was a shim at the old path until
+# work-laptop-config's Planka hooks sourced lib/hook-input.sh directly.
+.claude/hooks/hook-input.sh
 .claude/hooks/identity.sh
 .claude/hooks/outcome-lib.sh
 .claude/hooks/run-bounded.sh
