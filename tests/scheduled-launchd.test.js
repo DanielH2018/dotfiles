@@ -100,6 +100,29 @@ test('every Label matches its filename', { skip }, () => {
   }
 });
 
+// work-laptop-config's catch-up.sh replays every com.daniel.claude.*.plist in
+// ~/Library/LaunchAgents by running `eval` on ProgramArguments.2 with a leading `exec `
+// stripped, and stops only when run-skill.sh writes that day's .done marker. Any other job
+// under that prefix is replayed wrongly on every pass after 07:00, so the prefix is reserved
+// for plists shaped like a run-skill.sh invocation.
+const CATCHUP_PREFIX = 'com.daniel.claude.';
+// The skill run-skill.sh names its .done marker after must equal the label suffix
+// catch-up.sh looks that marker up by, or the replay never stops either.
+function catchUpReplayable(args, label) {
+  const m = args.length >= 3 && args[2].match(/^exec \S+\/run-skill\.sh (\S+)/);
+  return Boolean(m) && m[1] === label.slice(CATCHUP_PREFIX.length);
+}
+
+test('only run-skill.sh jobs take a label catch-up.sh replays', { skip }, () => {
+  for (const { name, xml } of definitions()) {
+    const [label] = stringValues(xml, 'Label');
+    if (!label?.startsWith(CATCHUP_PREFIX)) continue;
+    assert.ok(catchUpReplayable(stringValues(xml, 'ProgramArguments'), label),
+      `${name}: a ${CATCHUP_PREFIX}* label is replayed by catch-up.sh via eval of ` +
+      'ProgramArguments.2, which must be `exec …/run-skill.sh <label suffix> …` — rename the label');
+  }
+});
+
 // A plist naming a program that does not exist loads fine and fails at its first run, into
 // a log nobody reads. Resolve each absolute program path back to the source that deploys it.
 test('every program a definition runs exists in this repo', { skip }, () => {
@@ -150,6 +173,12 @@ test('the machine-pinning and Label checks reject a bad plist', { skip }, () => 
     assert.match(bad, /\/Users\//, 'the home-path check would not have flagged this');
     assert.notDeepStrictEqual(stringValues(bad, 'Label'), ['com.daniel.expected'],
       'the Label check would not have flagged this');
+    const direct = ['/x/claude-transcript-scan', '--since', '25'];
+    assert.ok(!catchUpReplayable(direct, 'com.daniel.claude.transcript-scan'),
+      'the catch-up check would have accepted a direct binary with arguments');
+    const mismatched = ['/bin/zsh', '-lc', 'exec /x/run-skill.sh other shown'];
+    assert.ok(!catchUpReplayable(mismatched, 'com.daniel.claude.changelog-watch'),
+      'the catch-up check would have accepted a skill that disagrees with its label');
 
     // And the parser half: a truncated plist must fail, or the XML test proves nothing.
     if (havePython) {

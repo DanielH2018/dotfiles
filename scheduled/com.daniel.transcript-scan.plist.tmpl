@@ -14,22 +14,28 @@
   StandardOutPath must be absolute. Rendering costs the symlink — the copy in
   ~/Library/LaunchAgents stops tracking edits here, so a change means re-running Activate.
 
-  Definition only. Like its siblings it lives outside `home/`, so chezmoi never deploys it:
-  work-laptop-config's catch-up.sh globs ~/Library/LaunchAgents and would replay the job
-  even while it is unloaded.
+  Definition only. Like its siblings it lives outside `home/`, so chezmoi never deploys it
+  and the job runs only on a machine that activates it by hand.
+
+  The label is com.daniel.transcript-scan, outside com.daniel.claude.*, because
+  work-laptop-config's catch-up.sh globs that prefix in ~/Library/LaunchAgents.
+  catch-up.sh replays a missed job by running `eval` on ProgramArguments.2, a convention only
+  run-skill.sh plists follow. Here that element is "25", the scan window in hours, so every pass
+  after 07:00 would run `eval 25`, exit 127, and never write the .done marker that stops it.
+  The job handles its own missed runs through RunAtLoad, described below.
 
   Activate:
 
     chezmoi execute-template \
-            < ~/.local/share/chezmoi/scheduled/com.daniel.claude.transcript-scan.plist.tmpl \
-            > ~/Library/LaunchAgents/com.daniel.claude.transcript-scan.plist
+            < ~/.local/share/chezmoi/scheduled/com.daniel.transcript-scan.plist.tmpl \
+            > ~/Library/LaunchAgents/com.daniel.transcript-scan.plist
     launchctl bootstrap "gui/$(id -u)" \
-            ~/Library/LaunchAgents/com.daniel.claude.transcript-scan.plist
+            ~/Library/LaunchAgents/com.daniel.transcript-scan.plist
 
   Deactivate:
 
-    launchctl bootout "gui/$(id -u)/com.daniel.claude.transcript-scan"
-    rm ~/Library/LaunchAgents/com.daniel.claude.transcript-scan.plist
+    launchctl bootout "gui/$(id -u)/com.daniel.transcript-scan"
+    rm ~/Library/LaunchAgents/com.daniel.transcript-scan.plist
 
   The 25-hour window below matches the unit: a day's window with an hour of overlap, because
   it has to cover more than the interval between runs, or a slow day loses transcripts.
@@ -47,7 +53,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.daniel.claude.transcript-scan</string>
+  <key>Label</key><string>com.daniel.transcript-scan</string>
   <key>ProgramArguments</key>
   <array>
     <string>{{ .chezmoi.homeDir }}/.local/bin/claude-transcript-scan</string>
