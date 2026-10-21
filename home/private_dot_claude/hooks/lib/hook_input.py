@@ -5,10 +5,9 @@ or the payload does not parse. A Python hook has no jq dependency, so the only f
 left is the payload itself: empty stdin, text that is not JSON, or JSON that is not an
 object. read_event() returns None for all three, and the hook exits 0 with no output.
 
-None is kept apart from a valid `{}` on purpose. enterworktree-name-guard.py defaults
-`tool_name` to EnterWorktree, so a `{}` there is a nameless call and is denied. If
-garbage on stdin also read as `{}`, the guard would deny on its own parse failure
-instead of failing open.
+None is kept apart from a valid `{}` on purpose. A guard that fills a missing field with
+a default reads `{}` as a real call and may deny it. If garbage on stdin also read as
+`{}`, such a guard would deny on its own parse failure instead of failing open.
 
 Each hook puts lib/ beside itself first on sys.path and imports this module from
 there. That holds in the source tree, where hooks run as executable_*.py, and in

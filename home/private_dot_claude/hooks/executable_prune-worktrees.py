@@ -30,12 +30,11 @@ live process holds it, either as its working directory or as its `CLAUDE_PROJECT
 The fifth is the one git state cannot see. A detached `land.sh` keeps running from the
 tree after the merge that makes the first four pass: it waits on CI and ticks the
 deployer, and the session that launched it may already be gone, its lock with it.
-Removing the tree under it kills the landing before its verdict, which is what
-worktree-landed.sh guards against in-session (dotfiles#747, #748). This sweeper is that
-hook's documented backstop, so it applies the same test: a tree some process still runs
-from is kept and reported as busy, and goes at a later session start once the process
-exits. Unlike the Stop hook, the sweeper needs no exclusion for its own session's
-processes, because a tree the session stands in is already kept as the current one.
+Removing the tree under it kills the landing before its verdict (dotfiles#747, #748).
+So a tree some process still runs from is kept and reported as busy, and goes at a later
+session start once the process exits. The sweeper needs no exclusion for its own
+session's processes, because a tree the session stands in is already kept as the
+current one.
 
 A session's project dir counts the same way as a cwd. Claude Code runs every repo
 hook from `CLAUDE_PROJECT_DIR`, so deleting that tree breaks the session even when its
@@ -182,7 +181,7 @@ import hook_input  # noqa: E402
 
 # The readers this hook shares with the server repo's pruner — the porcelain parser,
 # the lock-liveness check, the cherry and merge-tree verdicts, the default-ref lookup,
-# and the /proc scan for processes holding a tree, which worktree-landed.sh runs too —
+# and the /proc scan for processes holding a tree —
 # live in the claude-worktree package (`home/dot_local/share/claude-worktree/`),
 # deployed beside claude-guard. There is no fallback copy here: a hook that cannot
 # import its readers keeps every tree, which is the direction this script fails in

@@ -62,15 +62,20 @@ state="${1:-idle}"
 tty_out="${WARP_TITLE_TTY:-}"           # overridable so the test suite can capture the sequence
 if [[ -z "$tty_out" ]]; then
   pane_tty=$(ps -o tty= -p "${CLAUDE_PID:-0}" 2>/dev/null | tr -d '[:space:]')
-  if [[ -n "$pane_tty" && "$pane_tty" != "?" ]]; then
+  # No terminal is `?` from procps and `??` from macOS ps. The desktop app's sessions have
+  # none, and before `??` was caught here every run there opened /dev/?? and failed.
+  if [[ -n "$pane_tty" && "$pane_tty" != "?" && "$pane_tty" != "??" ]]; then
     tty_out="/dev/$pane_tty"
   else
     tty_out="/dev/tty"                  # older claude with no CLAUDE_PID; may still work
   fi
 fi
 # Open it rather than test it: only an open distinguishes a writable node from a reachable
-# terminal. fd 3 stays open for the writes below, so there is exactly one open per run.
-exec 3>"$tty_out" 2>/dev/null || exit 0
+# terminal. fd 3 stays open for the writes below, so there is exactly one open per run. The
+# braces carry the stderr redirect: on a bare `exec 3>x 2>/dev/null` the failed open reports
+# before the redirect of fd 2 is reached, which wrote one error line per run on a host with
+# no terminal.
+{ exec 3>"$tty_out"; } 2>/dev/null || exit 0
 
 # shellcheck source=/dev/null
 source "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/lib/hook-input.sh}"

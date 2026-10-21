@@ -26,10 +26,9 @@ const hostLink = (absPath, rel) =>
     ? `http://127.0.0.1:${PORT}/${rel}`
     : `file://${absPath}`;
 
-// The hook registers every .html it links as the repo's tracked artifact. Without an
-// override that lands in the real ~/.claude/logs/artifact-state, so a test run would
-// point the live registry at a /tmp fixture that is deleted moments later — and
-// clobber a genuine entry for whichever repo the suite ran in.
+// The hook records each artifact's repository in repos.tsv under the state dir. Without an
+// override that lands in the real ~/.claude/logs/artifact-state, so a test run would add
+// /tmp fixtures, deleted moments later, to the live browser's repository filter.
 const STATE_DIR = scratch(os.tmpdir(), 'la-state-');
 // Runs the hook with a Write payload for `filePath`; returns the emitted
 // additionalContext string ('' when the hook no-ops / exits without output).
@@ -209,19 +208,6 @@ test('.html artifact write -> no nudge', () => {
   const ctx = run(path.join(dir, 'review.html'));
   assert.ok(ctx.length > 0, 'still emits the link');
   assert.ok(!ctx.includes('AUTO-ARTIFACT'), `nudge is Markdown-only; got: ${ctx}`);
-});
-
-// Guards the isolation above: if CLAUDE_ARTIFACT_STATE_DIR ever stops being set here,
-// the suite starts writing into the developer's live registry and nothing else notices.
-test('registration is confined to the test state dir', () => {
-  const dir = artifactsDir(['reg.html']);
-  run(path.join(dir, 'reg.html'));
-
-  // Drop the override and the entry lands in the real registry instead, leaving this
-  // empty — which is exactly the regression, verified by mutating the line away.
-  const written = fs.readdirSync(STATE_DIR);
-  assert.ok(written.some((f) => f.endsWith('.current')),
-    `registration landed in the test state dir; got: ${JSON.stringify(written)}`);
 });
 
 // The artifact browser's repository filter reads this file. A session's repository is the

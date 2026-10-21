@@ -13,9 +13,7 @@ query: git, one `gh pr list` for `forge_says_merged`, or one pass over /proc for
 `process_holds`. None of them removes anything.
 A caller that needs the deployed copy imports it from `~/.local/share/claude-worktree`
 (`CLAUDE_WORKTREE_HOME` overrides the path), the way `claude_guard` is reached from
-`~/.local/share/claude-guard`. The `worktree-landed.sh` Stop hook is bash, so it runs
-this file as a script: `python3 claude_worktree.py forge-merged <branch> <head>`, and
-`python3 claude_worktree.py holders <tree>` for the process scan.
+`~/.local/share/claude-guard`.
 
 Python 3.10 is the floor, not 3.14: the SessionStart hook runs under the system
 interpreter, so nothing here may use syntax the system python3 lacks.
@@ -25,7 +23,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -262,9 +259,8 @@ def process_holds(
     directory is gone; it is stripped so a process standing in a half-removed tree
     still counts.
 
-    This is the scan the dotfiles `prune-worktrees.py` hook and the
-    `worktree-landed.sh` Stop hook both run. It ports the server repo's
-    `lib.worktrees.processes_using`, minus that repo's root helper.
+    This is the scan the dotfiles `prune-worktrees.py` hook runs. It ports the server
+    repo's `lib.worktrees.processes_using`, minus that repo's root helper.
 
     Args:
         proc: the procfs root to scan.
@@ -353,32 +349,3 @@ def tree_roots(path: str) -> set[str]:
     git reports a worktree's path as it was created, and /proc reports the real one.
     """
     return {path.rstrip("/"), str(Path(path).resolve())}
-
-
-def main(argv: list[str]) -> int:
-    """The entry points for the bash Stop hook, so it shares the Python readers.
-
-    `forge-merged <branch> <head>` exits 0 when the forge merged that head, else 1. It
-    runs from the current directory, which the hook sets to the worktree.
-
-    `holders <tree>` prints one line per process holding the tree or a path below it,
-    the pid and the `how` separated by a tab, and exits 0 whether or not it printed any.
-    """
-    if len(argv) == 3 and argv[0] == "forge-merged":
-        return 0 if forge_says_merged(os.getcwd(), argv[1], argv[2]) else 1
-    if len(argv) == 2 and argv[0] == "holders":
-        roots = tree_roots(argv[1])
-        for pid, held, how in process_holds():
-            if holds_tree(held, roots):
-                print(f"{pid}\t{how}")
-        return 0
-    print(
-        "usage: claude_worktree.py forge-merged <branch> <head>\n"
-        "       claude_worktree.py holders <tree>",
-        file=sys.stderr,
-    )
-    return 2
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))

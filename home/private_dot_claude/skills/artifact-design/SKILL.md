@@ -16,10 +16,10 @@ Render a document Daniel will sit down and read as a readable, self-contained HT
 
 ## Slice status — required whenever the doc has phases
 
-An artifact that plans work in slices gets refreshed automatically as those slices land
-(a Stop hook watches for commits on the default branch and asks for an update), so the
-status has to live somewhere a later session can find and edit surgically. Freehand
-prose can't be updated without rewriting the doc and losing content.
+An artifact that plans work in slices gets updated as those slices land, often by a later
+session than the one that wrote it, so the status has to live somewhere that session can
+find and edit surgically. Freehand prose can't be updated without rewriting the doc and
+losing content.
 
 Mark every slice on its container element:
 
@@ -37,18 +37,19 @@ Mark every slice on its container element:
 - Put `data-updated="<YYYY-MM-DD HH:MM>"` on `<body>` and show it in the footer, so a
   stale artifact is obvious on sight.
 
-When refreshing: change only the slices whose state actually changed, plus the summary
-line and `data-updated`. Leave everything else byte-identical. If the landed commits
-have nothing to do with the artifact, say so and change nothing — never invent status.
+When updating slice status: change only the slices whose state actually changed, plus the
+summary line and `data-updated`. Leave everything else byte-identical. If the landed
+commits have nothing to do with the artifact, say so and change nothing — never invent
+status.
 
 This is the general rule for any edit to an already-published artifact, not just slice
-refreshes: touch only what the request or the new status requires and leave the rest of
+updates: touch only what the request or the new status requires and leave the rest of
 the file byte-identical. A small requested change (a number, a line, one section) isn't
 license to also rewrite phrasing, resize headers, or "improve" parts nobody asked about.
 
 `prune-artifacts.sh` deletes an artifact once it goes `CLAUDE_ARTIFACT_RETENTION_DAYS`
 without an update. `settings.base.json` sets that to 30 days. A doc that keeps getting
-refreshed as work lands stays put, and an abandoned one clears itself out. Executable
+updated as work lands stays put, and an abandoned one clears itself out. Executable
 files in the artifacts directory are never pruned — a generated script is a tool, not
 a report. If you write one there, `chmod +x` it or it will age out with the docs.
 

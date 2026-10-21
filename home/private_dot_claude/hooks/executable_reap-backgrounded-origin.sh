@@ -4,8 +4,8 @@
 #   matcher: startup
 #   timeout: 5
 #   order: 70
-#   when: ne .chezmoi.os "windows"
-# reap the redundant interactive origin left running when a session is backgrounded; /proc-based, so non-Windows only. No-ops unless the daemon's ancestor cmdline carries the fork signature
+#   when: eq .chezmoi.os "linux"
+# reap the redundant interactive origin left running when a session is backgrounded; /proc-based, so Linux only: macOS has no /proc, and the walk there finds nothing. No-ops unless the daemon's ancestor cmdline carries the fork signature
 # SessionStart hook. When Claude Code backgrounds a session it forks a daemon
 # (--fork-session --resume <origin>.jsonl --reply-on-resume) but leaves the interactive
 # ORIGIN process alive, holding ~430MB and cluttering Agentview. This hook runs at the

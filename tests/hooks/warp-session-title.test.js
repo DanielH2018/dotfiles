@@ -98,12 +98,29 @@ test('no writable terminal is a silent no-op, not a failure', { skip }, () => {
   // stdin is 'ignore', not a pipe: the hook bails at the tty check BEFORE it reads stdin,
   // so piping input races the exit and intermittently throws EPIPE instead of asserting
   // anything. That early bail is the behaviour under test, so the race is the test's bug.
-  const r = execFileSync('bash', [HOOK, 'working'], {
+  const r = spawnSync('bash', [HOOK, 'working'], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, WARP_TITLE_TTY: '/nonexistent/dir/tty', HOOK_INPUT_LIB: LIB },
   });
-  assert.strictEqual(r, '');
+  assert.strictEqual(r.status, 0);
+  assert.strictEqual(r.stdout, '');
+  // Claude Code records a hook's stderr on every run, so a failed open must not print.
+  assert.strictEqual(r.stderr, '', 'the failed open must not reach stderr');
+});
+
+// macOS ps reports a process with no terminal as `??`, where procps says `?`. The desktop
+// app's sessions have none, so `??` must read as "no pane", not as the device /dev/??.
+test('a session whose ps tty is ?? is a silent no-op', { skip }, () => {
+  const bin = scratch(os.tmpdir(), 'wst-ps-');
+  fs.writeFileSync(path.join(bin, 'ps'), '#!/bin/sh\necho "??"\n', { mode: 0o755 });
+  const e = { ...process.env, PATH: `${bin}:${process.env.PATH}`, CLAUDE_PID: '1', HOOK_INPUT_LIB: LIB };
+  delete e.WARP_TITLE_TTY;
+  const r = spawnSync('setsid', ['bash', HOOK, 'completed'], {
+    encoding: 'utf8', env: e, stdio: ['ignore', 'pipe', 'pipe'], timeout: 10000,
+  });
+  assert.strictEqual(r.status, 0);
+  assert.strictEqual(r.stderr, '', `no error may be printed; got: ${r.stderr}`);
 });
 
 test('sanitises control characters out of the title', { skip }, () => {

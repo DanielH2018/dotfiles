@@ -179,3 +179,18 @@ Scripts/wslhost-interop-reaper/wslhost-interop-reaper-hidden.vbs
 .claude/hooks/chezmoi-managed-lib.sh
 .claude/hooks/artifact-state.sh
 .claude/hooks/hook_input.py
+
+# The 2026-10-21 scaffolding delete pass: hooks with no fire in 23 days of transcripts, or
+# whose only consumer went with them. worktree-landed.sh never blocked (prune-worktrees.py
+# removes landed trees at session start); artifact-refresh.sh never blocked, and
+# artifact-commit-track.sh and artifact-session-seed.sh only fed it; memory-nearest.py
+# never matched a near-duplicate; enterworktree-name-guard.py never denied; nothing read
+# check-update.sh's version stamp.
+.claude/hooks/worktree-landed.sh
+.claude/hooks/worktree-landed.md
+.claude/hooks/artifact-refresh.sh
+.claude/hooks/artifact-commit-track.sh
+.claude/hooks/artifact-session-seed.sh
+.claude/hooks/memory-nearest.py
+.claude/hooks/enterworktree-name-guard.py
+.claude/hooks/check-update.sh

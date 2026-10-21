@@ -174,30 +174,6 @@ if [ -z "${CLAUDE_STATE_HOST_DIR:-}" ] && [ -n "${CLAUDE_ARTIFACTS_BASE_URL:-}" 
   esac
 fi
 
-# Register the .html as the tracked artifact so artifact-refresh.sh can offer to bring
-# it up to date once work lands. Under three keys, which that hook reads most specific
-# first: the repo entry is what lets a plan written here keep being refreshed as later
-# slices land from other worktrees, and the session entry is what stops a session that
-# wrote its own doc being pointed at somebody else's. The worktree entry sits between
-# them, and on its own it could not do that job — in a primary checkout, where most
-# sessions here work, the worktree and repo slugs are the same string.
-#
-# Writing the artifact also clears this session's pending list, since the doc now
-# reflects that work. That is what stops a refresh nudge repeating every turn, and
-# what leaves the next slice to raise a fresh one. Pending is keyed by session, not
-# just worktree — see artifact-refresh.sh — so this clears the session-scoped file;
-# the bare worktree-slug file from before that fix is also removed as leftover cleanup.
-if [[ "$path" == *.html ]]; then
-  session=$(hook_field '.session_id // empty')
-  if wt=$(artifact_worktree_slug) && repo=$(artifact_repo_slug) && mkdir -p "$ARTIFACT_STATE_DIR" 2>/dev/null; then
-    sesskey=$(artifact_session_key "$wt" "$session") || sesskey="$wt"
-    printf '%s\n' "$path" > "$ARTIFACT_STATE_DIR/$sesskey.current" 2>/dev/null
-    printf '%s\n' "$path" > "$ARTIFACT_STATE_DIR/$wt.current" 2>/dev/null
-    printf '%s\n' "$path" > "$ARTIFACT_STATE_DIR/$repo.current" 2>/dev/null
-    rm -f "$ARTIFACT_STATE_DIR/$sesskey.pending" "$ARTIFACT_STATE_DIR/$wt.pending" 2>/dev/null
-  fi
-fi
-
 # A Markdown artifact with no HTML companion is the standing preference going unmet.
 # suggest-artifact.sh was supposed to catch it, from ExitPlanMode — where plan mode is
 # never used here: measured 2026-08-06, zero ExitPlanMode calls across 653 transcripts,

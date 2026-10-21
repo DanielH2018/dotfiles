@@ -663,14 +663,9 @@
             "type": "command",
             "command": "~/.claude/hooks/prune-worktrees.py --prune",
             "timeout": 15
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/artifact-session-seed.sh",
-            "timeout": 10
           }
         ]
-      }{{ if ne .chezmoi.os "windows" }},
+      }{{ if eq .chezmoi.os "linux" }},
       {
         "matcher": "startup",
         "hooks": [
@@ -691,16 +686,6 @@
           }
         ]
       }{{ end }},
-      {
-        "matcher": "startup",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/check-update.sh",
-            "timeout": 5
-          }
-        ]
-      },
       {
         "matcher": "startup|resume|clear",
         "hooks": [
@@ -737,12 +722,6 @@
       {
         "matcher": "Bash",
         "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/artifact-commit-track.sh pre",
-            "timeout": 10,
-            "if": "Bash(git *)"
-          },
           {
             "type": "command",
             "command": "~/.claude/hooks/guard-pre-tool-use.sh",
@@ -784,38 +763,12 @@
             "timeout": 10
           }
         ]
-      },
-      {
-        "matcher": "Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/memory-nearest.py",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "EnterWorktree",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/enterworktree-name-guard.py",
-            "timeout": 5
-          }
-        ]
       }
     ],
     "PostToolUse": [
       {
         "matcher": "Bash",
         "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/artifact-commit-track.sh post",
-            "timeout": 10,
-            "if": "Bash(git *)"
-          },
           {
             "type": "command",
             "command": "~/.claude/hooks/bash-write-fanout.sh",
@@ -939,16 +892,6 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/stop-checks.py",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/worktree-landed.sh",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/artifact-refresh.sh",
             "timeout": 10
           },
           {

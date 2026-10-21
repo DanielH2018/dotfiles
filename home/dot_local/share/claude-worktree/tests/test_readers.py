@@ -310,21 +310,6 @@ def test_forge_asks_once_per_branch_and_head(gh_stub, tmp_path):
     assert calls() == 1
 
 
-def test_forge_merged_command_exits_zero_only_on_a_match(gh_stub, tmp_path):
-    set_merged, _ = gh_stub
-    set_merged(("worktree-x", "aaaa111"))
-    script = Path(claude_worktree.__file__)
-
-    def run(*args):
-        return subprocess.run(
-            [sys.executable, str(script), *args], cwd=tmp_path, check=False
-        ).returncode
-
-    assert run("forge-merged", "worktree-x", "aaaa111") == 0
-    assert run("forge-merged", "worktree-x", "bbbb222") == 1
-    assert run("forge-merged") == 2
-
-
 # --- process_holds ------------------------------------------------------------------
 
 ME = 1000
