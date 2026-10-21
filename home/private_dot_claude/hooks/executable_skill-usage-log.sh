@@ -4,7 +4,7 @@
 #   matcher: Skill|Agent|Task
 #   timeout: 10
 #   order: 100
-# Fire-count logging: nothing recorded which of the 23 skills / 5 agents under
+# Fire-count logging: nothing recorded which of the skills and agents under
 # private_dot_claude/{skills,agents} ever actually fire, so a scaffolding-
 # delete-pass had no evidence to weigh a removal against. Both "Agent" and
 # "Task" are named in the matcher for the same reason the hook itself checks
@@ -14,7 +14,7 @@
 # PostToolUse hook (matcher: Skill|Agent): append one JSONL record per skill invocation
 # and per agent dispatch to ~/.claude/logs/skill-usage.jsonl.
 #
-# Nothing recorded which of the 23 skills and 5 agents under
+# Nothing recorded which of the skills and agents under
 # home/private_dot_claude/{skills,agents} ever actually fire, so a scaffolding-delete-
 # pass had no fire count to weigh a removal against. This is the write side; bin/skill-
 # usage (repo root) reads the file back into a table.

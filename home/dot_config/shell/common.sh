@@ -25,10 +25,16 @@ export IGNOREEOF=2
 [ -n "$ZSH_VERSION" ] && setopt ignore_eof 2>/dev/null
 
 # --- Editor ---
-export EDITOR='vim'
+# Neovim is the configured editor (dot_config/nvim/); no vimrc is tracked. The Linux
+# installer pins nvim, but the Brewfile does not list it, so fall back to vim where no
+# nvim is on PATH. Man pages read in nvim too (search, yank, syntax) when it's there.
+if command -v nvim >/dev/null 2>&1; then
+  export EDITOR='nvim'
+  export MANPAGER='nvim +Man!'
+else
+  export EDITOR='vim'
+fi
 export VISUAL="$EDITOR"
-# Read man pages in nvim (search, yank, syntax) when it's installed.
-command -v nvim >/dev/null 2>&1 && export MANPAGER='nvim +Man!'
 
 # --- Claude Code ---
 export CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000

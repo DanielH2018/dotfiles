@@ -1045,11 +1045,16 @@
          the reader and its skill, nothing that writes. Needs telemetry reaching a Loki that
          holds claude-code events; hosts without one get a skill that reports it cannot
          connect, not a broken session. */}}
-    "claude-permission-audit@daniel-tools": true,
+    "claude-permission-audit@daniel-tools": true
+{{- if ne .chezmoi.os "darwin" }},
     {{/* Restyles the transcript: tool rail, table cards, spinner, turn footer. Its prefs
          (skin, band off) live in the plugin store, which
-         .chezmoiscripts/os-unix/run_onchange_after_seed-skins-prefs.sh.tmpl seeds. */}}
+         .chezmoiscripts/os-unix/run_onchange_after_seed-skins-prefs.sh.tmpl seeds.
+         Not on darwin, the work laptop: the plugin is disabled there, and registering
+         its marketplace below would still clone the third-party repo onto that host.
+         Gated on the OS for the reason the OTEL block gives: a hostname gate fails open. */}}
     "skins@hellosverre-mods": true
+{{- end }}
 {{- if eq .chezmoi.hostname "daniel-box" }},
     {{/* Two-week trial on daniel-box only (dotfiles #794): /flow draws the session's
          subagents as a live tree. The marketplace below reads a copy that .chezmoiexternal
@@ -1067,13 +1072,16 @@
         "repo": "DanielH2018/claude-permission-audit"
       },
       "autoUpdate": true
-    },
+    }
+{{- if ne .chezmoi.os "darwin" }},
+    {{/* Same darwin gate as skins@hellosverre-mods in enabledPlugins above. */}}
     "hellosverre-mods": {
       "source": {
         "source": "github",
         "repo": "hellosverre/claude-skins"
       }
     }
+{{- end }}
 {{- if eq .chezmoi.hostname "daniel-box" }},
     {{/* A local directory, not a github source: a github marketplace follows a branch,
          and the trial's condition (dotfiles #794) is a pin to the audited commit. */}}
