@@ -15,7 +15,12 @@ set -u
 # shellcheck source=/dev/null
 . "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
 hook_read_input
-ERROR_TYPE=$(hook_field '.error_type // "unknown"')
+# The harness names the cause `error` (rate_limit, overloaded, server_error,
+# authentication_failed, max_output_tokens, unknown, ...). This read `.error_type`, which
+# the payload never carries: all 277 stop_failure lines the hook wrote to sessions.log,
+# until 06e9cc06 dropped that append, say error_type=unknown, and the notification below
+# never fired.
+ERROR_TYPE=$(hook_field '.error // "unknown"')
 
 # Desktop notification for rate limits so the user knows to wait
 case "$ERROR_TYPE" in
