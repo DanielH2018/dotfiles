@@ -3,7 +3,7 @@ export const meta = {
   description: 'Parallel multi-dimension security review of changed code, with adversarial verification of each high/critical finding',
   phases: [
     { title: 'Scope', detail: 'determine changed files to review' },
-    { title: 'Review', detail: 'one security-reviewer per security dimension' },
+    { title: 'Review', detail: 'one general-purpose reviewer per security dimension' },
     { title: 'Verify', detail: 'adversarially refute each high/critical finding' },
   ],
 }

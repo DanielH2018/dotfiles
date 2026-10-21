@@ -55,6 +55,12 @@ Checks:
       and edited no file on a test path. "Needs a test" is judgement; "no test file at
       all" is not.
 
+  test-hygiene (session) -- CLAUDE.md's Testing section names `test-scenario-hygiene`
+      as the sweep that ends a change carrying tests. The session edited a file on a
+      test path outside scratch space, and neither invoked that skill nor Read its
+      SKILL.md. The prose alone never fired it: 0 loads across 71 test-editing
+      transcripts from 2026-09-09 to 2026-10-21.
+
   migration (session) -- rules/sql.md. The session wrote a file under migrations/,
       migration/ or db/migrate/, and either the file names no down step or
       reversibility (an .up.sql needs its .down.sql sibling), or no `migration-reviewer`
@@ -233,6 +239,8 @@ class Session:
         self.created: set[str] = set()  # paths whose Write result was "create"
         self.bash: list[str] = []  # Bash commands
         self.agents: set[str] = set()  # subagent_type of every Agent/Task call
+        self.skills: set[str] = set()  # skill name of every Skill call
+        self.read: list[str] = []  # file paths passed to Read
         self.feedback: list[str] = []  # every Stop-hook feedback text
         if not transcript or not transcript.is_file():
             return
@@ -268,6 +276,10 @@ class Session:
             self.bash.append(data["command"])
         elif name in ("Agent", "Task") and isinstance(data.get("subagent_type"), str):
             self.agents.add(data["subagent_type"])
+        elif name == "Skill" and isinstance(data.get("skill"), str):
+            self.skills.add(data["skill"])
+        elif name == "Read" and isinstance(data.get("file_path"), str):
+            self.read.append(data["file_path"])
 
     def fired(self, tag: str) -> bool:
         return any(tag in text for text in self.feedback)
@@ -597,6 +609,37 @@ def tests_for_source(turn: Turn) -> str | None:
     )
 
 
+# ------------------------------------------------------------------ test-hygiene
+
+HYGIENE_SKILL = "test-scenario-hygiene"
+
+
+def test_hygiene(turn: Turn) -> str | None:
+    session = turn.session()
+    if HYGIENE_SKILL in session.skills:
+        return None
+    if any(p.endswith(f"/{HYGIENE_SKILL}/SKILL.md") for p in session.read):
+        return None
+    tests = sorted(
+        {
+            p
+            for p in session.edited
+            if TEST_PATH.search(p)
+            and not _is_scratch(p, turn.env)
+            and not _outside_work_tree(p)
+        }
+    )
+    if not tests:
+        return None
+    shown = ", ".join(tests[:5]) + (" ..." if len(tests) > 5 else "")
+    return (
+        f"This session edited test files ({shown}) and never loaded "
+        f"`{HYGIENE_SKILL}`. CLAUDE.md names it as the sweep that ends a change "
+        "carrying tests. Load it, apply it to this session's test changes, then stop "
+        "again. This fires once per session."
+    )
+
+
 # ------------------------------------------------------------------ migration
 
 MIGRATION_PATH = re.compile(
@@ -653,6 +696,7 @@ CHECKS = [
     ("preamble", "turn", preamble),
     ("evidence-for-claims", "turn", evidence_for_claims),
     ("tests-for-source", "session", tests_for_source),
+    ("test-hygiene", "session", test_hygiene),
     ("migration", "session", migration),
 ]
 

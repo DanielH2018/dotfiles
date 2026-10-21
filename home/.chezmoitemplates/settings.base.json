@@ -427,8 +427,8 @@
        is the UNION of every model the setup actually requests: claude-opus-5-5 (main,
        and first so enforceAvailableModels snaps to it), claude-opus-5 (the previous
        main, kept for `/model`), "opus" alias (eval judge +
-       planner/migration-reviewer/root-cause/deep-review agents), "sonnet"
-       (implementer/ops-investigator/network-navigator agents), claude-sonnet-5
+       migration-reviewer/root-cause/deep-review agents), "sonnet"
+       (implementer/ops-investigator agents), claude-sonnet-5
        (fallbackModel), "haiku" (Claude Code's internal/auxiliary calls, e.g. the eval
        judge's helper call, and the chore agent), and "fable"/claude-fable-5
        (Fable 5, opted in for manual `/model fable` selection).

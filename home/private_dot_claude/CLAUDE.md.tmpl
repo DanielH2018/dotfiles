@@ -95,8 +95,9 @@ the place the repo already keeps tests for that kind of change. Verify however y
 working, but a scratch script or a quick check is not a test — don't promote it into an extra
 permanent test file. This governs extras only: every behaviour the task asks for gets its test.
 
-The sweep that enforces that at the end of a change is the `test-scenario-hygiene` skill; it
-owns test content, where `pr-authoring` owns diff shape.
+When a change adds or edits tests, load the `test-scenario-hygiene` skill before you stop and
+apply it to the test diff. It owns test content, where `pr-authoring` owns diff shape.
+`stop-checks.py` blocks once in a session that edited a test file without loading it.
 
 Before you write a stub or a textual assertion, read that skill's *Anti-patterns* section: it lists five ways a test stays green while checking nothing.
 

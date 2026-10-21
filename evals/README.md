@@ -125,23 +125,27 @@ because it may still have billed. The reported `costUsd` stays the measured figu
 
 ## The agents
 
-Case *files* exist for all nine agents, but only five of them can be measured on a personal
-box — the four work-overlay agents below need `EVAL_AGENT_DIRS` and come back INCONCLUSIVE
+Case *files* exist for six agents, but only five of them can be measured on a personal
+box — the work-overlay agent below needs `EVAL_AGENT_DIRS` and comes back INCONCLUSIVE
 without it. Five are defined **in this repo**
 (`home/private_dot_claude/agents/`) and load with no extra setup: `implementer`,
 `migration-reviewer`, `chore`, `deep-review` and `root-cause`. (`planner` was dropped
 deliberately in 67a07ae — prep hands off to superpowers/Plan now — and its cases were
 retired with it.)
 
-The four work-overlay agents — `security-reviewer`, `ops-investigator`, `processing-engineer`,
-`network-navigator` — are defined in **`work-laptop-config/.claude/agents/`**, not this repo. Their
-cases exist here, but the runner can only load them when you point it at that dir with
-`EVAL_AGENT_DIRS` (colon-separated, searched after this repo's agents dir):
+The work-overlay agent `ops-investigator` is defined in
+**`work-laptop-config/.claude/agents/`**, not this repo. Its cases exist here, but the runner
+can only load them when you point it at that dir with `EVAL_AGENT_DIRS` (colon-separated,
+searched after this repo's agents dir):
 
 ```bash
 EVAL_AGENT_DIRS=~/work-laptop-config/.claude/agents \
-  node evals/run-evals.mjs --agent security-reviewer
+  node evals/run-evals.mjs --agent ops-investigator
 ```
+
+`security-reviewer`, `processing-engineer` and `network-navigator` were retired on 2026-10-21
+after no invocations in six weeks. Their two security cases (PAN in logs, no over-flagging)
+moved to `deep-review`, which now owns that review.
 
 `EVAL_AGENT_DIRS` is empty by default, so the CI/hermetic path is unchanged. Without it, a
 work-overlay case fails fast with a message naming the dirs it searched. New cases use

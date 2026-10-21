@@ -294,6 +294,64 @@ with tempfile.TemporaryDirectory(
         ),
     )
 
+# ---------------------------------------------------------------- test-hygiene
+
+TEST_EDIT = tool("Edit", file_path="/work/repo/tests/test_ledger.py")
+
+check(
+    "editing a test file without loading test-scenario-hygiene blocks",
+    tagged(evaluate("Done.", [user("x"), TEST_EDIT]), "test-hygiene"),
+)
+check(
+    "a test edit after invoking the skill passes",
+    not tagged(
+        evaluate(
+            "Done.",
+            [user("x"), TEST_EDIT, tool("Skill", skill="test-scenario-hygiene")],
+        ),
+        "test-hygiene",
+    ),
+)
+check(
+    "a test edit after reading the skill's SKILL.md passes",
+    not tagged(
+        evaluate(
+            "Done.",
+            [
+                user("x"),
+                TEST_EDIT,
+                tool(
+                    "Read",
+                    file_path="/home/u/.claude/skills/test-scenario-hygiene/SKILL.md",
+                ),
+            ],
+        ),
+        "test-hygiene",
+    ),
+)
+check(
+    "a scratch test file under /tmp passes",
+    not tagged(
+        evaluate("Done.", [user("x"), tool("Write", file_path="/tmp/test_probe.py")]),
+        "test-hygiene",
+    ),
+)
+check(
+    "test-hygiene stays quiet once it has fired in the session",
+    not tagged(
+        evaluate(
+            "Done.",
+            [
+                user("x"),
+                TEST_EDIT,
+                feedback("[stop-checks:test-hygiene] x"),
+                user("next thing"),
+            ],
+        ),
+        "test-hygiene",
+    ),
+)
+
 # ---------------------------------------------------------------- migration
 
 with tempfile.TemporaryDirectory(prefix="stop-checks-mig-") as mig_tmp:
