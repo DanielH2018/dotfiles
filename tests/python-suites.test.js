@@ -209,7 +209,9 @@ const PYTEST_PROJECTS = [
   // imported lazily inside embedder.py, and the suite substitutes a fake
   // embedder, so pulling ~200MB of onnxruntime in would buy nothing. It sets no
   // pythonpath of its own, hence PYTHONPATH here.
-  { root: VAULT_TOOLING, dir: 'vault-index', deps: ['pytest>=8.0', 'duckdb>=1.1.0'], env: { PYTHONPATH: '.' } },
+  // `<2` mirrors pyproject.toml: DuckDB 2.0.0 rejects query.py's `match_bm25(...) AS s`
+  // with a BinderException, and this run resolves fresh rather than from uv.lock.
+  { root: VAULT_TOOLING, dir: 'vault-index', deps: ['pytest>=8.0', 'duckdb>=1.1.0,<2'], env: { PYTHONPATH: '.' } },
   // claude-guard is 3.14-only by design (spec: docs/specs/2026-09-06-claude-guard-design.md),
   // so it names its interpreter; uv fetches a managed 3.14 on a cold machine.
   { root: SHARE, dir: 'claude-guard', deps: ['pytest>=8.0'], env: { PYTHONPATH: '.' }, python: '3.14' },

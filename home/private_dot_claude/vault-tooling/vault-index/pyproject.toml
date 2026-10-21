@@ -3,7 +3,8 @@ name = "vault-index"
 version = "0.1.0"
 description = "Local hybrid-search index over the LLM Wiki vault (semantic + BM25)"
 requires-python = ">=3.11"
-dependencies = ["duckdb>=1.1.0", "fastembed>=0.4.0"]
+# <2: DuckDB 2.0.0 rejects the `match_bm25(...) AS s` query in query.py with a BinderException.
+dependencies = ["duckdb>=1.1.0,<2", "fastembed>=0.4.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
