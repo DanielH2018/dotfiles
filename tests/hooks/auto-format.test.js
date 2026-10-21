@@ -58,6 +58,38 @@ test('a formatter that hangs is cut off at its bound and named', { skip }, () =>
   assert.match(r.stderr, /shfmt did not finish on x\.sh within 1s \(timeout\)/);
 });
 
+// taplo reformats a file the repo never formatted with it, so it runs only under a config.
+fs.writeFileSync(path.join(BIN, 'taplo'), `#!/bin/bash
+for a in "$@"; do f=$a; done
+echo '# formatted' >> "$f"
+`, { mode: 0o755 });
+
+function runToml({ config }) {
+  const repo = scratch(os.tmpdir(), 'autofmt-toml-');
+  if (config) fs.writeFileSync(path.join(repo, config), '');
+  fs.mkdirSync(path.join(repo, 'sub'));
+  const file = path.join(repo, 'sub', 'x.toml');
+  fs.writeFileSync(file, 'a = 1   # hand-aligned\n');
+  const r = spawnSync('bash', [HOOK], {
+    input: JSON.stringify({ tool_input: { file_path: file } }),
+    encoding: 'utf8',
+    env: { ...process.env, PATH: `${BIN}:${process.env.PATH}`, HOME: repo, XDG_STATE_HOME: path.join(repo, 'state') },
+  });
+  return { status: r.status, body: fs.readFileSync(file, 'utf8') };
+}
+
+test('a TOML file under a taplo config in a parent dir is formatted', { skip }, () => {
+  const r = runToml({ config: '.taplo.toml' });
+  assert.strictEqual(r.status, 0);
+  assert.match(r.body, /# formatted/);
+});
+
+test('a TOML file in a repo with no taplo config is left as written', { skip }, () => {
+  const r = runToml({ config: null });
+  assert.strictEqual(r.status, 0);
+  assert.strictEqual(r.body, 'a = 1   # hand-aligned\n');
+});
+
 test('a missing run-bounded.sh runs no formatter and exits 1', { skip }, () => {
   const r = run({ RUN_BOUNDED_LIB: path.join(DIR, 'no-such-lib.sh') });
   assert.strictEqual(r.status, 1);

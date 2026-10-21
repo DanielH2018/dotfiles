@@ -47,6 +47,17 @@ FMT_TIMEOUT_S="${AUTO_FORMAT_TIMEOUT_S:-12}"
 # nothing said so. Report a miss once per tool per day — enough to notice, not enough to nag.
 _fmt_state="${XDG_STATE_HOME:-$HOME/.local/state}/claude-auto-format"
 
+# Succeeds when <dir> or a parent of it holds .taplo.toml or taplo.toml, the files that
+# mark a repo as formatting its TOML with taplo.
+has_taplo_config() {
+  local dir="$1"
+  while :; do
+    if [ -f "$dir/.taplo.toml" ] || [ -f "$dir/taplo.toml" ]; then return 0; fi
+    [ "$dir" = / ] || [ "$dir" = . ] && return 1
+    dir=$(dirname "$dir")
+  done
+}
+
 run_if_installed() {
   if command -v "$1" >/dev/null 2>&1; then
     run_bounded "$FMT_TIMEOUT_S" 1048576 -- "$@"
@@ -123,7 +134,12 @@ case "$FILE_PATH" in
     run_if_installed terraform fmt "$FILE_PATH" >/dev/null
     ;;
   *.toml)
-    run_if_installed taplo fmt "$FILE_PATH" >/dev/null
+    # taplo's defaults realign hand-aligned comments across the whole file, so a one-line
+    # edit in a repo that never ran taplo came back as unrelated hunks: 5 of the chezmoi
+    # repo's 27 TOML files change under them. Format TOML only where a repo opted in.
+    if has_taplo_config "$(dirname "$FILE_PATH")"; then
+      run_if_installed taplo fmt "$FILE_PATH" >/dev/null
+    fi
     ;;
 esac
 
