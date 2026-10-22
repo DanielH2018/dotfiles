@@ -25,8 +25,9 @@ it could run without knowing which runner it is:
 
 The scan stops at a code runner (`python`, `node`, `psql`, ...): the words after it are
 code in another language, which the denylist below leaves unjudged, and Python's `a > b`
-read as shell would be a redirect. So an unlisted wrapper no longer fails toward allow,
-and an unlisted code runner fails toward deny, which the deny-not-ask decision accepts.
+read as shell would be a redirect. An unlisted wrapper therefore cannot hide a judged
+command, and an unlisted code runner fails toward deny, which the deny-not-ask decision
+accepts.
 A function definition, a `case`, and a command named by a variable are denied, as is a
 command the segmenter cannot read, since none can be shown to be a read.
 
