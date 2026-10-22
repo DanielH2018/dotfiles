@@ -53,3 +53,20 @@ test('with no managed 3.14 the hook still runs, under python3, and says so', { s
   assert.strictEqual(r.stdout.trim(), 'python3 /hooks/stop-checks.py --prune');
   assert.match(r.stderr, /no uv-managed Python 3\.14, so \/hooks\/stop-checks\.py runs under python3/);
 });
+
+test('every registered Python hook starts through run-python.sh', () => {
+  // The launcher only helps a hook that names it. #941 switched the four Python hooks it
+  // knew about by hand, and skill-usage-log.py, which landed beside it, kept the bare
+  // `#!/usr/bin/env python3` registration. That runs under whatever python3 the session's
+  // PATH resolves, a project venv included. A census catches the next one.
+  const dir = path.dirname(path.dirname(LAUNCHER));
+  const hooks = fs.readdirSync(dir).filter((f) => /^executable_.*\.py$/.test(f));
+  const registered = hooks.filter((f) => /^# gen-hooks: register$/m.test(fs.readFileSync(path.join(dir, f), 'utf8')));
+  assert.ok(registered.length >= 5, `expected the repo's Python hooks, found ${registered.length}`);
+  const missing = registered.filter((f) => {
+    const name = f.replace(/^executable_/, '');
+    const header = fs.readFileSync(path.join(dir, f), 'utf8');
+    return !new RegExp(`^#   command: bash ~/\\.claude/hooks/lib/run-python\\.sh ${name.replace('.', '\\.')}( |$)`, 'm').test(header);
+  });
+  assert.deepStrictEqual(missing, [], 'these Python hooks do not declare `command: bash ~/.claude/hooks/lib/run-python.sh <hook>`');
+});
