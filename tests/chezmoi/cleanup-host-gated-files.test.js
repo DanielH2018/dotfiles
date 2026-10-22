@@ -37,13 +37,13 @@ const DESKTOP_ONLY_MARKERS = [
   '.config/warp-terminal',
 ];
 const SANDBOX_MARKERS = ['claude-sandbox', '.claude/sandbox'];
-const DARWIN_HELPER_MARKERS = ['mac-askpass', 'logi-dev-mgr-kick'];
+const DARWIN_HELPER_MARKERS = ['mac-askpass'];
 const HOOKS_MARKER = 'test_*.py';
 // Each script's header comment names the hooks/test_*.py suites, so a marker check on the
 // whole render would pass with the removal code gone. Hooks checks read code lines only.
 const codeOnly = (s) => s.split('\n').filter((l) => !l.trim().startsWith('#')).join('\n');
 
-test('a server removes the desktop utilities, the sandbox, the darwin helpers, and the hooks tests', { skip }, () => {
+test('a server removes the desktop utilities, the sandbox, the darwin helper, and the hooks tests', { skip }, () => {
   const rendered = linuxServer();
   for (const m of [...DESKTOP_ONLY_MARKERS, ...SANDBOX_MARKERS, ...DARWIN_HELPER_MARKERS]) {
     assert.ok(rendered.includes(m), `daniel-box/daniel-server must clean up ${m}`);
@@ -51,7 +51,7 @@ test('a server removes the desktop utilities, the sandbox, the darwin helpers, a
   assert.ok(codeOnly(rendered).includes(HOOKS_MARKER), 'the hooks test suites are cleaned up on every host');
 });
 
-test('a workstation removes only the darwin helpers and the hooks tests', { skip }, () => {
+test('a workstation removes only the darwin helper and the hooks tests', { skip }, () => {
   const rendered = linuxWorkstation();
   for (const m of DESKTOP_ONLY_MARKERS) {
     assert.ok(!rendered.includes(m), `a desktop must keep using ${m}, not clean it up`);
@@ -101,7 +101,7 @@ test('on a server, the cleanup keeps another program\'s files in the shared XDG 
   for (const rel of foreign) assert.ok(fs.existsSync(path.join(home, rel)), `${rel} is not ours and must survive`);
 });
 
-test('Windows cleans up the darwin helpers and the hooks tests, and nothing else', { skip }, () => {
+test('Windows cleans up the darwin helper and the hooks tests, and nothing else', { skip }, () => {
   const rendered = windowsAs();
   for (const m of DARWIN_HELPER_MARKERS) {
     assert.ok(rendered.includes(m), `Windows is never darwin, so ${m} is cleaned up`);

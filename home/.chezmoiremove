@@ -206,3 +206,8 @@ Scripts/wslhost-interop-reaper/wslhost-interop-reaper-hidden.vbs
 
 # skill-usage-log.sh became skill-usage-log.py on 2026-10-22, its registration moving with it.
 .claude/hooks/skill-usage-log.sh
+
+# #732 (macOS row): logi-dev-mgr-kick, a workaround for Logi Options+ losing the trackball,
+# never fired. Its launchd job was never activated and its kick log was never written. The
+# .chezmoiignore gate that hid it off macOS went with it, so this entry reaches every OS.
+.local/bin/logi-dev-mgr-kick

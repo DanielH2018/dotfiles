@@ -387,13 +387,10 @@ AppData
 {{ end }}
 
 {{ if ne .chezmoi.os "darwin" }}
-# mac-askpass and logi-dev-mgr-kick are macOS-only. mac-askpass's only consumer is
-# dot_zshenv:41, itself guarded by `[ "$(uname)" = Darwin ]`-equivalent Aqua detection, and
-# logi-dev-mgr-kick's only consumer is the launchd plist in scheduled/ (not deployed by
-# chezmoi at all — see this repo's README on scheduled/). Neither has ever run on Linux or
-# Windows; both deployed there anyway because no gate excluded them.
+# mac-askpass is macOS-only. Its only consumer is dot_zshenv:41, itself guarded by
+# `[ "$(uname)" = Darwin ]`-equivalent Aqua detection. It has never run on Linux or Windows,
+# and it deployed there anyway until this gate excluded it.
 .local/bin/mac-askpass
-.local/bin/logi-dev-mgr-kick
 {{ end }}
 
 # The home/private_dot_claude/hooks/test_*.py files and _testkit.py deploy to
