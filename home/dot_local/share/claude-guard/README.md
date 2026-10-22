@@ -33,6 +33,12 @@ awk pass and agrees with it field for field (`tests/test_vectors.py`), except th
 `heredoc` field cannot represent an empty body — the parity tests there drop empty bodies on
 both sides before comparing.
 
+`substitution_spans(command)` comes from the same pass. It locates each outermost
+substitution: its kind, where it starts, where its body starts, where it ends, and whether
+it sits inside a `${ }`. `mask_substitutions` replaces each span with a placeholder for
+`deny.py`'s word readers, and `substitution.mask` cuts the `$( )` and `<( )` spans out for
+the judge.
+
 ## Running
 
     claude-guard explain 'git status && ls & rm -rf /'

@@ -67,8 +67,42 @@ def _unreadable(reason: str) -> Parsed:
     return Parsed(f"unreadable:{reason}", (), ())
 
 
+@dataclass(frozen=True, slots=True)
+class Span:
+    """One outermost substitution, located in the command `substitution_spans` read.
+
+    Attributes:
+        kind: "paren" for `$( )`, "dparen" for `$(( ))`, "procsub" for `<( )` or `>( )`,
+            "backtick" for a backtick pair.
+        start: the offset of its opening `$`, `<`, `>` or backtick.
+        body: the offset of the first character inside it. For "dparen" that is the
+            second `(`.
+        end: one past its closing `)` or backtick, so `command[start:end]` is the whole
+            substitution and `command[body:end - 1]` its body.
+        in_brace: True when it sits inside a `${ }`, whose operators can reach arithmetic.
+    """
+
+    kind: str
+    start: int
+    body: int
+    end: int
+    in_brace: bool
+
+
 def parse(command: str) -> Parsed:
     return _parse(command, None)
+
+
+def substitution_spans(command: str) -> tuple[Span, ...] | None:
+    """Every outermost substitution in `command`, in order, or None when `parse` refuses it.
+
+    A substitution nested in another is inside its parent's span and gets none of its own.
+    One inside `${ }` counts as outermost and says so in `in_brace`.
+    """
+    spans: list[Span] = []
+    if not _parse(command, spans).ok:
+        return None
+    return tuple(spans)
 
 
 def mask_substitutions(command: str, placeholder: str) -> str | None:
@@ -80,25 +114,28 @@ def mask_substitutions(command: str, placeholder: str) -> str | None:
     `substitutions`; this is for reading the words around them, where a tokenizer that
     splits on `(` and `)` would cut `$(git merge-base A B)..B` into separate commands.
     """
-    spans: list[tuple[int, int]] = []
-    if not _parse(command, spans).ok:
+    spans = substitution_spans(command)
+    if spans is None:
         return None
     out: list[str] = []
     last = 0
-    for start, end in spans:
-        out += (command[last:start], placeholder)
-        last = end
+    for span in spans:
+        out += (command[last : span.start], placeholder)
+        last = span.end
     out.append(command[last:])
     return "".join(out)
 
 
-def _parse(command: str, spans: list[tuple[int, int]] | None) -> Parsed:
+def _parse(command: str, spans: list[Span] | None) -> Parsed:
     s = command
     n = len(s)
 
     kind: list[str] = []  # frame stack
     cnt: list[int] = []  # nesting counter per frame, aligned with `kind`
     seg_start: list[int] = [0]  # per depth; index 0 is the top level
+    # Where each frame's body began, aligned with `kind`. Unlike `seg_start`, which `cut`
+    # moves past every separator inside the frame, this never moves.
+    opened: list[int] = []
     pend: list[tuple[str, bool, bool, int]] = []  # (delim, strip_tabs, quoted, offset)
     heredocs: list[tuple[int, str, bool]] = []  # (offset, body, quoted)
     segs: list[list] = []  # [text, sep, off0, off1]
@@ -108,16 +145,19 @@ def _parse(command: str, spans: list[tuple[int, int]] | None) -> Parsed:
         kind.append(k)
         cnt.append(0)
         seg_start.append(start)
+        opened.append(start)
 
     def pop() -> None:
         kind.pop()
         cnt.pop()
         seg_start.pop()
+        opened.pop()
 
     def close_span(i: int, opener: int) -> None:
         # Called before the frame is popped; `opener` is the length of `$(`, `<(` or `` ` ``.
         if spans is not None and not any(k in _ALL_SUBS for k in kind[:-1]):
-            spans.append((seg_start[-1] - opener, i + 1))
+            body = opened[-1]
+            spans.append(Span(kind[-1], body - opener, body, i + 1, "brace" in kind[:-1]))
 
     def cut(i: int, sep: str) -> None:
         depth = len(kind)

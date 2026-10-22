@@ -1742,6 +1742,8 @@ SUDO_REFUSE = [
     '"$(which sudo)" -n true',
     # a substitution in an argument is checked for what it runs
     "git log $(sudo id)..x",
+    # a variable command word after a separator inside a substitution
+    "diff <(grep a f | sort) <($S -n id)",
     # a quoted word inside the brace list does not hide it
     "{sudo,sh,-c,'id -u'}",
     # an interpreter's program in a heredoc or here-string, or behind a runner
@@ -1819,6 +1821,9 @@ SUDO_PASS = [
     "pytest -k 'sudo and boundary' tests",
     "docker run --rm alpine sh -c 'adduser -D dev; su dev -c id'",
     "ls -la",
+    # a substitution holding a pipeline is masked whole, so the variable arguments inside it
+    # are not read as command words of the outer segment
+    "diff <(grep a $M/f | sort | uniq -c) <(grep b $W/f | sort)",
     # an executor's option value, leading argument or command argument is no command word
     'find . -name "$P"',
     'find "$DIR" -name x -print',

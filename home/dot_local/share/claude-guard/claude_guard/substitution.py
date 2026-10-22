@@ -17,15 +17,16 @@ reads `--force` off the literal text never sees it. A variable assigned from a
 substitution, or a `for` variable looping over one, carries the same output, so the judge
 holds every later reference to it to the same rules.
 
-Backticks are refused outright, and so is anything this module and `segment.parse` read
-differently: `mask` re-derives the substitution list from its own spans and returns None
-unless it equals the one `parse` reported. A second scanner here is the drift hazard
-`segment.py` warns about, and the cross-check is what makes a drift refuse rather than allow.
+The spans come from `segment.substitution_spans`, the same pass `parse` makes, so this
+module and the segmenter cannot disagree on where a substitution starts or ends. Refused
+outright: a backtick, a substitution inside `${ }` (whose operators reach arithmetic, which
+can run a command through an array subscript), and one inside `$(( ))`, which is left in
+the masked text and so fails the check that the masked command parses with none left.
 """
 
 from dataclasses import dataclass
 
-from claude_guard.segment import parse
+from claude_guard.segment import parse, substitution_spans
 
 PLACEHOLDER = "__claude_guard_sub__"
 
@@ -55,8 +56,8 @@ INERT_COMMANDS = frozenset(
     }
 )
 
-# Frames that count `(`/`)` toward their own close. `$((` is arithmetic, not a substitution.
-_PAREN_FRAMES = frozenset({"sub", "arith"})
+# The span kinds this module cuts out and judges. `$(( ))` is arithmetic, left in place.
+_JUDGED_KINDS = frozenset({"paren", "procsub"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,118 +74,27 @@ class Masked:
     inner: tuple[str, ...]
 
 
-def _spans(s: str) -> list[tuple[int, int, int]] | None:
-    """(start, body_start, end) for each top-level `$( )`, `<( )` or `>( )`, or None.
-
-    `s[start:end]` is the whole substitution and `s[body_start:end - 1]` its body. Quoting
-    follows `segment.parse`: no frame opens inside single quotes, and `<(` does not open
-    inside double quotes.
-    """
-    n = len(s)
-    kind: list[str] = []
-    depth: list[int] = []
-    spans: list[tuple[int, int, int]] = []
-    open_at = -1
-    i = 0
-    while i < n:
-        c = s[i]
-        top = kind[-1] if kind else ""
-        if top == "squote":
-            if c == "'":
-                kind.pop()
-                depth.pop()
-            i += 1
-            continue
-        if c == "\\":
-            i += 2
-            continue
-        if c == "'":
-            if top != "dquote":
-                kind.append("squote")
-                depth.append(0)
-            i += 1
-            continue
-        if c == '"':
-            if top == "dquote":
-                kind.pop()
-                depth.pop()
-            else:
-                kind.append("dquote")
-                depth.append(0)
-            i += 1
-            continue
-        nxt = s[i + 1] if i + 1 < n else ""
-        opens = (c == "$" and nxt == "(") or (c in "<>" and nxt == "(" and top != "dquote")
-        if opens:
-            arith = c == "$" and s[i + 2 : i + 3] == "("
-            if not arith and not any(k in _PAREN_FRAMES or k == "brace" for k in kind):
-                open_at = i
-            kind.append("arith" if arith else "sub")
-            depth.append(0)
-            i += 2
-            continue
-        if c == "$" and nxt == "{":
-            kind.append("brace")
-            depth.append(0)
-            i += 2
-            continue
-        if top in _PAREN_FRAMES:
-            if c == "(":
-                depth[-1] += 1
-            elif c == ")":
-                if depth[-1]:
-                    depth[-1] -= 1
-                else:
-                    kind.pop()
-                    depth.pop()
-                    if top == "sub" and not any(k in _PAREN_FRAMES or k == "brace" for k in kind):
-                        spans.append((open_at, open_at + 2, i + 1))
-            i += 1
-            continue
-        if top == "brace":
-            if c == "{":
-                depth[-1] += 1
-            elif c == "}":
-                if depth[-1]:
-                    depth[-1] -= 1
-                else:
-                    kind.pop()
-                    depth.pop()
-        i += 1
-    return None if kind else spans
-
-
 def mask(command: str) -> Masked | None:
     """The command with its top-level substitutions cut out, or None when it cannot be.
 
     None means refuse: a backtick, the placeholder already in the text, a parse the
-    segmenter refuses, or spans that do not reproduce `parse`'s own substitution list.
+    segmenter refuses, a substitution inside `${ }`, or a masked command that still holds
+    a substitution.
     """
     if "`" in command or PLACEHOLDER in command:
         return None
-    parsed = parse(command)
-    if not parsed.ok:
+    spans = substitution_spans(command)
+    if spans is None or any(s.in_brace for s in spans):
         return None
-    spans = _spans(command)
-    if spans is None:
-        return None
-    expected: list[str] = []
-    for start, _body, end in spans:
-        piece = parse(command[start:end])
-        if not piece.ok:
-            return None
-        expected += piece.substitutions
-    if tuple(expected) != parsed.substitutions:
-        return None
+    judged = [s for s in spans if s.kind in _JUDGED_KINDS]
     out: list[str] = []
     prev = 0
-    for start, _body, end in spans:
-        out.append(command[prev:start])
-        out.append(PLACEHOLDER)
-        prev = end
+    for span in judged:
+        out += (command[prev : span.start], PLACEHOLDER)
+        prev = span.end
     out.append(command[prev:])
     masked = "".join(out)
     after = parse(masked)
-    if not after.ok or after.substitutions or len(after.segments) != len(parsed.segments):
+    if not after.ok or after.substitutions or len(after.segments) != len(parse(command).segments):
         return None
-    return Masked(masked, tuple(command[body : end - 1] for _s, body, end in spans))
+    return Masked(masked, tuple(command[s.body : s.end - 1] for s in judged))
