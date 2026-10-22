@@ -83,6 +83,10 @@ def settings_block(entries: list[dict]) -> str:
     for e in entries:
         for tool, key in (("Read", "read_globs"), ("Edit", "edit_globs")):
             for glob in e[key]:
+                # Claude Code reads `/path` relative to the settings file, so `Read(/etc/shadow)`
+                # denied ~/.claude/etc/shadow and never the real file. An absolute path is `//`.
+                if glob.startswith("/") and not glob.startswith("//"):
+                    raise ValueError(f"{e['id']}: {glob!r} is relative to ~/.claude; write //")
                 rule = json.dumps(f"{tool}({glob})", ensure_ascii=False)
                 if "{{" in rule or "}}" in rule:
                     raise ValueError(f"{e['id']}: {rule} would read as template syntax")

@@ -40,6 +40,14 @@ def test_a_case_pattern_the_shell_would_split_is_refused():
         st.hook_block([entry])
 
 
+def test_a_settings_glob_with_one_leading_slash_is_refused():
+    entry = {"id": "x", "why": "y", "read_globs": ["/etc/shadow"], "edit_globs": []}
+    with pytest.raises(ValueError, match="relative to ~/.claude"):
+        st.settings_block([entry])
+    entry["read_globs"] = ["//etc/shadow"]
+    assert '"Read(//etc/shadow)",' in st.settings_block([entry])
+
+
 def test_a_message_the_shell_would_expand_is_refused():
     entry = {"id": "x", "why": "y", "case_arms": ["a"], "message": "Blocked: $HOME"}
     with pytest.raises(ValueError, match="would expand"):
