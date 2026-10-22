@@ -308,7 +308,7 @@ def _git(args: list[str], env: Mapping[str, str], run: Runner) -> str | None:
 def pre(command: str, env: Mapping[str, str], run: Runner = bounded.run) -> Verdict | None:
     """The deny or ask for an apply that would revert work, or None to let it run.
 
-    The bounds fit inside the shim's judge bound: 2s for source-path and 5s for status.
+    The bounds fit inside the shim's 7s judge bound: 2s for source-path and 4s for status.
     CHEZMOI_APPLY_GUARD_TIMEOUT_S sets both, for the tests.
     """
     if "chezmoi" not in command:
@@ -383,7 +383,7 @@ def pre(command: str, env: Mapping[str, str], run: Runner = bounded.run) -> Verd
 
     # Whole-tree status, which avoids parsing chezmoi's own flags out of the command to find
     # the targets. A status that fails, times out, or is cut off is not a clean tree (#657).
-    t = _timeout(env, 5)
+    t = _timeout(env, 4)
     r = run([czm, "status", "--path-style=absolute"], t, 1048576, env)
     if r.status != "ok":
         return ask(f"`chezmoi status` did not finish within {t}s ({r.status})")

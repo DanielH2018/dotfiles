@@ -325,6 +325,8 @@ test('claude-guard is the sole Bash PreToolUse deny decision, live', { skip }, (
   assert.ok(!cmds.includes('~/.claude/hooks/block-dangerous-bash.sh'), 'block-dangerous-bash.sh is still registered');
   assert.strictEqual(s.env.CLAUDE_GUARD_DENY_SHADOW, undefined);
   assert.strictEqual(s.env.CMDPARSE_SHADOW_SAMPLE, undefined);
+  // The apply guard and the tq rewrite run inside the shim; their own hooks are gone.
+  assert.ok(!cmds.some((c) => /chezmoi-apply-guard|tq-wrap-tests/.test(c)), cmds.join(', '));
   const shim = entry.hooks.find((h) => h.command.endsWith('guard-pre-tool-use.sh'));
   assert.strictEqual(shim.timeout, 10);
 });

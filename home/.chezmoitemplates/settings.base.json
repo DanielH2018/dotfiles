@@ -725,7 +725,7 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/guard-pre-tool-use.sh",
-            "timeout": 20
+            "timeout": 10
           }
         ]
       },
