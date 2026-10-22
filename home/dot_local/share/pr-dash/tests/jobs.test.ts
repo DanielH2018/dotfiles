@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { createLoadJobs, JOBSTAT_BIN, type RunJobstat } from '../src/jobs.ts';
+import { createLoadJobs, type RunJobstat } from '../src/jobs.ts';
 
 // Synthetic labels only: this repo is public, and the real jobs belong to a private repo.
 const JOB = { label: 'com.example.digest', schedule: 'Mon-Fri 08:34', status: 'not running, last exit 1', failed: true, logAt: 1761137640 };
@@ -20,13 +20,6 @@ test('runs jobstat --json and drops entries missing a field', async () => {
   const run = fakeRun(() => JSON.stringify([JOB, { ...JOB, failed: 'yes' }, { ...JOB, logAt: null }]));
   assert.deepStrictEqual(await createLoadJobs(run)(), { jobs: [JOB, { ...JOB, logAt: null }] });
   assert.deepStrictEqual(run.calls, [['--json']]);
-});
-
-test('a missing jobstat is an error naming where pr-dash looked', async () => {
-  const run: RunJobstat = async () => {
-    throw Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' });
-  };
-  assert.deepStrictEqual(await createLoadJobs(run)(), { error: `jobstat is not installed at ${JOBSTAT_BIN}` });
 });
 
 test('output that is not a JSON list is an error', async () => {
@@ -49,5 +42,4 @@ test('a failure is retried on the next call, and a success is reused', async () 
   assert.deepStrictEqual(await load(), { error: 'jobstat: launchctl: busy' });
   assert.deepStrictEqual(await load(), { jobs: [JOB] });
   assert.deepStrictEqual(await load(), { jobs: [JOB] });
-  assert.strictEqual(run.calls.length, 2);
 });

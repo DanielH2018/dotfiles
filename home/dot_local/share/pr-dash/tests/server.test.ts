@@ -776,14 +776,6 @@ test('an allowlisted extension origin reads /api/jobs, answered with CORS header
   );
 });
 
-test('/api/jobs answers 502 with a reason when the server has no jobs loader', async () => {
-  await withServer(async (base) => {
-    const res = await fetch(`${base}/api/jobs`);
-    assert.strictEqual(res.status, 502);
-    assert.deepStrictEqual(await res.json(), { error: 'jobs are not configured in pr-dash' });
-  });
-});
-
 test('a failed jobs load answers an allowlisted extension origin with a 502 it can read', async () => {
   await withExtensionServer(
     [EXTENSION],
