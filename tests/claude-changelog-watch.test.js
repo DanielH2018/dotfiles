@@ -8,7 +8,7 @@
 //
 //   * the fallback state dir must be used INSTEAD of stubbing a vault -- common.sh exports
 //     CLAUDE_VAULT_DIR only where the LLM Wiki exists, so a stub vault at ~/Documents/My_Vault
-//     would also wake /lint, /healthcheck, /rebuild and /retract on a box with no wiki;
+//     would also wake /wiki-lint, /healthcheck, /rebuild and /retract on a box with no wiki;
 //   * the seeded note must carry the prepend marker and an EMPTY last_processed_version --
 //     STEP 5 of the command prepends below that marker, so a seed without it has nowhere to
 //     write, and a seed with a version pinned would skip the bootstrap review;
@@ -132,7 +132,7 @@ test('no wiki on the box -> seeds a private state dir, not a vault', { skip }, (
   assert.ok(readNote(stateVault), 'the note must be seeded in the state dir');
   assert.ok(
     !fs.existsSync(path.join(home, 'Documents', 'My_Vault')),
-    'a stub vault would wake /lint, /healthcheck, /rebuild and /retract on a wiki-less box',
+    'a stub vault would wake /wiki-lint, /healthcheck, /rebuild and /retract on a wiki-less box',
   );
 });
 

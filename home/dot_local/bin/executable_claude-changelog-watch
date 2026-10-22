@@ -32,7 +32,7 @@ flock -n 9 || skip "another run holds $LOCK"
 #
 # The last arm is the interesting one. common.sh exports CLAUDE_VAULT_DIR only where the LLM Wiki
 # actually exists, precisely so wiki-less boxes stay clean — and stubbing a fake vault here to
-# satisfy one command would also wake /lint, /healthcheck, /rebuild and /retract on a machine
+# satisfy one command would also wake /wiki-lint, /healthcheck, /rebuild and /retract on a machine
 # with no wiki for them to operate on. A private state dir keeps this job self-contained; the
 # command treats absent Meta/ grounding notes as "skip that step", which is the right read here.
 if [ -n "${CLAUDE_VAULT_DIR:-}" ]; then
