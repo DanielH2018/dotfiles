@@ -77,6 +77,39 @@ MUTATING_GIT_AND_GH = [
     "gh pr merge 5",
     "gh api -X POST repos/o/r/issues",
     "gh api repos/o/r/issues -f title=x",
+    "git remote -v add other https://example.invalid/r",
+    "git remote --verbose set-url origin https://example.invalid/r",
+]
+# A write inside a compound command, behind a runner the wrapper table does not list, or
+# through a link that carries a later scratch write into the tree.
+HIDDEN_WRITES = [
+    "for f in a; do git push; done",
+    "until false; do git push; done",
+    "if true; then rm -rf src; fi",
+    "case x in x) rm -rf src;; esac",
+    "select x in a; do rm -rf src; done",
+    "f(){ git push; }; f",
+    "f() { rm -rf src; }; f",
+    "function f { git push; }; f",
+    "uv run git push",
+    "uv run rm -rf src",
+    "ionice git push",
+    "flock /tmp/l git push",
+    "flock /tmp/l -c 'git push'",
+    "watch -n1 rm src/a",
+    "watch -n1 'rm src/a'",
+    "chronic rm src/a",
+    "parallel rm ::: src/a",
+    "script -c 'rm src/a' /dev/null",
+    "busybox rm src/a",
+    "env -S 'rm -rf src'",
+    "curl -sSLo src/app.py https://example.invalid/x",
+    "curl -sX POST https://example.invalid/x",
+    "cp -l /repo/src/app.py /tmp/h",
+    "cp -s /repo/src/app.py /tmp/l",
+    "cp --link /repo/src/app.py /tmp/h",
+    "cp --symbolic-link /repo/src/app.py /tmp/l",
+    "rsync -a --link-dest=/repo/src /repo/src/ /tmp/rc/",
 ]
 READS = [
     "git status --short && git diff HEAD~1 -- src",
@@ -90,6 +123,13 @@ READS = [
     "mkdir -p /tmp/rc && cp src/app.py /tmp/rc/",
     "rm -f /tmp/rc/out.txt",
     "sed -n 1,20p src/app.py",
+    "for f in a.py b.py; do git log -1 --oneline -- $f; done",
+    "if git diff --quiet; then echo same; fi",
+    "uv run git status",
+    "curl -sSL https://example.invalid/x",
+    "cp -r src /tmp/rc/",
+    "git remote -v",
+    "grep -rn 'git push' src",
 ]
 
 
@@ -111,6 +151,12 @@ def test_a_mutating_git_or_gh_verb_is_denied(env, agent, command):
     assert decision(command, env, agent) == "deny"
 
 
+@pytest.mark.parametrize("agent", READ_ONLY_AGENTS)
+@pytest.mark.parametrize("command", HIDDEN_WRITES)
+def test_a_write_inside_a_compound_or_behind_a_runner_is_denied(env, agent, command):
+    assert decision(command, env, agent) == "deny"
+
+
 @pytest.mark.parametrize("command", READS)
 def test_a_read_and_a_scratch_write_are_not_denied(env, command):
     assert decision(command, env, "root-cause") != "deny"
@@ -126,6 +172,15 @@ def test_the_denial_names_the_agent_and_what_wrote(env):
     text = reason("git push origin HEAD", env, "deep-review")
     assert "`deep-review` is read-only" in text
     assert "`git push`" in text
+
+
+def test_a_command_name_held_in_a_variable_is_a_write_in_the_arm_itself():
+    # The deny rules already refuse a variable command word for every session, so the hook
+    # cannot show this; the arm must not rely on that rule staying where it is.
+    from claude_guard.checks.read_only_agents import problem
+
+    for command in ["G=git; $G push", "X=rm; $X -rf src", '"$G" log']:
+        assert problem(command, ("/tmp",)) is not None, command
 
 
 def test_the_three_read_only_agents_declare_it_in_their_frontmatter():

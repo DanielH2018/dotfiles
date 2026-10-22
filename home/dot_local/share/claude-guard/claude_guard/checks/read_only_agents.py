@@ -13,8 +13,11 @@ one of them:
     module would have to judge a second time;
   - any git or gh verb outside a read-only set.
 
-A `$( )` body is judged as a command of its own. A command the segmenter cannot read is
-denied, since it cannot be shown to be a read.
+A `$( )` body is judged as a command of its own. So is the command after a reserved word
+(`then`, `do`), and, for a command this module does not know, each later word that names
+one it judges (`uv run git push`) and each argument that holds one as a command string.
+A function definition, a `case`, and a command named by a variable are denied, as is a
+command the segmenter cannot read, since none can be shown to be a read.
 
 The server repo has the same arm for its own agents (server #4617), reading only that
 checkout's `.claude/agents/`. This one runs from the user-level PreToolUse hook, so it
@@ -289,7 +292,9 @@ _GIT_READ_FORMS: dict[str, Callable[[list[str]], bool]] = {
     # The short flags differ: `-a` lists every branch but annotates a tag.
     "branch": lambda a: _ref_listing(a, "dDmMcCfut"),
     "tag": lambda a: _ref_listing(a, "dfasumFe"),
-    "remote": lambda a: _first(a) in ("", "-v", "--verbose", "show", "get-url"),
+    # `-v` may sit before the subcommand (`git remote -v add`), so judge the first word
+    # that is not an option.
+    "remote": lambda a: _first(_positionals(a)) in ("", "show", "get-url"),
     "worktree": lambda a: _first(a) == "list",
     "stash": lambda a: _first(a) in ("list", "show"),
     "reflog": lambda a: _first(a) in ("", "show") or _first(a).startswith("-"),
@@ -408,6 +413,27 @@ def _destination_scratch(value_flags: frozenset[str]):
     return check
 
 
+_LINK_LONG = ("--link", "--symbolic-link", "--link-dest")
+
+
+def _no_links(check: Check) -> Check:
+    """`check`, after refusing the options that make a link instead of a copy: `cp -l`/`-s`
+    and their long forms, and `rsync --link-dest`. A link in a scratch root that points into
+    the tree carries a later scratch write there, which is why `ln` is refused."""
+
+    def wrapped(args: list[str], roots: tuple[str, ...]) -> str | None:
+        for a in args:
+            if a == "--":
+                break
+            if _long_abbrev(a, _LINK_LONG) or (
+                a.startswith("-") and not a.startswith("--") and set(a[1:]) & set("ls")
+            ):
+                return f"passes `{a}`, which creates a link"
+        return check(args, roots)
+
+    return wrapped
+
+
 def _dd(args: list[str], roots: tuple[str, ...]) -> str | None:
     for a in args:
         if a.startswith("of=") and not _scratch(a[3:], roots):
@@ -468,8 +494,8 @@ def _curl(args: list[str], roots: tuple[str, ...]) -> str | None:
             "--request",
         ):
             return f"passes `{a.split('=', 1)[0]}`, which writes a file or sends a change"
-        if a.startswith("-") and not a.startswith("--") and set(a[1:2]) & set("oOTdFcDX"):
-            return f"passes `{a[:2]}`, which writes a file or sends a change"
+        if a.startswith("-") and not a.startswith("--") and set(a[1:]) & set("oOTdFcDX"):
+            return f"passes `{a}`, which writes a file or sends a change"
     return None
 
 
@@ -521,9 +547,9 @@ WRITERS: dict[str, Check] = {
     "chgrp": _all_scratch(skip=1),
     "mv": _all_scratch(frozenset({"-S", "-t"})),
     "tee": _all_scratch(),
-    "cp": _destination_scratch(frozenset({"-S"})),
+    "cp": _no_links(_destination_scratch(frozenset({"-S"}))),
     "install": _destination_scratch(frozenset({"-m", "-o", "-g", "-S"})),
-    "rsync": _destination_scratch(frozenset({"-e", "--rsh"})),
+    "rsync": _no_links(_destination_scratch(frozenset({"-e", "--rsh"}))),
     "scp": _destination_scratch(frozenset({"-P", "-i", "-o", "-F", "-J"})),
     "dd": _dd,
     "sed": _guarded(sed_readonly, "runs a sed program that writes a file or runs a command"),
@@ -548,18 +574,57 @@ WRITERS: dict[str, Check] = {
 _MAX_DEPTH = 4
 
 
-def _segment_problem(text: str, roots: tuple[str, ...]) -> str | None:
-    problem = _redirect_problem(text, roots)
-    if problem:
-        return problem
-    words = _argv(text)
-    if words is None:
-        return "cannot be split into words, so it cannot be shown to be a read"
-    argv, via_xargs = _unwrapped(words)
-    if not argv:
-        return None
+# Reserved words that open a compound command or a clause, ahead of the command they run.
+_LEADING_WORDS = frozenset({"if", "then", "else", "elif", "do", "while", "until", "time", "!"})
+_CLOSING_WORDS = frozenset({"fi", "done", "esac", "}"})
+# `name()` or `function name`: a function body runs later, under a name this hook cannot
+# follow to its call.
+_FUNCTION = re.compile(r"^\s*(function\s|[A-Za-z_][\w.:-]*\s*\(\s*\))")
+# Commands that only read their arguments, so a word such as `rm` among them is data.
+_DATA_READERS = frozenset(
+    {
+        "grep",
+        "egrep",
+        "fgrep",
+        "rg",
+        "ag",
+        "ack",
+        "echo",
+        "printf",
+        "cat",
+        "ls",
+        "head",
+        "tail",
+        "wc",
+        "less",
+        "more",
+        "man",
+        "which",
+        "type",
+        "whereis",
+        "file",
+        "stat",
+        "diff",
+        "jq",
+        "yq",
+        "test",
+        "[",
+        "[[",
+    }
+)
+# Every name the arm judges as a command. A runner the wrapper table does not know
+# (`uv run`, `ionice`, `flock`, `busybox`, `parallel`) leaves one of these as a later word.
+_JUDGED = _SHELLS | frozenset({"git", "gh", "script"}) | frozenset(WRITERS)
+
+
+def _command_problem(
+    argv: list[str], words: list[str], via_xargs: bool, roots: tuple[str, ...]
+) -> str | None:
+    """Why the command `argv` writes, or None when it is not one this module judges."""
     name = os.path.basename(argv[0])
-    if name in _SHELLS:
+    if "$" in argv[0] or "`" in argv[0]:
+        return f"runs a command named by `{argv[0]}`, which this hook cannot resolve"
+    if name in _SHELLS or name == "script":
         return f"runs `{name}`, whose command text this hook does not judge"
     if name in ("git", "gh"):
         # `GIT_PAGER`, `GIT_EXTERNAL_DIFF`, `GIT_SSH_COMMAND` and their kin make a git read
@@ -577,6 +642,49 @@ def _segment_problem(text: str, roots: tuple[str, ...]) -> str | None:
     return check(argv[1:], roots)
 
 
+def _segment_problem(text: str, roots: tuple[str, ...], depth: int) -> str | None:
+    redirect = _redirect_problem(text, roots)
+    if redirect:
+        return redirect
+    if _FUNCTION.match(text):
+        return "defines a shell function, whose body this hook does not judge"
+    words = _argv(text)
+    if words is None:
+        return "cannot be split into words, so it cannot be shown to be a read"
+    while words and words[0] in _LEADING_WORDS:
+        words = words[1:]
+    if not words or words[0] in _CLOSING_WORDS:
+        return None
+    if words[0] == "case":
+        return "runs a case statement, whose branches this hook does not judge"
+    if words[0] in ("for", "select"):
+        # The word list is data; the body follows `do` in a segment of its own.
+        return None
+    for i, word in enumerate(words):
+        if os.path.basename(word) == "env" and any(
+            w.startswith(("-S", "--split-string")) for w in words[i + 1 :]
+        ):
+            return "runs `env -S`, which splits a string into a command"
+    argv, via_xargs = _unwrapped(words)
+    if not argv:
+        return None
+    found = _command_problem(argv, words, via_xargs, roots)
+    if found or os.path.basename(argv[0]) in _JUDGED | _DATA_READERS:
+        return found
+    # An unknown command may run another: judge each later word that names a command this
+    # module judges, and each argument that holds one as a command string.
+    for j in range(1, len(argv)):
+        if os.path.basename(argv[j]) in _JUDGED:
+            found = _command_problem(argv[j:], argv, via_xargs, roots)
+        elif any(c.isspace() for c in argv[j]):
+            first = argv[j].split(None, 1)[0]
+            if os.path.basename(first) in _JUDGED:
+                found = problem(argv[j], roots, depth + 1)
+        if found:
+            return found
+    return None
+
+
 def problem(command: str, roots: tuple[str, ...], depth: int = 0) -> str | None:
     """Why `command` writes, or None when nothing in it is a write this module knows.
 
@@ -591,7 +699,7 @@ def problem(command: str, roots: tuple[str, ...], depth: int = 0) -> str | None:
     if not parsed.ok:
         return f"cannot be read as shell ({parsed.status}), so it cannot be shown to be a read"
     for seg in parsed.segments:
-        found = _segment_problem(seg.text, roots)
+        found = _segment_problem(seg.text, roots, depth)
         if found:
             return found
     for body in parsed.substitutions:
