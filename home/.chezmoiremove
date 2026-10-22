@@ -203,3 +203,8 @@ Scripts/wslhost-interop-reaper/wslhost-interop-reaper-hidden.vbs
 # managed-set cache that lib/chezmoi-managed-lib.sh held for the pair.
 .claude/hooks/chezmoi-edit-guard.sh
 .claude/hooks/lib/chezmoi-managed-lib.sh
+
+# chezmoi-apply-guard.sh and tq-wrap-tests.py folded into claude_guard (apply_guard.py,
+# tq_wrap.py), run by guard-pre-tool-use.sh and bash-write-fanout.sh.
+.claude/hooks/chezmoi-apply-guard.sh
+.claude/hooks/tq-wrap-tests.py

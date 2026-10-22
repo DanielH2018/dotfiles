@@ -29,7 +29,8 @@
 # specifically want to test a merged main.
 #
 # The deploy refuses to overwrite a file something other than chezmoi wrote, the
-# same case chezmoi-apply-guard.sh denies; TRY_APPLY_GUARD=off overrides it, as
+# same case the chezmoi apply guard denies (claude_guard.apply_guard, run by
+# guard-pre-tool-use.sh); TRY_APPLY_GUARD=off overrides it, as
 # CHEZMOI_APPLY_GUARD=off does for the hook. One bench at a time, under a lock.
 #
 # Kept bash-3.2 clean, like land.
@@ -155,7 +156,7 @@ bench() {
     return 0
   fi
 
-  # chezmoi-apply-guard.sh cannot see the apply below. It is a PreToolUse Bash
+  # The chezmoi apply guard cannot see the apply below. It is a PreToolUse Bash
   # hook that matches the command string, so what it gets handed is `try
   # <branch>` — no `chezmoi apply` in it, and it exits without looking. Without
   # the same check here, try is simply the way around that guard, and it is a

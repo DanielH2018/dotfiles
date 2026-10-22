@@ -259,7 +259,7 @@ test('-h prints usage without touching the repo', { skip }, () => {
   assert.strictEqual(calls(r.file), '');
 });
 
-// chezmoi-apply-guard.sh never sees this apply — it matches the Bash command
+// The chezmoi apply guard in guard-pre-tool-use.sh never sees this apply — it matches the Bash command
 // string, which here is `try <branch>` — so try has to make the same refusal
 // itself or it becomes the way around the guard.
 test('refuses to deploy over a file something other than chezmoi wrote', { skip }, () => {

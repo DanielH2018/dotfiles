@@ -69,9 +69,8 @@ hook_field() {
 #
 #     ask   - the PreToolUse "ask" permission-decision JSON that block-dangerous-bash.sh
 #             and protect-secrets.sh already hand-roll. Pass the hook-specific reason.
-#     noop  - print nothing. Right for chezmoi-guard.sh / chezmoi-apply-guard.sh's
-#             silent `exit 0`, and for any formatter/logger that already no-ops on a
-#             broken dependency.
+#     noop  - print nothing. Right for chezmoi-guard.sh's silent `exit 0`, and for any
+#             formatter/logger that already no-ops on a broken dependency.
 #
 #   Never calls exit itself: every current caller happens to exit 0 either way, but
 #   that is the caller's decision, not this library's. `reason` is inlined into a

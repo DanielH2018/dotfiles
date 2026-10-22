@@ -52,7 +52,8 @@ Assume other Claude sessions are in this repo right now, in worktrees under
   target path to exercise it, and those bytes are the only copy. Read `chezmoi diff <path>`
   before `chezmoi apply`; if the diff *removes* things the source never had, another job owns
   that file — recover it from `.claude/worktrees/*/home/...` and leave it alone. The
-  `chezmoi-apply-guard.sh` hook denies this case, but it only covers what chezmoi manages.
+  chezmoi apply guard in `guard-pre-tool-use.sh` denies this case, but it only covers what
+  chezmoi manages.
 
 Integrate with `bin/land`, which rebases, pushes, and merges the PR under a repo-wide lock so
 two sessions can't land onto a main the other is still moving. Nothing runs it unasked: a
@@ -72,8 +73,8 @@ git permits even while a worktree still holds it, or fast-forwards main onto it 
 wrong: chezmoi reads its source from `~/.local/share/chezmoi`, so an apply from a worktree
 needs `--source`, and a plain apply from the primary checkout deploys main rather than the
 branch you meant to test. `try` holds its own lock and makes the same refusal
-`chezmoi-apply-guard.sh` does, since that hook matches the Bash command string and never sees
-the apply inside a script.
+the chezmoi apply guard in `guard-pre-tool-use.sh` does, since that hook matches the Bash
+command string and never sees the apply inside a script.
 
 Same rule as `land` on who runs it, for a different reason: `try` moves the primary checkout's
 HEAD and deploys to `$HOME`, which is the operator's live config, so don't put a branch on the
