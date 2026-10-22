@@ -4,7 +4,7 @@
 #   matcher: startup|resume|clear
 #   timeout: 15
 #   order: 50
-#   args: --prune
+#   command: bash ~/.claude/hooks/lib/run-python.sh ~/.claude/hooks/prune-worktrees.py --prune
 # The startup slot prune-artifacts.sh sweeps in, for session worktrees: remove the
 # ones under .claude/worktrees/ whose branch is already an ancestor of origin/HEAD and
 # has moved since it was created, are clean, and hold no live session's lock. Claude
