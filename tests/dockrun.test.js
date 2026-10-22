@@ -40,6 +40,8 @@ fs.writeFileSync(path.join(REPO, 'compose.yaml'), 'services: {}\n');
 fs.writeFileSync(path.join(OUTSIDE, 'compose.yaml'), 'services: {}\n');
 const MODEL = path.join(DIR, 'model.json');
 const PS = path.join(DIR, 'ps.txt');
+const LEFTOVERS = path.join(DIR, 'leftovers.txt');
+const OWNERS = path.join(DIR, 'owners.json');
 
 fs.writeFileSync(path.join(BIN, 'docker'), `#!${process.execPath}
 const fs = require('fs');
@@ -51,7 +53,9 @@ if (args[0] === 'inspect') {
 } else if (args[0] === 'compose' && args.includes('config')) {
   process.stdout.write(fs.readFileSync(${JSON.stringify(MODEL)}, 'utf8'));
 } else if (args[0] === 'ps') {
-  process.stdout.write(fs.existsSync(${JSON.stringify(PS)}) ? fs.readFileSync(${JSON.stringify(PS)}, 'utf8') : '');
+  process.stdout.write(fs.readFileSync(${JSON.stringify(PS)}, 'utf8'));
+} else if ((args[0] === 'volume' || args[0] === 'network') && args[1] === 'ls') {
+  if (args[0] === 'volume') process.stdout.write(fs.readFileSync(${JSON.stringify(LEFTOVERS)}, 'utf8'));
 } else {
   process.stdout.write(JSON.stringify(args));
 }
@@ -65,13 +69,17 @@ mod = importlib.util.module_from_spec(importlib.util.spec_from_loader('dockrun',
 loader.exec_module(mod)
 mod.DOCKER_DIRS = (sys.argv[2],)
 mod.scratch_root = lambda: sys.argv[3]
-sys.exit(mod.main(sys.argv[4:]))
+mod.ownership_file = lambda: sys.argv[4]
+sys.exit(mod.main(sys.argv[5:]))
 `;
 
-function dockrun(args, { model = { name: 'repo', services: {} }, ps = '', cwd = REPO } = {}) {
+function dockrun(args, {
+  model = { name: 'repo', services: {} }, ps = '', leftovers = '', cwd = REPO,
+} = {}) {
   fs.writeFileSync(MODEL, JSON.stringify(model));
   fs.writeFileSync(PS, ps);
-  return run('python3', ['-c', SEAM, DOCKRUN, BIN, SCRATCH, ...args], { cwd });
+  fs.writeFileSync(LEFTOVERS, leftovers);
+  return run('python3', ['-c', SEAM, DOCKRUN, BIN, SCRATCH, OWNERS, ...args], { cwd });
 }
 
 function argvOf(args, opts) {
@@ -215,4 +223,18 @@ test('compose refuses a file or a project that belongs elsewhere', { skip }, () 
   assert.strictEqual(dockrun(['compose', '-p', 'repo', 'down', '-v'],
     { ps: `${REPO}/compose.yaml\n` }).code, 0);
   assertRefused(['compose', 'up'], { cwd: OUTSIDE }, /outside a git repository/);
+});
+
+test('a project with volumes but no containers needs a recorded owner', { skip }, (t) => {
+  // A stack taken down without -v leaves volumes that carry no compose file, so only
+  // dockrun's own record can say whose they are.
+  t.after(() => fs.rmSync(OWNERS, { force: true }));
+  const other = { model: { name: 'victim', services: {} }, leftovers: 'victim_data\n' };
+  assertRefused(['compose', '-p', 'victim', 'down', '-v'], other, /no record/);
+  assertRefused(['compose', '-p', 'victim', 'up', '-d'], other, /no record/);
+  // An up with nothing left over records the project, so the same leftovers then pass.
+  assert.strictEqual(dockrun(['compose', '-p', 'mine', 'up', '-d'],
+    { model: { name: 'mine', services: {} } }).code, 0);
+  assert.strictEqual(dockrun(['compose', '-p', 'mine', 'down', '-v'],
+    { model: { name: 'mine', services: {} }, leftovers: 'mine_data\n' }).code, 0);
 });

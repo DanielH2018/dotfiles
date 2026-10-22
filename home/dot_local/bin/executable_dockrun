@@ -27,7 +27,9 @@ as with dockq and ghread:
   - compose runs only for files under the repository or scratch. dockrun reads
     the resolved model with `compose config --format json` and refuses a
     service that asks for anything `run` refuses. It also refuses a project
-    whose existing containers came from compose files outside those roots, so
+    whose existing containers came from compose files outside those roots, and
+    one with volumes or networks but no containers unless dockrun recorded it
+    as this repository's (~/.local/state/dockrun/projects.json). So
     `-p <someone else's project> down -v` cannot reach another stack.
   - `rm`, `exec` and `logs` act only on containers `run` started, which carry the
     `dev.dockrun.managed` label. The label check and the action use the same
@@ -542,16 +544,46 @@ def check_model(model: dict, roots: list[str]) -> None:
                 _local_path(spec["file"], f"{kind} {name!r}", roots)
 
 
-def check_project_owner(docker: str, env: dict, project: str, roots: list[str]) -> None:
-    """Refuse a project whose containers came from compose files elsewhere."""
+def ownership_file() -> str:
+    """Where dockrun records which repository each compose project belongs to.
+
+    Under the account's home and outside every path the sandbox lets Bash write,
+    so a sandboxed command cannot forge an entry.
+    """
+    home = pwd.getpwuid(os.getuid()).pw_dir
+    return os.path.join(home, ".local", "state", "dockrun", "projects.json")
+
+
+def _owners() -> dict:
+    try:
+        with open(ownership_file(), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def record_owner(project: str, root: str) -> None:
+    """Record that `project` belongs to the repository at `root`.
+
+    Two dockrun calls writing at once can lose one entry. The cost is a later
+    refusal for that project, never a wrong grant.
+    """
+    owners = _owners()
+    if owners.get(project) == root:
+        return
+    owners[project] = root
+    path = ownership_file()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(owners, f, indent=1, sort_keys=True)
+    os.replace(tmp, path)
+
+
+def _docker_lines(docker: str, env: dict, argv: list[str]) -> list[str]:
     r = subprocess.run(
-        [
-            docker,
-            "ps",
-            "--all",
-            f"--filter=label=com.docker.compose.project={project}",
-            '--format={{.Label "com.docker.compose.project.config_files"}}',
-        ],
+        [docker, *argv],
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
@@ -559,11 +591,39 @@ def check_project_owner(docker: str, env: dict, project: str, roots: list[str]) 
         check=False,
     )
     if r.returncode != 0:
-        raise DockrunError(f"cannot list project {project!r}: {r.stderr.strip()}")
+        raise DockrunError(f"docker {argv[0]} failed: {r.stderr.strip()}")
+    return [line for line in r.stdout.splitlines() if line.strip()]
+
+
+def check_project_owner(
+    docker: str, env: dict, project: str, roots: list[str], starting: bool
+) -> None:
+    """Refuse a compose project that belongs to another repository.
+
+    A project's containers carry the compose files they came from, which settles
+    it. Its volumes and networks carry no such label, so a project with those
+    left over and no container (a stack taken down without -v) counts as this
+    repository's only when dockrun recorded it as such. Otherwise
+    `-p <that project> down -v` would delete another stack's data.
+
+    Args:
+      starting: the call is `up`, which records a project that has nothing yet.
+    """
+    label = f"--filter=label=com.docker.compose.project={project}"
+    containers = _docker_lines(
+        docker,
+        env,
+        [
+            "ps",
+            "--all",
+            label,
+            '--format={{.Label "com.docker.compose.project.config_files"}}',
+        ],
+    )
     # Scratch is shared by every session, so a project built only from scratch
     # files belongs to no repository; one file under this repository is required.
     allowed = roots + [scratch_root()]
-    for line in r.stdout.splitlines():
+    for line in containers:
         files = [os.path.realpath(f) for f in line.split(",") if f]
         outside = [f for f in files if not any(_within(f, a) for a in allowed)]
         if outside or not any(_within(f, root) for f in files for root in roots):
@@ -571,6 +631,20 @@ def check_project_owner(docker: str, env: dict, project: str, roots: list[str]) 
                 f"refusing project {project!r}: its containers came from "
                 f"{','.join(outside or files)!r}, outside this repository"
             )
+    if containers:
+        record_owner(project, roots[0])
+        return
+    leftovers = _docker_lines(docker, env, ["volume", "ls", "--quiet", label])
+    leftovers += _docker_lines(docker, env, ["network", "ls", "--quiet", label])
+    if not leftovers:
+        if starting:
+            record_owner(project, roots[0])
+        return
+    if _owners().get(project) not in roots:
+        raise DockrunError(
+            f"refusing project {project!r}: it has volumes or networks but no "
+            "containers, and dockrun has no record of it belonging to this repository"
+        )
 
 
 def build_compose(ns, prefix: list[str]) -> list[str]:
@@ -673,7 +747,7 @@ def plan(ns, docker: str, env: dict, cwd: str) -> list[str]:
     if ns.verb in ("up", "exec"):
         check_model(model, roots)
     project = _check(_NAME, model.get("name") or "", "project name")
-    check_project_owner(docker, env, project, roots)
+    check_project_owner(docker, env, project, roots, starting=ns.verb == "up")
     return build_compose(ns, prefix)
 
 
