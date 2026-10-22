@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * config-lint.js — deterministic drift checks for a Claude Code config dir.
+ * config-lint — deterministic drift checks for a Claude Code config dir.
  *
  * Report-only. Audits (default: ~/.claude):
  *   - enabledPlugins that aren't installed  (dead) / installed but not enabled (dormant)
@@ -15,14 +15,15 @@
  *     host — info-only for now (M14/M15 reference-resolver slice 1; see
  *     specs/env-modules)
  *
- * Usage: node config-lint.js [rootDir] [--strict] [--json]
+ * Usage: bin/config-lint [rootDir] [--strict] [--json]
  *   rootDir  config dir to audit (default: ~/.claude)
  *   --strict exit 1 if any should-fix findings (for CI/hooks)
  *   --json   emit findings as JSON instead of text
  *
  * The judgment part (is a rule in the right home — hook vs skill vs rule vs
- * permission) is intentionally NOT here; it lives in SKILL.md as advisory
- * review, because prose classification is unreliable as a hard check.
+ * permission) is intentionally NOT here; it belongs to the scaffolding-delete-pass
+ * skill as advisory review, because prose classification is unreliable as a
+ * hard check.
  */
 "use strict";
 const fs = require("fs");
@@ -205,7 +206,7 @@ function checkBinaryDeps(deps, hasBinary) {
 // would misreport every toolchain this box doesn't happen to have installed
 // as a "missing dependency," which it isn't. `md5:*`/`sdk ...:*`/`just:*`
 // (also named in A1-43) fall in that wider, syntactically indistinguishable
-// bucket and are left to the judgment-based pass 2 review (SKILL.md §2),
+// bucket and are left to the judgment-based review in scaffolding-delete-pass,
 // not this deterministic check.
 const PERMISSION_DEP_PATTERN = /^Bash\(([A-Za-z0-9_.-]+)\)$/;
 
@@ -394,7 +395,7 @@ function audit(root, home) {
         add("info", "skills", `skill name "${dupe.name}" defined in: ${dupe.sources.join(", ")}`);
     }
 
-    // Binary/tool dependencies (report-only: always info, see SKILL.md §Migration)
+    // Binary/tool dependencies (report-only: always info)
     const hookScripts = readHookScripts(path.join(root, "hooks"));
     const binaryDeps = extractBinaryDeps(hookScripts)
         .concat(extractPermissionDeps((settings.permissions || {}).allow));

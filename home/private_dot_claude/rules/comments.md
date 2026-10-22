@@ -41,7 +41,9 @@ have in common, so it is not repeated there.
 - **Implementation comments explain why, on the code that needs it.** Comment the tricky,
   non-obvious or surprising part, the part you would have to explain in review. Assume the
   reader knows the language better than they know this code, and do not describe what the
-  code does. `anti-slop.md`'s no-decorative-comments rule is this rule's floor.
+  code does.
+- **No decorative comments.** Do not restate the code (`// increment i`), narrate the
+  obvious, or write flavor text. Write a comment only to explain why.
 - **Complete sentences, capitalised and punctuated.** A fragment is acceptable only as an
   end-of-line note where the field or variable name is the subject (`// lines per page`).
 - **Summary first.** A doc comment opens with one summary line, then a blank line, then the
@@ -56,6 +58,7 @@ have in common, so it is not repeated there.
   (shell among them) use `TODO(username):`; write the link form in new code and match the
   file's existing form otherwise.
 - **The comment changes in the same edit as the code it describes.** A stale comment costs
-  more than none, so delete one you cannot keep true rather than leave it.
+  more than none, so delete one you cannot keep true rather than leave it. Leave comments
+  on code you did not change alone, unless your change made one false.
 - **Wrap at the file's existing width.** Google fixes no comment line length; 80 or 100 are
   both common, and consistency within a file matters more than the number.

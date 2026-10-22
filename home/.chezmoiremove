@@ -76,8 +76,8 @@
 
 # 2026-09-26 scaffolding delete pass at the Opus 5.5 upgrade: zero skill_activated events in
 # 30 days on the cluster's OTEL (typed slash commands included) and no caller left.
-# building-evals folded into writing-great-skills. config-lint loses only its SKILL.md; its
-# scripts/ directory stays deployed.
+# building-evals folded into writing-great-skills. config-lint lost its SKILL.md here; the
+# 2026-10-22 entry below removes the rest.
 .claude/skills/deep-understanding
 .claude/skills/reprime
 .claude/skills/prep
@@ -194,3 +194,7 @@ Scripts/wslhost-interop-reaper/wslhost-interop-reaper-hidden.vbs
 .claude/hooks/memory-nearest.py
 .claude/hooks/enterworktree-name-guard.py
 .claude/hooks/check-update.sh
+
+# 2026-10-22: config-lint is repo tooling with no SKILL.md, so its script moved to bin/config-lint
+# and is run from the chezmoi checkout like bin/skill-usage.
+.claude/skills/config-lint
