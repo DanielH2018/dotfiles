@@ -24,7 +24,7 @@ import os
 from collections.abc import Mapping
 
 from claude_guard import apply_guard, bypass, tq_wrap, waits
-from claude_guard.checks import git_conventions, worktree_escape
+from claude_guard.checks import git_conventions, read_only_agents, worktree_escape
 from claude_guard.checks.awk import awk_risk
 from claude_guard.deny import Verdict, deny
 from claude_guard.footguns import footgun
@@ -251,6 +251,16 @@ def escape_verdict(command: str, cwd: str) -> Verdict | None:
     return Verdict(v[0], "worktree-escape", v[1]) if v else None
 
 
+def read_only_agent_verdict(
+    stdin_text: str, command: str, env: Mapping[str, str]
+) -> Verdict | None:
+    """claude_guard.checks.read_only_agents as a Verdict, or None (dotfiles #848). It is a deny
+    rule, so it runs inside pre_tool_use's fail-closed try."""
+    data = json.loads(stdin_text)
+    v = read_only_agents.verdict(data, command, env) if isinstance(data, dict) else None
+    return Verdict(v[0], read_only_agents.RULE, v[1]) if v else None
+
+
 def conventions(command: str, cwd: str) -> Verdict | None:
     """claude_guard.checks.git_conventions as a Verdict, or None. Never raises: a failure in
     a convention check is no decision (that module's DECIDED), not the deny side's ask."""
@@ -277,7 +287,8 @@ def pre_tool_use(stdin_text: str, env: Mapping[str, str]) -> str | None:
     Never raises. An exception in the deny rules becomes ASK_JSON: the deny side fails closed
     to ask (spec, Failure contracts), the posture the bash took on a missing jq. The
     worktree-escape check is a deny rule and shares that try, because it is the only one that
-    reads the session's cwd. Unparseable
+    reads the session's cwd, and so does the read-only-agent check (dotfiles #848), which
+    reads the payload's `agent_type`. Unparseable
     stdin is no decision (:22-23). The git conventions run beside the deny rules and fail
     open (conventions()). The needless-bypass check (claude_guard.bypass) runs after them and
     also fails open. The read-only classifier runs last and only when nothing else
@@ -292,6 +303,7 @@ def pre_tool_use(stdin_text: str, env: Mapping[str, str]) -> str | None:
     try:
         rules = merge(merge(deny(command, "", env), footgun(command)), awk_verdict(command))
         rules = merge(rules, escape_verdict(command, cwd))
+        rules = merge(rules, read_only_agent_verdict(stdin_text, command, env))
         rules = merge(rules, waits.hand_wait(command, run_in_background(stdin_text)))
     except Exception:
         return ASK_JSON

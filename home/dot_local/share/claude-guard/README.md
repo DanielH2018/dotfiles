@@ -173,6 +173,12 @@ command, every stage is a `readonly.py` read, nothing needs the network, and no
 `denyRead` path is named. The denial tells the model to run it again without the flag. Like
 `readonly.py`, it fails open.
 
+`checks/read_only_agents.py` (dotfiles #848) is a deny rule beside the worktree-escape
+check. When the payload's `agent_type` names an agent whose frontmatter under
+`~/.claude/agents/` sets `read_only: true`, it denies a write redirect outside the scratch
+roots, a command that changes files outside them, a shell or `eval`, and any git or gh verb
+outside a read-only set. Its module docstring says why the rest is a denylist.
+
 When nothing above decides, `readonly.py` (dotfiles #628, ported from the server repo's
 `auto-approve-readonly.py`) allows a command whose every stage is provably read-only. It
 applies only when the session cwd is `$HOME` itself or inside `~/server` or

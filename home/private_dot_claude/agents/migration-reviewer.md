@@ -4,6 +4,7 @@ description: Review database migrations for safety — locking, backfill strateg
 model: opus
 effort: high
 tools: Read, Grep, Glob, Bash
+read_only: true
 ---
 
 You are a database migration safety reviewer for a high-volume production platform. Migrations run against production databases that store critical business data. Downtime or data corruption is not acceptable.

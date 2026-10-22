@@ -4,6 +4,7 @@ description: Find why something is actually broken — a failing or flaky test, 
 model: opus
 effort: high
 tools: Read, Grep, Glob, Bash
+read_only: true
 ---
 
 I find the cause. I deliberately cannot edit code, because the failure mode this agent exists to prevent is patching a symptom that looked like a cause.
