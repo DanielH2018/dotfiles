@@ -39,8 +39,10 @@ import shlex
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
+from claude_guard.assignments import PREFIX_NAMES
 from claude_guard.checks.remote_guards import (
     GIT_READONLY,
+    _long_abbrev,
     awk_readonly,
     find_readonly,
     sed_readonly,
@@ -270,7 +272,7 @@ _REF_LIST_MODE = frozenset(
 def _ref_listing(args: list[str], write_short: str) -> bool:
     """True when `git branch` / `git tag` with `args` only lists refs."""
     for a in args:
-        if a.startswith("--") and a.split("=", 1)[0] in _REF_WRITE_LONG:
+        if _long_abbrev(a, _REF_WRITE_LONG):
             return False
         if a.startswith("-") and not a.startswith("--") and set(a[1:]) & set(write_short):
             return False
@@ -309,12 +311,11 @@ def _git_problem(argv: list[str]) -> str | None:
         return "sets git config inline"
     args = list(inv.args)
     if any(
-        a.split("=", 1)[0] in ("--output", "--upload-pack", "--receive-pack", "--exec")
-        for a in args
+        _long_abbrev(a, ("--output", "--upload-pack", "--receive-pack", "--exec")) for a in args
     ):
         return "names a file for git to write or a command for it to run"
     if inv.sub == "grep" and any(
-        re.match(r"-[A-Za-z]*O", a) or a.startswith("--open-files") for a in args
+        re.match(r"-[A-Za-z]*O", a) or _long_abbrev(a, ("--open-files-in-pager",)) for a in args
     ):
         return "runs a pager command from git grep"
     if inv.sub in _GIT_READS:
@@ -560,10 +561,14 @@ def _segment_problem(text: str, roots: tuple[str, ...]) -> str | None:
     name = os.path.basename(argv[0])
     if name in _SHELLS:
         return f"runs `{name}`, whose command text this hook does not judge"
-    if name == "git":
-        return _git_problem(argv)
-    if name == "gh":
-        return _gh_problem(argv)
+    if name in ("git", "gh"):
+        # `GIT_PAGER`, `GIT_EXTERNAL_DIFF`, `GIT_SSH_COMMAND` and their kin make a git read
+        # run a command, so a prefix must be on the judge's allowlist of inert names.
+        for word in words[: len(words) - len(argv)]:
+            key = word.split("=", 1)[0]
+            if _ASSIGNMENT.match(word) and key not in PREFIX_NAMES:
+                return f"sets `{key}`, which can make {name} run a command"
+        return _git_problem(argv) if name == "git" else _gh_problem(argv)
     check = WRITERS.get(name)
     if check is None:
         return None
