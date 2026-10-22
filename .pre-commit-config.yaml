@@ -146,7 +146,7 @@ repos:
         language: system
         types_or: [javascript]
         # gen-lint-files: oxlint
-        files: (\.(js|mjs)$|^(bin/(config-lint|gen-hooks|gen-launchd|gen-lint-files)|home/dot_local/bin/(executable_claude-settings-merge|executable_terminal-cheatsheet))$)
+        files: (\.(js|mjs)$|^(bin/(config-lint|gen-hooks|gen-launchd|gen-lint-files|lint-bsd-portability)|home/dot_local/bin/(executable_claude-settings-merge|executable_terminal-cheatsheet))$)
 
       # One audit found four GNU-only shell idioms in a single session -- bare `sed -i`, `\b`
       # inside a bash [[ =~ ]] regex, and an mktemp template with a suffix after the X's. All

@@ -1,227 +1,269 @@
-#!/usr/bin/env bash
-#
-# lint-bsd-portability — catch the four GNU-only shell idioms that this repo has now shipped
-# five times, each one invisible on the Linux host it was written on.
-#
-# The first three were found by one audit, all of them had passed every gate, and all of them
-# failed only on macOS/BSD userland:
-#
-#   979b240  tests/mx-ergo-resync.test.js — bare `sed -i "script"` in a solaar stub. BSD sed
-#            reads the NEXT ARGUMENT as the backup suffix, so the script became the suffix and
-#            the filename became the script; it changed nothing and the stub then lied to the
-#            script under test, which correctly reported six unapplied settings and exited 1.
-#   25cc7e8  block-dangerous-bash.sh — `\b` in BDB_REPARSE, consumed by `[[ =~ ]]`. Darwin's
-#            libc ERE has no word boundary, so the whole interpreter-name alternation never
-#            matched: `bash -c "echo a; terraform apply"` stopped denying. A live bypass in a
-#            security control, not a cosmetic bug.
-#   6ebdaa4  claude-sandbox — `mktemp .../compact-XXXXXX.json`. BSD mktemp substitutes the X's
-#            only when they are TRAILING, so the name stayed literal: a crashed run poisons
-#            every later run and concurrent runs collide.
-#
-# The fourth came from a later macOS audit and is the quietest of the set:
-#
-#            statusline-command.sh — `date -d "$ts" +%s` feeding a `[[ -n ]]` guard. BSD date
-#            has no -d, so the substitution came back EMPTY and the guard skipped: the whole
-#            prompt-cache countdown segment silently did not render on the Mac. Nothing errored
-#            and nothing logged. The same file had the correct two-arm shape 130 lines above
-#            (`stat -f%m ... || stat -c%Y ...`), which is what makes this a lint and not a note:
-#            the author knew the pattern and the omission still shipped.
-#
-# A sibling of bin/lint-sh-templates rather than an extension of it, because that script does a
-# different job in a way that would put a hole in this one. It RENDERS each template through
-# chezmoi and then SKIPS the ones that render empty on this host — which is precisely the
-# WSL/Windows scripts. This check is textual, so it reads every template unrendered, needs no
-# chezmoi, and has no empty-render hole. It also has to reach .js, which lint-sh-templates
-# never will: the sed bug above lived inside a shell stub in a JS test.
-#
-# WHAT IT DELIBERATELY DOES NOT CATCH
-#
-#   * `\b` in a regex built at runtime, or handed through a chain (`FOO="$BAR"`), or assigned
-#     in one file and used in another. Pattern 2 is same-file and direct: it collects the names
-#     that appear on the right of `=~` inside `[[ ]]`, then flags a `\b` in an assignment to
-#     one of those names. That is the exact shape of 25cc7e8 and it stops there.
-#   * `\b` appearing after a `]` in the same `[[ =~ ]]` expression — the inline pattern stops
-#     at the first `]` so that `[[ $x =~ y ]] && grep '\bz'` is not a false positive.
-#   * `\b` in grep/rg/sed/awk patterns. Those are a different engine which implements it
-#     (block-dangerous-bash.sh kept several on purpose). Only `[[ =~ ]]` is a bug.
-#   * A sed script or an mktemp template held in a variable. Only pattern 2 got the two-phase
-#     treatment, because only pattern 2 has ever been written that way here -- patterns 1 and 3
-#     look at the command line and nothing else. `RE+='\b'` (append) is not seen either.
-#   * `sed -i''` (empty attached suffix) and `mktemp --suffix=`. Both are GNU-only in their own
-#     way; neither has ever appeared here, and guessing at them costs false positives.
-#   * Python. Nothing under .py in this repo carries an mktemp template or shells out to sed
-#     in place -- checked -- and the tempfile module has none of these problems.
-#   * Comment-only lines, in any of the scanned languages. Prose about these bugs is all over
-#     the repo — including in this file — and none of it runs.
-#   * `sha256sum`, `md5sum`, `nproc`, `base64 -w` and friends, which macOS also lacks. They were
-#     considered with pattern 4 and dropped for cost: claude_guard/tables.py lists those
-#     names as DATA inside allowlist alternations, and the
-#     sandbox Dockerfile/image scripts use them inside container builds that are Linux by
-#     construction. The exclusion list would end up longer than the rule.
-#   * `stat -c` without a fallback. Every occurrence here already pairs it with `stat -f`, so
-#     there is no evidence to write the rule against — and a rule with no true positive is a
-#     false-positive generator waiting for its first one.
-#   * A BSD date arm that lives in a DIFFERENT file from the `date -d` it guards (a wrapper
-#     function in a sourced lib, say). Pattern 4 is file-scoped, like pattern 2 is same-file:
-#     it asks only whether this file contains a non-comment `date -j`/`date -v` anywhere.
-#     Cross-file would need a call graph, and nothing here is written that way.
-#
-# Kept bash-3.2 clean (macOS default bash) and POSIX-awk clean, matching the rest of bin/. A
-# portability linter that needs gawk would be the joke writing itself; 2547123 landed only
-# because gawk was NOT a given here.
+#!/usr/bin/env node
+'use strict';
+//
+// lint-bsd-portability — catch the four GNU-only shell idioms that this repo has now shipped
+// five times, each one invisible on the Linux host it was written on.
+//
+// The first three were found by one audit, all of them had passed every gate, and all of them
+// failed only on macOS/BSD userland:
+//
+//   979b240  tests/mx-ergo-resync.test.js — bare `sed -i "script"` in a solaar stub. BSD sed
+//            reads the NEXT ARGUMENT as the backup suffix, so the script became the suffix and
+//            the filename became the script; it changed nothing and the stub then lied to the
+//            script under test, which correctly reported six unapplied settings and exited 1.
+//   25cc7e8  block-dangerous-bash.sh — `\b` in BDB_REPARSE, consumed by `[[ =~ ]]`. Darwin's
+//            libc ERE has no word boundary, so the whole interpreter-name alternation never
+//            matched: `bash -c "echo a; terraform apply"` stopped denying. A live bypass in a
+//            security control, not a cosmetic bug.
+//   6ebdaa4  claude-sandbox — `mktemp .../compact-XXXXXX.json`. BSD mktemp substitutes the X's
+//            only when they are TRAILING, so the name stayed literal: a crashed run poisons
+//            every later run and concurrent runs collide.
+//
+// The fourth came from a later macOS audit and is the quietest of the set:
+//
+//            statusline-command.sh — `date -d "$ts" +%s` feeding a `[[ -n ]]` guard. BSD date
+//            has no -d, so the substitution came back EMPTY and the guard skipped: the whole
+//            prompt-cache countdown segment silently did not render on the Mac. Nothing errored
+//            and nothing logged. The same file had the correct two-arm shape 130 lines above
+//            (`stat -f%m ... || stat -c%Y ...`), which is what makes this a lint and not a note:
+//            the author knew the pattern and the omission still shipped.
+//
+// A sibling of bin/lint-sh-templates rather than an extension of it, because that script does a
+// different job in a way that would put a hole in this one. It RENDERS each template through
+// chezmoi and then SKIPS the ones that render empty on this host — which is precisely the
+// WSL/Windows scripts. This check is textual, so it reads every template unrendered, needs no
+// chezmoi, and has no empty-render hole. It also has to reach .js, which lint-sh-templates
+// never will: the sed bug above lived inside a shell stub in a JS test.
+//
+// WHAT IT DELIBERATELY DOES NOT CATCH
+//
+//   * `\b` in a regex built at runtime, or handed through a chain (`FOO="$BAR"`), or assigned
+//     in one file and used in another. Pattern 2 is same-file and direct: it collects the names
+//     that appear on the right of `=~` inside `[[ ]]`, then flags a `\b` in an assignment to
+//     one of those names. That is the exact shape of 25cc7e8 and it stops there.
+//   * `\b` appearing after a `]` in the same `[[ =~ ]]` expression — the inline pattern stops
+//     at the first `]` so that `[[ $x =~ y ]] && grep '\bz'` is not a false positive.
+//   * `\b` in grep/rg/sed/awk patterns. Those are a different engine which implements it
+//     (block-dangerous-bash.sh kept several on purpose). Only `[[ =~ ]]` is a bug.
+//   * A sed script or an mktemp template held in a variable. Only pattern 2 got the two-phase
+//     treatment, because only pattern 2 has ever been written that way here -- patterns 1 and 3
+//     look at the command line and nothing else. `RE+='\b'` (append) is not seen either.
+//   * `sed -i''` (empty attached suffix) and `mktemp --suffix=`. Both are GNU-only in their own
+//     way; neither has ever appeared here, and guessing at them costs false positives.
+//   * Python. Nothing under .py in this repo carries an mktemp template or shells out to sed
+//     in place -- checked -- and the tempfile module has none of these problems.
+//   * Comment-only lines, in any of the scanned languages. Prose about these bugs is all over
+//     the repo — including in this file — and none of it runs.
+//   * `sha256sum`, `md5sum`, `nproc`, `base64 -w` and friends, which macOS also lacks. They were
+//     considered with pattern 4 and dropped for cost: claude_guard/tables.py lists those
+//     names as DATA inside allowlist alternations, and the
+//     sandbox Dockerfile/image scripts use them inside container builds that are Linux by
+//     construction. The exclusion list would end up longer than the rule.
+//   * `stat -c` without a fallback. Every occurrence here already pairs it with `stat -f`, so
+//     there is no evidence to write the rule against — and a rule with no true positive is a
+//     false-positive generator waiting for its first one.
+//   * A BSD date arm that lives in a DIFFERENT file from the `date -d` it guards (a wrapper
+//     function in a sourced lib, say). Pattern 4 is file-scoped, like pattern 2 is same-file:
+//     it asks only whether this file contains a non-comment `date -j`/`date -v` anywhere.
+//     Cross-file would need a call graph, and nothing here is written that way.
+//
+// Plain Node with no dependencies, ported from bash plus an embedded POSIX awk program that had
+// outgrown shell: two passes per file and five patterns, held in a shell string no linter
+// could read. The POSIX bracket classes that program used are spelled out as ASCII ranges, so
+// the match set is unchanged: [[:blank:]] is [ \t], [[:alnum:]] is [A-Za-z0-9] and [[:space:]]
+// is [ \t\n\v\f\r]. Files are decoded as latin1, so one byte is one character, as awk read
+// them. Every pattern is only tested for a match, except the assignment-name one, whose span
+// ends at the first `=` however it is matched, so awk's leftmost-longest engine and a
+// backtracking one agree. Output lines and exit codes are those of the shell version.
 
-set -u
+const fs = require('node:fs');
+const { execFileSync } = require('node:child_process');
 
-ROOT="$(git rev-parse --show-toplevel)" || exit 1
-cd "$ROOT" || exit 1
+// The only suppression mechanism, deliberately — a single path list with a reason per entry,
+// the same shape as RUFF_BACKLOG in tests/lint-gate-coverage.test.js. An inline marker was
+// considered and dropped: nothing in the tree can use one anyway, since the WSL hits sit on a
+// line ending in `\`.
+//
+// Applied to arguments as well as to the derived list. prek passes explicit filenames, so an
+// exclusion that only ran on the no-argument path would leave the commit hook flagging files
+// that a manual run calls clean.
+const EXCLUDED_PREFIXES = [
+  // chezmoi's own layout declares the target OS, so these can never meet a BSD sed. os-unix/
+  // -- the tree that DOES run on macOS -- stays in scope.
+  'home/.chezmoiscripts/os-linux/',
+  'home/.chezmoiscripts/os-windows/',
+];
+const EXCLUDED_PATHS = new Set([
+  'home/.chezmoitemplates/linux-install.sh',
 
-# The only suppression mechanism, deliberately — a single path list with a reason per entry,
-# the same shape as RUFF_BACKLOG in tests/lint-gate-coverage.test.js. An inline marker was
-# considered and dropped: nothing in the tree can use one anyway, since the WSL hits sit on a
-# line ending in `\`.
-#
-# Applied to arguments as well as to the derived list. prek passes explicit filenames, so an
-# exclusion that only ran on the no-argument path would leave the commit hook flagging files
-# that a manual run calls clean.
-excluded() {
-  case "${1#"$ROOT"/}" in
-    # chezmoi's own layout declares the target OS, so these can never meet a BSD sed. os-unix/
-    # -- the tree that DOES run on macOS -- stays in scope.
-    home/.chezmoiscripts/os-linux/* | home/.chezmoiscripts/os-windows/*) return 0 ;;
-    home/.chezmoitemplates/linux-install.sh) return 0 ;;
+  // These two hold the known-bad patterns literally, by construction.
+  'bin/lint-bsd-portability',
+  'tests/lint-bsd-portability.test.js',
+]);
 
-    # These two hold the known-bad patterns literally, by construction.
-    bin/lint-bsd-portability | tests/lint-bsd-portability.test.js) return 0 ;;
-  esac
-  return 1
+// Shell-ish plus JavaScript. .md.tmpl and friends are out on purpose: LINUX-SETUP.md.tmpl
+// carries `D=~/.var/app/...`, which is a free false positive for anything looking at `=~`.
+const SCANNED_EXTENSION = /\.(?:sh|bash|zsh|sh\.tmpl|bash\.tmpl|js|mjs|cjs)$/;
+
+// No shebang and no extension: rc files are sourced, and the .chezmoitemplates fragments
+// are spliced into the scripts that include them.
+const SCANNED_BASENAMES = new Set(['dot_bashrc', 'dot_zshenv', 'is-wsl', 'is-desktop-linux', 'require-sudo']);
+
+const MESSAGES = {
+  sed: 'bare `sed -i`: BSD sed takes the NEXT argument as the backup suffix, so this errors and changes nothing. Use `sed -i.bak` and delete the backup.',
+  mktemp: "mktemp template with characters after the X's: BSD mktemp only substitutes TRAILING X's, so the name stays literal and collides. Move the suffix off the template.",
+  date: '`date -d` with no BSD arm in this file: BSD date has no -d, so this returns empty and a guard on its output skips in SILENCE rather than erroring. Add a `date -j -f <fmt>` (or -v) fallback.',
+  inlineB: "`\\b` in a bash [[ =~ ]] regex: Darwin's libc ERE has no word boundary, so this silently never matches. Spell it (^|[^[:alnum:]_]) ... ([^[:alnum:]_]|$).",
+  assignedB: (name) => `\`\\b\` in ${name}, which is used as a bash [[ =~ ]] regex: Darwin's libc ERE has no word boundary, so that test silently never matches. Spell it (^|[^[:alnum:]_]) ... ([^[:alnum:]_]|$).`,
+};
+
+// `/` is deliberately NOT in the leading class: /usr/bin/sed and "$BINDIR/sed" have to fire,
+// and the trailing ["']? is what lets the quoted form of the latter through. `.` and `-` ARE
+// in it, so that `parsed -i` and `--parsed -i` do not.
+const SED_IN_PLACE = /(?:^|[^A-Za-z0-9_.-])sed["']?[ \t]+(?:-[^ \t]+[ \t]+)*(?:-[A-Za-z]*i(?:[ \t]|$)|--in-place)/;
+const MKTEMP_SUFFIX = /mktemp[^;&|]*XXXX*[^X'"`) \t\n\v\f\r]/;
+const DATE_D = /(?:^|[^A-Za-z0-9_.-])date["']?[ \t]+(?:-[^ \t]+[ \t]+)*(?:-d(?:[ \t]|$)|--date)/;
+const DATE_BSD_ARM = /(?:^|[^A-Za-z0-9_.-])date[ \t]+-[jv]/;
+const INLINE_B = /\[\[[^\]]*=~[^\]]*\\b/;
+const REGEX_VAR_USE = /=~[ \t]*"?\$\{?([A-Za-z_][A-Za-z0-9_]*)/g;
+const ASSIGNMENT = /^[ \t]*(?:local|declare|export|readonly|typeset)?[ \t]*[A-Za-z_][A-Za-z0-9_]*=/;
+const COMMENT = /^[ \t]*(?:#|\/\/)/;
+
+// Lines that are comments in shell (`#`) or JavaScript (`//`) after leading blanks.
+function isComment(line) {
+  return COMMENT.test(line);
 }
 
-# Shell-ish plus JavaScript. .md.tmpl and friends are out on purpose: LINUX-SETUP.md.tmpl
-# carries `D=~/.var/app/...`, which is a free false positive for anything looking at `=~`.
-scannable() {
-  for f in $(git ls-files); do
-    case "$f" in
-      *.sh | *.bash | *.zsh | *.sh.tmpl | *.bash.tmpl | *.js | *.mjs | *.cjs)
-        printf '%s\n' "$f"
-        continue
-        ;;
-    esac
-    case "${f##*/}" in
-      # No shebang and no extension: rc files are sourced, and the .chezmoitemplates fragments
-      # are spliced into the scripts that include them.
-      dot_bashrc | dot_zshenv | is-wsl | is-desktop-linux | require-sudo)
-        printf '%s\n' "$f"
-        continue
-        ;;
-      *.*) continue ;;
-    esac
-    [ -f "$f" ] || continue
-    case "$(head -1 "$f")" in
-      '#!'*sh* | '#!'*node*) printf '%s\n' "$f" ;;
-    esac
-  done
-}
+// Returns [lineNumber, message] pairs for one file's lines, in report order.
+function scan(lines) {
+  const hits = [];
+  const report = (n, msg) => hits.push([n, msg]);
 
-# The hook in .pre-commit-config.yaml has to name this same set by hand, since `files:` and
-# `types:` are ANDed and a .sh.tmpl types as text, not shell. --list is what
-# tests/lint-bsd-portability.test.js compares the hook's pattern against, so the two cannot
-# drift apart unnoticed.
-if [ "${1:-}" = "--list" ]; then
-  scannable | while read -r f; do
-    excluded "$f" || printf '%s\n' "$f"
-  done
-  exit 0
-fi
-
-if [ "$#" -gt 0 ]; then
-  set -- "$@"
-else
-  # shellcheck disable=SC2046  # word-split intended; no path in this repo has spaces
-  set -- $(scannable)
-fi
-
-files=""
-for f in "$@"; do
-  excluded "$f" && continue
-  [ -f "$f" ] || continue
-  files="$files $f"
-done
-[ -n "$files" ] || exit 0
-
-PROG=$(
-  cat <<'AWK'
-function report(n, msg) { printf "%s:%d: %s\n", fname, n, msg; hits++ }
-
-function iscomment(s) {
-  sub(/^[[:blank:]]*/, "", s)
-  return (s ~ /^#/ || s ~ /^\/\//)
-}
-
-function check(   i, s, rest, tok, name, hasbsd) {
-  if (fname == "") return
-
-  # Pass A: which variables end up on the right of `=~` inside a [[ ]] test. Without this the
-  # check misses 25cc7e8 entirely -- that regex was assigned on line 127 and consumed on 139.
-  # Pass A also answers a second, file-scoped question, for pattern 4 below: does this file
-  # carry a BSD date arm anywhere? Comments do not count -- prose about this trap is all over
-  # the repo, and a file that only TALKS about `date -j` has no fallback.
-  # The left boundary is the same one pattern 4 uses, and it is load-bearing in the SUPPRESSING
-  # direction, which is the dangerous one: `date -v` is a substring of `up{date -v}` and
-  # `date -j` of `vali{date -j}`, so a bare `brew update -v` anywhere in a file would set
-  # hasbsd and silence pattern 4 for that whole file.
-  for (i = 1; i <= nlines; i++) {
-    s = line[i]
-    if (iscomment(s)) continue
-    if (s ~ /(^|[^[:alnum:]_.-])date[[:blank:]]+-[jv]/) hasbsd = 1
-    if (s !~ /\[\[/) continue
-    rest = s
-    while (match(rest, /=~[[:blank:]]*"?\$\{?[A-Za-z_][A-Za-z0-9_]*/)) {
-      tok = substr(rest, RSTART, RLENGTH)
-      rest = substr(rest, RSTART + RLENGTH)
-      sub(/^=~[[:blank:]]*"?\$\{?/, "", tok)
-      regexvar[tok] = 1
-    }
+  // Pass A: which variables end up on the right of `=~` inside a [[ ]] test. Without this the
+  // check misses 25cc7e8 entirely -- that regex was assigned on line 127 and consumed on 139.
+  // Pass A also answers a second, file-scoped question, for pattern 4 below: does this file
+  // carry a BSD date arm anywhere? Comments do not count -- prose about this trap is all over
+  // the repo, and a file that only TALKS about `date -j` has no fallback.
+  // The left boundary is the same one pattern 4 uses, and it is load-bearing in the SUPPRESSING
+  // direction, which is the dangerous one: `date -v` is a substring of `up{date -v}` and
+  // `date -j` of `vali{date -j}`, so a bare `brew update -v` anywhere in a file would set
+  // hasBsd and silence pattern 4 for that whole file.
+  const regexVars = new Set();
+  let hasBsd = false;
+  for (const s of lines) {
+    if (isComment(s)) continue;
+    if (DATE_BSD_ARM.test(s)) hasBsd = true;
+    if (!s.includes('[[')) continue;
+    for (const m of s.matchAll(REGEX_VAR_USE)) regexVars.add(m[1]);
   }
 
-  for (i = 1; i <= nlines; i++) {
-    s = line[i]
-    if (iscomment(s)) continue
+  lines.forEach((s, idx) => {
+    if (isComment(s)) return;
+    const n = idx + 1;
 
-    # `/` is deliberately NOT in the leading class: /usr/bin/sed and "$BINDIR/sed" have to
-    # fire, and the trailing ["']? is what lets the quoted form of the latter through. `.` and
-    # `-` ARE in it, so that `parsed -i` and `--parsed -i` do not.
-    if (s ~ /(^|[^[:alnum:]_.-])sed["']?[[:blank:]]+(-[^[:blank:]]+[[:blank:]]+)*(-[A-Za-z]*i([[:blank:]]|$)|--in-place)/)
-      report(i, "bare `sed -i`: BSD sed takes the NEXT argument as the backup suffix, so this errors and changes nothing. Use `sed -i.bak` and delete the backup.")
+    if (SED_IN_PLACE.test(s)) report(n, MESSAGES.sed);
+    if (MKTEMP_SUFFIX.test(s)) report(n, MESSAGES.mktemp);
+    if (!hasBsd && DATE_D.test(s)) report(n, MESSAGES.date);
+    if (INLINE_B.test(s)) report(n, MESSAGES.inlineB);
 
-    if (s ~ /mktemp[^;&|]*XXXX*[^X'"`)[:space:]]/)
-      report(i, "mktemp template with characters after the X's: BSD mktemp only substitutes TRAILING X's, so the name stays literal and collides. Move the suffix off the template.")
-
-    if (!hasbsd && s ~ /(^|[^[:alnum:]_.-])date["']?[[:blank:]]+(-[^[:blank:]]+[[:blank:]]+)*(-d([[:blank:]]|$)|--date)/)
-      report(i, "`date -d` with no BSD arm in this file: BSD date has no -d, so this returns empty and a guard on its output skips in SILENCE rather than erroring. Add a `date -j -f <fmt>` (or -v) fallback.")
-
-    if (s ~ /\[\[[^]]*=~[^]]*\\b/)
-      report(i, "`\\b` in a bash [[ =~ ]] regex: Darwin's libc ERE has no word boundary, so this silently never matches. Spell it (^|[^[:alnum:]_]) ... ([^[:alnum:]_]|$).")
-
-    if (match(s, /^[[:blank:]]*(local|declare|export|readonly|typeset)?[[:blank:]]*[A-Za-z_][A-Za-z0-9_]*=/)) {
-      name = substr(s, RSTART, RLENGTH)
-      sub(/=$/, "", name)
-      sub(/^[[:blank:]]*/, "", name)
-      sub(/^(local|declare|export|readonly|typeset)[[:blank:]]+/, "", name)
-      if ((name in regexvar) && s ~ /\\b/)
-        report(i, "`\\b` in " name ", which is used as a bash [[ =~ ]] regex: Darwin's libc ERE has no word boundary, so that test silently never matches. Spell it (^|[^[:alnum:]_]) ... ([^[:alnum:]_]|$).")
+    const assignment = ASSIGNMENT.exec(s);
+    if (assignment) {
+      const name = assignment[0]
+        .replace(/=$/, '')
+        .replace(/^[ \t]*/, '')
+        .replace(/^(?:local|declare|export|readonly|typeset)[ \t]+/, '');
+      if (regexVars.has(name) && s.includes('\\b')) report(n, MESSAGES.assignedB(name));
     }
-  }
+  });
 
-  delete line
-  delete regexvar
-  nlines = 0
+  return hits;
 }
 
-FNR == 1 { check(); fname = FILENAME }
-{ line[FNR] = $0; nlines = FNR }
-END { check(); exit (hits > 0) }
-AWK
-)
+// awk's records are the newline-terminated lines, and a final line with no newline still counts.
+function splitRecords(text) {
+  const lines = text.split('\n');
+  if (lines[lines.length - 1] === '') lines.pop();
+  return lines;
+}
 
-# shellcheck disable=SC2086  # word-split intended
-awk "$PROG" $files
+function readLatin1(file) {
+  return fs.readFileSync(file, 'latin1');
+}
+
+function isFile(file) {
+  try {
+    return fs.statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function repoRoot() {
+  try {
+    const out = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'inherit'],
+    });
+    return out.replace(/\n+$/, '');
+  } catch {
+    return null;
+  }
+}
+
+function main(args) {
+  const root = repoRoot();
+  if (root === null) return 1;
+  try {
+    process.chdir(root);
+  } catch {
+    return 1;
+  }
+
+  function excluded(file) {
+    const rel = file.startsWith(`${root}/`) ? file.slice(root.length + 1) : file;
+    return EXCLUDED_PATHS.has(rel) || EXCLUDED_PREFIXES.some((p) => rel.startsWith(p));
+  }
+
+  function scannable() {
+    const tracked = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8', maxBuffer: 1 << 28 })
+      .split('\0')
+      .filter(Boolean);
+    return tracked.filter((f) => {
+      if (SCANNED_EXTENSION.test(f)) return true;
+      const base = f.slice(f.lastIndexOf('/') + 1);
+      if (SCANNED_BASENAMES.has(base)) return true;
+      if (base.includes('.')) return false;
+      if (!isFile(f)) return false;
+      let first;
+      try {
+        first = readLatin1(f).split('\n', 1)[0];
+      } catch {
+        return false;
+      }
+      return first.startsWith('#!') && (first.includes('sh', 2) || first.includes('node', 2));
+    });
+  }
+
+  // The hook in .pre-commit-config.yaml has to name this same set by hand, since `files:` and
+  // `types:` are ANDed and a .sh.tmpl types as text, not shell. --list is what
+  // tests/lint-bsd-portability.test.js compares the hook's pattern against, so the two cannot
+  // drift apart unnoticed.
+  if (args[0] === '--list') {
+    const listed = scannable().filter((f) => !excluded(f));
+    if (listed.length > 0) process.stdout.write(`${listed.join('\n')}\n`);
+    return 0;
+  }
+
+  const candidates = args.length > 0 ? args : scannable();
+  const files = candidates.filter((f) => !excluded(f) && isFile(f));
+  if (files.length === 0) return 0;
+
+  const out = [];
+  for (const file of files) {
+    for (const [n, msg] of scan(splitRecords(readLatin1(file)))) out.push(`${file}:${n}: ${msg}`);
+  }
+  if (out.length > 0) process.stdout.write(`${out.join('\n')}\n`);
+  return out.length > 0 ? 1 : 0;
+}
+
+process.exitCode = main(process.argv.slice(2));
