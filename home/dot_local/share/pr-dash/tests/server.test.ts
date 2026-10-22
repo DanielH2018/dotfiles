@@ -783,3 +783,18 @@ test('/api/jobs answers 502 with a reason when the server has no jobs loader', a
     assert.deepStrictEqual(await res.json(), { error: 'jobs are not configured in pr-dash' });
   });
 });
+
+test('a failed jobs load answers an allowlisted extension origin with a 502 it can read', async () => {
+  await withExtensionServer(
+    [EXTENSION],
+    async (base) => {
+      const response = await getFrom(base, '/api/jobs', EXTENSION);
+      assert.match(response, /^HTTP\/1\.1 502 /);
+      assert.match(response, /"error":"jobstat --json failed"/);
+      assert.ok(response.toLowerCase().includes(`\r\naccess-control-allow-origin: ${EXTENSION}\r\n`), response);
+    },
+    undefined,
+    undefined,
+    async () => ({ error: 'jobstat --json failed' }),
+  );
+});

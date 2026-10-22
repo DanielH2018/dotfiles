@@ -17,7 +17,7 @@ function fakeRun(...answers: (() => string)[]): RunJobstat & { calls: string[][]
 }
 
 test('runs jobstat --json and drops entries missing a field', async () => {
-  const run = fakeRun(() => JSON.stringify([JOB, { label: 'com.example.half', failed: 'yes' }, { ...JOB, logAt: null }]));
+  const run = fakeRun(() => JSON.stringify([JOB, { ...JOB, failed: 'yes' }, { ...JOB, logAt: null }]));
   assert.deepStrictEqual(await createLoadJobs(run)(), { jobs: [JOB, { ...JOB, logAt: null }] });
   assert.deepStrictEqual(run.calls, [['--json']]);
 });
