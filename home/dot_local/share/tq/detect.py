@@ -15,6 +15,8 @@ import re
 # Tokens that stand in front of the real program without being it.
 LAUNCHERS = {"uv", "uvx", "poetry", "pdm", "rye", "hatch", "pipenv", "env", "command"}
 SUBCOMMANDS = {"run", "exec", "tool", "--"}
+# The launchers that are project managers with verbs of their own.
+PROJECT_MANAGERS = {"uv", "poetry", "pdm", "rye", "hatch", "pipenv"}
 PYTHON = re.compile(r"^python(3(\.\d+)?)?$")
 
 # The programs worth asking detect() about at all. The hook checks this first so
@@ -301,11 +303,22 @@ def tool_name(argv):
     Scanning for the tool's name anywhere in argv is what a first cut does, and
     it misfires on any command that merely mentions it — `grep pytest file` is
     not a test run, and injecting reporter flags into it would be.
+
+    A project manager reaches a tool only through a run-type subcommand. Its
+    other verbs are its own: `uv python find … 3.14` is uv locating an
+    interpreter, and reading `find` out of it as the tool made tq run a find
+    survey that handed uv a `-p` it rejects. So a word after one of them that
+    is not a subcommand ends the scan with no tool. uvx, env and command take
+    the program directly and are not in this set.
     """
+    awaiting_subcommand = False
     for tok in argv:
         if tok.startswith("-") and tok != "--":
             continue
         base = os.path.basename(tok)
+        if awaiting_subcommand and base not in SUBCOMMANDS:
+            return ""
+        awaiting_subcommand = base in PROJECT_MANAGERS
         if base in LAUNCHERS or base in SUBCOMMANDS or PYTHON.match(base):
             continue
         if "=" in base:

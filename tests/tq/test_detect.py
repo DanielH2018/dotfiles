@@ -27,6 +27,27 @@ class TestDetection(unittest.TestCase):
             detect_mod.tool_name(["uv", "run", "python", "-m", "pytest"]), "pytest"
         )
         self.assertEqual(detect_mod.tool_name(["uv", "run", "ruff", "check"]), "ruff")
+
+    def test_a_launcher_reaches_a_tool_only_through_a_run_subcommand(self):
+        for argv in (
+            ["uv", "run", "pytest"],
+            ["uv", "run", "--", "pytest"],
+            ["uv", "tool", "run", "pytest"],
+            ["uvx", "pytest"],
+            ["poetry", "run", "pytest"],
+        ):
+            self.assertEqual(detect_mod.detect(argv), "pytest", argv)
+        # uv's own verb: wrapped as a `find` survey, tq handed uv a `-p` it rejects.
+        argv = [
+            "uv",
+            "python",
+            "find",
+            "--no-project",
+            "--managed-python",
+            "--system",
+            "3.14",
+        ]
+        self.assertIsNone(detect_mod.detect(argv))
         self.assertEqual(detect_mod.tool_name(["/usr/bin/node", "--test"]), "node")
         self.assertEqual(detect_mod.tool_name(["env", "FOO=1", "pytest"]), "pytest")
 
