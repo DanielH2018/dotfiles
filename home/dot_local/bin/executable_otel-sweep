@@ -34,10 +34,10 @@ Read-only by construction: every request is a GET, and PROBE writes no files.
 syslog through `logger`, raises a desktop notification through `notify-send`, and
 keeps two small state files under $XDG_STATE_HOME/otel-sweep-watch. Both programs
 are literals in this file, and the sweep it summarises runs in this process, so
-nothing in the environment or argv names a program to run. The only caller-shaped
-input is `watch --stdin`, which reads sweep JSON instead of sweeping; that JSON is
-data summarised into one argv element of `logger` and `notify-send`, never a
-position of a command.
+nothing in the environment or argv names a program to run. `watch` takes no input
+either: what it logs, notifies and writes is always what the sweep it just ran
+found. Its test seam is the `watch(raw)` parameter, reached only by importing this
+file, so a command line cannot hand it a fabricated sweep to report.
 """
 
 from __future__ import annotations
@@ -800,15 +800,20 @@ def _run_fixed(argv, discard_stderr=False):
         )
 
 
-def watch(from_stdin):
+def watch(raw=None):
     """Summarise a deep sweep, record it, and raise the alarm if it found anything.
 
     The sweep runs in this process: there is no program for a caller to name, so the
-    confinement in the module docstring holds. `--stdin` exists as the test seam and
-    reads the same JSON document the sweep would have produced.
+    confinement in the module docstring holds.
+
+    Args:
+      raw: The test seam. Bytes of a sweep JSON document to summarise instead of
+        sweeping. The CLI never passes it: a command-line flag for it would let any
+        caller of the allow-listed `otel-sweep` write a fabricated finding into
+        syslog, a notification and the statusline banner.
     """
-    if from_stdin:
-        raw = sys.stdin.buffer.read().rstrip(b"\n")
+    if raw is not None:
+        raw = raw.rstrip(b"\n")
         if not raw:
             print(f"{WATCH_PROG}: sweep produced no output", file=sys.stderr)
             return 2
@@ -978,16 +983,11 @@ def sweep(mode, only=None, timeout=DEFAULT_TIMEOUT):
 def main():
     argv = sys.argv[1:]
     if argv[:1] == ["watch"]:
-        wp = argparse.ArgumentParser(
+        argparse.ArgumentParser(
             prog=f"{PROG} watch",
             description="Summarise a deep sweep, log it, and notify on findings.",
-        )
-        wp.add_argument(
-            "--stdin",
-            action="store_true",
-            help="read the sweep JSON from stdin instead of sweeping (test seam)",
-        )
-        return watch(wp.parse_args(argv[1:]).stdin)
+        ).parse_args(argv[1:])
+        return watch()
 
     ap = argparse.ArgumentParser(
         prog=PROG,

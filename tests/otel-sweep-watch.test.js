@@ -4,9 +4,10 @@
 // The thing worth pinning is what the runner treats as a finding. It fires a desktop
 // notification, so a rule that flags something normal — daniel-server runs no Tempo, and
 // never will — gets muted within a week, after which it detects nothing at all. These
-// drive the real subcommand with the sweep JSON on stdin (`watch --stdin`), which is the
-// seam that replaced pointing OTEL_SWEEP at a stub program: nothing the environment
-// carries can name a program for otel-sweep to run.
+// load otel-sweep as a module and call watch() with the sweep JSON, which is the seam that
+// replaced pointing OTEL_SWEEP at a stub program. It is deliberately not a CLI flag: the
+// command line of an allow-listed tool must not be able to hand `watch` a fabricated sweep
+// to log, notify and bannerise.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
@@ -60,9 +61,19 @@ function notifyStub() {
 // Shadows notify-send and logger for every run that does not bring its own stub.
 const SILENT = notifyStub();
 
+// The file has no .py extension, so a plain import cannot find it; SourceFileLoader can.
+const DRIVER = [
+  'import importlib.machinery, importlib.util, sys',
+  'loader = importlib.machinery.SourceFileLoader("otel_sweep", sys.argv[1])',
+  'spec = importlib.util.spec_from_loader("otel_sweep", loader)',
+  'mod = importlib.util.module_from_spec(spec)',
+  'loader.exec_module(mod)',
+  'sys.exit(mod.watch(sys.stdin.buffer.read()))',
+].join('\n');
+
 function run(payload, extra = {}) {
   try {
-    const stdout = execFileSync('python3', [SWEEP, 'watch', '--stdin'], {
+    const stdout = execFileSync('python3', ['-c', DRIVER, SWEEP], {
       encoding: 'utf8',
       input: payload,
       env: {
@@ -82,6 +93,27 @@ function run(payload, extra = {}) {
 
 const HEALTHY = JSON.stringify({
   local: { backends: { loki: 'ready', prometheus: 'ready', tempo: 'ready' }, events_24h: { api_request: 12 }, sessions_24h: 3, silent_sessions: [] },
+});
+
+test('the command line cannot supply the sweep: `watch --stdin` is refused', { skip }, () => {
+  // The rejecting half of the seam above. A flag that read sweep JSON would let any caller
+  // of the allow-listed tool write a fabricated finding into syslog and the banner.
+  const state = scratch(DIR, 'state-');
+  const stub = notifyStub();
+  let code = 0;
+  try {
+    execFileSync('python3', [SWEEP, 'watch', '--stdin'], {
+      input: JSON.stringify({ local: { error: 'fabricated' } }),
+      stdio: 'pipe',
+      env: { ...process.env, PATH: `${stub.bin}:${process.env.PATH}`, XDG_STATE_HOME: state },
+    });
+  } catch (err) {
+    code = err.status;
+  }
+  assert.strictEqual(code, 2, 'argparse rejects the unknown flag');
+  assert.ok(!fs.existsSync(path.join(state, 'otel-sweep-watch')), 'nothing was written');
+  assert.deepStrictEqual(stub.logged(), [], 'nothing was logged');
+  assert.deepStrictEqual(stub.calls(), [], 'nothing was notified');
 });
 
 test('a healthy sweep is silent and exits 0', { skip }, () => {
