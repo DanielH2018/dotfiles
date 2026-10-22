@@ -68,7 +68,7 @@ from claude_guard.gitargv import (
     remote_add_mirrors_push,
     subcommand_at,
 )
-from claude_guard.segment import mask_substitutions, parse
+from claude_guard.segment import Segment, mask_substitutions, parse
 
 
 @dataclass(frozen=True, slots=True)
@@ -2030,6 +2030,67 @@ def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool
     return found
 
 
+_CASE_HEAD = re.compile(r"\s*(?:(?:do|then|else|elif|\{|!)\s+)*case\s+\S*\s*in(?=\s|$)")
+_CASE_END = re.compile(r"\s*esac(?=[\s;&|)]|$)")
+# A case pattern up to its `)`: one word, an optional `(` before it. A word with a space in it
+# is no pattern, so `(true; su*)` keeps `su*` as a command word.
+_CASE_PATTERN = re.compile(r"\s*\(?\s*[^\s()]*\s*\)")
+_CASE_ALTERNATIVE = re.compile(r"\s*\(?\s*[^\s()]*\s*")
+
+
+def _case_arms(segments: tuple[Segment, ...], nested: bool):
+    """Each segment as `(text, heredocs, nested)` for the sudo check, with case patterns cut.
+
+    The segmenter cuts `case x in a) true;; *) y;; esac` at each `;`, so `*) y` would reach
+    the check with the glob `*` as its command word, and `*` matches `sudo`. This walks the
+    segments of one parse level with the case state bash keeps: after `case W in` and after
+    `;;`, `;&` or `;;&`, a pattern comes before the arm's command, and a `|` between patterns
+    cuts a segment too. Only that pattern is dropped; the arm's command is checked, as nested,
+    so the one allowed sudo line is refused inside an arm. A segment the state does not
+    explain is checked whole, which over-refuses.
+    """
+    depth = 0
+    expect = False
+    prev_sep = ""
+    for seg in segments:
+        sep, prev_sep = prev_sep, seg.sep
+        masked = mask_substitutions(seg.text, _SUB_PLACEHOLDER) or seg.text
+        bare = _unquoted(masked)
+        if bare is None or (depth == 0 and not _CASE_HEAD.match(bare)):
+            yield seg.text, seg.heredocs, nested
+            continue
+        if not bare.strip():
+            # `;;` is two `;` cuts around an empty segment; `;&` and `;;&` end in `&`.
+            if depth and sep == ";" and seg.sep in (";", "&"):
+                expect = True
+            continue
+        if _CASE_END.match(bare):
+            depth -= 1
+            expect = False
+            yield seg.text, seg.heredocs, nested
+            continue
+        pos = 0
+        while True:
+            head = _CASE_HEAD.match(bare, pos)
+            if head:
+                depth += 1
+                expect = True
+                pos = head.end()
+            if not expect:
+                break
+            pattern = _CASE_PATTERN.match(bare, pos)
+            if pattern:
+                expect = False
+                pos = pattern.end()
+                continue
+            rest = bare[pos:]
+            if not rest.strip() or (seg.sep == "|" and _CASE_ALTERNATIVE.fullmatch(rest)):
+                pos = len(bare)
+            break
+        if masked[pos:].strip():
+            yield masked[pos:], seg.heredocs, True
+
+
 def _sudo_text(text: str, depth: int = 0, nested: bool = False) -> int:
     """The highest rank anything in `text`, read as shell, reaches: an escalator other than
     the one allowed line, a command word only an expansion names, or neither. A command the
@@ -2041,7 +2102,7 @@ def _sudo_text(text: str, depth: int = 0, nested: bool = False) -> int:
         return _SUDO_ESCALATES if _loose_hit(text) else _SUDO_CLEAN
     found = _SUDO_CLEAN
     for rank in itertools.chain(
-        (_segment_sudo(s.text, s.heredocs, depth, nested) for s in p.segments),
+        (_segment_sudo(t, h, depth, arm) for t, h, arm in _case_arms(p.segments, nested)),
         (_sudo_text(sub, depth, True) for sub in p.substitutions),
     ):
         found = max(found, rank)

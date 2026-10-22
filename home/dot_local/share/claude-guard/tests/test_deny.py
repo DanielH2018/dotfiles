@@ -1701,6 +1701,15 @@ SUDO_REFUSE = [
     "echo x | sudo -n true",
     "[[ -n x ]] && sudo -n true",
     "case x in x) sudo -n true;; esac",
+    # a case pattern is cut, the arm's command is not, and a subshell is no case arm
+    "case x in a) true;; *) sudo id;; esac",
+    "case x in a) true;& *) su*;; esac",
+    "case x in a) (true; su*) ;; esac",
+    "case x in a) true;; esac; *) true",
+    "case x in $(sudo id)) true;; esac",
+    "(true; su*)",
+    "s?do -n true",
+    f"case x in a) sudo -n {W};; esac",
     "tee >(sudo -n true) < /dev/null",
     "env -- sudo -n true",
     "env FOO=bar sudo -n true",
@@ -1853,6 +1862,14 @@ SUDO_PASS = [
     "git push --force-with-lease=feat:$(git rev-parse origin/feat) origin feat",
     "echo $(echo a)$(echo b)",
     "a=$(( $(wc -l < f) + 1 ))",
+    # a case pattern is no command word, though `*` matches sudo (2026-10-22 audit)
+    "case x in a) true;; *) true;; esac",
+    "while read l; do case $l in *) continue;; esac; done",
+    "case $x in\n  a|b) foo ;;\n  *) break ;;\nesac",
+    "case x in\n  s*|x) true ;;\nesac",
+    "case x in (s*) true;; esac",
+    "case x in a) true;;& *) true;; esac",
+    "case x in a) case y in *) true;; esac;; *) break;; esac",
 ]
 
 
