@@ -10,14 +10,16 @@
          SessionStart, then the UI paints `* Claude Code` over it, so the state never showed
          (observed in Warp's sidebar 2026-08-19). This yields the title to the hook. */}}
     "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1",
-    {{/* prune-artifacts.sh sweeps ~/.claude/artifacts on SessionStart; this is its window.
-         The hook's own default is 7 days, which is right for a scratch page but too short
-         for a findings write-up or an audit that gets cited weeks after the work landed.
-         30 keeps a month of reports reachable from a link that was pasted into a PR.
+    {{/* The window retention-sweep's G20 and G21 rows prune ~/.claude/artifacts and its
+         state registry by, in days. A timer runs the sweep and never sees this block, so
+         the sweeper reads this file's env directly; the environment wins when both set it.
+         Without either, the manifest's cap of 30d applies. A week is right for a scratch
+         page but too short for a findings write-up or an audit that gets cited weeks after
+         the work landed. 30 keeps a month of reports reachable from a link pasted into a PR.
 
          The clock runs from last modification, so an artifact that keeps being republished
-         never expires. `find -mtime +30` truncates the day count, so a file is deleted once
-         it is 31 full days old. Set to 0 to disable the sweep entirely. */}}
+         never expires. The sweep deletes a file once it is 30 full days old. Set to 0 to
+         disable both rows. */}}
     "CLAUDE_ARTIFACT_RETENTION_DAYS": "30",
     {{/* The skins plugin draws its light palette unless something says the terminal is
          dark. Its `auto` theme reads COLORFGBG, which no terminal here sets, then GNOME's
@@ -57,9 +59,10 @@
     "CLAUDE_ARTIFACTS_HOST": "{{ .chezmoi.hostname }}{{ if includeTemplate "is-agent" . }}-{{ .chezmoi.username }}{{ end }}",
 {{ if eq .chezmoi.hostname "daniel-box" }}
     {{/* The star list the cluster's artifact browser writes (server repo,
-         ansible/roles/k8s/artifacts, artifacts_stars_file). prune-artifacts.sh keeps every
-         artifact it stars under this host's label. It sits outside /home/ubuntu so the agent
-         user's prune can read it too. daniel-server keeps the default path, because that is
+         ansible/roles/k8s/artifacts, artifacts_stars_file). retention-sweep keeps every
+         artifact it stars under this host's label, and reads this path from settings.json
+         because its timer never sees this block. It sits outside /home/ubuntu so an agent
+         user can read it too. daniel-server keeps the default path, because that is
          where the browser's sync cron pushes its copy. */}}
     "CLAUDE_ARTIFACT_STARS_FILE": "/var/lib/artifact-stars/stars.txt",
 {{ end }}
@@ -647,11 +650,6 @@
       {
         "matcher": "startup",
         "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/prune-artifacts.sh",
-            "timeout": 10
-          },
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/lib/run-python.sh memory-upkeep.py",

@@ -218,5 +218,32 @@
     "owner": "retention-sweep",
     "finding": null,
     "notes": "one line per Skill/Agent tool call, appended by executable_skill-usage-log.sh; same shape and cap as G13 (history.jsonl). Not from an audit finding -- added with the hook itself, since an unbounded per-invocation log is the exact failure mode G13/G8 already exist to cap."
+  },
+  {
+    "id": "G20",
+    "path": "~/.claude/artifacts/**/*",
+    "kind": "file-glob",
+    "rule": "prune-age",
+    "cap": "30d",
+    "cap_env": "CLAUDE_ARTIFACT_RETENTION_DAYS",
+    "files_only": true,
+    "keep": ["executable", "pinned", "starred"],
+    "grace": "1h",
+    "owner": "retention-sweep",
+    "finding": "#733",
+    "notes": "HTML artifacts; replaced the SessionStart hook prune-artifacts.sh. Executables are tools, not reports, pinned/ holds reference pages kept on purpose, and a starred artifact (this host's lines in the star list) never expires. The clock runs from the last update."
+  },
+  {
+    "id": "G21",
+    "path": "~/.claude/logs/artifact-state/**/*",
+    "kind": "file-glob",
+    "rule": "prune-age",
+    "cap": "30d",
+    "cap_env": "CLAUDE_ARTIFACT_RETENTION_DAYS",
+    "files_only": true,
+    "grace": "1h",
+    "owner": "retention-sweep",
+    "finding": "#733",
+    "notes": "the artifact hooks' registry (repos.tsv and the per-session .tip, .mine and .pending files); an entry for a deleted artifact or a removed worktree is dead weight. Same window as G20."
   }
 ]

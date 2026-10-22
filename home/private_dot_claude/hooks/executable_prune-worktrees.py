@@ -5,7 +5,7 @@
 #   timeout: 15
 #   order: 50
 #   command: bash ~/.claude/hooks/lib/run-python.sh prune-worktrees.py --prune
-# The startup slot prune-artifacts.sh sweeps in, for session worktrees: remove the
+# A SessionStart sweep over session worktrees: remove the
 # ones under .claude/worktrees/ whose branch is already an ancestor of origin/HEAD and
 # has moved since it was created, are clean, and hold no live session's lock. Claude
 # Code's exit prompt only reaches a session still attached when it ends, so a

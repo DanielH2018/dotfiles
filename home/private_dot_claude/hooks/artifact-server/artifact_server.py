@@ -16,13 +16,13 @@ that wrote the file:
     /healthz                liveness
 
 The star list is the one thing the server writes. Every artifact tree stays mounted read-only;
-the list lives in its own file, ARTIFACTS_STARS_FILE, which prune-artifacts.sh on each host
+the list lives in its own file, ARTIFACTS_STARS_FILE, which retention-sweep on each host
 reads so that a starred artifact is never aged out.
 
 The index is built ON REQUEST and cached against a signature of (path, mtime, size) for
-every file under ROOT. It is not built on a timer: prune-artifacts.sh deletes artifacts
-after 30 days, so a timer-built index serves links to files that are already gone. Building
-on request cannot. ~50 files parse in single-digit milliseconds.
+every file under ROOT. It is not built on a timer: retention-sweep deletes artifacts after
+30 days, so a timer-built index serves links to files that are already gone. Building on
+request cannot. ~50 files parse in single-digit milliseconds.
 
 Two siblings ship beside this one in the same ConfigMap: `artifact_meta.py` holds the
 taxonomy and the metadata parsers, and `_gui_html.py` holds the page served at `/`.
@@ -165,7 +165,7 @@ class StarStore:
     """The starred artifacts, one `<host>/<relpath>` line each, in a single file.
 
     `<host>` is the ROOT/<host> segment, which is also the label each host's
-    prune-artifacts.sh carries (CLAUDE_ARTIFACTS_HOST). The prune keeps every artifact whose
+    retention-sweep carries (CLAUDE_ARTIFACTS_HOST). The sweep keeps every artifact whose
     line names its own label, so one file serves every host it reaches.
 
     Attributes:

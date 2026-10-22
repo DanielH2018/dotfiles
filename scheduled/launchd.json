@@ -124,6 +124,72 @@
           "inherited. It bounds how long the port sits unheld after an idle exit."
         ]
       }
+    },
+    {
+      "label": "com.daniel.retention-sweep",
+      "plist": "scheduled/com.daniel.retention-sweep.plist.tmpl",
+      "why": [
+        "The macOS half of the hourly retention sweep. Linux runs it as",
+        "home/dot_config/systemd/user/retention-sweep.{service,timer}; this is the same job, with",
+        "the same one argument, which tells the sweeper to act. It is the only thing that prunes",
+        "~/.claude/artifacts here: manifest rows G20 and G21 replaced the SessionStart hook",
+        "prune-artifacts.sh.",
+        "",
+        "Acting covers every APPLY_ROWS row, not only the artifact rows. That includes G14 and",
+        "G15, which prune known /tmp prefixes older than a day.",
+        "",
+        "Definition only. Like its siblings it lives outside `home/`, so chezmoi never deploys it",
+        "and the job runs only on a machine that activates it by hand.",
+        "",
+        "The label is com.daniel.retention-sweep, outside com.daniel.claude.*, because",
+        "work-laptop-config's catch-up.sh globs that prefix and runs `eval` on",
+        "ProgramArguments.2. Here that element is the sweeper's path, so a replay would run the",
+        "sweep outside its launcher. RunAtLoad covers a missed hour instead.",
+        "",
+        "Activate:",
+        "",
+        "  chezmoi execute-template \\",
+        "          < ~/.local/share/chezmoi/scheduled/com.daniel.retention-sweep.plist.tmpl \\",
+        "          > ~/Library/LaunchAgents/com.daniel.retention-sweep.plist",
+        "  launchctl bootstrap \"gui/$(id -u)\" \\",
+        "          ~/Library/LaunchAgents/com.daniel.retention-sweep.plist",
+        "",
+        "Deactivate:",
+        "",
+        "  launchctl bootout \"gui/$(id -u)/com.daniel.retention-sweep\"",
+        "  rm ~/Library/LaunchAgents/com.daniel.retention-sweep.plist",
+        "",
+        "Check it: the last line of the log reports what the last run pruned, and",
+        "~/.claude/.retention-sweep-last-run holds the same counts as JSON."
+      ],
+      "program": [
+        "/bin/bash",
+        "{{ .chezmoi.homeDir }}/.claude/hooks/lib/run-python.sh",
+        "{{ .chezmoi.homeDir }}/.local/bin/retention-sweep",
+        "--apply"
+      ],
+      "env": {
+        "PATH": "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+      },
+      "interval": 3600,
+      "at_load": true,
+      "log_path": "{{ .chezmoi.homeDir }}/.claude/logs/scheduled/retention-sweep.launchd.log",
+      "notes": {
+        "ProgramArguments": [
+          "Started through run-python.sh, under the uv-managed Python 3.14 the hooks use.",
+          "The sweeper's own #!/usr/bin/env python3 resolves to Apple's /usr/bin/python3 on",
+          "launchd's PATH, which is 3.9 and lacks os.path.realpath(strict=), so every",
+          "containment check would raise."
+        ],
+        "env.PATH": [
+          "Puts uv on PATH for run-python.sh's interpreter lookup. When that lookup fails it",
+          "falls back to python3, which this PATH resolves to Homebrew's rather than 3.9."
+        ],
+        "StartInterval": [
+          "Hourly, as the systemd timer's OnCalendar=hourly. RunAtLoad stands in for its",
+          "Persistent=true: launchd has no catch-up for a machine that was asleep."
+        ]
+      }
     }
   ]
 }

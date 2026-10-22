@@ -47,8 +47,19 @@ pid inherited by another user's process answers "dead" (EPERM), but reuse means 
 original exited, so the file it named really is stale. This is NOT the origin
 reaper's problem, which sends SIGTERM and does need identity.sh's (pid, procStart).
 
+Three optional row fields narrow what a row may remove. G20 and G21 (the artifacts and
+their state registry) use them to keep every rule the SessionStart prune hook had:
+
+  files_only  true: only regular files match, never a directory or a link. After the
+              row, --apply removes the directories under its prefix that it left empty.
+  keep        names from KEEP_RULES. A file any of them protects is never removed.
+  cap_env     a variable whose value, in days, replaces the cap. 0 disables the row.
+              Read from the environment, then from ~/.claude/settings.json's env
+              block, so a timer that never sees the session's env still honours it.
+
 Test seams: RETENTION_MANIFEST, RETENTION_SIBLING_CANDIDATES (G12's live-sibling
-search list), RETENTION_STATE_DIR (run marker and measurements), RETENTION_LOCK.
+search list), RETENTION_STATE_DIR (run marker and measurements), RETENTION_LOCK,
+RETENTION_SYSNAME (the uname -s the host label branches on), ARTIFACT_SCUTIL.
 """  # noqa: E501
 
 from __future__ import annotations
@@ -59,7 +70,9 @@ import json
 import os
 import re
 import shutil
+import socket
 import stat
+import subprocess
 import sys
 import time
 
@@ -69,7 +82,11 @@ PROG = "retention-sweep"
 # self-managed; G8/G9/G10/G11/G13 are rotate/truncate, gated separately below.
 # Membership is tested against the whitespace-separated tokens of this literal, so a
 # manifest id can never match by being a substring of it.
-APPLY_ROWS = " G1 G2 G3 G4 G5 G6 G7 G12 G14 G15 G16 G17 "
+APPLY_ROWS = " G1 G2 G3 G4 G5 G6 G7 G12 G14 G15 G16 G17 G20 G21 "
+
+# The names a row's `keep` list may use. A source literal for the same reason as
+# APPLY_ROWS, and an unknown name refuses the whole row rather than being ignored.
+KEEP_RULES = ("executable", "pinned", "starred")
 
 # The rotate/truncate rows. A source literal, same reasoning as APPLY_ROWS: reading it
 # from the manifest would mean a manifest edit could grant itself a rewrite path. Acting
@@ -749,6 +766,121 @@ def row_globs(row) -> list[str]:
     return globs
 
 
+# --- artifact rows --------------------------------------------------------------------
+# G20 and G21 replaced the SessionStart hook prune-artifacts.sh, and the hook read its
+# window, its host label and its star list from settings.json's env block, which Claude
+# Code exports into a session. A launchd or systemd job never sees that block. Reading
+# the file directly keeps one source of truth: the k3s nodes' CLAUDE_ARTIFACT_STARS_FILE
+# and CLAUDE_ARTIFACTS_HOST reach the timer the same way they reach a session.
+
+
+def load_settings_env(home: str) -> dict[str, str]:
+    """The string values of ~/.claude/settings.json's env block, or {} if unreadable."""
+    try:
+        with open(f"{home}/.claude/settings.json", "rb") as fh:
+            env = json.load(fh).get("env")
+    except (OSError, ValueError, AttributeError):
+        return {}
+    if not isinstance(env, dict):
+        return {}
+    return {k: v for k, v in env.items() if isinstance(v, str)}
+
+
+def setting(cfg: dict, name: str) -> str | None:
+    """The environment's value first, then settings.json's. Empty counts as unset."""
+    return os.environ.get(name) or cfg["settings_env"].get(name) or None
+
+
+def local_host_name() -> str | None:
+    """`scutil --get LocalHostName`, the one subprocess in this script.
+
+    scutil goes by absolute path so the answer does not depend on PATH, as in
+    lib/artifact-state.sh. It runs with a fixed argv and deletes nothing.
+    """
+    scutil = os.environ.get("ARTIFACT_SCUTIL") or "/usr/sbin/scutil"
+    try:
+        done = subprocess.run(
+            [scutil, "--get", "LocalHostName"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    name = done.stdout.strip()
+    return name if done.returncode == 0 and name else None
+
+
+def artifact_host_label(cfg: dict) -> str:
+    """The label this host's star lines carry: artifact_host_label in the shell lib.
+
+    The two must agree, or every starred artifact here counts as unstarred. The order
+    is the lib's: CLAUDE_ARTIFACTS_HOST, then LocalHostName on macOS, then the short
+    hostname, then "local". Run unsandboxed, as launchd and systemd run it: inside
+    Claude Code's Bash sandbox scutil can print a different LocalHostName.
+    """
+    host = setting(cfg, "CLAUDE_ARTIFACTS_HOST")
+    sysname = os.environ.get("RETENTION_SYSNAME") or os.uname().sysname
+    if not host and sysname == "Darwin":
+        host = local_host_name()
+    if not host:
+        host = socket.gethostname().split(".", 1)[0]
+    return host or "local"
+
+
+def load_stars(cfg: dict) -> tuple[set[str] | None, str]:
+    """This host's starred relpaths, and a refusal reason when the list is unreadable.
+
+    A list that exists but cannot be read would look empty, and an empty list releases
+    every starred artifact. So the caller refuses the row instead of sweeping it.
+    """
+    path = setting(cfg, "CLAUDE_ARTIFACT_STARS_FILE") or (
+        f"{cfg['home']}/.claude/artifact-stars.txt"
+    )
+    if not os.path.exists(path):
+        return set(), ""
+    try:
+        with open(path, encoding="utf-8", errors="surrogateescape") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return None, f"star list {path} is unreadable"
+    label = artifact_host_label(cfg) + "/"
+    return {line[len(label) :] for line in lines if line.startswith(label)}, ""
+
+
+def keep_reason(keep: list[str], rel: str, f: str, stars: set[str]) -> str:
+    """Why a keep rule protects `f` (relpath `rel` under its prefix), or ""."""
+    if "executable" in keep:
+        try:
+            if file_mode(f) & stat.S_IXUSR:
+                return "executable (u+x)"
+        except OSError:
+            return "unreadable mode"
+    if "pinned" in keep and rel.startswith("pinned/"):
+        return "under pinned/"
+    # A literal match on the whole relpath, as the hook's grep -xF was: a star on a
+    # directory or a pattern protects nothing else.
+    if "starred" in keep and rel in stars:
+        return "starred"
+    return ""
+
+
+def remove_empty_dirs(prefix: str) -> None:
+    """Remove each empty directory under `prefix`, deepest first, never `prefix` itself.
+
+    A files_only row leaves the directories it emptied behind. rmdir refuses anything
+    not empty, a symlink included, and os.walk does not follow links into another tree.
+    """
+    if not os.path.isdir(prefix) or os.path.islink(prefix):
+        return
+    for here, dirs, _files in os.walk(prefix, topdown=False):
+        for name in dirs:
+            d = os.path.join(here, name)
+            with contextlib.suppress(OSError):
+                os.rmdir(d)
+
+
 # --- the sweep ------------------------------------------------------------------------
 
 
@@ -812,13 +944,40 @@ def sweep(cfg: dict) -> int:
         kept_reason = ""
         min_age = grace_seconds(grace)
 
+        # The row options. Any of them can refuse the whole row, and a refusal acts on
+        # nothing while the row is still counted and reported.
+        files_only = row_field(row, "files_only") is True
+        keep = row_field(row, "keep") or []
+        refusal = ""
+        stars: set[str] = set()
+        age_cap = age_cap_seconds(cap)
+        if not isinstance(keep, list) or any(k not in KEEP_RULES for k in keep):
+            refusal = f"keep not understood: {json.dumps(keep)}"
+        elif "starred" in keep and (acting or rotating):
+            loaded, refusal = load_stars(cfg)
+            stars = loaded or set()
+        cap_env = row_field(row, "cap_env")
+        days = setting(cfg, cap_env) if isinstance(cap_env, str) and cap_env else None
+        if refusal or days is None:
+            pass  # unset: the manifest's cap stands
+        elif not days.isdigit():
+            refusal = f"{cap_env} not understood: {days}"
+        elif int(days) == 0:
+            refusal = f"disabled by {cap_env}=0"
+        else:
+            age_cap = int(days) * 86400
+        prefixes: list[str] = []
+
         for g in row_globs(row):
             expanded = home + g[1:] if g.startswith("~") else g
             if "cwd" in expanded:
                 continue  # G11: per-cwd, not a fixed glob
             prefix = glob_prefix(expanded)
+            prefixes.append(prefix)
             for f in expand_words(expanded):
                 if not os.path.exists(f):
+                    continue
+                if files_only and (os.path.islink(f) or not os.path.isfile(f)):
                     continue
                 count += 1
                 b = (dir_bytes(f) if os.path.isdir(f) else file_size(f)) or 0
@@ -830,6 +989,9 @@ def sweep(cfg: dict) -> int:
                         oldest_days = age_days
 
                 if not (acting or rotating):
+                    continue
+                if refusal:
+                    kept_reason = refusal
                     continue
                 if mtime is None:
                     kept_reason = "unreadable mtime"
@@ -845,6 +1007,12 @@ def sweep(cfg: dict) -> int:
                 if not contained(prefix, f):
                     kept_reason = "outside its glob prefix or a symlink"
                     continue
+
+                if keep:
+                    reason = keep_reason(keep, f[len(prefix) + 1 :], f, stars)
+                    if reason:
+                        kept_reason = reason
+                        continue
 
                 # Gate 3: the rule itself.
                 if rule.startswith("prune-dead-pid"):
@@ -868,7 +1036,7 @@ def sweep(cfg: dict) -> int:
                         continue
                     _out(f"  {id_}: live sibling is {sibling}")
                 elif rule == "prune-age":
-                    n = age_cap_seconds(cap)
+                    n = age_cap
                     if n is None:
                         kept_reason = f"cap not understood: {cap}"
                         continue
@@ -949,6 +1117,10 @@ def sweep(cfg: dict) -> int:
                     continue
                 pruned += 1
                 pruned_bytes += b
+
+        if acting and files_only and not refusal:
+            for prefix in prefixes:
+                remove_empty_dirs(prefix)
 
         line = (
             f"{tag} {id_}: rule={rule} cap={cap} matched={count} bytes={bytes_} "
@@ -1056,6 +1228,7 @@ def main(argv: list[str]) -> int:
         "state_dir": state_dir,
         "marker": f"{state_dir}/.retention-sweep-last-run",
         "measured": f"{state_dir}/.retention-sweep-measured.json",
+        "settings_env": load_settings_env(home),
         "now": int(time.time()),
         "measured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }

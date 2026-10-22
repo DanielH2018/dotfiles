@@ -47,8 +47,9 @@ updates: touch only what the request or the new status requires and leave the re
 the file byte-identical. A small requested change (a number, a line, one section) isn't
 license to also rewrite phrasing, resize headers, or "improve" parts nobody asked about.
 
-`prune-artifacts.sh` deletes an artifact once it goes `CLAUDE_ARTIFACT_RETENTION_DAYS`
-without an update. `settings.base.json` sets that to 30 days. A doc that keeps getting
+`retention-sweep` (manifest row G20, run hourly by a timer) deletes an artifact once
+it goes `CLAUDE_ARTIFACT_RETENTION_DAYS` without an update. `settings.base.json` sets
+that to 30 days. A doc that keeps getting
 updated as work lands stays put, and an abandoned one clears itself out. Executable
 files in the artifacts directory are never pruned — a generated script is a tool, not
 a report. If you write one there, `chmod +x` it or it will age out with the docs.

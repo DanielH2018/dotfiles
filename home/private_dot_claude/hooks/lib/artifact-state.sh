@@ -1,8 +1,9 @@
 # shellcheck shell=bash
 # Shared state for the artifact hooks: where they keep their state, the repository each
 # artifact was written from, the star list, and this host's label. link-artifact.sh records
-# the repository; the artifact browser (serve-artifacts.sh) and the sweep
-# (prune-artifacts.sh) read the rest.
+# the repository; the artifact browser (serve-artifacts.sh) reads the rest.
+# retention-sweep's G20 row reimplements artifact_host_label in Python, and reads the star
+# list itself.
 
 # shellcheck disable=SC2034  # read by the hooks that source this
 ARTIFACT_STATE_DIR="${CLAUDE_ARTIFACT_STATE_DIR:-$HOME/.claude/logs/artifact-state}"
@@ -12,7 +13,7 @@ ARTIFACT_STATE_DIR="${CLAUDE_ARTIFACT_STATE_DIR:-$HOME/.claude/logs/artifact-sta
 ARTIFACT_REPOS_FILE="$ARTIFACT_STATE_DIR/repos.tsv"
 
 # The star list: one `<host>/<relpath>` line per artifact the browser has starred, which
-# prune-artifacts.sh never deletes. Kept out of the artifacts dir and out of
+# retention-sweep never deletes. Kept out of the artifacts dir and out of
 # ARTIFACT_STATE_DIR, because both are swept by mtime and a list nobody touched for a month
 # would be deleted with them. The k3s nodes set CLAUDE_ARTIFACT_STARS_FILE in
 # settings.base.json; a workstation's loopback browser owns the default path.
@@ -32,8 +33,8 @@ ARTIFACT_STARS_FILE="${CLAUDE_ARTIFACT_STARS_FILE:-$HOME/.claude/artifact-stars.
 # LocalHostName from the one it prints outside. On one laptop on 2026-10-21 it printed
 # MacBook-Pro sandboxed and MacBook-Pro-2 unsandboxed. The hooks run unsandboxed, so the
 # browser, the sweep and the star list all carry the unsandboxed name. Do not run
-# prune-artifacts.sh from a sandboxed shell: under the other label it matches no star
-# and deletes starred artifacts.
+# `retention-sweep --apply` from a sandboxed shell: under the other label it matches no
+# star and deletes starred artifacts.
 artifact_host_label() {
   local host="${CLAUDE_ARTIFACTS_HOST:-}"
   if [[ -z "$host" && "$(uname -s)" == Darwin ]]; then
@@ -54,8 +55,8 @@ ARTIFACT_SERVER_ROOT="$HOME/.claude/.artifacts-root"
 #
 # Does nothing where the list is read-only to this host (CLAUDE_ARTIFACTS_BASE_URL: the
 # cluster's browser owns it) or cannot be read and rewritten. Call it before anything
-# reads the list for this host: prune-artifacts.sh runs before serve-artifacts.sh at
-# session start.
+# reads the list for this host. serve-artifacts.sh calls it at session start; the hourly
+# retention-sweep does not, so a star stays under its old label until the browser starts.
 artifact_migrate_stars() {
   local host="$1" stars="$ARTIFACT_STARS_FILE" old olds=() tmp
   [[ -n "${CLAUDE_ARTIFACTS_BASE_URL:-}" ]] && return 0

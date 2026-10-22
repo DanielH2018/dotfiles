@@ -105,8 +105,13 @@ test('removal is exactly one file unlink, one tree remove, plus rmdir', () => {
   // rather than trusting an emptiness check that could race a writer.
   assert.match(codeOnly, /\bos\.rmdir\(f\)/, 'prune-empty-dir must use rmdir, not a recursive remove');
 
-  // Nothing is delegated to another process, so no rm/mv/tail can hide behind a shell.
-  assert.doesNotMatch(codeOnly, /\bsubprocess\b|\bos\.system\b|\bos\.exec|\bos\.popen\b/, 'the sweeper must not shell out');
+  // Nothing is delegated to another process, so no rm/mv/tail can hide behind a shell. The
+  // one exception reads the host label, with a fixed argv, inside local_host_name.
+  const hostFn = defOf(codeOnly, 'local_host_name');
+  assert.match(hostFn.body, /subprocess\.run\(\s*\[scutil, "--get", "LocalHostName"\]/, 'the one subprocess runs scutil --get LocalHostName');
+  const outsideHost = codeOnly.slice(0, hostFn.start) + codeOnly.slice(hostFn.end);
+  assert.doesNotMatch(outsideHost.replace(/^import subprocess$/m, ''), /\bsubprocess\b|\bos\.system\b|\bos\.exec|\bos\.popen\b/, 'the sweeper must not shell out');
+  assert.doesNotMatch(codeOnly, /\bos\.system\b|\bos\.exec|\bos\.popen\b|shell=True/, 'not even the host label goes through a shell');
 });
 
 // Slice 3 deferred rotate/truncate entirely. Slice 4 implements them, so the guarantee
@@ -186,7 +191,7 @@ test('the acting and rotating row sets are source literals covering their rules 
   assert.ok(m, 'APPLY_ROWS literal not found');
   const rows = m[1].trim().split(/\s+/).sort();
   assert.deepStrictEqual(rows,
-    ['G1', 'G12', 'G14', 'G15', 'G16', 'G17', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7'].sort());
+    ['G1', 'G12', 'G14', 'G15', 'G16', 'G17', 'G2', 'G20', 'G21', 'G3', 'G4', 'G5', 'G6', 'G7'].sort());
 
   // The rotate/truncate rows must never be reachable through --apply alone.
   for (const deferred of ['G8', 'G9', 'G10', 'G11', 'G13']) {
@@ -207,12 +212,12 @@ test('the acting and rotating row sets are source literals covering their rules 
 
 // G18 (cmdparse-shadow.jsonl, the M02 census sink) left with its writer: claude-guard slice 6
 // deleted block-dangerous-bash.sh, so nothing appends to that log any more and the row is
-// gone rather than renumbered.
-test('manifest has all 20 rows (the 19-row spec table plus G19, minus G18) with required schema fields', () => {
+// gone rather than renumbered. G20 and G21 replaced the SessionStart artifact prune hook.
+test('manifest has all 22 rows (the 19-row spec table plus G19-G21, minus G18) with required schema fields', () => {
   const manifest = JSON.parse(fs.readFileSync(MANIFEST, 'utf8'));
-  assert.strictEqual(manifest.length, 20);
+  assert.strictEqual(manifest.length, 22);
   const ids = manifest.map((r) => r.id).sort();
-  const expected = ['N1', 'N2', ...Array.from({ length: 19 }, (_, i) => `G${i + 1}`)]
+  const expected = ['N1', 'N2', ...Array.from({ length: 21 }, (_, i) => `G${i + 1}`)]
     .filter((id) => id !== 'G18')
     .sort();
   assert.deepStrictEqual(ids, expected);
@@ -883,4 +888,217 @@ test('directory bytes are apparent file bytes: a hard link counts once and direc
   runSweep(m);
 
   assert.strictEqual(measuredOf(root).G1.bytes, 150);
+});
+
+// --- G20/G21: the artifact rows that replaced the SessionStart prune hook -------------
+// Each case is one rule prune-artifacts.sh kept. The rows' window, host label and star
+// list come from variables a Claude session exports, so the ambient copies are dropped
+// here: a test run from a session would otherwise sweep under the real ones.
+
+const DAY = 86400 * 1000;
+const ARTIFACT_VARS = ['CLAUDE_ARTIFACT_RETENTION_DAYS', 'CLAUDE_ARTIFACTS_HOST', 'CLAUDE_ARTIFACT_STARS_FILE'];
+
+const artifactRow = (root, extra = {}) => ({
+  id: 'G20', path: path.join(root, 'artifacts', '**', '*'), kind: 'file-glob', rule: 'prune-age',
+  cap: '30d', cap_env: 'CLAUDE_ARTIFACT_RETENTION_DAYS', files_only: true,
+  keep: ['executable', 'pinned', 'starred'], grace: '1h', owner: 'retention-sweep', finding: 'test',
+  ...extra,
+});
+
+function sweepArtifacts(root, rows, env = {}) {
+  const saved = Object.fromEntries(ARTIFACT_VARS.map((k) => [k, process.env[k]]));
+  for (const k of ARTIFACT_VARS) delete process.env[k];
+  try {
+    return runSweep(manifestFile(root, rows), ['--apply'], {
+      CLAUDE_ARTIFACTS_HOST: 'testhost',
+      CLAUDE_ARTIFACT_STARS_FILE: path.join(root, 'stars.txt'),
+      ...env,
+    });
+  } finally {
+    for (const [k, v] of Object.entries(saved)) if (v !== undefined) process.env[k] = v;
+  }
+}
+
+test('G20 prunes stale artifact files, not the directories that hold fresh ones, and drops emptied dirs', { skip }, () => {
+  const root = scratch(os.tmpdir(), 'retention-art-');
+  const art = path.join(root, 'artifacts');
+  const stale = aged(path.join(art, 'stale.html'), 'x', 40 * DAY);
+  const fresh = aged(path.join(art, 'fresh.html'), 'x', 29 * DAY);
+  aged(path.join(art, 'k3s', 'old.html'), 'x', 40 * DAY);
+  fs.utimesSync(path.join(art, 'k3s'), ago(40 * DAY), ago(40 * DAY));
+  // A directory's mtime ignores edits to the files under it, so an old directory can hold
+  // a live page. files_only is what keeps the sweep from removing it as one tree.
+  const live = aged(path.join(art, 'plan', 'slice.html'), 'x', DAY);
+  fs.utimesSync(path.join(art, 'plan'), ago(40 * DAY), ago(40 * DAY));
+
+  sweepArtifacts(root, [artifactRow(root)]);
+
+  assert.ok(!fs.existsSync(stale), 'a 40-day-old artifact goes');
+  assert.ok(fs.existsSync(fresh), 'one inside the 30-day window stays');
+  assert.ok(!fs.existsSync(path.join(art, 'k3s')), 'a directory the sweep emptied goes too');
+  assert.ok(fs.existsSync(live), 'a fresh file inside an old directory survives');
+  assert.ok(fs.existsSync(art), 'the artifacts directory itself is never removed');
+});
+
+test('G20 keeps an executable however old, and the directory it sits in', { skip }, () => {
+  const root = scratch(os.tmpdir(), 'retention-art-x-');
+  const art = path.join(root, 'artifacts');
+  const script = aged(path.join(art, 'mx-ergo', 'setup.sh'), 'x', 60 * DAY);
+  fs.chmodSync(script, 0o755);
+  fs.utimesSync(script, ago(60 * DAY), ago(60 * DAY));
+  const doc = aged(path.join(art, 'mx-ergo', 'notes.sh'), 'x', 60 * DAY);
+
+  const out = sweepArtifacts(root, [artifactRow(root)]);
+
+  assert.ok(fs.existsSync(script), 'the u+x bit spares it, not the extension');
+  assert.ok(!fs.existsSync(doc), 'a non-executable .sh is still a stale file');
+  assert.match(out, /kept_example="executable \(u\+x\)"/);
+  assert.ok(fs.existsSync(path.dirname(script)), 'the directory is not empty, so the empty-dir pass leaves it');
+});
+
+test('G20 keeps files under the top-level pinned/ at any depth, and nowhere else', { skip }, () => {
+  const root = scratch(os.tmpdir(), 'retention-art-pin-');
+  const art = path.join(root, 'artifacts');
+  const top = aged(path.join(art, 'pinned', 'architecture.html'), 'x', 60 * DAY);
+  const nested = aged(path.join(art, 'pinned', 'maps', 'network.html'), 'x', 60 * DAY);
+  const lookalike = aged(path.join(art, 'unpinned', 'pinned', 'page.html'), 'x', 60 * DAY);
+
+  sweepArtifacts(root, [artifactRow(root)]);
+
+  assert.ok(fs.existsSync(top) && fs.existsSync(nested), 'pinned pages survive');
+  assert.ok(!fs.existsSync(lookalike), 'a pinned/ further down the tree is not exempt');
+});
+
+test('G20 keeps a starred artifact: this host\'s lines only, each matched as a literal relpath', { skip }, () => {
+  const root = scratch(os.tmpdir(), 'retention-art-star-');
+  const art = path.join(root, 'artifacts');
+  fs.writeFileSync(path.join(root, 'stars.txt'),
+    'testhost/starred.html\ntesthost/sub/deep.html\nother-host/elsewhere.html\ntesthost/[ab].html\ntesthost/plan\n');
+  const starred = aged(path.join(art, 'starred.html'), 'x', 60 * DAY);
+  const deep = aged(path.join(art, 'sub', 'deep.html'), 'x', 60 * DAY);
+  const bracket = aged(path.join(art, '[ab].html'), 'x', 60 * DAY);
+  const gone = ['elsewhere.html', 'a.html', 'plan.html'].map((n) => aged(path.join(art, n), 'x', 60 * DAY));
+
+  sweepArtifacts(root, [artifactRow(root)]);
+
+  for (const f of [starred, deep, bracket]) assert.ok(fs.existsSync(f), `${path.relative(art, f)} is starred`);
+  for (const f of gone) {
+    assert.ok(!fs.existsSync(f), `${path.relative(art, f)} is another host's star, a glob match or a prefix, not a star`);
+  }
+});
+
+test('an unreadable star list refuses the artifact row, and the state row still runs',
+  { skip: skip || (process.getuid && process.getuid() === 0 ? 'root reads a 0000 file' : false) }, () => {
+    const root = scratch(os.tmpdir(), 'retention-art-unread-');
+    const stars = path.join(root, 'stars.txt');
+    fs.writeFileSync(stars, 'testhost/starred.html\n');
+    fs.chmodSync(stars, 0o000);
+    const starred = aged(path.join(root, 'artifacts', 'starred.html'), 'x', 60 * DAY);
+    const stale = aged(path.join(root, 'artifacts', 'stale.html'), 'x', 60 * DAY);
+    const entry = aged(path.join(root, 'state', 'abc123.current'), 'x', 60 * DAY);
+    const stateRow = artifactRow(root, { id: 'G21', path: path.join(root, 'state', '**', '*'), keep: undefined });
+
+    let out;
+    try {
+      out = sweepArtifacts(root, [artifactRow(root), stateRow]);
+    } finally {
+      fs.chmodSync(stars, 0o644);
+    }
+
+    assert.ok(fs.existsSync(starred) && fs.existsSync(stale), 'the whole artifact row waits');
+    assert.match(out, /G20: .*kept_example="star list .* is unreadable"/);
+    assert.ok(!fs.existsSync(entry), 'the registry row has no star rule and still sweeps');
+  });
+
+test('cap_env replaces the cap in days, 0 disables the row, and a non-number refuses it', { skip }, () => {
+  const root = scratch(os.tmpdir(), 'retention-art-env-');
+  const f = aged(path.join(root, 'artifacts', 'stale.html'), 'x', 9 * DAY);
+
+  let out = sweepArtifacts(root, [artifactRow(root)], { CLAUDE_ARTIFACT_RETENTION_DAYS: '0' });
+  assert.ok(fs.existsSync(f), '0 is the escape hatch');
+  assert.match(out, /disabled by CLAUDE_ARTIFACT_RETENTION_DAYS=0/);
+
+  out = sweepArtifacts(root, [artifactRow(root)], { CLAUDE_ARTIFACT_RETENTION_DAYS: 'week' });
+  assert.ok(fs.existsSync(f), 'a value the sweeper cannot read acts on nothing');
+  assert.match(out, /CLAUDE_ARTIFACT_RETENTION_DAYS not understood: week/);
+
+  sweepArtifacts(root, [artifactRow(root)]);
+  assert.ok(fs.existsSync(f), 'nine days is inside the manifest\'s 30d cap');
+
+  sweepArtifacts(root, [artifactRow(root)], { CLAUDE_ARTIFACT_RETENTION_DAYS: '7' });
+  assert.ok(!fs.existsSync(f), 'and outside a 7-day override');
+});
+
+// The timer case: launchd and systemd export none of the session's env, so the k3s
+// nodes' star file and label have to come from settings.json itself.
+test('with the variables unset, the window, host label and star list come from settings.json', { skip }, () => {
+  const root = scratch(os.tmpdir(), 'retention-art-settings-');
+  const stars = path.join(root, 'cluster-stars.txt');
+  fs.writeFileSync(stars, 'daniel-box/starred.html\n');
+  fs.mkdirSync(path.join(root, '.claude'));
+  fs.writeFileSync(path.join(root, '.claude', 'settings.json'), JSON.stringify({ env: {
+    CLAUDE_ARTIFACT_RETENTION_DAYS: '7', CLAUDE_ARTIFACTS_HOST: 'daniel-box', CLAUDE_ARTIFACT_STARS_FILE: stars,
+  } }));
+  const starred = aged(path.join(root, 'artifacts', 'starred.html'), 'x', 9 * DAY);
+  const stale = aged(path.join(root, 'artifacts', 'stale.html'), 'x', 9 * DAY);
+
+  sweepArtifacts(root, [artifactRow(root)], {
+    CLAUDE_ARTIFACTS_HOST: '', CLAUDE_ARTIFACT_STARS_FILE: '',
+  });
+
+  assert.ok(fs.existsSync(starred), 'the star in settings.json\'s list under its label holds');
+  assert.ok(!fs.existsSync(stale), 'settings.json\'s 7-day window applies');
+});
+
+// The browser writes star lines under lib/artifact-state.sh's artifact_host_label, and the
+// sweeper reimplements it. So the star line here comes from the lib itself, run under the
+// same stubs: if the two ever disagree, the starred artifact is deleted and this fails.
+test('on macOS the sweeper\'s host label is the lib\'s: scutil\'s LocalHostName', { skip: skip || skipUnless('bash') }, () => {
+  const root = scratch(os.tmpdir(), 'retention-art-scutil-');
+  const bin = path.join(root, 'bin');
+  fs.mkdirSync(bin);
+  const stub = (name, body) => {
+    fs.writeFileSync(path.join(bin, name), `#!/bin/sh\n${body}\n`);
+    fs.chmodSync(path.join(bin, name), 0o755);
+  };
+  stub('uname', 'echo Darwin');
+  stub('hostname', 'echo fakehost-2');
+  stub('scutil', '[ "$1 $2" = "--get LocalHostName" ] && echo fakehost');
+  const scutil = path.join(bin, 'scutil');
+  const lib = srcPath('private_dot_claude', 'hooks', 'lib', 'artifact-state.sh');
+  const label = execFileSync('bash', ['-c', '. "$1"; artifact_host_label', '-', lib], {
+    env: { HOME: root, PATH: `${bin}:/usr/bin:/bin`, ARTIFACT_SCUTIL: scutil }, encoding: 'utf8',
+  });
+  assert.strictEqual(label, 'fakehost', 'the lib takes LocalHostName over hostname -s');
+  fs.writeFileSync(path.join(root, 'stars.txt'), `${label}/starred.html\n`);
+  const starred = aged(path.join(root, 'artifacts', 'starred.html'), 'x', 60 * DAY);
+
+  sweepArtifacts(root, [artifactRow(root)], {
+    CLAUDE_ARTIFACTS_HOST: '', RETENTION_SYSNAME: 'Darwin', ARTIFACT_SCUTIL: scutil,
+  });
+
+  assert.ok(fs.existsSync(starred), 'the star the lib\'s label wrote holds in the sweep');
+});
+
+test('a keep name the sweeper does not implement refuses the row', { skip }, () => {
+  const root = scratch(os.tmpdir(), 'retention-art-keep-');
+  const f = aged(path.join(root, 'artifacts', 'stale.html'), 'x', 60 * DAY);
+
+  const out = sweepArtifacts(root, [artifactRow(root, { keep: ['executable', 'recent'] })]);
+
+  assert.ok(fs.existsSync(f));
+  assert.match(out, /keep not understood/);
+});
+
+test('the real manifest\'s G20 and G21 keep every rule the prune hook had', () => {
+  const rows = Object.fromEntries(JSON.parse(fs.readFileSync(MANIFEST, 'utf8')).map((r) => [r.id, r]));
+  assert.strictEqual(rows.G20.path, '~/.claude/artifacts/**/*');
+  assert.deepStrictEqual([...rows.G20.keep].sort(), ['executable', 'pinned', 'starred']);
+  assert.strictEqual(rows.G21.path, '~/.claude/logs/artifact-state/**/*');
+  for (const id of ['G20', 'G21']) {
+    assert.strictEqual(rows[id].rule, 'prune-age');
+    assert.strictEqual(rows[id].cap, '30d');
+    assert.strictEqual(rows[id].cap_env, 'CLAUDE_ARTIFACT_RETENTION_DAYS');
+    assert.strictEqual(rows[id].files_only, true, `${id} must never remove a directory as one tree`);
+  }
 });

@@ -42,8 +42,8 @@ LOG="$HOME/.claude/.artifacts-server.log"
 # The server reads one subdirectory per host under its root, because upstream mounts every
 # host's tree side by side. A workstation has one tree, so the root holds one symlink to it.
 ROOT="$ARTIFACT_SERVER_ROOT"
-# The same label link-artifact.sh puts in /a/<host>/ links, and prune-artifacts.sh looks
-# for in the star list.
+# The same label link-artifact.sh puts in /a/<host>/ links, and retention-sweep's G20 row
+# looks for in the star list.
 HOST=$(artifact_host_label)
 REPOS_FILE="$ARTIFACT_REPOS_FILE"
 # Where CLAUDE_ARTIFACTS_BASE_URL is set, the cluster's browser is the one the links open
@@ -62,8 +62,8 @@ stamp=$(
 
 mkdir -p "$DIR" "$ROOT"
 # The old link's name is the only record of the label older star lines carry, so move
-# them before deleting it. prune-artifacts.sh has already done this at session start; a
-# star clicked in the old server since then is what this pass catches.
+# them before deleting it. This is the only caller since the SessionStart prune hook went,
+# so a label change reaches the star list the next time the browser starts.
 artifact_migrate_stars "$HOST"
 # A link left under an older label would list every artifact twice, once per label.
 find "$ROOT" -mindepth 1 -maxdepth 1 -type l ! -name "$HOST" -delete 2>/dev/null

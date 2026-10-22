@@ -5,7 +5,7 @@
 #   timeout: 10
 #   order: 30
 #   command: bash ~/.claude/hooks/lib/run-python.sh memory-upkeep.py
-# The startup slot prune-artifacts.sh sweeps in, for memories. Nothing re-checks a
+# A SessionStart sweep over memories. Nothing re-checks a
 # memory when the code it describes changes, and nothing bounds the index that is
 # injected into every session, so both drift one way. This reports memories naming
 # paths that are gone and an index over its pointer-line cap, and never edits: a

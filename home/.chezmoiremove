@@ -211,3 +211,7 @@ Scripts/wslhost-interop-reaper/wslhost-interop-reaper-hidden.vbs
 # never fired. Its launchd job was never activated and its kick log was never written. The
 # .chezmoiignore gate that hid it off macOS went with it, so this entry reaches every OS.
 .local/bin/logi-dev-mgr-kick
+
+# #733: the SessionStart artifact sweep moved into retention-sweep as manifest rows G20 and
+# G21, which run hourly from a timer instead of once per session.
+.claude/hooks/prune-artifacts.sh
