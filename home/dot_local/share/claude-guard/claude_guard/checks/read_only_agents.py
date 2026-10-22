@@ -14,8 +14,19 @@ one of them:
   - any git or gh verb outside a read-only set.
 
 A `$( )` body is judged as a command of its own. So is the command after a reserved word
-(`then`, `do`), and, for a command this module does not know, each later word that names
-one it judges (`uv run git push`) and each argument that holds one as a command string.
+(`then`, `do`). A command this module does not know may be a runner, so the arm judges what
+it could run without knowing which runner it is:
+
+  - each later word that names a command this module judges (`uv run git push`,
+    `ionice git push`), with every assignment ahead of it in the segment;
+  - each argument with a space in it, as shell text of its own (`watch 'true; rm a'`,
+    `flock l -c 'echo x > a'`). Text that does not parse is denied when a word in it names
+    a judged command.
+
+The scan stops at a code runner (`python`, `node`, `psql`, ...): the words after it are
+code in another language, which the denylist below leaves unjudged, and Python's `a > b`
+read as shell would be a redirect. So an unlisted wrapper no longer fails toward allow,
+and an unlisted code runner fails toward deny, which the deny-not-ask decision accepts.
 A function definition, a `case`, and a command named by a variable are denied, as is a
 command the segmenter cannot read, since none can be shown to be a read.
 
@@ -166,7 +177,26 @@ _WRAPPERS = frozenset(
     }
 )
 _SHELLS = frozenset(
-    {"bash", "sh", "zsh", "dash", "ksh", "fish", "eval", "source", ".", "su", "sudo", "doas"}
+    {
+        "bash",
+        "sh",
+        "zsh",
+        "dash",
+        "ksh",
+        "mksh",
+        "ash",
+        "hush",
+        "yash",
+        "csh",
+        "tcsh",
+        "fish",
+        "eval",
+        "source",
+        ".",
+        "su",
+        "sudo",
+        "doas",
+    }
 )
 
 
@@ -615,6 +645,18 @@ _DATA_READERS = frozenset(
 # Every name the arm judges as a command. A runner the wrapper table does not know
 # (`uv run`, `ionice`, `flock`, `busybox`, `parallel`) leaves one of these as a later word.
 _JUDGED = _SHELLS | frozenset({"git", "gh", "script"}) | frozenset(WRITERS)
+# The names judged as a LATER word. `.` is left out: there it is a directory operand
+# (`uv run ruff check .`), and a runner that execs its argv cannot reach the builtin. A
+# runner that hands its words to `sh -c` (`watch . /tmp/x`) reaches a scratch script, which
+# running `/tmp/x` reaches without a runner.
+_LATER_JUDGED = _JUDGED - {"."}
+# Programs whose later words are code in another language. The DECIDED denylist leaves
+# that code unjudged, and read as shell it is noise: `print(1 > 0)` is a redirect.
+_CODE_RUNNER = re.compile(
+    r"(python|pypy)[0-9.]*|node(js)?|deno|bun|php|lua(jit)?|Rscript|julia"
+    r"|sqlite3|psql|mysql|mariadb|duckdb"
+)
+_WORD_BREAK = re.compile(r"[\s;&|()<>`'\"]+")
 
 
 def _command_problem(
@@ -669,19 +711,35 @@ def _segment_problem(text: str, roots: tuple[str, ...], depth: int) -> str | Non
     if not argv:
         return None
     found = _command_problem(argv, words, via_xargs, roots)
-    if found or os.path.basename(argv[0]) in _JUDGED | _DATA_READERS:
+    name = os.path.basename(argv[0])
+    if found or name in _JUDGED | _DATA_READERS or _CODE_RUNNER.fullmatch(name):
         return found
-    # An unknown command may run another: judge each later word that names a command this
-    # module judges, and each argument that holds one as a command string.
+    # An unknown command may be a runner. Which runner it is does not matter: judge each
+    # later word that names a command this module judges, and each argument that could be
+    # a command string, up to the first code runner.
     for j in range(1, len(argv)):
-        if os.path.basename(argv[j]) in _JUDGED:
-            found = _command_problem(argv[j:], argv, via_xargs, roots)
+        later = os.path.basename(argv[j])
+        if _CODE_RUNNER.fullmatch(later):
+            return None
+        if later in _LATER_JUDGED:
+            # `words`, not `argv`: an assignment ahead of the runner reaches git too.
+            found = _command_problem(argv[j:], words, via_xargs, roots)
         elif any(c.isspace() for c in argv[j]):
-            first = argv[j].split(None, 1)[0]
-            if os.path.basename(first) in _JUDGED:
-                found = problem(argv[j], roots, depth + 1)
+            found = _string_problem(argv[j], roots, depth)
         if found:
             return found
+    return None
+
+
+def _string_problem(text: str, roots: tuple[str, ...], depth: int) -> str | None:
+    """Why an argument that may be a command string writes. Shell text is judged as a
+    command of its own. Text the segmenter cannot read (a regex, a pytest `-k` expression)
+    is denied only when a word in it names a judged command."""
+    if parse(text).ok:
+        return problem(text, roots, depth + 1)
+    names = {os.path.basename(w) for w in _WORD_BREAK.split(text)}
+    if names & _LATER_JUDGED:
+        return "passes a command string this hook cannot read"
     return None
 
 

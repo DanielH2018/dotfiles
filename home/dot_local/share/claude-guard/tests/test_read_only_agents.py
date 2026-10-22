@@ -111,6 +111,23 @@ HIDDEN_WRITES = [
     "cp --symbolic-link /repo/src/app.py /tmp/l",
     "rsync -a --link-dest=/repo/src /repo/src/ /tmp/rc/",
 ]
+# A runner no table names, so these rows hold for the class rather than for a list: the
+# command it runs is a later word, or a string whose first word is not the write.
+UNKNOWN_RUNNERS = [
+    "frobnicate rm src/a",
+    "frobnicate -x git push",
+    "frobnicate -c 'true; git push'",
+    "frobnicate 'echo x > src/a'",
+    "watch 'cd src && rm a'",
+    "watch 'true; rm src/a'",
+    "watch 'echo x > src/a'",
+    "flock /tmp/l -c 'timeout 5 rm src/a'",
+    "flock /tmp/l -c 'FOO=1 git push'",
+    "busybox ash -c 'cd s; rm a'",
+    "frobnicate 'rm src/a; <(('",
+    "GIT_EXTERNAL_DIFF=/tmp/x.sh uv run git diff",
+    "env GIT_EXTERNAL_DIFF=/tmp/x.sh uv run git diff",
+]
 READS = [
     "git status --short && git diff HEAD~1 -- src",
     "git log --oneline -5 | head -3",
@@ -130,6 +147,15 @@ READS = [
     "cp -r src /tmp/rc/",
     "git remote -v",
     "grep -rn 'git push' src",
+    # Behind a runner: a `.` operand is a directory, and code in another language
+    # (Python, SQL) is not shell text to judge.
+    "uv run ruff check .",
+    "uv run pytest -k 'a and not b' tests/",
+    "uv run python -c 'print(1 > 0)'",
+    "python3 -c 'import sys; print(sys.version_info >= (3, 11))'",
+    "psql -c 'select 1 where 2 > 1'",
+    "ssh host 'journalctl -u x | grep y'",
+    "timeout 60 uv run pytest -q",
 ]
 
 
@@ -154,6 +180,12 @@ def test_a_mutating_git_or_gh_verb_is_denied(env, agent, command):
 @pytest.mark.parametrize("agent", READ_ONLY_AGENTS)
 @pytest.mark.parametrize("command", HIDDEN_WRITES)
 def test_a_write_inside_a_compound_or_behind_a_runner_is_denied(env, agent, command):
+    assert decision(command, env, agent) == "deny"
+
+
+@pytest.mark.parametrize("agent", READ_ONLY_AGENTS)
+@pytest.mark.parametrize("command", UNKNOWN_RUNNERS)
+def test_a_write_behind_a_runner_no_table_names_is_denied(env, agent, command):
     assert decision(command, env, agent) == "deny"
 
 
