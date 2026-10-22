@@ -754,7 +754,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/chezmoi-edit-guard.sh",
+            "command": "~/.claude/hooks/chezmoi-guard.sh pre",
             "timeout": 10
           },
           {

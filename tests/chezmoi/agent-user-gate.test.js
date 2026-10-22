@@ -116,10 +116,17 @@ test("the agent runs neither the source re-add hook nor the operator's artifact 
   const commands = (s) => Object.values(s.hooks).flat().flatMap((g) => g.hooks).map((h) => h.command);
   const agent = commands(settings(true));
   const operator = commands(settings(false));
-  for (const hook of ['chezmoi-guard.sh', 'serve-artifacts.sh']) {
+  for (const hook of ['serve-artifacts.sh']) {
     assert.ok(!agent.some((c) => c.includes(hook)), `${hook} runs for the agent`);
   }
-  assert.ok(operator.some((c) => c.includes('chezmoi-guard.sh')));
+  // chezmoi-guard.sh registers twice. The re-add is its PostToolUse side; the `pre` side only
+  // refuses an edit to a template's output, which the agent needs as much as the operator.
+  const postCommands = (s) => s.hooks.PostToolUse.flatMap((g) => g.hooks).map((h) => h.command);
+  assert.ok(!postCommands(settings(true)).some((c) => c.includes('chezmoi-guard.sh')),
+    'the source re-add runs for the agent');
+  assert.ok(postCommands(settings(false)).some((c) => c.includes('chezmoi-guard.sh')));
+  assert.ok(agent.includes('~/.claude/hooks/chezmoi-guard.sh pre'), 'the agent lost the edit guard');
+  assert.ok(operator.includes('~/.claude/hooks/chezmoi-guard.sh pre'));
   assert.ok(agent.some((c) => c.includes('guard-pre-tool-use.sh')), 'the agent lost its guard hooks');
 });
 

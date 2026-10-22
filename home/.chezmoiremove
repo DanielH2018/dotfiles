@@ -198,3 +198,8 @@ Scripts/wslhost-interop-reaper/wslhost-interop-reaper-hidden.vbs
 # 2026-10-22: config-lint is repo tooling with no SKILL.md, so its script moved to bin/config-lint
 # and is run from the chezmoi checkout like bin/skill-usage.
 .claude/skills/config-lint
+
+# chezmoi-edit-guard.sh merged into chezmoi-guard.sh as its `pre` mode, which inlines the
+# managed-set cache that lib/chezmoi-managed-lib.sh held for the pair.
+.claude/hooks/chezmoi-edit-guard.sh
+.claude/hooks/lib/chezmoi-managed-lib.sh

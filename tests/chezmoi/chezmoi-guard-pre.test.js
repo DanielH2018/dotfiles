@@ -1,8 +1,8 @@
-// Regression guard for executable_chezmoi-edit-guard.sh (PreToolUse/Edit|Write, #574).
+// Regression guard for executable_chezmoi-guard.sh's `pre` mode (PreToolUse/Edit|Write, #574).
 // Drives the ACTUAL hook with a STUB `chezmoi` on PATH and a scratch HOME. The pair that
 // matters: an edit to a deployed file whose source is a template or script is denied and
 // names that source, while an edit to a plain managed file gets no decision, because
-// chezmoi-guard.sh's PostToolUse resync is the right handling for it.
+// the hook's own PostToolUse resync is the right handling for it.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
@@ -13,7 +13,7 @@ const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
 const { srcPath } = require('../lib/paths');
 
-const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_chezmoi-edit-guard.sh');
+const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_chezmoi-guard.sh');
 
 const skip = skipUnless('bash', 'jq');
 
@@ -57,8 +57,8 @@ const reset = () => {
   fs.rmSync(path.join(HOME, '.cache', 'claude-hooks'), { recursive: true, force: true });
 };
 
-function decide(file_path, extraEnv = {}, hook = HOOK) {
-  const out = execFileSync('bash', [hook], {
+function decide(file_path, extraEnv = {}, mode = 'pre') {
+  const out = execFileSync('bash', [HOOK, mode], {
     input: JSON.stringify({ tool_input: { file_path } }),
     encoding: 'utf8',
     env: {
@@ -98,15 +98,14 @@ test('the session-level override turns it off', { skip }, () => {
   assert.strictEqual(decide(path.join(HOME, '.claude', 'CLAUDE.md'), { CHEZMOI_EDIT_GUARD: 'off' }), null);
 });
 
-// ---- the managed-set cache, shared with chezmoi-guard.sh (#613) ------------------------
+// ---- the managed-set cache, shared with the post side (#613) ---------------------------
 
-test('a cache chezmoi-guard.sh wrote answers this hook without a second lookup', { skip }, () => {
+test('a cache the post side wrote answers the pre side without a second lookup', { skip }, () => {
   reset();
   const f = path.join(HOME, 'scratch.txt');
-  const postHook = srcPath('private_dot_claude', 'hooks', 'executable_chezmoi-guard.sh');
-  assert.strictEqual(decide(f, {}, postHook), null);
+  assert.strictEqual(decide(f, {}, 'post'), null);
   assert.strictEqual(decide(f), null);
-  assert.strictEqual(callCount('managed'), 1, 'both hooks must read one cache');
+  assert.strictEqual(callCount('managed'), 1, 'both sides must read one cache');
   assert.strictEqual(callCount('source-path'), 0);
 });
 
