@@ -9,7 +9,7 @@ disk, not just my replies.
 #### Formatting rules for written output
 
 - No emojis unless I ask. Reference code as `file:line`.
-- Paths to things I'll open (specs, plans, HTML reports, sandbox artifacts) go as short clickable markdown links, never raw. A raw path wraps in a terminal session and stops being clickable once it crosses a line boundary. Which form depends on the surface: a terminal session takes `[label](file:///abs/path)`; the Claude desktop app rejects `file://` outright and resolves a bare path against the session's granted folders, so there it is a path relative to the working directory, or the `http://127.0.0.1` URL for anything under `~/.claude/artifacts` (which the app will never grant, being inside its own config tree).
+- Paths to things I'll open (specs, plans, HTML reports, sandbox artifacts) go as short clickable markdown links, never raw: a raw path stops being clickable once it wraps. A terminal session takes `[label](file:///abs/path)`. The Claude desktop app rejects `file://`, so there use a path relative to the working directory, or the `http://127.0.0.1` URL for anything under `~/.claude/artifacts`, which the app never grants.
 - Every reference to something with a URL is a markdown link: a ticket, a PR, an issue, a Slack thread, a doc page, a dashboard, an incident, a web source. Write `[PROC-1234](https://…/browse/PROC-1234)`, never a bare `PROC-1234`. Build the URL from a known pattern when the ID alone determines it. Leave the reference unlinked only when no URL can be derived, rather than guessing one.
 - Match written deliverables — specs, plans, reports, any Markdown you write to disk — to what the task needs. Cover the substance without padding it out.
 
@@ -45,39 +45,28 @@ to memory files and status lines as much as to docs.
 
 ## Config & dotfiles management (chezmoi)
 
-My dotfiles and Claude config are managed across **two repos** — edit the *source*, never the deployed copy under `~`. Run `chezmoi source-path <file>` before editing any config under `~`.
+My dotfiles and Claude config are managed across **two repos**. Edit the *source*, never the deployed copy under `~`; `chezmoi source-path <file>` names it, and `chezmoi-guard.sh` warns after an edit to a deployed file.
 
-- **Personal / general** → chezmoi, source `~/.local/share/chezmoi` (remote `DanielH2018/dotfiles`, `.chezmoiroot=home`). Owns most of `~/.claude` as **real files** under `home/private_dot_claude/`. `~/.claude/settings.json` is **generated** from `home/.chezmoitemplates/settings.base.json` — to change settings/permissions, edit that base template, then `chezmoi apply ~/.claude/settings.json`. A hook registers itself in the `# gen-hooks:` block at the top of its file and `bin/gen-hooks` renders the hooks block from those.
+- **Personal / general** → chezmoi, source `~/.local/share/chezmoi` (remote `DanielH2018/dotfiles`, `.chezmoiroot=home`). Owns most of `~/.claude` as **real files** under `home/private_dot_claude/`. `~/.claude/settings.json` is **generated**; that repo's `CLAUDE.md` says from what.
 - **Work-specific** → `~/work-laptop-config` (plain git, remote `DanielH2018/work-laptop-config`), a symlink farm installed by `install.sh`. Owns `CLAUDE.local.md`, `docs/{integrations,enforcement}.md`, work agents, and PCI/redaction hooks — these appear as **symlinks** in `~/.claude`.
 
 ## Working in isolation
 
-Isolate before editing, and treat a failure to isolate as a stop rather than a fallback.
-**Retry `EnterWorktree` once. If it fails again, make no edits — report the failure and
-stop.** `repeat-failure-guard.py` enforces the stop: at the second identical failure of
-any tool call in one turn, it tells the session to stop retrying and report.
-`isolation-guard.sh` backstops a missed isolation for a background job, and only after an
-edit is already attempted.
-
-This binds only where isolation was called for in the first place. Reading, searching and
-answering questions happen in place as usual, and a session already inside
-`.claude/worktrees/` is already isolated.
+Isolate before editing. **Retry `EnterWorktree` once. If it fails again, make no edits —
+report the failure and stop.** `repeat-failure-guard.py` enforces the stop, and
+`isolation-guard.sh` backstops a background job that edits without isolating. Reading,
+searching and answering happen in place, and a session inside `.claude/worktrees/` is
+already isolated.
 
 ## Git conventions
 
-- Commits are signed{{ if eq .chezmoi.os "darwin" }} via the 1Password SSH agent (work laptop only){{ else }} via an OpenSSH signing key{{ end }} — `bin/check-push-signatures` (the pre-push gate) rejects anything that reaches origin unsigned, however it got that way; `--no-verify` itself is denied at the permission layer.
+- Commits are signed{{ if eq .chezmoi.os "darwin" }} via the 1Password SSH agent (work laptop only){{ else }} via an OpenSSH signing key{{ end }}; `bin/check-push-signatures` rejects an unsigned push.
 - The default branch is whatever `origin/HEAD` names, so read it with `git symbolic-ref --short refs/remotes/origin/HEAD` rather than assuming one. The dotfiles repo uses `main`; the homelab repo (`DanielH2018/server`) uses `master`. Prefer rebase over merge. Create a new commit rather than amending unless I ask for an amend.
-- Write commit messages that explain *why*, not just what changed:
-  ```
-  Fix race condition in settlement processor on concurrent retries
-
-  The previous implementation didn't hold the lock across the
-  DB read + write, allowing duplicate settlements under load.
-  ```
+- Write commit messages that explain *why*, not just what changed.
 
 ## Pull requests
 
-- **A squash merge makes the PR title the commit subject**, so the commit rules above are the title rules: imperative, sentence case, no `feat:`/`fix:` prefix, no ticket, naming the outcome rather than the files touched. `guard-pre-tool-use.sh` denies a `gh pr create`/`edit` title{{ if .work }} or a `planka card` title{{ end }} with such a prefix or a ticket id.
+- **A squash merge makes the PR title the commit subject**: imperative, sentence case, naming the outcome rather than the files touched. `guard-pre-tool-use.sh` denies a title{{ if .work }} or a `planka card` title{{ end }} with a `feat:`-style prefix or a ticket id.
 - A PR body exists to stop the reviewer re-deriving what you already worked out. Open on the measured symptom, name the alternatives you rejected and why, and quote real command output for every verification claim.
 - Fill a repo's `.github/pull_request_template.md` when one exists rather than replacing its sections.
 - The long form is the `pr-authoring` skill, which also owns diff size and commit history; `gh-stack` owns splitting.
@@ -95,11 +84,9 @@ the place the repo already keeps tests for that kind of change. Verify however y
 working, but a scratch script or a quick check is not a test — don't promote it into an extra
 permanent test file. This governs extras only: every behaviour the task asks for gets its test.
 
-When a change adds or edits tests, load the `test-scenario-hygiene` skill before you stop and
-apply it to the test diff. It owns test content, where `pr-authoring` owns diff shape.
-`stop-checks.py` blocks once in a session that edited a test file without loading it.
-
-Before you write a stub or a textual assertion, read that skill's *Anti-patterns* section: it lists five ways a test stays green while checking nothing.
+When a change adds or edits tests, apply the `test-scenario-hygiene` skill to the test diff
+before you stop; `stop-checks.py` blocks once if you don't. Read its *Anti-patterns* section
+before you write a stub or a textual assertion.
 
 ## Verification & self-checking
 
@@ -111,7 +98,7 @@ Don't dispatch a review subagent on your own initiative to double-check work you
 
 Ask review agents for **everything** they find, each finding carrying a confidence or severity score; filtering is a separate pass.
 
-**When a reviewer says they don't understand something, fix the code — don't explain in the thread.** Clarify the code itself, or leave a comment at the line that confused them; a reply in the review thread helps one person once, while the code helps everyone who reads it later. This is the homelab repo's `# DECIDED:` marker generalized: it applies in every repo, and to any confusion a reviewer surfaces rather than only to a settled trade-off. Adapted from <https://google.github.io/eng-practices/review/developer/handling-comments.html>.
+**When a reviewer says they don't understand something, fix the code — don't explain in the thread.** Clarify the code itself, or leave a comment at the line that confused them; a reply in the review thread helps one person once, while the code helps everyone who reads it later. Adapted from <https://google.github.io/eng-practices/review/developer/handling-comments.html>.
 
 ## Scope discipline
 
@@ -121,12 +108,12 @@ Finishing the whole thing has two failure modes that look finished. **Reverse st
 
 - When you produce a document for me to read — an implementation plan, a spec, a findings or review write-up, an audit, a handoff meant for me rather than for a successor agent — also render it as an HTML artifact for readability, in addition to the written version, not instead of it. Load the `artifact-design` skill first. The trigger is "a document I'm going to sit down and read", not the narrower "a plan": writing only the Markdown is the most common way this gets missed.
 - Keep it **local by default**: write a self-contained HTML file to `~/.claude/artifacts/` and tell me the path. Publishing to claude.ai or calling the Artifact tool needs me to ask for it explicitly.
-- **The link is the last thing in your reply.** Written plan first, then the artifact, then the link as the closing line — otherwise I have to scroll back up past the plan to open it. `link-artifact.sh` emits the link to use; relay it verbatim rather than composing one.
-- **In the Claude desktop app, also load that URL in the Browser pane.** Clicking the link only opens the external browser — the app has no in-app viewer for a clicked link, and its native preview covers `.pdf`/`.doc(x)`/`.ppt(x)`/`.xls(x)` but never `.html`. The Browser pane is the only surface that renders an artifact inside the app, and it takes `http://` but refuses `file://`. Open the pane *and* close with the link; the pane is the render, the link is what I keep.
+- **The link is the last thing in your reply**, after the written plan. `link-artifact.sh` emits the link; relay it verbatim.
+- **In the Claude desktop app, also load that URL in the Browser pane.** The pane is the only surface that renders `.html` inside the app, and it refuses `file://`. Open the pane *and* close with the link.
 - **An artifact is a rendering, not the record.** `prune-artifacts.sh` deletes an artifact after `CLAUDE_ARTIFACT_RETENTION_DAYS` (30) without an update, and artifacts are neither in git nor in the break-glass bundle. When an artifact records a decision or a plan that outlives the session, its substance goes into the repo's docs in the same PR that acts on it.
 - Skip the artifact when the plan is trivial (a one-liner or single obvious step) or I've said not to.
 - **Docs change in the same PR as the code they describe.** A README, a docstring or a role's `CLAUDE.md` updated in a follow-up is a doc that stays wrong until someone notices. Generated pages are the exception — their generator is the thing to change.
-- **Plan in vertical slices, not horizontal layers.** Sequence a non-trivial feature as thin end-to-end slices I can actually exercise (curl / browser / a real test) at each step — work middle-out: API contract + mock data → UI against the mock → wire the service layer → DB migrations → then business logic → then error handling. Stack-order planning (DB → service → API → frontend) is the model's default and it leaves nothing runnable until the end, forcing a cold review of thousands of lines. Slices let me resteer at 100-200 lines.
+- **Plan in vertical slices, not horizontal layers.** Sequence a non-trivial feature as thin end-to-end slices I can exercise (curl, browser, a real test), middle-out: API contract and mock data, UI against the mock, service layer, DB migrations, business logic, error handling. Stack-order planning leaves nothing runnable until the end; slices let me resteer at 100-200 lines.
 
 ## Tool use & context discipline
 
@@ -143,7 +130,7 @@ Delegate a search that would take 3+ exploratory calls, and keep only the findin
 
 ## Compaction policy
 
-`pre-compact.sh` re-injects branch and push state, files modified, test commands run, and the "preserve corrections and error strings verbatim" reminder — all from ground truth, so don't restate them. What the hook *cannot* derive, and you must carry across yourself: test **pass/fail results**, architectural decisions, and next steps. Never paraphrase an error string or a user correction into a summary of it. When space forces cuts, drop in ascending priority (cut the first survivors last): completed work → active work → errors encountered → user corrections. A user correction is the last thing to go.
+`pre-compact.sh` re-injects branch and push state, files modified, test commands run, and the "preserve corrections and error strings verbatim" reminder, so don't restate them. Carry across what the hook *cannot* derive: test **pass/fail results**, architectural decisions, and next steps. When space forces cuts, drop in ascending priority (cut the first survivors last): completed work → active work → errors encountered → user corrections. A user correction is the last thing to go.
 
 Don't reach for `/compact` yourself. Auto-compaction fires at about 600k tokens.
 
