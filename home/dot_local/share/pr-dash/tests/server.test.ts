@@ -630,10 +630,11 @@ test('an allowlisted extension origin reads /api/prs, answered with CORS headers
 });
 
 test('an allowlisted extension origin is refused on every path except /api/prs and /api/planka', async () => {
-  // The page shell, the client code, near-misses of the API paths, and a path that would
-  // 404: the allowlist opens two routes, not the server.
+  // The page shell, the client code, near-misses of the API paths, a path that would 404,
+  // and /api/vulns, which stays same-origin only: the allowlist opens two routes, not the
+  // server.
   await withExtensionServer([EXTENSION], async (base) => {
-    for (const path of ['/', '/index.html', '/app.js', '/api/prs/', '/api/planka/', '/no-such-file']) {
+    for (const path of ['/', '/index.html', '/app.js', '/api/prs/', '/api/planka/', '/api/vulns', '/no-such-file']) {
       const response = await getFrom(base, path, EXTENSION);
       assert.match(response, /^HTTP\/1\.1 403 /, `path ${path}`);
       assert.doesNotMatch(response, /access-control-allow-origin/i, `path ${path}`);

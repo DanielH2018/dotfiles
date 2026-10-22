@@ -18,6 +18,7 @@ import {
   startPreload,
 } from './main-lib.ts';
 import { createPayloadStore, DEFAULT_STATE_DIR } from './payload-store.ts';
+import { createVulnLoader, parseVulnRepos, type VulnLoadResult } from './vulns.ts';
 
 const parsedPort = parsePort(process.env['PR_DASH_PORT']);
 if (!parsedPort.ok) {
@@ -32,6 +33,13 @@ const port = parsedPort.port;
 const parsedExtensionOrigins = parseExtensionOrigins(process.env['PR_DASH_EXTENSION_ORIGINS']);
 if (!parsedExtensionOrigins.ok) {
   console.error(parsedExtensionOrigins.reason);
+  process.exit(1);
+}
+// Refused at startup for a related reason: a typo here would silently drop a repository from
+// the vulnerabilities page, which then reads as that repository having no open alerts.
+const parsedVulnRepos = parseVulnRepos(process.env['PR_DASH_VULN_REPOS']);
+if (!parsedVulnRepos.ok) {
+  console.error(parsedVulnRepos.reason);
   process.exit(1);
 }
 
@@ -88,6 +96,9 @@ const server = createServer({
   // Spawns the planka CLI per request, never at startup, so a machine without it pays
   // nothing until something asks for /api/planka.
   loadPlanka: createLoadPlanka(),
+  // Shares the PR loader's lazy client, so both routes resolve the token once. Alerts change
+  // far more slowly than PR state, hence the longer TTL than the PR cache's 60 seconds.
+  loadVulns: createVulnLoader(client, parsedVulnRepos.repos, createCache<VulnLoadResult>(300_000)),
   onRequest: () => idleExit.touch(),
 });
 // Attached before listen(): without a handler, an occupied port reaches Node's default

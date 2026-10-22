@@ -90,7 +90,7 @@ test('no file under public/ uses an HTML-injection sink', () => {
   // repository) and reaches the row from both the live fetch and the restored file, so
   // row.textContent (and group.js's name.textContent) must never become innerHTML or an
   // equivalent sink.
-  for (const name of ['app.js', 'group.js', 'render-guards.js']) {
+  for (const name of ['app.js', 'group.js', 'render-guards.js', 'vulns.js', 'vuln-view.js']) {
     const text = stripComments(readFileSync(path.join(__dirname, '..', 'public', name), 'utf8'));
     assert.doesNotMatch(
       text,

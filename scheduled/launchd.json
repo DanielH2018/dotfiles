@@ -69,6 +69,7 @@
         "PR_DASH_PORT": "8770",
         "PR_DASH_WORK_ORGS": "{{ if hasKey . \"prDashWorkOrgs\" }}{{ .prDashWorkOrgs }}{{ end }}",
         "PR_DASH_EXTENSION_ORIGINS": "{{ if hasKey . \"prDashExtensionOrigins\" }}{{ .prDashExtensionOrigins }}{{ end }}",
+        "PR_DASH_VULN_REPOS": "{{ if hasKey . \"prDashVulnRepos\" }}{{ .prDashVulnRepos }}{{ end }}",
         "PATH": "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
       },
       "at_load": true,
@@ -97,6 +98,15 @@
           "entry makes src/main.ts exit at startup rather than serve a wider boundary than",
           "configured. launchd reads this only at bootstrap, so a changed key needs the",
           "reload block in this file's header, not just `chezmoi apply`."
+        ],
+        "env.PR_DASH_VULN_REPOS": [
+          "The repositories the vulnerabilities page (/vulns.html) lists open Dependabot alerts",
+          "for, comma-separated owner/name. The names stay out of this repo: they come from",
+          "`prDashVulnRepos` in the machine-local chezmoi.toml, under [data]. Unset renders an",
+          "empty string, and the page then says no repositories are configured. A malformed",
+          "entry makes src/main.ts exit at startup rather than silently drop a repository.",
+          "The token needs Dependabot-alert read access on each one, or that repository shows",
+          "as a partial error."
         ],
         "env.PATH": [
           "src/token.ts invokes `op` by bare name through execFile, and launchd's default",

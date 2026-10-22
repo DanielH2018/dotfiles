@@ -491,3 +491,69 @@ a.section-name:hover { color: var(--blue); text-decoration: underline; }
     margin-left: 0;
   }
 }
+
+/* ---- vulnerabilities page ---------------------------------------------- */
+
+/* The link between the two pages, sitting before each page's own h1. */
+.page-nav a {
+  color: var(--blue);
+  font-size: 13px;
+  text-decoration: none;
+}
+.page-nav a:hover { text-decoration: underline; }
+
+/*
+ * Severity reuses the outline chip, with critical filled: it is the one level that should
+ * read as the loudest thing in a row, which the outline pattern deliberately avoids.
+ */
+.sev-chip {
+  flex: none;
+  min-width: 64px;
+  padding: 1px 7px;
+  border: 1px solid currentColor;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  text-align: center;
+  white-space: nowrap;
+}
+.sev-chip.sev-critical { color: var(--crust); background: var(--red); border-color: var(--red); }
+.sev-chip.sev-high { color: var(--red); }
+.sev-chip.sev-moderate { color: var(--yellow); }
+.sev-chip.sev-low { color: var(--subtext0); }
+.section-header .sev-chip { min-width: 0; }
+
+.vuln-package {
+  flex: none;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--mauve);
+}
+
+.vuln-manifest {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--overlay0);
+  font-size: 12px;
+}
+
+.totals {
+  margin: 0;
+  padding: 8px 20px;
+  color: var(--subtext0);
+  font-size: 13px;
+  border-bottom: 1px solid var(--surface1);
+}
+
+span.empty { display: block; }
+
+@media (max-width: 860px) {
+  .vuln-manifest { display: none; }
+}

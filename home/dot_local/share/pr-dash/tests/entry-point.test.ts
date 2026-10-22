@@ -54,3 +54,18 @@ test('src/main.ts refuses to start on a malformed PR_DASH_EXTENSION_ORIGINS', as
   assert.match(res.stderr, /PR_DASH_EXTENSION_ORIGINS entries must each be/);
   assert.doesNotMatch(res.stdout, /listening/);
 });
+
+test('src/main.ts refuses to start on a malformed PR_DASH_VULN_REPOS', () => {
+  // PR_DASH_PORT is valid and PR_DASH_VULN_REPOS is not, so the exit can only come from the
+  // repository check. It runs before listen(), so no port needs reserving.
+  const { PR_DASH_PRELOAD: _omit, ...env } = process.env;
+  const res = spawnSync(process.execPath, ['src/main.ts'], {
+    cwd: PACKAGE_ROOT,
+    encoding: 'utf8',
+    env: { ...env, PR_DASH_PORT: '1', PR_DASH_VULN_REPOS: 'acme/api,not-a-repo' },
+    timeout: 20_000,
+  });
+  assert.strictEqual(res.status, 1, res.stderr);
+  assert.match(res.stderr, /PR_DASH_VULN_REPOS entries must each be owner\/name, but one is "not-a-repo"/);
+  assert.doesNotMatch(res.stdout, /listening/);
+});

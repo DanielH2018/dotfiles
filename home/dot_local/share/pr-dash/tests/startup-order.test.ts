@@ -145,19 +145,21 @@ test('main.ts uses the identifier token only in its known-safe places', () => {
 const WRITE_CALL = /console\.\w+\s*\(|process\.(stdout|stderr)\.write\s*\(/;
 
 // Every write main.ts is allowed to make, by exact source text: the parsedPort failure, the
-// extension-origins failure, the pre-load failure, the listen-error handler, and the
-// listening line. None of them can carry a token — the first three print a message composed
-// elsewhere (the extension-origins one from an environment variable, before any token
-// exists), the fourth prints listenErrorMessage, and the fifth prints a literal and the port.
+// extension-origins failure, the vuln-repos failure, the pre-load failure, the listen-error
+// handler, and the listening line. None of them can carry a token — the first four print a
+// message composed elsewhere (the extension-origins and vuln-repos ones from an environment
+// variable, before any token exists), the fifth prints listenErrorMessage, and the sixth
+// prints a literal and the port.
 const ALLOWED_WRITES = [
   'console.error(parsedPort.reason);',
   'console.error(parsedExtensionOrigins.reason);',
+  'console.error(parsedVulnRepos.reason);',
   'console.error(`pr-dash could not pre-load PRs (the page will retry): ${message}`);',
   'console.error(listenErrorMessage(err, port));',
   'console.log(`pr-dash listening on http://127.0.0.1:${port}`);',
 ];
 
-test('main.ts writes to stdout and stderr only at its five known call sites', () => {
+test('main.ts writes to stdout and stderr only at its six known call sites', () => {
   let remaining = MAIN_TS_STRIPPED;
   for (const site of ALLOWED_WRITES) {
     assert.ok(
@@ -172,7 +174,7 @@ test('main.ts writes to stdout and stderr only at its five known call sites', ()
   assert.doesNotMatch(
     remaining,
     WRITE_CALL,
-    'main.ts writes to stdout or stderr somewhere other than its five known call sites; ' +
+    'main.ts writes to stdout or stderr somewhere other than its six known call sites; ' +
       'under launchd that stream is a persistent log file',
   );
 });

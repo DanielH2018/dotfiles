@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Vulnerabilities</title>
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<header>
+  <!--
+    The same two-row header as index.html. Every checkbox `value` is also what vulns.js
+    persists under `pr-dash:vulns-view`, so relabel the visible text freely and leave the
+    values alone.
+  -->
+  <div class="bar">
+    <nav class="page-nav"><a href="./">PRs</a></nav>
+    <h1>Open vulnerabilities</h1>
+    <label class="field">Group by
+      <select id="group-by">
+        <option value="repo">Repository</option>
+        <option value="severity">Severity</option>
+        <option value="package">Package</option>
+      </select>
+    </label>
+    <label class="field">Sort
+      <select id="sort-by">
+        <option value="severity">Severity</option>
+        <option value="age">Age</option>
+        <option value="package">Package</option>
+      </select>
+    </label>
+    <div class="actions">
+      <button id="collapse-all" type="button">Collapse all</button>
+      <button id="expand-all" type="button">Expand all</button>
+      <button id="reset" type="button">Reset view</button>
+      <button id="refresh" type="button" class="primary">Refresh</button>
+    </div>
+  </div>
+  <div class="filters">
+    <fieldset id="filter-severity"><legend>Severity</legend>
+      <label><input type="checkbox" value="critical"> critical</label>
+      <label><input type="checkbox" value="high"> high</label>
+      <label><input type="checkbox" value="moderate"> moderate</label>
+      <label><input type="checkbox" value="low"> low</label>
+    </fieldset>
+    <fieldset id="filter-scope"><legend>Scope</legend>
+      <label><input type="checkbox" value="runtime"> runtime</label>
+      <label><input type="checkbox" value="development"> dev</label>
+      <label><input type="checkbox" value="unknown"> unknown</label>
+    </fieldset>
+    <fieldset id="filter-fix"><legend>Fix</legend>
+      <label><input type="checkbox" value="patched"> patch available</label>
+      <label><input type="checkbox" value="unpatched"> no patch</label>
+    </fieldset>
+  </div>
+</header>
+<div id="banner" hidden></div>
+<p id="totals" class="totals" hidden></p>
+<main id="groups"></main>
+<script type="module" src="./vulns.js"></script>
+</body>
+</html>

@@ -90,6 +90,15 @@
 		     reload block in this file's header, not just `chezmoi apply`. -->
 		<key>PR_DASH_EXTENSION_ORIGINS</key>
 		<string>{{ if hasKey . "prDashExtensionOrigins" }}{{ .prDashExtensionOrigins }}{{ end }}</string>
+		<!-- The repositories the vulnerabilities page (/vulns.html) lists open Dependabot alerts
+		     for, comma-separated owner/name. The names stay out of this repo: they come from
+		     `prDashVulnRepos` in the machine-local chezmoi.toml, under [data]. Unset renders an
+		     empty string, and the page then says no repositories are configured. A malformed
+		     entry makes src/main.ts exit at startup rather than silently drop a repository.
+		     The token needs Dependabot-alert read access on each one, or that repository shows
+		     as a partial error. -->
+		<key>PR_DASH_VULN_REPOS</key>
+		<string>{{ if hasKey . "prDashVulnRepos" }}{{ .prDashVulnRepos }}{{ end }}</string>
 		<!-- src/token.ts invokes `op` by bare name through execFile, and launchd's default
 		     PATH is just /usr/bin:/bin:/usr/sbin:/sbin. Without /opt/homebrew/bin here, the
 		     first /api/prs comes back as a 500 carrying an ENOENT. -->

@@ -105,6 +105,23 @@ test('the plist and bin/pr-dash read PR_DASH_EXTENSION_ORIGINS from the same che
   );
 });
 
+test('the plist and bin/pr-dash read PR_DASH_VULN_REPOS from the same chezmoi key, guarded by hasKey', () => {
+  // Same shape as the work-orgs test. The repository names are an employer's private
+  // inventory, so they are machine-local data, never a literal in this public repo.
+  const plistExpr =
+    /<key>PR_DASH_VULN_REPOS<\/key>\s*<string>([^<]*)<\/string>/.exec(plistText)?.[1];
+  const binExpr = /^VULN_REPOS_DEFAULT='([^']*)'$/m.exec(binText)?.[1];
+  assert.ok(plistExpr !== undefined, 'expected a PR_DASH_VULN_REPOS string in the plist');
+  assert.ok(binExpr !== undefined, 'expected a VULN_REPOS_DEFAULT literal in bin/pr-dash');
+  assert.strictEqual(plistExpr, binExpr);
+  assert.match(
+    plistExpr,
+    /^\{\{\s*if hasKey \. "prDashVulnRepos"\s*\}\}\{\{\s*\.prDashVulnRepos\s*\}\}\{\{\s*end\s*\}\}$/,
+    'expected the value to be .prDashVulnRepos behind a hasKey guard and nothing else',
+  );
+  assert.match(binText, /export PR_DASH_VULN_REPOS=/, 'expected bin/pr-dash to export PR_DASH_VULN_REPOS');
+});
+
 test('KeepAlive is bare <true/>, with no SuccessfulExit override', () => {
   // The idle exit (main-lib.ts's createIdleExit) exits status 0 by design. A dict form —
   // <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict> — reads that clean

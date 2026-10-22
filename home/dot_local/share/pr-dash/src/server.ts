@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { checkHost } from './guard.ts';
 import { buildStacks } from './stacks.ts';
 import type { PlankaResult } from './planka.ts';
+import type { LoadVulns } from './vulns.ts';
 import type { PrRecord, StackNode } from './types.ts';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../public/', import.meta.url));
@@ -57,6 +58,11 @@ export type ServerOpts = {
   // onRequest, so a ServerOpts built without it still compiles; unset answers that route
   // with a 502 saying Planka is not configured.
   loadPlanka?: () => Promise<PlankaResult>;
+  // Backs `GET /api/vulns` — see createVulnLoader in vulns.ts. Optional for the same reason
+  // as loadPlanka; unset answers that route with a 502. Deliberately absent from
+  // EXTENSION_PATHS: open vulnerabilities are a security inventory, so they stay readable
+  // from this server's own origin only.
+  loadVulns?: LoadVulns;
 };
 
 // The only paths an allowlisted extension origin may read. The new tab's work panels need
@@ -207,6 +213,16 @@ async function handle(
     if (result.error !== undefined) return refuse(res, 502, result.error);
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify(result.board));
+    return;
+  }
+
+  if (url.pathname === '/api/vulns') {
+    if (opts.loadVulns === undefined) return refuse(res, 502, 'vulnerabilities are not configured in pr-dash');
+    // Same contract as /api/prs: only the exact `refresh=1` reaches the loader, as a boolean.
+    const force = url.searchParams.get('refresh') === '1';
+    const { alerts, repos, fetchedAt, partialErrors, stale, error } = await opts.loadVulns({ force });
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ alerts, repos, fetchedAt, partialErrors, stale, error: error ?? null }));
     return;
   }
 
