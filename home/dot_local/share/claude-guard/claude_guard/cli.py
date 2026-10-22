@@ -10,6 +10,8 @@
     claude-guard pre-tool-use              # hook entry: hook JSON on stdin, deny/ask JSON
                                             # or nothing on stdout
     claude-guard replay <jsonl> --deny     # deny/ask/allow verdict per record
+    claude-guard post-tool-use             # bash-write-fanout.sh's helper: hook JSON on
+                                            # stdin, {stripped, context} JSON on stdout
 
 Both hook entries are live-only: slice 6 retired the allow side's shadow mode (2026-09-17)
 and the deny side's (2026-09-18, with the bash hook it shadowed) -- see claude_guard.hook.
@@ -23,7 +25,7 @@ import sys
 from pathlib import Path
 
 from claude_guard.deny import deny
-from claude_guard.hook import ASK_JSON, permission_request, pre_tool_use
+from claude_guard.hook import ASK_JSON, permission_request, post_tool_use, pre_tool_use
 from claude_guard.judge import judge
 from claude_guard.rules import load_rules
 from claude_guard.segment import Parsed, parse
@@ -162,6 +164,13 @@ def cmd_pre_tool_use(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_post_tool_use(args: argparse.Namespace) -> int:
+    # post_tool_use() catches what it can decide about; anything else is the shim's
+    # "Python failed" path, which it reports.
+    print(post_tool_use(sys.stdin.read(), os.environ))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="claude-guard", description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -171,6 +180,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     pt = sub.add_parser("pre-tool-use", help="PreToolUse hook entry (stdin JSON): deny rules")
     pt.set_defaults(fn=cmd_pre_tool_use)
+
+    po = sub.add_parser("post-tool-use", help="bash-write-fanout.sh's parser and apply report")
+    po.set_defaults(fn=cmd_post_tool_use)
 
     s = sub.add_parser("segment", help="decompose the command on stdin")
     s.add_argument(

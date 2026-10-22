@@ -2,7 +2,7 @@
 # gen-hooks: register
 #   event: PreToolUse
 #   matcher: Bash
-#   timeout: 10
+#   timeout: 20
 #   order: 20
 # DECIDED: claude-guard slice 4 cutover (docs/specs/2026-09-06-claude-guard-design.md,
 # Rollout row 4). This is the sole decision for Bash PreToolUse -- deny.py
@@ -10,9 +10,16 @@
 # until the cutover and deleted in slice 6 (the DECIDED comment in the env block
 # of settings.base.json has the exit-gate numbers). Contract when it cannot run: the shim
 # prints `ask` itself -- the same posture the bash took on a missing jq -- never
-# silence, because this is the deny side. Registered at the same 10 s timeout the
-# bash carried.
+# silence, because this is the deny side. Registered at 20 s: the bash it replaced carried
+# 10 s, and the judge took on the chezmoi apply guard's 15 s registration when that hook
+# folded into it (bounds below).
 # guard-pre-tool-use.sh — PreToolUse/Bash shim for the claude-guard package.
+#
+# The one Python process before a Bash call. Besides the deny rules it runs the chezmoi
+# apply guard (claude_guard.apply_guard, formerly chezmoi-apply-guard.sh) and the tq rewrite
+# (claude_guard.tq_wrap, formerly tq-wrap-tests.py), each under its own failure contract
+# inside claude_guard.hook. Before the fold a Bash call started up to three interpreters
+# here, plus a `uv python find` for each of two of them.
 #
 # Failure contract (spec docs/specs/2026-09-06-claude-guard-design.md, "Failure contracts",
 # claude-guard deny path): cannot run → this shim emits `ask` ITSELF, without Python. That was
@@ -57,11 +64,14 @@
 # harness's hook-stderr channel verbatim, and a traceback can quote the command text this
 # hook exists to avoid ever printing.
 #
-# Both children run through run_bounded (#581, #660); guard_python bounds the lookup. They used to run bare, so a uv or a
-# Python that hung instead of failing never reached `fail`. The harness killed the hook at
-# its 10s timeout, and a killed PreToolUse hook is a non-blocking error: the call ran with no
-# deny check, and in the sandbox without the exit-2 deny either. The bounds are 2s for the
-# lookup and 6s for the judge, inside the 10s. CLAUDE_GUARD_TIMEOUT_S sets both, for the
+# Both children run through run_bounded (#581, #660); guard_python bounds the lookup. They
+# used to run bare, so a uv or a Python that hung instead of failing never reached `fail`. The
+# harness killed the hook at its timeout, and a killed PreToolUse hook is a non-blocking
+# error: the call ran with no deny check, and in the sandbox without the exit-2 deny either.
+# The bounds are 2s for the lookup and 14s for the judge, inside the 20s. The judge's share
+# holds the apply guard's own chezmoi bounds, 2s for source-path and 5s for status, so a slow
+# status reaches its own named ask rather than this shim's generic one.
+# CLAUDE_GUARD_TIMEOUT_S sets both, for the
 # tests. Any RB_STATUS other than `ok` is could-not-evaluate and takes `fail`, and so does a
 # non-zero exit from either child. A missing run-bounded.sh is `fail` too: the judge cannot
 # run bounded, so it does not run. The sandbox mounts lib/ beside this file for that
@@ -96,7 +106,7 @@ command -v run_bounded >/dev/null 2>&1 || fail
 # shellcheck source=/dev/null
 . "${BASH_SOURCE[0]%/*}/lib/guard-python.sh" 2>/dev/null || fail
 T_FIND=${CLAUDE_GUARD_TIMEOUT_S:-2}
-T_JUDGE=${CLAUDE_GUARD_TIMEOUT_S:-6}
+T_JUDGE=${CLAUDE_GUARD_TIMEOUT_S:-14}
 
 guard_python "$T_FIND" || fail
 PY=$GUARD_PY

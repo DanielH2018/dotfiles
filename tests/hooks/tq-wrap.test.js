@@ -1,8 +1,9 @@
-// Regression guard for executable_tq-wrap-tests.py (PreToolUse/Bash). Feeds
-// hook payloads through the ACTUAL hook and asserts what it rewrites and — the
-// half that matters more — what it leaves alone. This hook sits in front of
-// every Bash call the agent makes, so a false positive here corrupts an
-// unrelated command. Offline and deterministic; skips without python3.
+// Regression guard for the tq rewrite, claude_guard.tq_wrap, which runs inside
+// guard-pre-tool-use.sh (PreToolUse/Bash); it was tq-wrap-tests.py until it folded into the
+// shim. Feeds hook payloads through the ACTUAL shim and asserts what it rewrites and — the
+// half that matters more — what it leaves alone. This sits in front of every Bash call the
+// agent makes, so a false positive here corrupts an unrelated command. Offline and
+// deterministic; skips without bash or a uv-managed 3.14.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { spawnSync } = require('node:child_process');
@@ -13,10 +14,14 @@ const { scratch, hardenedCopy } = require('../lib/tmp');
 const { have, skipUnless } = require('../lib/probe');
 const { srcPath } = require('../lib/paths');
 
-const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_tq-wrap-tests.py');
+const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_guard-pre-tool-use.sh');
 const TQ = srcPath('dot_local', 'bin', 'executable_tq');
 
-const skip = skipUnless('python3');
+const PY314 = spawnSync(
+  'uv', ['python', 'find', '--no-project', '--managed-python', '--system', '3.14'], { encoding: 'utf8' },
+).stdout?.trim();
+const UV = spawnSync('bash', ['-c', 'command -v uv'], { encoding: 'utf8' }).stdout.trim();
+const skip = skipUnless('bash', 'python3') || (PY314 ? false : 'no uv-managed Python 3.14');
 
 // The hook only rewrites when `tq` resolves on PATH, because that is the word it
 // emits. The repo's copy is named executable_tq, so give it a resolvable alias
@@ -40,15 +45,11 @@ if (have('python3')) {
 // its permissions explicitly, and point TQ_HOME at that — the same fix in kind as the
 // TQ_OFF scrub above, for the same reason: this hook must be exercised on its own terms,
 // not on whatever the environment happened to leave lying around.
-// claude_guard.segment, which decides whether a command is one simple command (#580), is
-// imported under the same ownership check, so it gets the same hardened copy.
 const TQ_LIB_SRC = srcPath('dot_local', 'share', 'tq');
 const GUARD_SRC = srcPath('dot_local', 'share', 'claude-guard');
 let hardenedLib = '';
-let hardenedGuard = '';
 if (have('python3')) {
   hardenedLib = hardenedCopy(scratch(os.tmpdir(), 'tq-hook-lib-'), TQ_LIB_SRC);
-  hardenedGuard = hardenedCopy(scratch(os.tmpdir(), 'tq-hook-guard-'), GUARD_SRC);
 }
 
 function runHook(command, { tool = 'Bash', env = {}, raw = null, cwd } = {}) {
@@ -61,10 +62,10 @@ function runHook(command, { tool = 'Bash', env = {}, raw = null, cwd } = {}) {
   // through `env`, which is spread last and still wins.
   const base = {
     ...process.env, PATH: `${binDir}:${process.env.PATH}`, TQ_BIN: TQ, TQ_HOME: hardenedLib,
-    CLAUDE_GUARD_HOME: hardenedGuard,
+    CLAUDE_GUARD_HOME: GUARD_SRC,
   };
   delete base.TQ_OFF;
-  const r = spawnSync('python3', [HOOK], {
+  const r = spawnSync('bash', [HOOK], {
     input,
     encoding: 'utf8',
     env: { ...base, ...env },
@@ -78,7 +79,9 @@ function rewritten(command, opts) {
   if (!r.stdout.trim()) return null;
   const payload = JSON.parse(r.stdout);
   assert.strictEqual(payload.hookSpecificOutput.hookEventName, 'PreToolUse');
-  return payload.hookSpecificOutput.updatedInput.command;
+  // The shim also carries the deny side's verdict and nudges; only the rewrite is this file's.
+  const updated = payload.hookSpecificOutput.updatedInput;
+  return updated ? updated.command : null;
 }
 
 test('a bare node --test run is routed through tq', { skip }, () => {
@@ -203,19 +206,6 @@ test('a separator inside quotes is an argument, not a second command', { skip },
   }
 });
 
-test('a claude_guard package that is missing or unsafe to import leaves the command alone', { skip }, () => {
-  const hostile = scratch(os.tmpdir(), 'tq-hostile-guard-');
-  fs.mkdirSync(path.join(hostile, 'claude_guard'));
-  fs.writeFileSync(path.join(hostile, 'claude_guard', '__init__.py'), 'raise SystemExit("must never be imported")\n');
-  fs.writeFileSync(path.join(hostile, 'claude_guard', 'segment.py'), '');
-  fs.chmodSync(hostile, 0o777);
-  for (const home of [hostile, scratch(os.tmpdir(), 'tq-empty-guard-')]) {
-    const r = runHook('node --test', { env: { CLAUDE_GUARD_HOME: home } });
-    assert.strictEqual(r.status, 0, `hook exited ${r.status}: ${r.stderr}`);
-    assert.strictEqual(r.stdout.trim(), '', home);
-  }
-});
-
 test('TQ_OFF disables the rewrite, by env or inline', { skip }, () => {
   assert.strictEqual(rewritten('node --test', { env: { TQ_OFF: '1' } }), null);
   // Inline needs no special case: an assignment is not a program name.
@@ -239,7 +229,7 @@ test('unreadable input fails open rather than erroring', { skip }, () => {
 });
 
 // JSON that is not an object once reached payload.get() outside the hook's try and exited 1
-// with a traceback. hook_input.read_event() reads it as no payload at all.
+// with a traceback. claude_guard.hook reads it as no command at all.
 test('a payload that is JSON but not an object fails open', { skip }, () => {
   for (const raw of ['[]', '"Bash"', '42']) {
     const r = runHook(null, { raw });
@@ -263,9 +253,12 @@ test('the rewrite is skipped when tq cannot be resolved by name', { skip }, () =
     .split(path.delimiter)
     .filter((dir) => dir && !fs.existsSync(path.join(dir, 'tq')))
     .join(path.delimiter);
-  const r = runHook('node --test', { env: { PATH: reduced } });
-  assert.strictEqual(r.status, 0, `hook exited ${r.status}: ${r.stderr}`);
-  assert.strictEqual(r.stdout.trim(), '');
+  // uv stays reachable on its own, or the shim would ask for want of an interpreter and
+  // this would pass for the wrong reason.
+  const uvDir = scratch(os.tmpdir(), 'tq-hook-uv-');
+  fs.symlinkSync(UV, path.join(uvDir, 'uv'));
+  assert.strictEqual(rewritten('node --test', { env: { PATH: `${uvDir}${path.delimiter}${reduced}` } }), null);
+  assert.strictEqual(rewritten('node --test'), 'tq node --test');
 });
 
 // TQ_LIB is derived from $TQ_HOME when that is set, and this hook runs in front of every
@@ -277,15 +270,11 @@ test('a world-writable TQ_HOME is refused rather than imported', { skip }, () =>
   // If this were imported the hook would die on the SystemExit rather than return null.
   fs.writeFileSync(path.join(hostile, 'detect.py'), 'raise SystemExit("must never be imported")\n');
   fs.chmodSync(hostile, 0o777);
-  const r = runHook('node --test', { env: { TQ_HOME: hostile } });
-  assert.strictEqual(r.status, 0, `hook exited ${r.status}: ${r.stderr}`);
-  assert.strictEqual(r.stdout.trim(), '');
+  assert.strictEqual(rewritten('node --test', { env: { TQ_HOME: hostile } }), null);
 });
 
 test('a TQ_HOME with no module is refused', { skip }, () => {
   const empty = scratch(os.tmpdir(), 'tq-empty-');
-  const r = runHook('node --test', { env: { TQ_HOME: empty } });
-  assert.strictEqual(r.status, 0, `hook exited ${r.status}: ${r.stderr}`);
-  assert.strictEqual(r.stdout.trim(), '');
+  assert.strictEqual(rewritten('node --test', { env: { TQ_HOME: empty } }), null);
 });
 

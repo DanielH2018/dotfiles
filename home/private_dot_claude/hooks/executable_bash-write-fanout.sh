@@ -10,6 +10,9 @@
 # them. chezmoi-guard is the one that costs work: without it the source never
 # tracks the edit and the next `chezmoi apply` silently reverts it. This
 # extracts the written paths from the command text and re-drives all four.
+# It also carries the post side of the chezmoi apply guard (claude_guard.apply_guard,
+# formerly `chezmoi-apply-guard.sh post`), because both need the same claude_guard process
+# and one interpreter start after a Bash call is the budget.
 # Timeout matches lint-after-edit.sh, the slowest thing it can call.
 # PostToolUse hook (matcher Bash): re-drive the Edit|Write hooks for files a Bash
 # command wrote.
@@ -37,13 +40,9 @@
 # close it. The failure direction is a missed fanout, never a wrong one: a path is only
 # ever handed on if it exists as a regular file after the command ran.
 #
-# Opt out with CLAUDE_BASH_WRITE_FANOUT=0.
+# Opt out of the fanout with CLAUDE_BASH_WRITE_FANOUT=0. The apply report still runs.
 
 set -u
-
-# Cheapest possible bail, before sourcing anything. This fires on EVERY Bash call, and
-# the overwhelming majority are reads with no write token anywhere in them.
-case "${CLAUDE_BASH_WRITE_FANOUT:-1}" in 0) exit 0 ;; esac
 
 # shellcheck source=/dev/null
 . "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/lib/hook-input.sh}"
@@ -53,11 +52,18 @@ hook_require_jq noop || exit 0
 CMD=$(hook_field '.tool_input.command // empty')
 [ -n "$CMD" ] || exit 0
 
-# Second bail: no write construct in the text at all. `>` alone covers redirects and is
-# by far the most common; the other three are checked because they write without one.
+# The bail. This fires on EVERY Bash call, and the overwhelming majority are reads that
+# neither hold a write construct nor name chezmoi. `>` alone covers redirects and is by far
+# the most common; the other three are checked because they write without one.
+WRITES=1
 case "$CMD" in
   *'>'*|*tee*|*'sed '*|*'dd '*) ;;
-  *) exit 0 ;;
+  *) WRITES=0 ;;
+esac
+[ "${CLAUDE_BASH_WRITE_FANOUT:-1}" != 0 ] || WRITES=0
+case "$CMD" in
+  *chezmoi*) ;;
+  *) [ "$WRITES" = 1 ] || exit 0 ;;
 esac
 
 HOOK_DIR=${BASH_SOURCE[0]%/*}
@@ -90,7 +96,8 @@ BACKSLASH=$'\x5c'
 # README.md. Rewriting a file the command never wrote is the failure this hook exists to
 # prevent, so the parser decides.
 #
-# Three outcomes, and the difference between them is the whole safety argument:
+# Three outcomes, and the difference between them is the whole safety argument (the
+# `stripped` field of `claude_guard.cli post-tool-use`, claude_guard.hook.post_tool_use):
 #
 #   parsed ok      the segment texts, rejoined with their own separators. Bodies are
 #                  gone; the opening line, and the `> file` on it, survive.
@@ -99,51 +106,71 @@ BACKSLASH=$'\x5c'
 #                  located, and a missed fanout is the safe direction here.
 #   no interpreter fall back to the regex below, which is what this hook did before.
 #
-# Gated on `<<` in the text, not on `>`: `2>/dev/null` is in a large share of ordinary
-# commands, and paying for an interpreter on those would put a Python start in front of
-# most Bash calls.
+# Gated on `<<` or `chezmoi` in the text, not on `>`: `2>/dev/null` is in a large share of
+# ordinary commands, and paying for an interpreter on those would put a Python start in
+# front of most Bash calls.
 #
-# Both children run through run_bounded (#581, #657): 2s for the interpreter lookup, 3s
-# for the parse. One that does not finish returns 1, the same as no interpreter, so the
-# regex decides. It must never return 0 with nothing printed, which would read as
-# "unreadable" and fan out nothing. The library is sourced here, ahead of its first use;
-# a missing one is reported as a block further down, before any downstream hook runs.
+# The same call returns the apply guard's report (`context`). A Python that cannot run
+# leaves the regex to strip heredocs, as before. For an apply it means `chezmoi diff` never
+# ran, which an --source apply reports as not evaluated: the text scan below is the one
+# claude_guard.apply_guard falls back to, reduced to the --source test.
+#
+# Both children run through run_bounded (#581, #657): 2s for the interpreter lookup, 14s
+# for the call, which holds the apply guard's 10s `chezmoi diff`. One that does not finish
+# counts as no interpreter. The library is sourced here, ahead of its first use; a missing
+# one is reported as a block further down, before any downstream hook runs.
 GUARD_SHARE="${CLAUDE_GUARD_HOME:-${HOME:-}/.local/share/claude-guard}"
 RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-$HOOK_DIR/lib/run-bounded.sh}"
 # shellcheck source=/dev/null
 . "$RUN_BOUNDED_PATH" 2>/dev/null
 
-parsed_strip_heredocs() {
+POST_JSON=''
+claude_guard_post() {
   command -v run_bounded >/dev/null 2>&1 || return 1
-  [ -f "$GUARD_SHARE/claude_guard/segment.py" ] || return 1
-  local py
+  [ -f "$GUARD_SHARE/claude_guard/cli.py" ] || return 1
   # shellcheck source=/dev/null
   . "$HOOK_DIR/lib/guard-python.sh" 2>/dev/null || return 1
   guard_python 2 || return 1
-  py=$GUARD_PY
+  # The payload goes in through process substitution, so run_bounded keeps its RB_* here.
   # stderr is dropped inside the child: run_bounded merges it into the text returned.
-  # shellcheck disable=SC2016  # $1..$3 belong to the inner bash
-  run_bounded 3 1048576 -- bash -c 'CG_SHARE="$1" exec "$2" -S -P -c "$3" 2>/dev/null' _ \
-    "$GUARD_SHARE" "$py" '
-import os, sys
-
-sys.path.insert(0, os.environ["CG_SHARE"])
-from claude_guard.segment import parse
-
-p = parse(sys.stdin.read())
-if not p.ok:
-    raise SystemExit(0)  # nothing on stdout: the caller fans out nothing
-
-# Put each separator back as text. The tokenizer downstream resets its command word on
-# `|`, `;` and `&`, so joining on newlines alone would let one segment/s redirect target
-# read as the next one/s.
-SEP = {"&&": " && ", "||": " || ", ";": " ; ", "|": " | ", "&": " & ",
-       "newline": "\n", "eof": ""}
-sys.stdout.write("".join(s.text + SEP.get(s.sep, " ") for s in p.segments))
-' <<<"$1"
+  # shellcheck disable=SC2016  # $1/$2 belong to the inner bash
+  run_bounded 14 1048576 -- \
+    bash -c 'PYTHONPATH="$1" exec "$2" -S -P -m claude_guard.cli post-tool-use 2>/dev/null' \
+    _ "$GUARD_SHARE" "$GUARD_PY" < <(printf '%s' "$_HOOK_INPUT_RAW")
   [ "$RB_STATUS" = ok ] && [ "$RB_EXIT" -eq 0 ] || return 1
-  printf '%s' "$RB_OUT"
+  printf '%s' "$RB_OUT" | jq -e 'type == "object"' >/dev/null 2>&1 || return 1
+  POST_JSON=$RB_OUT
 }
+
+PY_OK=0
+STRIPPED_KIND=none
+STRIPPED=''
+APPLY_CONTEXT=''
+case "$CMD" in
+  *'<<'*|*chezmoi*) claude_guard_post && PY_OK=1 ;;
+esac
+if [ "$PY_OK" = 1 ]; then
+  APPLY_CONTEXT=$(printf '%s' "$POST_JSON" | jq -r '.context // empty')
+  STRIPPED_KIND=$(printf '%s' "$POST_JSON" \
+    | jq -r 'if has("stripped") then (if .stripped == null then "unreadable" else "ok" end) else "none" end')
+  STRIPPED=$(printf '%s' "$POST_JSON" | jq -r '.stripped // empty')
+else
+  case "$CMD" in
+    *chezmoi*' --source'*|*chezmoi*' -S'*)
+      APPLY_CONTEXT="chezmoi-apply-guard: claude_guard could not run, so \`chezmoi diff\` did not run -- not evaluated, so it is unknown what this --source apply left ahead of the primary source checkout. Run \`chezmoi diff\` to see it." ;;
+  esac
+fi
+
+# Ends the hook early, with the apply report as the only output when there is one.
+finish() {
+  if [ -n "$APPLY_CONTEXT" ]; then
+    jq -n --arg msg "$APPLY_CONTEXT" '{
+      hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: $msg }
+    }'
+  fi
+  exit 0
+}
+[ "$WRITES" = 1 ] || finish
 
 strip_heredocs() {
   # Drop every heredoc BODY, keeping the line that opens it.
@@ -231,7 +258,10 @@ extract_paths() {
   case $1 in
     *'<<'*)
       # The parser's answer wins; only an unavailable interpreter reaches the regex.
-      if ! shell_text=$(parsed_strip_heredocs "$1"); then
+      if [ "$PY_OK" = 1 ]; then
+        [ "$STRIPPED_KIND" = ok ] || return 0
+        shell_text=$STRIPPED
+      else
         shell_text=$(strip_heredocs "$1")
       fi ;;
     *) shell_text=$1 ;;
@@ -280,7 +310,7 @@ extract_paths() {
 }
 
 extract_paths "$CMD"
-if [ "${#CANDIDATES[@]}" -eq 0 ]; then exit 0; fi
+if [ "${#CANDIDATES[@]}" -eq 0 ]; then finish; fi
 
 # ── resolve, filter, dedupe ──────────────────────────────────────────────────────────
 #
@@ -311,7 +341,7 @@ for c in "${CANDIDATES[@]}"; do
   # hooks over each would stall the session for no benefit.
   if [ "${#PATHS[@]}" -ge 8 ]; then break; fi
 done
-if [ "${#PATHS[@]}" -eq 0 ]; then exit 0; fi
+if [ "${#PATHS[@]}" -eq 0 ]; then finish; fi
 
 # Test seam: print what would be fanned out and stop. Extraction is the half worth
 # testing directly — the downstream hooks stay silent on most inputs, so running the
@@ -407,16 +437,18 @@ for p in "${PATHS[@]}"; do
   done
 done
 
-if [ -z "$OUTPUTS$NOTEVAL" ]; then exit 0; fi
+if [ -z "$OUTPUTS$NOTEVAL" ]; then finish; fi
 
 # Merge. A hook may emit at most one JSON document, so four hooks' worth of output has to
 # collapse into one: any `block` decision wins and its reasons are concatenated, otherwise
 # every additionalContext and every line of plain text is joined into a single context
-# string. The not-evaluated lines are appended to whichever one it is. Plain stdout is kept rather than dropped — auto-format.sh reports a missing
-# formatter that way, and losing it would make the fanout quieter than a real edit.
+# string. The not-evaluated lines, then the apply report, are appended to whichever one it
+# is, so a block never drops them. Plain stdout is kept rather than dropped — auto-format.sh
+# reports a missing formatter that way, and losing it would make the fanout quieter than a
+# real edit.
 # Piped rather than fed as a here-string: bash backs a here-string with a tempfile on many
 # versions, which would bring back the dependency the variable above removed.
-printf '%s' "$OUTPUTS" | jq -Rs --arg noteval "$NOTEVAL" '
+printf '%s' "$OUTPUTS" | jq -Rs --arg noteval "$NOTEVAL" --arg apply "$APPLY_CONTEXT" '
   [ split("\n")[] | select(length > 0)
     | . as $line | (try ($line | fromjson) catch {plain: $line}) ] as $docs
   | ( [ $docs[] | select(.decision == "block") | .reason | select(. != null) ] ) as $blocks
@@ -424,7 +456,7 @@ printf '%s' "$OUTPUTS" | jq -Rs --arg noteval "$NOTEVAL" '
         | if .hookSpecificOutput.additionalContext then .hookSpecificOutput.additionalContext
           elif .plain then .plain
           else empty end ] ) as $ctx
-  | ( [ $noteval | split("\n")[] | select(length > 0) ] ) as $ne
+  | ( [ $noteval | split("\n")[] | select(length > 0) ] + [ $apply | select(length > 0) ] ) as $ne
   | if ($blocks | length) > 0 then
       { decision: "block", reason: (($blocks + $ne) | join("\n\n")) }
     elif (($ctx + $ne) | length) > 0 then

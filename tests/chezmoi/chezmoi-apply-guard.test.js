@@ -1,10 +1,13 @@
-// Regression guard for executable_chezmoi-apply-guard.sh (PreToolUse/Bash).
-// Drives the ACTUAL hook with a STUB `chezmoi` on PATH so it's hermetic. The
+// Regression guard for the chezmoi apply guard, claude_guard.apply_guard. It runs inside
+// guard-pre-tool-use.sh (PreToolUse/Bash) and bash-write-fanout.sh (PostToolUse/Bash), the
+// two shims that start claude_guard; it was chezmoi-apply-guard.sh until it folded into them.
+// Drives the ACTUAL shims with a STUB `chezmoi` on PATH so it's hermetic. The
 // discriminator under test is chezmoi's own status columns, verified against
 // chezmoi v2.71.1: " M path" is the normal source-edited workflow and must pass,
 // "MM path" means the deployed file changed outside chezmoi and apply would
 // discard it. Blocking the first would make the hook useless, so both directions
-// are pinned. Skips without bash/jq.
+// are pinned. Skips without bash, jq or a uv-managed 3.14. The text fallback for a command
+// the parser cannot read is pinned in claude-guard's tests/test_apply_guard.py.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
@@ -15,15 +18,13 @@ const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
 const { srcPath } = require('../lib/paths');
 
-const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_chezmoi-apply-guard.sh');
+const PRE = srcPath('private_dot_claude', 'hooks', 'executable_guard-pre-tool-use.sh');
+const POST = srcPath('private_dot_claude', 'hooks', 'executable_bash-write-fanout.sh');
 const GUARD = srcPath('dot_local', 'share', 'claude-guard');
 
-const skip = skipUnless('bash', 'jq');
-
-// The parsed path needs the same interpreter the shims resolve: a uv-MANAGED 3.14, which
-// is not the one actions/setup-python provides. Probing for `uv` alone would run the
-// parsed assertions on a machine where the hook silently takes its fallback, and they
-// would fail for a reason that is not a regression.
+// The guard needs the interpreter the shims resolve: a uv-MANAGED 3.14, which is not the one
+// actions/setup-python provides. Without it the pre shim asks on every command, and these
+// assertions would fail for a reason that is not a regression.
 const managedPython = (() => {
   try {
     const r = execFileSync(
@@ -33,7 +34,7 @@ const managedPython = (() => {
     return fs.existsSync(r);
   } catch { return false; }
 })();
-const skipParsed = skip || (managedPython ? false : 'no uv-managed 3.14');
+const skip = skipUnless('bash', 'jq') || (managedPython ? false : 'no uv-managed 3.14');
 
 const BIN = scratch(os.tmpdir(), 'czag-bin-');
 fs.writeFileSync(path.join(BIN, 'chezmoi'), `#!/bin/bash
@@ -65,12 +66,13 @@ const UV_ENV = {
   UV_CACHE_DIR: process.env.UV_CACHE_DIR || path.join(os.homedir(), '.cache', 'uv'),
 };
 
-// A decision, or null when the hook stayed out of the way. `guardHome` is the claude_guard
-// package the hook parses with; pointing it at an empty directory is how the fallback is
-// exercised, exactly as a machine with no claude-guard deploy would take it.
-function decide(command, stubStatus, guardHome = GUARD) {
-  const out = execFileSync('bash', [HOOK], {
-    input: JSON.stringify({ tool_input: { command } }),
+// A deny or ask, or null when the guard stayed out of the way. The pre shim decides for the
+// whole deny side, so a read-only allow or a context nudge beside the guard is no decision.
+const blocking = (d) => (d && ['deny', 'ask'].includes(d.permissionDecision) ? d : null);
+
+function decide(command, stubStatus) {
+  const out = execFileSync('bash', [PRE], {
+    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd: '/home/daniel' }),
     encoding: 'utf8',
     stdio: ['pipe', 'pipe', 'pipe'],
     env: {
@@ -79,20 +81,20 @@ function decide(command, stubStatus, guardHome = GUARD) {
       PATH: `${BIN}:${process.env.PATH}`,
       STUB_STATUS: stubStatus,
       HOME: '/home/daniel',
-      CLAUDE_GUARD_HOME: guardHome,
+      CLAUDE_GUARD_HOME: GUARD,
     },
   });
-  return out.trim() ? JSON.parse(out).hookSpecificOutput : null;
+  return blocking(out.trim() ? JSON.parse(out).hookSpecificOutput : null);
 }
 
-const denies = (command, stub = CLOBBER, guardHome = GUARD) => {
-  const d = decide(command, stub, guardHome);
+const denies = (command, stub = CLOBBER) => {
+  const d = decide(command, stub);
   assert.ok(d, `expected a decision for: ${command}`);
   assert.strictEqual(d.permissionDecision, 'deny');
   return d.permissionDecisionReason;
 };
-const allows = (command, stub = CLOBBER, guardHome = GUARD) =>
-  assert.strictEqual(decide(command, stub, guardHome), null, `expected no decision for: ${command}`);
+const allows = (command, stub = CLOBBER) =>
+  assert.strictEqual(decide(command, stub), null, `expected no decision for: ${command}`);
 
 test('denies an apply that would discard an out-of-band deployed change', { skip }, () => {
   const reason = denies('chezmoi apply');
@@ -154,7 +156,7 @@ test('stays silent when chezmoi status reports nothing to overwrite', { skip }, 
 // same stub. Two of them are fail-OPEN, which is the reason the parser is here at all:
 // the apply ran and reverted a sibling's deployed build while the session believed the
 // guard had looked.
-test('a redirect or a pipeline does not narrow the targets', { skip: skipParsed }, () => {
+test('a redirect or a pipeline does not narrow the targets', { skip }, () => {
   // The old scan took every /-rooted token in the WHOLE command as a target, so a log
   // path on the far side of a pipe left no conflict under any named target and the
   // apply was allowed.
@@ -167,11 +169,11 @@ test('a redirect or a pipeline does not narrow the targets', { skip: skipParsed 
   denies('chezmoi apply 2>> /tmp/x');
 });
 
-test('a cd in front of the apply does not narrow the targets', { skip: skipParsed }, () => {
+test('a cd in front of the apply does not narrow the targets', { skip }, () => {
   denies('cd /tmp && chezmoi apply');
 });
 
-test('the override counts only as an assignment on the apply itself', { skip: skipParsed }, () => {
+test('the override counts only as an assignment on the apply itself', { skip }, () => {
   // Matching the override anywhere in the text made it settable from inside any other
   // command's arguments, which is a bypass rather than an override.
   denies('echo CHEZMOI_APPLY_GUARD=off; chezmoi apply');
@@ -187,7 +189,7 @@ test('the override counts only as an assignment on the apply itself', { skip: sk
 // only reaches the process it prefixes: suggesting it at the head of
 // `cd /tmp && chezmoi apply` sets it for `cd`, the apply is denied again, and the
 // session loops on the hook's own advice.
-test('the override the message suggests is one the guard accepts', { skip: skipParsed }, () => {
+test('the override the message suggests is one the guard accepts', { skip }, () => {
   const reason = denies('cd /tmp && chezmoi apply');
   const suggested = /^ {2}(.*CHEZMOI_APPLY_GUARD=off.*)$/m.exec(reason);
   assert.ok(suggested, `the reason offers no override command:\n${reason}`);
@@ -195,7 +197,7 @@ test('the override the message suggests is one the guard accepts', { skip: skipP
   allows(suggested[1]);
 });
 
-test('the words only count as a command, not as text', { skip: skipParsed }, () => {
+test('the words only count as a command, not as text', { skip }, () => {
   // Denying these blocked commands that write nothing, and the message told the session
   // to re-run its own commit with CHEZMOI_APPLY_GUARD=off.
   allows('git commit -m "fix chezmoi apply guard"');
@@ -203,25 +205,17 @@ test('the words only count as a command, not as text', { skip: skipParsed }, () 
   allows('grep -rn "chezmoi apply" docs/');
 });
 
-test('-n is the short dry-run flag wherever it sits', { skip: skipParsed }, () => {
+test('-n is the short dry-run flag wherever it sits', { skip }, () => {
   allows('chezmoi apply -n');
   allows('chezmoi apply -n ~/.local/bin/agentview');
 });
 
-test('an apply inside a substitution is still seen', { skip: skipParsed }, () => {
+test('an apply inside a substitution is still seen', { skip }, () => {
   denies('echo $(chezmoi apply)');
 });
 
-// The parser is an improvement, never a dependency. A machine with no claude-guard
-// deploy -- and a command the parser refuses to read -- must still get the guard.
-test('with no claude_guard package it falls back and still denies', { skip }, () => {
-  const empty = scratch(os.tmpdir(), 'czag-noguard-');
-  denies('chezmoi apply', CLOBBER, empty);
-  allows('chezmoi apply', NORMAL, empty);
-  allows('ls -la', CLOBBER, empty);
-});
-
-test('an unreadable command falls back rather than passing', { skip: skipParsed }, () => {
+// A command the parser refuses to read must still get the guard.
+test('an unreadable command falls back rather than passing', { skip }, () => {
   // An unbalanced quote makes the parser refuse. Its docstring is explicit that a
   // refusal is never a skip, so the hook takes the old scan, which denies this.
   denies('chezmoi apply "unbalanced');
@@ -253,9 +247,11 @@ function sourceRepo(behind) {
   return path.join(dir, 'home');
 }
 
+// The pre shim's deny or ask, or with `post` the fanout shim's report.
 function run(command, extraEnv = {}, args = []) {
-  const out = execFileSync('bash', [HOOK, ...args], {
-    input: JSON.stringify({ tool_input: { command } }),
+  const post = args[0] === 'post';
+  const out = execFileSync('bash', [post ? POST : PRE], {
+    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd: '/home/daniel' }),
     encoding: 'utf8',
     env: {
       ...GIT_ENV, ...UV_ENV,
@@ -263,7 +259,8 @@ function run(command, extraEnv = {}, args = []) {
       HOME: '/home/daniel', CLAUDE_GUARD_HOME: GUARD, ...extraEnv,
     },
   });
-  return out.trim() ? JSON.parse(out).hookSpecificOutput : null;
+  const d = out.trim() ? JSON.parse(out).hookSpecificOutput : null;
+  return post ? d : blocking(d);
 }
 
 test('denies an apply while the primary source checkout is behind origin/main', { skip }, () => {
@@ -277,7 +274,7 @@ test('allows an apply from a source checkout level with origin/main', { skip }, 
   assert.strictEqual(run('chezmoi apply', { STUB_SOURCE_PATH: sourceRepo(false) }), null);
 });
 
-test('a stale primary does not block an apply that reads another source', { skip: skipParsed }, () => {
+test('a stale primary does not block an apply that reads another source', { skip }, () => {
   const stale = { STUB_SOURCE_PATH: sourceRepo(true) };
   assert.strictEqual(run('chezmoi apply --source /wt/home ~/.zshrc', stale), null);
   assert.strictEqual(run('chezmoi apply --source=/wt/home', stale), null);
@@ -286,14 +283,14 @@ test('a stale primary does not block an apply that reads another source', { skip
   assert.strictEqual(run('chezmoi apply -S /wt/home && chezmoi apply', stale).permissionDecision, 'deny');
 });
 
-test('the --source operand is not read as a target', { skip: skipParsed }, () => {
+test('the --source operand is not read as a target', { skip }, () => {
   // Before, /wt/home became a target and narrowed the conflict scan to a path no
   // conflict could be under, so this clobbering apply ran.
   denies('chezmoi apply --source /wt/home');
 });
 
 // ── post: the diff an --source apply leaves behind (#583) ─────────────────────────
-test('after an --source apply it prints the diff against the primary source', { skip: skipParsed }, () => {
+test('after an --source apply it prints the diff against the primary source', { skip }, () => {
   const argsFile = path.join(scratch(os.tmpdir(), 'czag-diff-'), 'args');
   const d = run('chezmoi apply --source /wt/home ~/.zshrc',
     { STUB_DIFF: '-old line\n+new line', STUB_DIFF_ARGS: argsFile }, ['post']);
@@ -305,18 +302,22 @@ test('after an --source apply it prints the diff against the primary source', { 
   assert.doesNotMatch(argv, /\/wt\/home/);
 });
 
-test('after a plain apply, or a clean diff, post says nothing', { skip: skipParsed }, () => {
+test('after a plain apply, or a clean diff, post says nothing', { skip }, () => {
   assert.strictEqual(run('chezmoi apply', { STUB_DIFF: '-x' }, ['post']), null);
   assert.strictEqual(run('chezmoi apply --source /wt/home', { STUB_DIFF: '' }, ['post']), null);
 });
 
-test('the stale-source refusal is parser-only, so the text fallback stays no stricter', { skip }, () => {
-  // The fallback matches the words anywhere, a commit message included. Before the
-  // stale check, a fallback match with no status conflict passed, and it still must.
-  const stale = { STUB_SOURCE_PATH: sourceRepo(true) };
+test('with no claude_guard after an --source apply, the diff is reported as not run', { skip }, () => {
   const empty = scratch(os.tmpdir(), 'czag-noguard-');
-  assert.strictEqual(run('chezmoi apply', { ...stale, CLAUDE_GUARD_HOME: empty }), null);
-  if (!skipParsed) assert.strictEqual(run('git commit -m "chezmoi apply \\"x', stale), null);
+  const d = run('chezmoi apply --source /wt/home', { CLAUDE_GUARD_HOME: empty, STUB_DIFF: '-x' }, ['post']);
+  assert.match(d.additionalContext, /chezmoi diff.*did not run -- not evaluated/s);
+  assert.strictEqual(run('chezmoi apply', { CLAUDE_GUARD_HOME: empty }, ['post']), null);
+});
+
+test('a commit message naming the apply is not a stale-source refusal', { skip }, () => {
+  // The parser cannot split this, and the text fallback matches the words; the stale check
+  // is parser-only, so with no status conflict it passes, as it did before the stale check.
+  assert.strictEqual(run('git commit -m "chezmoi apply \\"x', { STUB_SOURCE_PATH: sourceRepo(true) }), null);
 });
 
 // ── words in quoted or heredoc text (#614) ──────────────────────────────────────────
@@ -328,21 +329,10 @@ test('the stale-source refusal is parser-only, so the text fallback stays no str
 // then refused on the deployed-ahead conflict.
 const ODD_QUOTE_BODY = 'gh pr create --title "Stop the chezmoi apply guard misfiring" --body "$(cat <<\'EOF\'\nA 5" screen shows it.\nEOF\n)"';
 
-test('an odd quote in a heredoc body does not turn a non-chezmoi command into a refusal', { skip: skipParsed }, () => {
+test('an odd quote in a heredoc body does not turn a non-chezmoi command into a refusal', { skip }, () => {
   allows(ODD_QUOTE_BODY);
   // The reject half: a chezmoi command the parser cannot split still falls back and denies.
   denies('chezmoi apply "unbalanced');
-});
-
-test('the text fallback ignores quoted and quoted-heredoc text', { skip }, () => {
-  const empty = scratch(os.tmpdir(), 'czag-noguard-');
-  allows('git commit -m "fix chezmoi apply guard"', CLOBBER, empty);
-  allows('GH_REPO=a/b uv run python findings.py open --title "Stop the guard refusing chezmoi apply text"', CLOBBER, empty);
-  allows("git commit -F - <<'EOF'\nFix guard\n\nIt no longer refuses chezmoi apply in a heredoc.\nEOF", CLOBBER, empty);
-  allows(ODD_QUOTE_BODY, CLOBBER, empty);
-  // A substitution inside double quotes runs, so that text still counts.
-  denies('echo "$(chezmoi apply)"', CLOBBER, empty);
-  denies('chezmoi apply', CLOBBER, empty);
 });
 
 // ── a lookup that cannot finish asks instead of allowing (#657) ─────────────────────
@@ -381,16 +371,8 @@ test('a hung source-path lookup is cut off and asks', { skip: skipBounded }, () 
   assert.match(d.permissionDecisionReason, /source-path.*within 1s \(timeout\)/s);
 });
 
-test('a hung post-apply diff is cut off and reported as not evaluated', { skip: skipParsed || skipBounded }, () => {
+test('a hung post-apply diff is cut off and reported as not evaluated', { skip: skip || skipBounded }, () => {
   const { d, seconds } = timedRun('chezmoi apply --source /wt/home', { STUB_SLOW: 'diff' }, ['post']);
   assert.ok(seconds < 10, `took ${seconds}s`);
   assert.match(d.additionalContext, /chezmoi diff.*within 1s \(timeout\).*not evaluated/s);
-});
-
-test('a missing run-bounded.sh asks on an apply and stays out of other chezmoi commands', { skip }, () => {
-  const env = { RUN_BOUNDED_LIB: '/nonexistent/run-bounded.sh' };
-  const d = run('chezmoi apply', env);
-  assert.strictEqual(d && d.permissionDecision, 'ask');
-  assert.match(d.permissionDecisionReason, /cannot load .*not evaluated/);
-  assert.strictEqual(run('chezmoi status', env), null);
 });

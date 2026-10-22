@@ -23,7 +23,7 @@ import json
 import os
 from collections.abc import Mapping
 
-from claude_guard import bypass, waits
+from claude_guard import apply_guard, bypass, tq_wrap, waits
 from claude_guard.checks import git_conventions, worktree_escape
 from claude_guard.checks.awk import awk_risk
 from claude_guard.deny import Verdict, deny
@@ -32,6 +32,7 @@ from claude_guard.judge import Decision, judge
 from claude_guard.nudges import nudge, seen
 from claude_guard.readonly import readonly
 from claude_guard.rules import load_rules
+from claude_guard.segment import parse
 from claude_guard.tables import scratch_roots
 
 ALLOW_JSON = (
@@ -139,6 +140,42 @@ def wait_rewrite(stdin_text: str) -> dict | None:
         return waits.rewrite(data, os.getpid()) if isinstance(data, dict) else None
     except Exception:
         return None
+
+
+def tq_rewrite(stdin_text: str, command: str, cwd: str, env: Mapping[str, str]) -> dict | None:
+    """The tq rewrite for this call (claude_guard.tq_wrap), or None. Never raises, for the
+    reason wait_rewrite() gives.
+
+    Claude Code replaces the tool input with updatedInput rather than merging it, so every
+    other key rides along. Sending the command alone dropped run_in_background and timeout:
+    a backgrounded suite ran in the foreground under the 120s default (#771)."""
+    try:
+        updated = tq_wrap.rewrite(command, cwd, env)
+        if updated is None:
+            return None
+        data = json.loads(stdin_text)
+        if data.get("tool_name") != "Bash":
+            return None
+        return {**data["tool_input"], "command": updated}
+    except Exception:
+        return None
+
+
+def apply_guard_verdict(command: str, env: Mapping[str, str]) -> Verdict | None:
+    """claude_guard.apply_guard's verdict for a `chezmoi apply`, or None.
+
+    Its failure contract is the deny side's, not no-decision: a guard that cannot complete
+    asks, because the apply it guards would silently revert work."""
+    try:
+        return apply_guard.pre(command, env)
+    except Exception:
+        return Verdict(
+            "ask",
+            "chezmoi-apply-guard",
+            "chezmoi-apply-guard: the check raised -- not evaluated, so it is unknown whether "
+            "this apply reverts a file something other than chezmoi wrote. Check `chezmoi "
+            "status` before approving.",
+        )
 
 
 def run_in_background(stdin_text: str) -> bool:
@@ -262,9 +299,17 @@ def pre_tool_use(stdin_text: str, env: Mapping[str, str]) -> str | None:
     # A needless dangerouslyDisableSandbox (claude_guard.bypass). Its own failure contract is
     # no decision, so it runs outside the deny rules' fail-closed try above.
     verdict = merge(verdict, bypass_verdict(stdin_text, cwd, env))
+    # The chezmoi apply guard (claude_guard.apply_guard) asks rather than fails open, so it
+    # merges like a deny rule, after the checks above so a deny from them is not delayed by
+    # a chezmoi status it no longer needs.
+    if verdict.kind != "deny":
+        verdict = merge(verdict, apply_guard_verdict(command, env))
     if verdict.kind == "none":
         verdict = readonly(command, cwd, env) or verdict
-    return pre_tool_use_json(verdict, nudge_for(command, stdin_text), wait_rewrite(stdin_text))
+    # One updatedInput at most. A cc-wait call is never a test run tq claims, and the wait
+    # rewrite changes how the call runs, so it goes first.
+    updated = wait_rewrite(stdin_text) or tq_rewrite(stdin_text, command, cwd, env)
+    return pre_tool_use_json(verdict, nudge_for(command, stdin_text), updated)
 
 
 _RANK = {"deny": 3, "ask": 2, "allow": 1, "none": 0}
@@ -279,3 +324,52 @@ def merge(danger: Verdict, slip: Verdict | None) -> Verdict:
     if slip is None or _RANK[slip.kind] <= _RANK[danger.kind]:
         return danger
     return slip
+
+
+# =============================================================================================
+# PostToolUse: what bash-write-fanout.sh needs a parser for
+# =============================================================================================
+
+# Each separator put back as text. The fanout's tokenizer resets its command word on `|`,
+# `;` and `&`, so joining on newlines alone would let one segment's redirect target read as
+# the next one's.
+_SEP_TEXT = {
+    "&&": " && ",
+    "||": " || ",
+    ";": " ; ",
+    "|": " | ",
+    "&": " & ",
+    "newline": "\n",
+    "eof": "",
+}
+
+
+def post_tool_use(stdin_text: str, env: Mapping[str, str]) -> str:
+    """The JSON bash-write-fanout.sh reads after a Bash call: one interpreter start for both
+    of the post side's questions.
+
+    `context` is claude_guard.apply_guard.post()'s report, or null. `stripped`, present only
+    when the command holds `<<`, is its shell text with every heredoc body lifted out, or
+    null when the parser cannot read it -- the fanout then fans out nothing, since a write it
+    cannot locate is the safe miss. A body line such as `> README.md` (a Markdown blockquote)
+    must never read as a redirect, which is why the parser decides rather than a regex.
+    """
+    try:
+        command = read_command(stdin_text) or ""
+    except Exception:
+        command = ""
+    out: dict = {"context": None}
+    try:
+        out["context"] = apply_guard.post(command, env)
+    except Exception:
+        out["context"] = (
+            "chezmoi-apply-guard: the check raised -- not evaluated, so it is unknown what "
+            "this --source apply left ahead of the primary source checkout. Run `chezmoi "
+            "diff` to see it."
+        )
+    if "<<" in command:
+        p = parse(command)
+        out["stripped"] = (
+            "".join(seg.text + _SEP_TEXT.get(seg.sep, " ") for seg in p.segments) if p.ok else None
+        )
+    return json.dumps(out)
