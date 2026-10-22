@@ -221,6 +221,23 @@ test('a finding the baseline does not cover is still reported', { skip }, () => 
   assert.match(r.stdout, /1 new finding/);
 });
 
+// dotfiles #849: an accept used to rewrite the baseline from its own window alone, so every
+// finding accepted earlier, and every entry appended by hand, vanished at the next accept
+// whose window did not hold it. A wider scan then reported all of them as new.
+test('an accept keeps baseline entries outside its own window', { skip }, () => {
+  const sb = sandbox();
+  run(['--session', path.join(sb.projects, 'dirty.jsonl'), '--accept-baseline'], sb);
+  const first = fs.readFileSync(sb.baseline, 'utf8').trim();
+  assert.match(first, /^github-pat:dirty\.jsonl:[0-9a-f]{16}$/, 'the first accept recorded the finding');
+  const byHand = 'generic-api-key:loki:0123456789abcdef';
+  fs.appendFileSync(sb.baseline, byHand + '\n');
+
+  const again = run(['--session', path.join(sb.projects, 'clean.jsonl'), '--accept-baseline'], sb);
+  assert.strictEqual(again.status, 0, `${again.stdout}${again.stderr}`);
+  const kept = fs.readFileSync(sb.baseline, 'utf8').split('\n').filter(Boolean);
+  assert.deepStrictEqual(kept.sort(), [byHand, first].sort());
+});
+
 test('the fingerprint is rule, file name and a hash of the matched line', { skip }, () => {
   // Baselines already on disk were written by the shell version, whose fingerprint was the
   // first 16 hex of `sed -n "${line}p" | sha256sum`: the matched line WITH its newline.

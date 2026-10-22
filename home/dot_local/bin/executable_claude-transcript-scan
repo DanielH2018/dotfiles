@@ -22,7 +22,7 @@ is how long it stays valid.
   claude-transcript-scan --since 72         # ...or a different window, in hours
   claude-transcript-scan --session PATH     # one transcript (what the SessionEnd hook runs)
   claude-transcript-scan --all              # every transcript on the machine
-  claude-transcript-scan --accept-baseline  # record today's findings as known; report only new ones
+  claude-transcript-scan --accept-baseline  # add this run's findings to the baseline; report only new ones
   claude-transcript-scan --paranoid         # gitleaks' FULL ruleset, for a deliberate audit
   claude-transcript-scan --no-loki          # transcripts only; skip the Loki store
 
@@ -873,11 +873,12 @@ class Scanner:
                 self.mark_unavailable(partial)
             try:
                 with open(self.baseline, "rb") as fh:
-                    accepted = fh.read().count(b"\n")
+                    held = fh.read().count(b"\n")
             except OSError:
-                accepted = 0
+                held = 0
             _out(
-                f"{PROG}: accepted {accepted} finding(s) as baseline in {self.baseline}"
+                f"{PROG}: accepted this run's findings; the baseline in {self.baseline} "
+                f"holds {held} finding(s)"
             )
             _out(
                 "Only findings NOT in that file are reported from now on. "
@@ -990,14 +991,21 @@ class Scanner:
             lines = _read_lines(new)
         except OSError:
             lines = None
-        # The shell redirected into the baseline before it sorted, so a run that found
-        # nothing truncated it. The sorted, de-duplicated findings of THIS run are the
-        # whole new baseline.
+        # An accept adds to the baseline and never removes from it. This run's window
+        # sees only part of what was accepted before, and a hand-appended entry may never
+        # have been in any window, so replacing the file with this run's findings dropped
+        # both (dotfiles #849). Re-read at write time rather than reusing the set loaded
+        # at start, so an entry appended while the scan ran survives too.
+        try:
+            kept = _read_lines(self.baseline)
+        except OSError:
+            kept = []
+        merged = set(kept) | set(lines or [])
+        merged.discard("")
         try:
             with open(self.baseline, "wb") as fh:
-                if lines is not None:
-                    body = "".join(f"{fp}\n" for fp in sorted(set(lines)))
-                    fh.write(body.encode("utf-8", "surrogateescape"))
+                body = "".join(f"{fp}\n" for fp in sorted(merged))
+                fh.write(body.encode("utf-8", "surrogateescape"))
         except OSError:
             return
         if lines is not None:
