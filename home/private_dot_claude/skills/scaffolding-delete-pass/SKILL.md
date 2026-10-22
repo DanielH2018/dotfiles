@@ -74,7 +74,7 @@ The counts that settled the 2026-09-26 run:
   runs on the PC and the work laptop, so its zero there is unknown.
 - To get the counts on a machine Loki cannot see, run `~/.local/share/chezmoi/bin/skill-usage`
   on that machine. It reads the per-host `~/.claude/logs/skill-usage.jsonl` that the
-  `skill-usage-log.sh` hook has written since 2026-09-03. The log records Skill and Agent tool
+  `skill-usage-log.py` hook has written since 2026-09-03. The log records Skill and Agent tool
   calls only, so it misses typed slash commands and Workflow runs.
 - A skill that CLAUDE.md tells the model to Read, rather than invoke, counts zero activations
   in both sources. The 2026-09-28 run found `test-scenario-hygiene` in this state.

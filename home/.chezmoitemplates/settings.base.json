@@ -820,7 +820,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/skill-usage-log.sh",
+            "command": "~/.claude/hooks/skill-usage-log.py",
             "timeout": 10
           }
         ]

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Standalone tests for skill-usage-log.sh.
+"""Standalone tests for skill-usage-log.py.
 
 Run: python3 test_skill_usage_log.py
 
@@ -22,15 +22,16 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 from _testkit import check, finish
 
 HERE = Path(__file__).resolve().parent
-HOOK = HERE / "executable_skill-usage-log.sh"
+HOOK = HERE / "executable_skill-usage-log.py"
 if not HOOK.exists():  # deployed copy drops chezmoi's mode prefix
-    HOOK = HERE / "skill-usage-log.sh"
+    HOOK = HERE / "skill-usage-log.py"
 
 # Scrub git's own environment: the hook shells out to `git -C <cwd> rev-parse
 # --git-common-dir` to resolve cwd_repo, and GIT_DIR/GIT_WORK_TREE outrank -C.
@@ -41,7 +42,7 @@ for _var in [k for k in os.environ if k.startswith("GIT_")]:
 def run_hook(payload, home_dir, cwd, extra_env=None):
     env = {**os.environ, "HOME": str(home_dir), **(extra_env or {})}
     return subprocess.run(
-        ["bash", str(HOOK)],
+        [sys.executable, str(HOOK)],
         cwd=str(cwd),
         input=json.dumps(payload),
         capture_output=True,
@@ -183,34 +184,24 @@ with tempfile.TemporaryDirectory() as tmp:
         bool(lines) and lines[0].get("ok") is False,
     )
 
-    # ── a missing run-bounded.sh is reported, not absorbed (#581) ──────────────────
-    # The hook used to define its own unbounded run_bounded() when the library did not
-    # source. Now it still writes the row (the fire count does not need the lookup) but
-    # exits 1 naming the library. The accepting half runs the same payload with the
-    # library present and must exit 0.
+    # ── a cwd outside any git repo still records the row ───────────────────────────
+    # cwd_repo comes from `git rev-parse --git-common-dir`; when that lookup fails, the
+    # fire count must still land, with cwd_repo falling back to the directory name.
 
-    payload = {
-        "session_id": "s7",
-        "cwd": str(root),
-        "tool_name": "Skill",
-        "tool_input": {"skill": "gh-stack"},
-    }
-    home7 = root / "home-lib-present"
+    home7 = root / "home-not-a-repo"
     home7.mkdir()
-    present = run_hook(payload, home7, root)
-    check("with run-bounded.sh present the hook exits 0", present.returncode == 0)
-
-    home8 = root / "home-lib-missing"
-    home8.mkdir()
-    missing = run_hook(
-        payload, home8, root, {"RUN_BOUNDED_LIB": "/nonexistent/run-bounded.sh"}
+    result = run_hook(
+        {
+            "session_id": "s7",
+            "cwd": str(root),
+            "tool_name": "Skill",
+            "tool_input": {"skill": "gh-stack"},
+        },
+        home7,
+        root,
     )
-    check("a missing run-bounded.sh exits 1", missing.returncode == 1)
-    check(
-        "and names the library on stderr",
-        "/nonexistent/run-bounded.sh" in missing.stderr,
-    )
-    lines = log_lines(home8)
+    check("a cwd outside any git repo exits 0", result.returncode == 0)
+    lines = log_lines(home7)
     check(
         "the row is still written, cwd_repo falling back to the directory name",
         bool(lines) and lines[0].get("cwd_repo") == root.name,
