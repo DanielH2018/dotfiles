@@ -81,7 +81,7 @@
 		     every repository then counts as work and the chip stays hidden. -->
 		<key>PR_DASH_WORK_ORGS</key>
 		<string>{{ if hasKey . "prDashWorkOrgs" }}{{ .prDashWorkOrgs }}{{ end }}</string>
-		<!-- The Chrome extension origins allowed to read /api/prs and /api/planka cross-origin,
+		<!-- The Chrome extension origins allowed to read the routes in src/server.ts's EXTENSION_PATHS cross-origin,
 		     comma-separated, each chrome-extension://<32-letter id>. The ID stays out of this repo: it comes
 		     from `prDashExtensionOrigins` in the machine-local chezmoi.toml, under [data].
 		     Unset renders an empty string, which accepts no extension origin, and a malformed

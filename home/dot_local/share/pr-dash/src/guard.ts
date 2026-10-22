@@ -44,7 +44,7 @@ function originHost(origin: string): string | undefined {
  *
  * The one exception to the `Origin` rule is `expected.extensionOrigins`: an `Origin` equal to
  * one of its entries is accepted and returned as `extensionOrigin`, so the server can confine
- * it to `GET /api/prs` and `GET /api/planka`. The comparison is exact string equality — no `canonicalHost`, no
+ * it to the routes in `EXTENSION_PATHS` in server.ts. The comparison is exact string equality — no `canonicalHost`, no
  * case-folding — against entries `parseExtensionOrigins` in main-lib.ts has already
  * validated. The `Host` check above it is unconditional, whatever the `Origin`.
  */

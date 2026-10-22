@@ -4,6 +4,7 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkHost } from './guard.ts';
 import { buildStacks } from './stacks.ts';
+import type { JobsResult } from './jobs.ts';
 import type { PlankaResult } from './planka.ts';
 import type { LoadVulns } from './vulns.ts';
 import type { PrRecord, StackNode } from './types.ts';
@@ -35,8 +36,8 @@ export type ServerOpts = {
   // spend cycles refusing is still activity, not idleness. Optional so every existing
   // caller (every test that builds a ServerOpts without it) keeps compiling.
   onRequest?: () => void;
-  // Chrome extension origins allowed to read `GET /api/prs` and `GET /api/planka`
-  // cross-origin (see EXTENSION_PATHS), each exactly
+  // Chrome extension origins allowed to read the routes in EXTENSION_PATHS
+  // cross-origin, each exactly
   // `chrome-extension://<32 a-p>` — see `parseExtensionOrigins` in main-lib.ts, which
   // validates them. Absent or empty means no extension origin is accepted, which is the
   // behaviour before this option existed.
@@ -58,6 +59,9 @@ export type ServerOpts = {
   // onRequest, so a ServerOpts built without it still compiles; unset answers that route
   // with a 502 saying Planka is not configured.
   loadPlanka?: () => Promise<PlankaResult>;
+  // Backs `GET /api/jobs` — see createLoadJobs in jobs.ts. Optional for the same reason as
+  // loadPlanka; unset answers that route with a 502.
+  loadJobs?: () => Promise<JobsResult>;
   // Backs `GET /api/vulns` — see createVulnLoader in vulns.ts. Optional for the same reason
   // as loadPlanka; unset answers that route with a 502. Deliberately absent from
   // EXTENSION_PATHS: open vulnerabilities are a security inventory, so they stay readable
@@ -66,8 +70,8 @@ export type ServerOpts = {
 };
 
 // The only paths an allowlisted extension origin may read. The new tab's work panels need
-// these two and nothing else, so the page shell, app.js and every 404 stay refused.
-const EXTENSION_PATHS: ReadonlySet<string> = new Set(['/api/prs', '/api/planka']);
+// these and nothing else, so the page shell, app.js and every 404 stay refused.
+const EXTENSION_PATHS: ReadonlySet<string> = new Set(['/api/prs', '/api/planka', '/api/jobs']);
 
 // Derived from opts.loadPrs's own return type rather than restating it: a hand-maintained
 // copy closes the omission this round found (`refreshing` dropped at the wire) but not the
@@ -152,7 +156,7 @@ async function handle(
   // never reaches this point: the method gate above has already answered 405.
   const { extensionOrigin } = hostCheck;
   if (extensionOrigin !== undefined && !EXTENSION_PATHS.has(url.pathname)) {
-    return refuse(res, 403, `origin ${extensionOrigin} may only read ${[...EXTENSION_PATHS].join(' and ')}`);
+    return refuse(res, 403, `origin ${extensionOrigin} may only read ${[...EXTENSION_PATHS].join(', ')}`);
   }
 
   // The shell contains no PR data. Beyond the Host/Origin check above, only the extension
@@ -213,6 +217,20 @@ async function handle(
     if (result.error !== undefined) return refuse(res, 502, result.error);
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify(result.board));
+    return;
+  }
+
+  if (url.pathname === '/api/jobs') {
+    // Same shape as /api/planka: CORS headers before the load, nothing from the URL reaches
+    // the loader, and a failure is a 502 whose body carries the reason.
+    if (extensionOrigin !== undefined) {
+      res.setHeader('access-control-allow-origin', extensionOrigin);
+      res.setHeader('vary', 'Origin');
+    }
+    const result = opts.loadJobs ? await opts.loadJobs() : { error: 'jobs are not configured in pr-dash' };
+    if (result.error !== undefined) return refuse(res, 502, result.error);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ jobs: result.jobs }));
     return;
   }
 

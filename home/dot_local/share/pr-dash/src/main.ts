@@ -3,6 +3,7 @@ import { createClient } from './github.ts';
 import type { LoadResult } from './loader.ts';
 import { resolveToken } from './token.ts';
 import { createCache } from './cache.ts';
+import { createLoadJobs } from './jobs.ts';
 import { createLoadPlanka } from './planka.ts';
 import {
   createIdleExit,
@@ -96,6 +97,8 @@ const server = createServer({
   // Spawns the planka CLI per request, never at startup, so a machine without it pays
   // nothing until something asks for /api/planka.
   loadPlanka: createLoadPlanka(),
+  // Spawns jobstat per request for the same reason: most machines never ask for /api/jobs.
+  loadJobs: createLoadJobs(),
   // Shares the PR loader's lazy client, so both routes resolve the token once. Alerts change
   // far more slowly than PR state, hence the longer TTL than the PR cache's 60 seconds.
   loadVulns: createVulnLoader(client, parsedVulnRepos.repos, createCache<VulnLoadResult>(300_000)),

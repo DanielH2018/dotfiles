@@ -45,6 +45,7 @@ async function withServer(
   workOrgs: string[] = [],
   extensionOrigins: string[] = [],
   loadPlanka?: ServerOpts['loadPlanka'],
+  loadJobs?: ServerOpts['loadJobs'],
 ) {
   const port = await freePort();
   const server = createServer({
@@ -54,6 +55,7 @@ async function withServer(
     workOrgs,
     extensionOrigins,
     loadPlanka,
+    loadJobs,
   });
   await new Promise<void>((r) => server.listen(port, '127.0.0.1', r));
   try {
@@ -605,8 +607,9 @@ function withExtensionServer(
   fn: (base: string) => Promise<void>,
   loadPrs?: Parameters<typeof withServer>[1],
   loadPlanka?: ServerOpts['loadPlanka'],
+  loadJobs?: ServerOpts['loadJobs'],
 ) {
-  return withServer(fn, loadPrs, undefined, [], extensionOrigins, loadPlanka);
+  return withServer(fn, loadPrs, undefined, [], extensionOrigins, loadPlanka, loadJobs);
 }
 
 test('an allowlisted extension origin reads /api/prs, answered with CORS headers naming that exact origin', async () => {
@@ -629,12 +632,13 @@ test('an allowlisted extension origin reads /api/prs, answered with CORS headers
   });
 });
 
-test('an allowlisted extension origin is refused on every path except /api/prs and /api/planka', async () => {
+test('an allowlisted extension origin is refused on every path outside EXTENSION_PATHS', async () => {
   // The page shell, the client code, near-misses of the API paths, a path that would 404,
-  // and /api/vulns, which stays same-origin only: the allowlist opens two routes, not the
-  // server.
+  // and /api/vulns, which stays same-origin only: the allowlist opens the work panels'
+  // routes, not the server.
+  const paths = ['/', '/index.html', '/app.js', '/api/prs/', '/api/planka/', '/api/jobs/', '/api/vulns', '/no-such-file'];
   await withExtensionServer([EXTENSION], async (base) => {
-    for (const path of ['/', '/index.html', '/app.js', '/api/prs/', '/api/planka/', '/api/vulns', '/no-such-file']) {
+    for (const path of paths) {
       const response = await getFrom(base, path, EXTENSION);
       assert.match(response, /^HTTP\/1\.1 403 /, `path ${path}`);
       assert.doesNotMatch(response, /access-control-allow-origin/i, `path ${path}`);
@@ -753,5 +757,29 @@ test('/api/planka answers 502 with a reason when the server has no Planka loader
     const res = await fetch(`${base}/api/planka`);
     assert.strictEqual(res.status, 502);
     assert.deepStrictEqual(await res.json(), { error: 'Planka is not configured in pr-dash' });
+  });
+});
+
+test('an allowlisted extension origin reads /api/jobs, answered with CORS headers naming that exact origin', async () => {
+  const jobs = [{ label: 'com.example.job', schedule: 'Mon-Fri 08:15', status: 'not running', failed: true, logAt: 1 }];
+  await withExtensionServer(
+    [EXTENSION],
+    async (base) => {
+      const response = await getFrom(base, '/api/jobs', EXTENSION);
+      assert.match(response, /^HTTP\/1\.1 200 /);
+      assert.ok(response.toLowerCase().includes(`\r\naccess-control-allow-origin: ${EXTENSION}\r\n`), response);
+      assert.ok(response.includes(JSON.stringify({ jobs })), response);
+    },
+    undefined,
+    undefined,
+    async () => ({ jobs }),
+  );
+});
+
+test('/api/jobs answers 502 with a reason when the server has no jobs loader', async () => {
+  await withServer(async (base) => {
+    const res = await fetch(`${base}/api/jobs`);
+    assert.strictEqual(res.status, 502);
+    assert.deepStrictEqual(await res.json(), { error: 'jobs are not configured in pr-dash' });
   });
 });

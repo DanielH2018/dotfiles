@@ -63,7 +63,7 @@ export type ParsedExtensionOrigins =
 const EXTENSION_ORIGIN_PATTERN = /^chrome-extension:\/\/[a-p]{32}$/;
 
 /**
- * Reads the extension origins allowed to read `GET /api/prs` and `GET /api/planka` from a
+ * Reads the extension origins allowed to read the routes in server.ts's `EXTENSION_PATHS` from a
  * raw `PR_DASH_EXTENSION_ORIGINS` value: a comma-separated list such as
  * `chrome-extension://<id>,chrome-extension://<id>`.
  *
