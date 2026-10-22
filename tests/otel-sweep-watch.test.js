@@ -1,9 +1,12 @@
-// Regression guard for home/dot_local/bin/executable_otel-sweep-watch.
+// Regression guard for `otel-sweep watch` (home/dot_local/bin/executable_otel-sweep), and
+// for the executable_otel-sweep-watch shim the systemd unit still runs.
 //
 // The thing worth pinning is what the runner treats as a finding. It fires a desktop
 // notification, so a rule that flags something normal — daniel-server runs no Tempo, and
 // never will — gets muted within a week, after which it detects nothing at all. These
-// drive the real script against a stubbed otel-sweep on PATH.
+// drive the real subcommand with the sweep JSON on stdin (`watch --stdin`), which is the
+// seam that replaced pointing OTEL_SWEEP at a stub program: nothing the environment
+// carries can name a program for otel-sweep to run.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
@@ -13,7 +16,8 @@ const path = require('node:path');
 const { scratch } = require('./lib/tmp');
 const { srcPath } = require('./lib/paths');
 
-const WATCH = srcPath('dot_local', 'bin', 'executable_otel-sweep-watch');
+const SWEEP = srcPath('dot_local', 'bin', 'executable_otel-sweep');
+const SHIM = srcPath('dot_local', 'bin', 'executable_otel-sweep-watch');
 
 let skip = false;
 try {
@@ -24,20 +28,6 @@ try {
 
 const DIR = scratch(os.tmpdir(), 'otel-sweep-watch-');
 // Every other scratch here is made inside DIR, so removing it covers them all.
-
-// A stub standing in for otel-sweep: prints the fixture handed to it, ignores its flags.
-function stub(payload) {
-  const file = path.join(DIR, `stub-${Math.abs(hash(payload))}`);
-  fs.writeFileSync(file, `#!/usr/bin/env bash\ncat <<'JSON'\n${payload}\nJSON\n`);
-  fs.chmodSync(file, 0o755);
-  return file;
-}
-
-function hash(s) {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-  return h;
-}
 
 // A notify-send that records instead of drawing, so the tests can assert on what
 // the operator would actually have seen.
@@ -72,11 +62,11 @@ const SILENT = notifyStub();
 
 function run(payload, extra = {}) {
   try {
-    const stdout = execFileSync('bash', [WATCH], {
+    const stdout = execFileSync('python3', [SWEEP, 'watch', '--stdin'], {
       encoding: 'utf8',
+      input: payload,
       env: {
         ...process.env,
-        OTEL_SWEEP: stub(payload),
         PATH: `${SILENT.bin}:${process.env.PATH}`,
         // Each run gets its own state dir by default, so the dedup memory neither
         // reaches the real ~/.local/state nor leaks between tests.
@@ -451,4 +441,60 @@ test('a clean run clears a banner an earlier down run left behind', { skip }, ()
   assert.strictEqual(run(HEALTHY, { XDG_STATE_HOME: state }).code, 0);
   assert.ok(!fs.existsSync(path.join(state, 'otel-sweep-watch', 'findings-pending')),
     'a resolved finding must not leave a stale banner behind');
+});
+
+test('an empty sweep exits 2, not a clean run', { skip }, () => {
+  const { code, stdout } = run('');
+  assert.strictEqual(code, 2, 'no output at all means the sweep did not run');
+  assert.strictEqual(stdout, '', 'there is no report to print');
+});
+
+// --- state file formats: the statusline and existing state files depend on them ---
+
+test('last-notified holds the POSIX cksum of the findings and an epoch', { skip }, () => {
+  const state = scratch(DIR, 'format-');
+  assert.strictEqual(run(LOKI_DOWN, { XDG_STATE_HOME: state }).code, 1);
+  const dir = path.join(state, 'otel-sweep-watch');
+  const findings = '  box: Loki unreachable - nothing is being recorded';
+  // The shell version fingerprinted with `cksum`; a state file it wrote must still match.
+  const [crc] = execFileSync('cksum', { input: findings, encoding: 'utf8' }).split(' ');
+  assert.match(fs.readFileSync(path.join(dir, 'last-notified'), 'utf8'), new RegExp(`^${crc} \\d+\\n$`));
+  assert.strictEqual(fs.readFileSync(path.join(dir, 'findings-pending'), 'utf8'), `${findings}\n`);
+});
+
+// --- the shim the systemd unit runs ----------------------------------------------
+
+// A copy of the shim beside a stand-in otel-sweep that records its argv.
+function shimDir(withSweep) {
+  const dir = scratch(DIR, 'shim-');
+  fs.copyFileSync(SHIM, path.join(dir, 'otel-sweep-watch'));
+  fs.chmodSync(path.join(dir, 'otel-sweep-watch'), 0o755);
+  if (withSweep) {
+    fs.writeFileSync(path.join(dir, 'otel-sweep'), `#!/bin/sh\nprintf '%s\\n' "$@" >"${dir}/argv"\nexit 1\n`);
+    fs.chmodSync(path.join(dir, 'otel-sweep'), 0o755);
+  }
+  return dir;
+}
+
+function runShim(dir, env = {}) {
+  try {
+    execFileSync(path.join(dir, 'otel-sweep-watch'), ['ignored'], { encoding: 'utf8', stdio: 'pipe', env: { ...process.env, ...env } });
+    return { code: 0, stderr: '' };
+  } catch (err) {
+    return { code: err.status, stderr: String(err.stderr || '') };
+  }
+}
+
+test('the shim runs the otel-sweep beside it as `watch` and keeps its exit code', () => {
+  const dir = shimDir(true);
+  // OTEL_SWEEP named the program to run before; it must now be inert.
+  const { code } = runShim(dir, { OTEL_SWEEP: '/bin/false' });
+  assert.strictEqual(code, 1, 'the unit relies on exit 1 meaning findings');
+  assert.strictEqual(fs.readFileSync(path.join(dir, 'argv'), 'utf8'), 'watch\n', 'no argument is forwarded');
+});
+
+test('the shim exits 2 when otel-sweep is not beside it', () => {
+  const { code, stderr } = runShim(shimDir(false));
+  assert.strictEqual(code, 2);
+  assert.match(stderr, /otel-sweep-watch: otel-sweep not on PATH/);
 });

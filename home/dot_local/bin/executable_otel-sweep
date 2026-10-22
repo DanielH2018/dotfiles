@@ -26,14 +26,27 @@ caller-supplied string.
   otel-sweep --deep          # adds sessions that are exporting nowhere
   otel-sweep --only box      # one machine
   otel-sweep --rows          # compact text instead of JSON
+  otel-sweep watch           # the daily check: deep sweep, log, notify on findings
 
 Read-only by construction: every request is a GET, and PROBE writes no files.
+
+`watch` is the one subcommand with side effects, and they are fixed: it writes
+syslog through `logger`, raises a desktop notification through `notify-send`, and
+keeps two small state files under $XDG_STATE_HOME/otel-sweep-watch. Both programs
+are literals in this file, and the sweep it summarises runs in this process, so
+nothing in the environment or argv names a program to run. The only caller-shaped
+input is `watch --stdin`, which reads sweep JSON instead of sweeping; that JSON is
+data summarised into one argv element of `logger` and `notify-send`, never a
+position of a command.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -554,10 +567,432 @@ def render_rows(results):
             )
 
 
+# --- watch: the daily check that every machine is actually exporting telemetry ---
+#
+# The failure this exists for is silent by construction: a session started before its
+# collector was up exports nothing for its entire life, while pods stay green and the
+# counters keep climbing. Two of them went unnoticed for three days each. A journal line
+# nobody reads would be exactly as invisible, so findings raise a desktop notification —
+# the one place this deviates from the other health timers here.
+#
+# What counts as a finding is deliberately narrow, because a check that cries wolf daily
+# gets muted and then detects nothing:
+#   - a machine that cannot be reached at all
+#   - Loki unreachable on a machine that answered (nothing is recorded without it)
+#   - a session whose transcript is growing while Loki holds none of its events
+#   - an error whose MESSAGE is not a known-benign one; a rate-limit rejection is
+#     what a busy day looks like, so counting it as a fault made the verdict red
+#     on ordinary use, and a check that is red every day is one nobody reads
+# Counts are attributed to the STORE that holds them rather than to the machine
+# that queried it, because nothing in the pipeline records a hostname and two
+# cluster nodes read one Loki — reporting per host turned 9 errors into 18.
+# Prometheus or Tempo being unreachable is NOT a finding: daniel-server legitimately
+# runs no Tempo, so flagging it would fire every single day forever. Loki gets the same
+# treatment on a machine otel-sweep marks `queryable: false` — daniel-server has been a
+# collector-only k3s worker since 2026-08-13, holding the otel-collector DaemonSet and
+# no query backend at all, so "Loki unreachable" there is the expected answer and its
+# zeros mean "not queryable from here", never "nothing is being recorded". Its events
+# are in box's totals.
+#
+# Exits non-zero on findings so `systemctl --user --failed` is a second, passive signal.
+
+WATCH_PROG = "otel-sweep-watch"
+
+SILENT_FINDING_LIMIT = 5
+
+# DECIDED: benign errors are named LITERALLY here, where otel-sweep's errors_24h
+# takes a broad pattern over an enumeration. Both follow the same asymmetry, and
+# it points opposite ways on the two sides. There, a pattern that misses an error
+# NAME produces silence indistinguishable from health, so breadth is the safe
+# error. Here, an entry that is too broad silences a real fault, while one that
+# is too narrow costs a finding somebody reads once and widens — so this list
+# takes the narrowest thing that works. Prefix match on a measured sentence, not
+# a `rate.?limit` regex, which would also swallow a quota exhaustion worth waking
+# for. Measured 2026-09-02: 13 api_errors, 11 this rejection and 2 a dead OAuth
+# token on a nightly timer that had been failing since 2026-08-20.
+BENIGN_ERROR_PREFIXES = ("This request would exceed your account's rate limit",)
+
+# Seconds a finding set stays quiet after it raised a notification. OTEL_SWEEP_WATCH_
+# REPEAT_AFTER overrides it because a test has to be able to close the window; nothing
+# in the environment can name a program to run.
+DEFAULT_REPEAT_AFTER = 21600
+
+
+def is_benign(message):
+    return message.startswith(BENIGN_ERROR_PREFIXES)
+
+
+def summarise(data):
+    """The sweep's JSON as (report lines, findings)."""
+    findings, lines = [], []
+
+    # Every tally the sweep collects is a property of the STORE, not of the machine
+    # that asked for it — nothing in the pipeline records a hostname. Two machines on
+    # one Loki therefore return one set of numbers twice, and labelling each copy
+    # with a host invents a second incident: on 2026-09-02 this reported "local: 9
+    # api_error events" and "server: 9 api_error events" for the same 9 events.
+    # Group by the store, and report each number once, against the store holding it.
+    #
+    # A machine whose sweep does not say which store it read groups alone, so an
+    # older otel-sweep degrades to the previous per-host output and two stores can
+    # never be merged by accident.
+    groups = {}
+    for host in sorted(data):
+        d = data[host]
+        if "error" in d:
+            findings.append(f"{host}: unreachable ({d['error'][:80]})")
+            lines.append(f"{host}: UNREACHABLE")
+            continue
+        if d.get("queryable") is False:
+            lines.append(f"{host}: collector-only - counts live in box")
+            continue
+        if d.get("backends", {}).get("loki") != "ready":
+            findings.append(f"{host}: Loki unreachable - nothing is being recorded")
+        if d.get("silent_checked") is False:
+            findings.append(
+                f"{host}: silent-session check did not run - Loki query failed"
+            )
+        # Host-derived, and the only findings that are: a silent session is read from
+        # THIS machine's transcripts against the store, so it stays per-host however
+        # the stores group.
+        silent = d.get("silent_sessions", [])
+        # One line per session up to the cap, then a count. A fan-out of short-lived
+        # sessions that all missed the exporter is one incident, and 23 near-identical
+        # findings train the reader to skip the block. The `silent=` line below still
+        # carries the honest total, because it is a len() over the uncapped payload.
+        for s in silent[:SILENT_FINDING_LIMIT]:
+            findings.append(
+                f"{host}: session {s['session'][:8]} exporting nowhere ({s['mb']}MB)"
+            )
+        if len(silent) > SILENT_FINDING_LIMIT:
+            findings.append(
+                f"{host}: and {len(silent) - SILENT_FINDING_LIMIT} "
+                "more sessions exporting nowhere"
+            )
+        groups.setdefault(d.get("store") or ("host:" + host), []).append(host)
+
+    def merged(hosts, field):
+        """The largest count each key reached across a store's machines.
+
+        Equal by construction — they queried one store — but the queries run seconds
+        apart, so a key can land on one side of the window and not the other. Taking
+        the max means that skew can never make a group under-report.
+        """
+        out = {}
+        for h in hosts:
+            for key, n in (data[h].get(field) or {}).items():
+                out[key] = max(out.get(key, 0), int(n))
+        return out
+
+    for store in sorted(groups):
+        hosts = groups[store]
+        events = max(sum((data[h].get("events_24h") or {}).values()) for h in hosts)
+        sessions = max(data[h].get("sessions_24h", 0) for h in hosts)
+
+        if len(hosts) == 1:
+            label = hosts[0]
+            silent_n = len(data[hosts[0]].get("silent_sessions", []))
+            lines.append(
+                f"{label}: events={events} sessions={sessions} silent={silent_n}"
+            )
+        else:
+            # The shared totals once, then the one number that really is per-machine.
+            label = f"{store} store ({', '.join(hosts)})"
+            lines.append(f"{label}: events={events} sessions={sessions}")
+            for h in hosts:
+                silent_n = len(data[h].get("silent_sessions", []))
+                lines.append(f"  {h}: silent={silent_n}")
+
+        messages = merged(hosts, "error_messages_24h")
+        if messages:
+            benign = sum(n for msg, n in messages.items() if is_benign(msg))
+            for msg, n in sorted(messages.items()):
+                if not is_benign(msg):
+                    findings.append(f"{label}: {n} x {msg[:90]}")
+            # Benign volume stays in the beat and out of the verdict. Dropping it from
+            # both would trade a noisy detector for a blind one — a rate-limit count
+            # that tripled is worth finding afterwards, even though it wakes nobody.
+            if benign:
+                lines.append(
+                    f"{label}: {benign} rate-limited request(s) in 24h, not a fault"
+                )
+        else:
+            # No message breakdown means no class judgement is possible, so every
+            # error counts. This is what the check did before the sweep reported
+            # messages, and it is the right reading of a sweep that still does not.
+            for name, n in sorted(merged(hosts, "errors_24h").items()):
+                findings.append(f"{label}: {n} {name} events in 24h")
+    return lines, findings
+
+
+def render_report(lines, findings):
+    """The report text, without trailing newlines."""
+    text = "\n".join(lines) + "\n"
+    if findings:
+        text += "FINDINGS:\n" + "".join(f"  {f}\n" for f in findings)
+    return text.rstrip("\n")
+
+
+def _crc_table():
+    table = []
+    for i in range(256):
+        crc = i << 24
+        for _ in range(8):
+            crc = (crc << 1) ^ 0x04C11DB7 if crc & 0x80000000 else crc << 1
+            crc &= 0xFFFFFFFF
+        table.append(crc)
+    return table
+
+
+_CRC_TABLE = _crc_table()
+
+
+def cksum(data):
+    """POSIX `cksum`'s CRC of `data`, reproduced exactly.
+
+    last-notified stores this fingerprint, written by the shell version through
+    `cksum`. Any other hash would make every existing state file mismatch once,
+    and the first run after the change would re-notify for a finding set that
+    had already been announced.
+    """
+    crc = 0
+    for byte in data:
+        crc = ((crc << 8) & 0xFFFFFFFF) ^ _CRC_TABLE[((crc >> 24) ^ byte) & 0xFF]
+    length = len(data)
+    while length:
+        crc = ((crc << 8) & 0xFFFFFFFF) ^ _CRC_TABLE[((crc >> 24) ^ length) & 0xFF]
+        length >>= 8
+    return ~crc & 0xFFFFFFFF
+
+
+def _field(content, number):
+    """`cut -d' ' -f<number>` over every line of `content`, joined and trimmed.
+
+    A line with no space is printed whole by cut, whichever field was asked for,
+    and a shell `$(...)` drops the trailing newlines. Both are kept so that a
+    state file written by the shell version reads back the same way.
+    """
+    out = []
+    for line in content.split("\n"):
+        parts = line.split(" ")
+        if len(parts) == 1:
+            out.append(line)
+        else:
+            out.append(parts[number - 1] if number <= len(parts) else "")
+    return "\n".join(out).rstrip("\n")
+
+
+def _squash(text, limit):
+    """`tr '\\n' ';' | cut -c1-<limit>`."""
+    return text.replace("\n", ";")[:limit]
+
+
+def _run_fixed(argv, discard_stderr=False):
+    """Run a fixed program for its side effect; failing to run it is not a failure here.
+
+    Every position of argv is a literal in this file except the message, which is
+    sweep data and one element of the list — there is no shell for it to escape into.
+    """
+    sys.stdout.flush()
+    with contextlib.suppress(OSError):
+        subprocess.run(
+            argv, stderr=subprocess.DEVNULL if discard_stderr else None, check=False
+        )
+
+
+def watch(from_stdin):
+    """Summarise a deep sweep, record it, and raise the alarm if it found anything.
+
+    The sweep runs in this process: there is no program for a caller to name, so the
+    confinement in the module docstring holds. `--stdin` exists as the test seam and
+    reads the same JSON document the sweep would have produced.
+    """
+    if from_stdin:
+        raw = sys.stdin.buffer.read().rstrip(b"\n")
+        if not raw:
+            print(f"{WATCH_PROG}: sweep produced no output", file=sys.stderr)
+            return 2
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except ValueError:
+            data = None
+    else:
+        # deep is the point: silent-session detection is the only check here that the
+        # fast pass cannot make. It costs a per-session Loki query on each machine,
+        # affordable once a day.
+        data = sweep("deep")
+    try:
+        if data is None:
+            raise ValueError("unparseable sweep output")
+        report = render_report(*summarise(data))
+    except Exception:  # noqa: BLE001 - any shape the summary cannot read is unparseable
+        report = None
+
+    print(report or "")
+    if report is None:
+        print(f"{WATCH_PROG}: could not parse sweep output", file=sys.stderr)
+        return 2
+
+    state_home = os.environ.get("XDG_STATE_HOME") or os.path.join(
+        os.environ.get("HOME") or os.path.expanduser("~"), ".local", "state"
+    )
+    state_dir = os.path.join(state_home, WATCH_PROG)
+
+    report_lines = report.split("\n")
+    marker = next((i for i, ln in enumerate(report_lines) if "FINDINGS:" in ln), None)
+    if marker is None:
+        # A clean run says so, so that "no line today" reads as "the check did not run"
+        # rather than "the check was happy" — but only to someone reading back. Nothing
+        # watches for the absence of an up beat: `probe.py alerts` reads status=down
+        # lines, and no Kuma push monitor exists for this check. The up line is a
+        # durable record for a post-hoc grep, not an alert. It uses the same shape as
+        # the other host health checks so that adding such a monitor later needs no
+        # change here.
+        if shutil.which("logger"):
+            _run_fixed(
+                ["logger", "-t", WATCH_PROG, "status=up " + _squash(report, 300)]
+            )
+        # Clear the statusline banner (see below): a clean run must make it go away, or
+        # the last finding's banner would outlive the finding it named.
+        with contextlib.suppress(OSError):
+            os.remove(os.path.join(state_dir, "findings-pending"))
+        return 0
+
+    text = "\n".join(report_lines[marker + 1 :]).rstrip("\n")
+
+    # An unchanged finding set tells you nothing the last banner already did, and this
+    # check kept no memory, so anything that persisted raised a fresh notification on
+    # every single run. Re-notify when the findings change, or when the window lapses
+    # — a problem that is still there should resurface rather than go quiet for good.
+    last_notified = os.path.join(state_dir, "last-notified")
+    try:
+        repeat_after = int(
+            os.environ.get("OTEL_SWEEP_WATCH_REPEAT_AFTER") or DEFAULT_REPEAT_AFTER
+        )
+    except ValueError:
+        repeat_after = None
+    fingerprint = str(cksum(text.encode("utf-8")))
+    now = int(time.time())
+    notify = True
+    if os.access(last_notified, os.R_OK):
+        try:
+            with open(last_notified, encoding="utf-8", errors="replace") as fh:
+                content = fh.read()
+        except OSError:
+            content = ""
+        since_text = _field(content, 2)
+        since = int(since_text) if since_text.isascii() and since_text.isdigit() else 0
+        if (
+            _field(content, 1) == fingerprint
+            and repeat_after is not None
+            and now - since < repeat_after
+        ):
+            notify = False
+
+    # syslog first, and unconditionally — this is the only channel that works on the
+    # machine where it matters most. On daniel-box there is no desktop bus for
+    # notify-send, the user journal held no record of this unit at all, and
+    # `SuccessExitStatus=1` kept it out of `systemctl --user --failed`. So on
+    # 2026-08-23 this check correctly found a dead query path and told nobody. Syslog
+    # reaches Loki, which is where the other host health checks report and where
+    # `probe.py alerts` already looks; `status=` is their convention.
+    #
+    # Outside the notify gate deliberately. That gate exists to stop a repeat
+    # *notification* becoming noise, and a log line is not noise. A record written only
+    # on runs that happened to change the fingerprint is a record with holes in it.
+    if shutil.which("logger"):
+        _run_fixed(["logger", "-t", WATCH_PROG, "status=down " + _squash(text, 400)])
+
+    if notify:
+        # Best effort: a headless box has no bus, and the syslog line above is the
+        # durable record.
+        if shutil.which("notify-send"):
+            body = "\n".join(text.split("\n")[:5]).rstrip("\n")
+            _run_fixed(
+                [
+                    "notify-send",
+                    "--urgency=normal",
+                    "--icon=dialog-warning",
+                    "Claude telemetry",
+                    body,
+                ],
+                discard_stderr=True,
+            )
+        try:
+            os.makedirs(state_dir, exist_ok=True)
+            with open(last_notified, "w", encoding="utf-8") as fh:
+                fh.write(f"{fingerprint} {now}\n")
+        except OSError:
+            pass
+
+    # A channel that works on daniel-box, where there is no desktop bus for
+    # notify-send: a statusline banner, the same way claude-transcript-scan's leak
+    # marker works (private_dot_claude/executable_statusline-command.sh, "Segment:
+    # transcript credential leaks"). Written unconditionally, unlike the
+    # notify-send/last-notified pair above — the banner is not a notification that
+    # repeats, it is a standing "still true" fact, so it is rewritten every down run
+    # regardless of the repeat-window, and cleared only by the clean-run branch above.
+    try:
+        os.makedirs(state_dir, exist_ok=True)
+        with open(
+            os.path.join(state_dir, "findings-pending"), "w", encoding="utf-8"
+        ) as fh:
+            fh.write(text + "\n")
+    except OSError:
+        pass
+
+    # The unit still exits non-zero on findings, on purpose: `systemctl --user --failed`
+    # is a second, passive signal that works whether or not anyone is looking at a
+    # statusline right now, and removing it once traded away the ONLY signal that fired
+    # on 2026-08-23 (see the SuccessExitStatus note in the unit file). The banner adds
+    # a channel; it does not replace this one.
+    return 1
+
+
+def sweep(mode, only=None, timeout=DEFAULT_TIMEOUT):
+    """Probe the machines and return {name: result}, `queryable` marked."""
+    if only:
+        targets = [only]
+    else:
+        # "local" already covers whichever machine this is, so sweeping its named
+        # entry as well would ssh to ourselves and duplicate the row. Before this,
+        # running on daniel-box reported `box UNREACHABLE` every time: the shared
+        # ~/.ssh/config gives that host IdentityFiles belonging to another machine,
+        # so the self-loop fails on a key that does not exist here. A tool alarming
+        # about a machine it is running on is noise that trains the reader to skip
+        # findings.
+        targets = [name for name in sorted(HOSTS) if not is_self(HOSTS[name])]
+    results = {name: probe(dest_for(name), mode, timeout) for name in targets}
+
+    # A collector-only machine answers no query, so its zeros are absence of
+    # evidence. Say so in the JSON too, or a reader takes silent_sessions: []
+    # for "clean" when it means "never looked".
+    for name in targets:
+        data = results[name]
+        ready = [k for k, v in data.get("backends", {}).items() if v == "ready"]
+        if name in COLLECTOR_ONLY and "error" not in data and not ready:
+            data["queryable"] = False
+    return results
+
+
 def main():
+    argv = sys.argv[1:]
+    if argv[:1] == ["watch"]:
+        wp = argparse.ArgumentParser(
+            prog=f"{PROG} watch",
+            description="Summarise a deep sweep, log it, and notify on findings.",
+        )
+        wp.add_argument(
+            "--stdin",
+            action="store_true",
+            help="read the sweep JSON from stdin instead of sweeping (test seam)",
+        )
+        return watch(wp.parse_args(argv[1:]).stdin)
+
     ap = argparse.ArgumentParser(
         prog=PROG,
         description="Read the Claude Code telemetry stack on every machine.",
+        epilog="Subcommand: `otel-sweep watch` is the daily check (see `watch -h`).",
     )
     ap.add_argument(
         "--deep", action="store_true", help="add silent-session detection"
@@ -572,30 +1007,9 @@ def main():
         "--timeout", type=int, default=DEFAULT_TIMEOUT,
         help="per-machine timeout in seconds",
     )
-    ns = ap.parse_args()
+    ns = ap.parse_args(argv)
 
-    mode = "deep" if ns.deep else "fast"
-    if ns.only:
-        targets = [ns.only]
-    else:
-        # "local" already covers whichever machine this is, so sweeping its named
-        # entry as well would ssh to ourselves and duplicate the row. Before this,
-        # running on daniel-box reported `box UNREACHABLE` every time: the shared
-        # ~/.ssh/config gives that host IdentityFiles belonging to another machine,
-        # so the self-loop fails on a key that does not exist here. A tool alarming
-        # about a machine it is running on is noise that trains the reader to skip
-        # findings.
-        targets = [name for name in sorted(HOSTS) if not is_self(HOSTS[name])]
-    results = {name: probe(dest_for(name), mode, ns.timeout) for name in targets}
-
-    # A collector-only machine answers no query, so its zeros are absence of
-    # evidence. Say so in the JSON too, or a reader takes silent_sessions: []
-    # for "clean" when it means "never looked".
-    for name in targets:
-        data = results[name]
-        ready = [k for k, v in data.get("backends", {}).items() if v == "ready"]
-        if name in COLLECTOR_ONLY and "error" not in data and not ready:
-            data["queryable"] = False
+    results = sweep("deep" if ns.deep else "fast", ns.only, ns.timeout)
 
     if ns.rows:
         render_rows(results)

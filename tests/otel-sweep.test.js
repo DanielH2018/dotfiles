@@ -73,6 +73,20 @@ test('no shell, anywhere', () => {
   assert.ok(!/(?<![.\w])compile\(/.test(CODE), 'a bare compile() must not appear');
 });
 
+// `watch` is the one subcommand that runs programs other than PROBE's interpreter, so it
+// is where a program name could start coming from outside. The shell version ran whatever
+// OTEL_SWEEP named; these hold the line that replaced it.
+test('watch runs only literal programs and reads no environment variable that names one', () => {
+  const calls = STATEMENTS.split('_run_fixed(').slice(1);
+  const literal = calls.filter((c) => /^\s*\[\s*"(logger|notify-send)"/.test(c));
+  // The def line is one split too, so every call site must be one of the two literals.
+  assert.ok(literal.length >= 3, 'logger (up, down) and notify-send are the call sites');
+  assert.strictEqual(calls.length, literal.length + 1, 'every _run_fixed call site must name a literal program');
+  const reads = [...STATEMENTS.matchAll(/os\.environ\.get\("(\w+)"\)/g)].map((m) => m[1]);
+  assert.deepStrictEqual([...new Set(reads)].sort(), ['HOME', 'OTEL_SWEEP_WATCH_REPEAT_AFTER', 'XDG_STATE_HOME']);
+  assert.ok(!/os\.environ\[|os\.getenv/.test(STATEMENTS), 'environment reads must stay greppable');
+});
+
 test('the remote program is a constant and is never built from input', () => {
   // PROBE may only ever be referenced bare — piped to stdin. Any interpolation of
   // it (or into it) would mean caller data could reach the remote interpreter.
@@ -426,10 +440,14 @@ test('errors are also counted by message, not only by event name', () => {
 });
 
 test('otel-sweep does not itself decide what is benign', () => {
-  // The rejecting half, and a boundary: the sweep reports, the watch judges.
-  // A benign list in both places is a list that gets updated in one.
+  // The rejecting half, and a boundary: the sweep reports, `watch` judges.
+  // A benign list in both places is a list that gets updated in one. The two now
+  // share a file, so the boundary is PROBE (the program that collects) against the
+  // rest of the module (which holds the benign list, for `watch`).
   // Matched on the provider's sentence, not on the words "rate limit" — the
   // probe legitimately discusses the UFW rate limiter that throttles its own ssh.
-  assert.ok(!/would exceed your account/i.test(SRC),
-    'classification belongs to otel-sweep-watch, which is where its test lives');
+  const probe = SRC.slice(SRC.indexOf("PROBE = r'''"), SRC.indexOf("'''", SRC.indexOf("PROBE = r'''") + 12));
+  assert.ok(probe.length > 1000, 'the PROBE source must have been found');
+  assert.ok(!/would exceed your account/i.test(probe),
+    'classification belongs to the watch side of otel-sweep, not to the probe that collects');
 });
