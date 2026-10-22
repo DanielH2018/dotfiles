@@ -40,6 +40,7 @@ from dataclasses import dataclass
 
 _EXECUTING = frozenset({"paren", "procsub", "backtick"})
 _SUB_FRAMES = frozenset({"paren", "dparen", "procsub"})
+_ALL_SUBS = frozenset({"paren", "dparen", "procsub", "backtick"})
 _DELIM_END = frozenset(" \t\n;&|><(")
 
 
@@ -67,6 +68,31 @@ def _unreadable(reason: str) -> Parsed:
 
 
 def parse(command: str) -> Parsed:
+    return _parse(command, None)
+
+
+def mask_substitutions(command: str, placeholder: str) -> str | None:
+    """`command` with each outermost `$( )`, `$(( ))`, backtick, `<( )` and `>( )` replaced
+    by `placeholder`, or None when `parse` would refuse the command.
+
+    A substitution nested in another is inside the replaced span, and one inside `${ }` is
+    replaced where it stands. The caller reads the inner commands from `parse`'s
+    `substitutions`; this is for reading the words around them, where a tokenizer that
+    splits on `(` and `)` would cut `$(git merge-base A B)..B` into separate commands.
+    """
+    spans: list[tuple[int, int]] = []
+    if not _parse(command, spans).ok:
+        return None
+    out: list[str] = []
+    last = 0
+    for start, end in spans:
+        out += (command[last:start], placeholder)
+        last = end
+    out.append(command[last:])
+    return "".join(out)
+
+
+def _parse(command: str, spans: list[tuple[int, int]] | None) -> Parsed:
     s = command
     n = len(s)
 
@@ -87,6 +113,11 @@ def parse(command: str) -> Parsed:
         kind.pop()
         cnt.pop()
         seg_start.pop()
+
+    def close_span(i: int, opener: int) -> None:
+        # Called before the frame is popped; `opener` is the length of `$(`, `<(` or `` ` ``.
+        if spans is not None and not any(k in _ALL_SUBS for k in kind[:-1]):
+            spans.append((seg_start[-1] - opener, i + 1))
 
     def cut(i: int, sep: str) -> None:
         depth = len(kind)
@@ -132,6 +163,7 @@ def parse(command: str) -> Parsed:
         if c == "`":
             if top == "backtick":
                 subs.append(s[seg_start[depth] : i])
+                close_span(i, 1)
                 pop()
                 i += 1
                 continue
@@ -169,6 +201,7 @@ def parse(command: str) -> Parsed:
                     continue
                 if top != "dparen":
                     subs.append(s[seg_start[depth] : i])
+                close_span(i, 2)
                 pop()
                 i += 1
                 continue

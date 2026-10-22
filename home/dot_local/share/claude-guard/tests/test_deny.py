@@ -1729,6 +1729,10 @@ SUDO_REFUSE = [
     "/usr/bin/s*do -n true",
     "/usr/bin/su?o -n true",
     "{sudo,-n,true}",
+    # a quoted substitution is still the command word
+    '"$(which sudo)" -n true',
+    # a substitution in an argument is checked for what it runs
+    "git log $(sudo id)..x",
     # a quoted word inside the brace list does not hide it
     "{sudo,sh,-c,'id -u'}",
     # an interpreter's program in a heredoc or here-string, or behind a runner
@@ -1841,6 +1845,14 @@ SUDO_PASS = [
     'strace -o "$LOG" ls',
     'strace -fo "$LOG" ls',
     'xargs -0I {} cp {} "$DEST"',
+    # a substitution glued to an argument is no command word (2026-10-22 audit): the `)` once
+    # cut the segment, leaving `..$B` in command position
+    "git log --oneline $(git merge-base HEAD $B)..$B",
+    "git range-diff -s backup/$b-pre-rebase-2\uff20{0}~$(git rev-list --count origin/main..$b)"
+    "..backup/$b-pre-rebase-2 origin/main..$b",
+    "git push --force-with-lease=feat:$(git rev-parse origin/feat) origin feat",
+    "echo $(echo a)$(echo b)",
+    "a=$(( $(wc -l < f) + 1 ))",
 ]
 
 
@@ -1871,6 +1883,11 @@ def test_a_variable_an_executor_runs_is_refused_as_a_variable(command):
 def test_a_real_sudo_beside_a_variable_command_word_keeps_the_sudo_message():
     v = d.deny('"$H"; sudo -n true', "", ENV)
     assert v.reason == d.SUDO_MSG
+
+
+def test_a_substitution_in_a_force_push_refspec_still_reaches_the_push_rules():
+    v = d.deny("git push --force-with-lease=main:$(git rev-parse origin/main) origin main", "", ENV)
+    assert (v.kind, v.rule) == ("deny", "push-main")
 
 
 def test_the_sudo_tables_are_not_vacuous():

@@ -4,7 +4,7 @@ The shared corpus lives in tests/test_vectors.py (Task 5). `visible()` is the vi
 every consumer takes: stripped, empties dropped.
 """
 
-from claude_guard.segment import Parsed, Segment, parse, visible
+from claude_guard.segment import Parsed, Segment, mask_substitutions, parse, visible
 
 
 def seps(p: Parsed) -> list[str]:
@@ -192,6 +192,12 @@ def test_an_unbalanced_substitution_is_still_refused():
 
 def test_an_unbalanced_quote_inside_a_substitution_reports_the_quote():
     assert parse("echo $(echo 'x)").status == "unreadable:unbalanced-quote"
+
+
+def test_masking_replaces_each_outermost_substitution_and_leaves_quoted_text_alone():
+    cmd = """git log "$(a $(b))"..x `c` <(d) $((1 + (2))) ${v:-$(e)} '$(f)'"""
+    assert mask_substitutions(cmd, "$S") == """git log "$S"..x $S $S $S ${v:-$S} '$(f)'"""
+    assert mask_substitutions("echo $(ls", "$S") is None
 
 
 # --- heredocs --------------------------------------------------------------------------

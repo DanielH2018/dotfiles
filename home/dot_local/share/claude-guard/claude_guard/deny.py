@@ -68,7 +68,7 @@ from claude_guard.gitargv import (
     remote_add_mirrors_push,
     subcommand_at,
 )
-from claude_guard.segment import parse
+from claude_guard.segment import mask_substitutions, parse
 
 
 @dataclass(frozen=True, slots=True)
@@ -1741,6 +1741,8 @@ SUDO_VARIABLE_MSG = (
 # the command decides the message, so a real sudo beside a variable command word is still
 # reported as sudo.
 _SUDO_CLEAN, _SUDO_VARIABLE, _SUDO_ESCALATES = 0, 1, 2
+# What a substitution reads as when a segment is split into words: one word, and an expansion.
+_SUB_PLACEHOLDER = "$CLAUDE_GUARD_SUB"
 
 
 def _loose_hit(s: str) -> bool:
@@ -1925,6 +1927,11 @@ def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool
     # Bash joins a backslash-newline before it splits words; shlex would keep the newline in
     # the word, so `sudo\<newline> -n true` would read as a command named "sudo\n".
     joined = text.replace("\\\n", "")
+    # shlex splits on the parentheses of `$( )`, so `git log $(git merge-base A B)..B` would
+    # read as three commands, the last named `..B`. Each substitution stands as one word that
+    # still reads as an expansion, so `$(which sudo) -n true` keeps a variable command word.
+    # `_sudo_text` checks the inner commands from `parse`'s substitutions.
+    joined = mask_substitutions(joined, _SUB_PLACEHOLDER) or joined
     lex = shlex.shlex(joined, posix=True, punctuation_chars=True)
     lex.whitespace_split = True
     lex.commenters = ""
