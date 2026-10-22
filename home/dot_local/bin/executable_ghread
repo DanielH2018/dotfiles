@@ -17,8 +17,11 @@ constants and validated values:
     travels inside one `--flag=value` element, and the one positional (a PR,
     issue or run selector, or an api path) sits after `--` and must not start
     with `-`. So no caller text can become a gh flag.
-  - Nothing ever sends `-X`/`--method`, `-f`/`-F`/`--input`, or graphql, so
-    `gh api` stays on its default GET.
+  - `gh api` only ever sends a GET. With no field it sends no method flag and
+    stays on gh's default GET. With fields it sends `--method=GET` itself, so a
+    field becomes a query parameter and never a request body. Every field
+    travels as `--raw-field`, so gh's `-F key=@file` never reads a local file.
+    `--input` and graphql are never sent.
   - `--out` writes only under a scratch root, and refuses a symlink or hard link
     as the target, so it replaces `> file` without becoming a write primitive.
 
@@ -26,6 +29,8 @@ constants and validated values:
   ghread pr comments 123 -R owner/repo --kind issue
   ghread run logs 4567 --failed --out "$TMPDIR/run.log"
   ghread api repos/owner/repo/pulls --paginate --jq '.[].number'
+  ghread api -X GET search/issues -f q='repo:owner/repo is:open' -f per_page=10
+  ghread search prs -R owner/repo --state open -- 'review:required'
   ghread stack view --short
 
 gh's exit status is ghread's exit status. A refusal ghread raises itself exits 2.
@@ -60,6 +65,9 @@ _FIELDS = re.compile(r"^[A-Za-z]+(?:,[A-Za-z]+)*$")
 _API_PATH = re.compile(r"^/?[A-Za-z0-9{][A-Za-z0-9_.~{}/?=&,%:+@-]*$")
 # gh's jq is gojq, which exposes the process environment as `$ENV` and `env`.
 # Nothing else in it reaches outside the response, so these are all it refuses.
+# A field name for `api -f/-F`: gh's `key[]` array form is allowed, nothing
+# that could carry an `=` or a nested path.
+_FIELD_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\[\])?$")
 _JQ_ENV = re.compile(r"\$ENV\b|\benv\b|\$__prog_env\b")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
@@ -242,7 +250,9 @@ def build_run(ns) -> list[str]:
         return (
             ["run", "list"]
             + _repo_flag(ns)
-            + _value_flags(ns, ("branch", "workflow", "status", "limit"))
+            + _value_flags(
+                ns, ("branch", "workflow", "status", "limit", "created", "commit")
+            )
             + _json_flags(ns)
         )
     run_id = _check(_NUMBER, ns.run_id, "run id")
@@ -256,18 +266,55 @@ def build_run(ns) -> list[str]:
     return argv + ["--", run_id]
 
 
+def _api_fields(ns) -> list[str]:
+    """`-f`/`-F` as GET query parameters, each sent as one `--raw-field`.
+
+    gh switches to POST as soon as a field is present, so a field never reaches
+    gh without `--method=GET` ahead of it. `-F` is sent as a raw field as well:
+    gh's typed `-F` reads a file for `key=@path` and stdin for `key=@-`, and a
+    query string has no use for its type conversion.
+    """
+    out = []
+    for flag, items in (("-f", ns.raw_field or []), ("-F", ns.field or [])):
+        for item in items:
+            key, sep, value = item.partition("=")
+            if not sep:
+                raise GhreadError(f"refusing {flag} {item!r}: expected key=value")
+            _check(_FIELD_KEY, key, f"{flag} key")
+            _text(value, f"{flag} {key}")
+            if flag == "-F" and value.startswith("@"):
+                raise GhreadError(f"refusing -F {key}=@...: gh would read a file")
+            out.append(f"--raw-field={key}={value}")
+    return ["--method=GET"] + out if out else []
+
+
 def build_api(ns) -> list[str]:
     path = _check(_API_PATH, ns.path, "api path")
     if "//" in path:
         raise GhreadError(f"refusing api path {path!r}: a URL, not a path")
     if "graphql" in path.lower():
         raise GhreadError("refusing graphql: it carries mutations over the same POST")
-    argv = ["api"]
+    argv = ["api"] + _api_fields(ns)
     if ns.paginate:
         argv.append("--paginate")
     if ns.jq:
         argv.append(f"--jq={_jq(ns.jq)}")
     return argv + ["--", path]
+
+
+def build_search(ns) -> list[str]:
+    terms = [_text(t, "search term") for t in ns.terms]
+    if not terms:
+        raise GhreadError("search needs at least one query term")
+    return (
+        ["search", ns.kind]
+        + _repo_flag(ns)
+        + _value_flags(
+            ns, ("owner", "state", "limit", "author", "label", "language", "sort", "order")
+        )
+        + _json_flags(ns)
+        + ["--", *terms]
+    )
 
 
 def build_stack(ns) -> list[str]:
@@ -292,7 +339,7 @@ def _parser() -> argparse.ArgumentParser:
     repo.add_argument("-R", "--repo", help="OWNER/REPO (default: the cwd's repository)")
     json_ = argparse.ArgumentParser(add_help=False)
     json_.add_argument("--json", metavar="FIELDS", help="comma-separated JSON fields")
-    json_.add_argument("--jq", metavar="EXPR", help="filter --json output")
+    json_.add_argument("-q", "--jq", metavar="EXPR", help="filter --json output")
     listing = argparse.ArgumentParser(add_help=False)
     listing.add_argument("--state", choices=("open", "closed", "merged", "all"))
     listing.add_argument("-L", "--limit", type=_limit)
@@ -324,7 +371,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     p.add_argument("selector", help="PR number")
     p.add_argument("--kind", choices=("review", "issue"), default="review")
-    p.add_argument("--jq", metavar="EXPR")
+    p.add_argument("-q", "--jq", metavar="EXPR")
 
     issue = top.add_parser("issue", help="issues").add_subparsers(
         dest="verb", required=True
@@ -343,6 +390,8 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("-w", "--workflow")
     p.add_argument("-s", "--status")
     p.add_argument("-L", "--limit", type=_limit)
+    p.add_argument("--created", help="e.g. >2026-10-01")
+    p.add_argument("-c", "--commit", help="a commit SHA")
     p = run.add_parser("view", parents=[common, repo, json_])
     p.add_argument("run_id")
     p.add_argument("--job")
@@ -353,8 +402,42 @@ def _parser() -> argparse.ArgumentParser:
 
     p = top.add_parser("api", parents=[common], help="GET one REST path")
     p.add_argument("path")
+    p.add_argument(
+        "-X",
+        "--method",
+        choices=("GET",),
+        help="accepted for gh compatibility; GET is the only method",
+    )
+    p.add_argument(
+        "-f",
+        "--raw-field",
+        action="append",
+        metavar="KEY=VALUE",
+        help="a query parameter (repeatable)",
+    )
+    p.add_argument(
+        "-F",
+        "--field",
+        action="append",
+        metavar="KEY=VALUE",
+        help="same as -f; sent raw, and an @file value is refused",
+    )
     p.add_argument("--paginate", action="store_true")
-    p.add_argument("--jq", metavar="EXPR")
+    p.add_argument("-q", "--jq", metavar="EXPR")
+
+    p = top.add_parser(
+        "search", parents=[common, repo, json_], help="gh search; query after --"
+    )
+    p.add_argument("kind", choices=("prs", "issues", "code", "repos", "commits"))
+    p.add_argument("terms", nargs="*", metavar="TERM")
+    p.add_argument("--owner")
+    p.add_argument("--state", choices=("open", "closed"))
+    p.add_argument("-L", "--limit", type=_limit)
+    p.add_argument("--author")
+    p.add_argument("--label")
+    p.add_argument("--language")
+    p.add_argument("--sort")
+    p.add_argument("--order", choices=("asc", "desc"))
 
     stack = top.add_parser("stack", help="gh stack").add_subparsers(
         dest="verb", required=True
@@ -370,6 +453,7 @@ BUILDERS = {
     "issue": build_issue,
     "run": build_run,
     "api": build_api,
+    "search": build_search,
     "stack": build_stack,
 }
 
