@@ -131,8 +131,21 @@ test('run refuses the Docker socket and binds outside the repo or scratch', { sk
   assertRefused(['run', '-v', 'named:/data', 'alpine:3.20'], {}, /named volume/);
 });
 
-test('run refuses a writable repo bind but allows a writable scratch bind', { skip }, (t) => {
-  assertRefused(['run', '-v', `${REPO}:/r`, 'alpine:3.20'], {}, /must be read-only/);
+test('a writable repo bind may not reach .git or .claude; scratch binds may write', { skip }, (t) => {
+  // The sandbox's denyWrite protects only git's and Claude Code's own files inside a repo,
+  // so that is all a writable bind has to stay clear of.
+  assertRefused(['run', '-v', `${REPO}:/r`, 'alpine:3.20'], {}, /contains '\.git'/);
+  assertRefused(['run', '-v', `${REPO}/.git:/g`, 'alpine:3.20'], {}, /inside \.git or \.claude/);
+  assert.ok(argvOf(['run', '-v', `${REPO}/src:/s`, 'alpine:3.20'])
+    .includes(`--mount=type=bind,source=${REPO}/src,target=/s`));
+  // A linked worktree under the main checkout's .claude/worktrees/ is judged from its own
+  // root, or no writable bind inside any worktree could pass.
+  const wt = path.join(REPO, '.claude', 'worktrees', 'wt');
+  fs.mkdirSync(path.join(wt, 'src'), { recursive: true });
+  fs.mkdirSync(path.join(REPO, '.git', 'worktrees', 'wt'), { recursive: true });
+  fs.writeFileSync(path.join(wt, '.git'), `gitdir: ${REPO}/.git/worktrees/wt\n`);
+  t.after(() => fs.rmSync(path.join(REPO, '.claude'), { recursive: true }));
+  assert.strictEqual(dockrun(['run', '-v', `${wt}/src:/s`, 'alpine:3.20'], { cwd: wt }).code, 0);
   const out = scratch(SCRATCH, 'out-', t);
   assert.ok(argvOf(['run', '-v', `${out}:/out`, 'alpine:3.20'])
     .includes(`--mount=type=bind,source=${out},target=/out`));

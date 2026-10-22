@@ -18,10 +18,11 @@ as with dockq and ghread:
     names them. `--network host` and `container:<id>` are refused by value.
   - A bind mount's source is resolved with realpath. It must sit under the cwd's
     repository or under Claude's scratch root (/private/tmp/claude-<uid>, the
-    sandbox's $TMPDIR). A bind under the repository is always read-only: dockrun
-    runs unsandboxed, and a writable bind would let a container write
-    .git/hooks or .claude/settings.local.json, which the sandbox's denyWrite
-    protects. The Docker socket is refused outright, and so is any bind whose
+    sandbox's $TMPDIR). dockrun runs unsandboxed, so a writable bind under the
+    repository may neither sit inside nor contain a `.git` or `.claude` entry:
+    through one, a container could write .git/hooks or
+    .claude/settings.local.json, which the sandbox's denyWrite protects. Mount
+    those trees `:ro`. The Docker socket is refused outright, and so is any bind whose
     tree holds a file the sandbox read-denies (.env, *.pem, *.key, id_rsa, ...).
   - compose runs only for files under the repository or scratch. dockrun reads
     the resolved model with `compose config --format json` and refuses a
@@ -190,11 +191,18 @@ def _secret_name(rel: str) -> bool:
     return len(parts) >= 2 and parts[-2] == ".aws" and name in ("credentials", "config")
 
 
-def scan_for_secrets(source: str) -> None:
-    """Refuse a bind whose tree holds a file the sandbox would not let Claude read.
+# Directories whose contents the sandbox's denyWrite protects inside a repository:
+# git's config and hooks, and Claude Code's settings, hooks and skills.
+_WRITE_PROTECTED = (".git", ".claude")
 
-    A container with that bind could print the file, and it runs outside the
-    sandbox, so the mount would undo the read-deny.
+
+def scan_tree(source: str, writable: bool) -> None:
+    """Refuse a bind that would undo a sandbox read-deny or write-deny.
+
+    A container runs outside the sandbox. With a bind holding a file the sandbox
+    read-denies, it could print that file. With a writable bind holding a
+    `.git` or `.claude` entry, it could write the hooks and settings the
+    sandbox's denyWrite protects.
     """
     if os.path.isfile(source):
         if _secret_name(os.path.basename(source)):
@@ -202,6 +210,14 @@ def scan_for_secrets(source: str) -> None:
         return
     seen = 0
     for top, dirs, files in os.walk(source):
+        if writable:
+            for name in dirs + files:
+                if name in _WRITE_PROTECTED:
+                    rel = os.path.relpath(os.path.join(top, name), source)
+                    raise DockrunError(
+                        f"refusing writable bind of {source!r}: it contains {rel!r}; "
+                        "bind it read-only (:ro) or bind a narrower path"
+                    )
         dirs[:] = [d for d in dirs if d != ".git"]
         for name in dirs + files:
             seen += 1
@@ -221,10 +237,14 @@ def scan_for_secrets(source: str) -> None:
 def check_bind(source: str, read_only: bool, roots: list[str]) -> str:
     """Validate one bind source. Returns its realpath.
 
+    A writable bind under the repository is allowed only where sandboxed Bash
+    could write already: not inside, and not holding, a `.git` or `.claude`
+    entry.
+
     Raises:
       DockrunError: the source is the Docker socket, sits outside the repository
-        and scratch, is a writable bind under the repository, or holds a
-        read-denied file.
+        and scratch, is a writable bind that reaches `.git` or `.claude`, or
+        holds a read-denied file.
     """
     if os.path.basename(source.rstrip("/")) == "docker.sock":
         raise DockrunError(f"refusing bind of the Docker socket {source!r}")
@@ -241,12 +261,17 @@ def check_bind(source: str, read_only: bool, roots: list[str]) -> str:
         raise DockrunError(
             f"refusing bind of {source!r}: not under the repository or {scratch}"
         )
-    if in_repo and not _within(real, scratch) and not read_only:
-        raise DockrunError(
-            f"refusing writable bind of {source!r}: a bind under the repository "
-            "must be read-only (:ro); write output under $TMPDIR instead"
-        )
-    scan_for_secrets(real)
+    writable = in_repo and not _within(real, scratch) and not read_only
+    if writable:
+        # Relative to the innermost root, so a worktree under the main checkout's
+        # .claude/worktrees/ is judged by its own path, not by that `.claude`.
+        root = max((r for r in roots if _within(real, r)), key=len)
+        parts = os.path.relpath(real, root).split(os.sep)
+        if any(p in _WRITE_PROTECTED for p in parts):
+            raise DockrunError(
+                f"refusing writable bind of {source!r}: it is inside .git or .claude"
+            )
+    scan_tree(real, writable)
     return real
 
 
@@ -727,6 +752,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--format")
     p = sub_parser(verbs, "logs", parents=[bounded])
     p.add_argument("--no-log-prefix", action="store_true")
+    p.add_argument("--no-color", action="store_true", help="accepted; always on")
     p.add_argument("services", nargs="*")
     p = sub_parser(verbs, "exec", parents=[env])
     p.add_argument("-T", "--no-tty", dest="no_tty", action="store_true")
