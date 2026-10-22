@@ -877,8 +877,8 @@ class Scanner:
             except OSError:
                 held = 0
             _out(
-                f"{PROG}: accepted this run's findings; the baseline in {self.baseline} "
-                f"holds {held} finding(s)"
+                f"{PROG}: accepted this run's findings; "
+                f"the baseline in {self.baseline} holds {held} finding(s)"
             )
             _out(
                 "Only findings NOT in that file are reported from now on. "
@@ -992,10 +992,11 @@ class Scanner:
         except OSError:
             lines = None
         # An accept adds to the baseline and never removes from it. This run's window
-        # sees only part of what was accepted before, and a hand-appended entry may never
-        # have been in any window, so replacing the file with this run's findings dropped
-        # both (dotfiles #849). Re-read at write time rather than reusing the set loaded
-        # at start, so an entry appended while the scan ran survives too.
+        # sees only part of what was accepted before, and a hand-appended entry may
+        # never have been in any window, so replacing the file with this run's
+        # findings dropped both (dotfiles #849). Re-read at write time rather than
+        # reusing the set loaded at start, so an entry appended while the scan ran
+        # survives too.
         try:
             kept = _read_lines(self.baseline)
         except OSError:
