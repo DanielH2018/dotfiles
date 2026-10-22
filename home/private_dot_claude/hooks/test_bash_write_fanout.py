@@ -79,6 +79,8 @@ def extracted(command, cwd, env_extra=None):
         "CLAUDE_BASH_WRITE_FANOUT_DRYRUN": "1",
         # Ahead of env_extra, so the no-package case can still point it elsewhere.
         "CLAUDE_GUARD_HOME": str(GUARD_SRC),
+        # A cached interpreter would answer without asking a stub uv.
+        "GUARD_PYTHON_CACHE": "0",
         **(env_extra or {}),
     }
     result = subprocess.run(

@@ -50,7 +50,8 @@ function run(env = {}) {
     encoding: 'utf8',
     env: {
       ...process.env, PATH: `${BIN}:${process.env.PATH}`, CLAUDE_GUARD_HOME: SHARE,
-      CLAUDE_GUARD_TIMEOUT_S: '1', ...env,
+      // A cached interpreter would answer without asking the stub uv.
+      CLAUDE_GUARD_TIMEOUT_S: '1', GUARD_PYTHON_CACHE: '0', ...env,
     },
   });
   return { ...r, seconds: (Date.now() - started) / 1000 };

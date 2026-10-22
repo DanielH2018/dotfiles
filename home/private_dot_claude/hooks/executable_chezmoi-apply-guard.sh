@@ -121,9 +121,8 @@ T_DIFF=${CHEZMOI_APPLY_GUARD_TIMEOUT_S:-10}
 #   unreadable       the parser refused (see its module docstring: a refusal is
 #                    never a skip) — the caller falls back
 #
-# The interpreter lookup is guard-pre-tool-use.sh's, flag for flag, and for its
-# reasons: --no-project/--system/--managed-python keep uv from answering with a
-# worktree's own venv, -S -P stop a cwd-local claude_guard.py shadowing the package.
+# The interpreter is lib/guard-python.sh's, as it is for guard-pre-tool-use.sh, and -S -P
+# stop a cwd-local claude_guard.py shadowing the package.
 GUARD_SHARE="${CLAUDE_GUARD_HOME:-${HOME:-}/.local/share/claude-guard}"
 
 #
@@ -134,11 +133,10 @@ parsed_decision() {
   [ -z "$NO_RB" ] || return 1
   [ -f "$GUARD_SHARE/claude_guard/segment.py" ] || return 1
   local py
-  run_bounded 2 4096 -- \
-    bash -c 'exec uv python find --no-project --managed-python --system 3.14 2>/dev/null' </dev/null
-  [ "$RB_STATUS" = ok ] && [ "$RB_EXIT" -eq 0 ] || return 1
-  py=$RB_OUT
-  [ -x "$py" ] || return 1
+  # shellcheck source=/dev/null
+  . "${BASH_SOURCE[0]%/*}/lib/guard-python.sh" 2>/dev/null || return 1
+  guard_python 2 || return 1
+  py=$GUARD_PY
   # shellcheck disable=SC2016  # $1..$3 belong to the inner bash
   run_bounded 3 65536 -- bash -c 'CG_SHARE="$1" exec "$2" -S -P -c "$3" 2>/dev/null' _ \
     "$GUARD_SHARE" "$py" '

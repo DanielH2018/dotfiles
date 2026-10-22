@@ -148,7 +148,11 @@ function runStubbed(env) {
     encoding: 'utf8',
     timeout: 20000,
     input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'ls' }, cwd: '/w' }),
-    env: { ...process.env, PATH: `${STUB_BIN}:${process.env.PATH}`, CLAUDE_GUARD_HOME: STUB_SHARE, ...env },
+    // GUARD_PYTHON_CACHE=0: a cached interpreter would answer without asking the stub uv.
+    env: {
+      ...process.env, PATH: `${STUB_BIN}:${process.env.PATH}`, CLAUDE_GUARD_HOME: STUB_SHARE,
+      GUARD_PYTHON_CACHE: '0', ...env,
+    },
   });
   return { ...r, seconds: (Date.now() - started) / 1000 };
 }

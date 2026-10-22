@@ -117,11 +117,10 @@ parsed_strip_heredocs() {
   command -v run_bounded >/dev/null 2>&1 || return 1
   [ -f "$GUARD_SHARE/claude_guard/segment.py" ] || return 1
   local py
-  run_bounded 2 4096 -- \
-    bash -c 'exec uv python find --no-project --managed-python --system 3.14 2>/dev/null' </dev/null
-  [ "$RB_STATUS" = ok ] && [ "$RB_EXIT" -eq 0 ] || return 1
-  py=$RB_OUT
-  [ -x "$py" ] || return 1
+  # shellcheck source=/dev/null
+  . "$HOOK_DIR/lib/guard-python.sh" 2>/dev/null || return 1
+  guard_python 2 || return 1
+  py=$GUARD_PY
   # stderr is dropped inside the child: run_bounded merges it into the text returned.
   # shellcheck disable=SC2016  # $1..$3 belong to the inner bash
   run_bounded 3 1048576 -- bash -c 'CG_SHARE="$1" exec "$2" -S -P -c "$3" 2>/dev/null' _ \

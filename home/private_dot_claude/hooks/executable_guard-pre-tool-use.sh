@@ -45,10 +45,8 @@
 # PYTHON's stderr, where a traceback could quote the command text. This reason is a fixed
 # string containing no command text.
 #
-# `--no-project` stops uv reading a pyproject in cwd; `--system` stops it answering with a
-# valid, version-matching virtualenv it finds by walking up from cwd instead — measured
-# returning such a worktree's own `.venv/bin/python3` in place of the managed interpreter.
-# `--managed-python` restricts the answer to a uv-managed install. `-S` skips site-packages;
+# The interpreter is lib/guard-python.sh's: uv's managed 3.14, its lookup flags, and the
+# cache that saves a `uv python find` per call. `-S` skips site-packages;
 # the package is stdlib-only. `-P` stops Python prepending cwd (as `''`) to sys.path for `-m`
 # — measured `sys.path[:3] == ['', PYTHONPATH-dir, ...]` without it, so a Claude session
 # working in a directory that happens to hold its own claude_guard.py (or, unset -S, any
@@ -59,7 +57,7 @@
 # harness's hook-stderr channel verbatim, and a traceback can quote the command text this
 # hook exists to avoid ever printing.
 #
-# Both children run through run_bounded (#581, #660). They used to run bare, so a uv or a
+# Both children run through run_bounded (#581, #660); guard_python bounds the lookup. They used to run bare, so a uv or a
 # Python that hung instead of failing never reached `fail`. The harness killed the hook at
 # its 10s timeout, and a killed PreToolUse hook is a non-blocking error: the call ran with no
 # deny check, and in the sandbox without the exit-2 deny either. The bounds are 2s for the
@@ -67,7 +65,8 @@
 # tests. Any RB_STATUS other than `ok` is could-not-evaluate and takes `fail`, and so does a
 # non-zero exit from either child. A missing run-bounded.sh is `fail` too: the judge cannot
 # run bounded, so it does not run. The sandbox mounts lib/ beside this file for that
-# reason (sandbox/executable_claude-sandbox).
+# reason (sandbox/executable_claude-sandbox), and a missing guard-python.sh is `fail` the same
+# way.
 set -u
 : "${CLAUDE_GUARD_FAIL_CLOSED:=0}"
 ASK='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"claude-guard: the dangerous-command rules could not be evaluated (interpreter or package unavailable). Review this command yourself."}}'
@@ -94,15 +93,13 @@ SHARE="${CLAUDE_GUARD_HOME:-${HOME:-}/.local/share/claude-guard}"
 # shellcheck source=/dev/null
 . "${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/lib/run-bounded.sh}" 2>/dev/null || fail
 command -v run_bounded >/dev/null 2>&1 || fail
+# shellcheck source=/dev/null
+. "${BASH_SOURCE[0]%/*}/lib/guard-python.sh" 2>/dev/null || fail
 T_FIND=${CLAUDE_GUARD_TIMEOUT_S:-2}
 T_JUDGE=${CLAUDE_GUARD_TIMEOUT_S:-6}
 
-# </dev/null: the payload belongs to the judge, and the lookup must not read it.
-run_bounded "$T_FIND" 4096 -- \
-  bash -c 'exec uv python find --no-project --managed-python --system 3.14 2>/dev/null' </dev/null
-[ "$RB_STATUS" = ok ] && [ "$RB_EXIT" -eq 0 ] || fail
-PY=$RB_OUT
-[ -x "$PY" ] || fail
+guard_python "$T_FIND" || fail
+PY=$GUARD_PY
 
 # The payload goes in through process substitution. A pipe would run run_bounded in a
 # subshell and lose RB_*, and a here-string appends a newline the payload never had.

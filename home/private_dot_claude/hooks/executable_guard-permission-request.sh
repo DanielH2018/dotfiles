@@ -69,16 +69,19 @@ RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/lib/run-bounded.sh}"
 if ! . "$RUN_BOUNDED_PATH" 2>/dev/null || ! command -v run_bounded >/dev/null 2>&1; then
   not_evaluated "cannot load $RUN_BOUNDED_PATH"
 fi
+# shellcheck source=/dev/null
+. "${BASH_SOURCE[0]%/*}/lib/guard-python.sh" 2>/dev/null \
+  || not_evaluated "cannot load ${BASH_SOURCE[0]%/*}/lib/guard-python.sh"
 T_FIND=${CLAUDE_GUARD_TIMEOUT_S:-2}
 T_JUDGE=${CLAUDE_GUARD_TIMEOUT_S:-6}
 
-# </dev/null: the payload on stdin is the judge's, and must not be spent on the lookup.
-run_bounded "$T_FIND" 4096 -- \
-  bash -c 'exec uv python find --no-project --managed-python --system 3.14 2>/dev/null' </dev/null
-[ "$RB_STATUS" = ok ] || not_evaluated "uv python find did not finish within ${T_FIND}s ($RB_STATUS)"
-[ "$RB_EXIT" -eq 0 ] || exit 0
-PY=$RB_OUT
-[ -x "$PY" ] || exit 0
+# lib/guard-python.sh keeps the payload on stdin for the judge. A uv that answers with no
+# interpreter is a host without the toolchain, not a failed check, so it stays silent.
+if ! guard_python "$T_FIND"; then
+  [ "$GUARD_PY_STATUS" = none ] && exit 0
+  not_evaluated "uv python find did not finish within ${T_FIND}s ($GUARD_PY_STATUS)"
+fi
+PY=$GUARD_PY
 
 # shellcheck disable=SC2016  # $1/$2 belong to the inner bash
 run_bounded "$T_JUDGE" 65536 -- \
