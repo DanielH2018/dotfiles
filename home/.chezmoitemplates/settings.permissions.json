@@ -174,10 +174,11 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(git push:*)",
-      "Bash(git status:*)",
-      "Bash(git log:*)",
-      "Bash(git diff:*)",
-      "Bash(git show:*)",
+      {{/* No prefix rule for git's read subcommands (status, log, diff, show, rev-parse,
+           ls-files, ls-tree, blame, shortlog, describe, cat-file, name-rev, merge-base).
+           claude_guard.judge decides them through remote_guards.git_readonly and
+           claude_guard.gitread, which refuse `--output=<file>` and `-c core.pager=<cmd>`.
+           A prefix rule here grants both, so adding one back widens what is approved. */}}
       "Bash(git branch)",
       "Bash(git branch -a)",
       "Bash(git branch -v:*)",
@@ -190,15 +191,10 @@
       "Bash(git remote:*)",
       "Bash(git config --get:*)",
       "Bash(git config --list)",
-      "Bash(git blame:*)",
       "Bash(git stash list:*)",
       "Bash(git fetch:*)",
-      "Bash(git rev-parse:*)",
-      "Bash(git ls-files:*)",
-      "Bash(git ls-tree:*)",
       "Bash(git tag)",
       "Bash(git tag -l:*)",
-      "Bash(git describe:*)",
       "Bash(git stash show:*)",
       {{/* The stash protocol the harness prescribes for a shared stash stack: push under a
            unique tag, apply by the entry's SHA. Neither is in the ask tier, but neither was
@@ -207,18 +203,14 @@
       "Bash(git stash push -u -m:*)",
       "Bash(git stash apply:*)",
       "Bash(git worktree list:*)",
-      "Bash(git shortlog:*)",
       "Bash(git reflog:*)",
-      "Bash(git cat-file:*)",
-      "Bash(git name-rev:*)",
-      {{/* Reads the 2026-10-20 transcript replay found prompting. merge-base and
-           check-ignore only print. `merge-tree --write-tree` writes the merged tree's objects
+      {{/* Reads the 2026-10-20 transcript replay found prompting. check-ignore only
+           prints. `merge-tree --write-tree` writes the merged tree's objects
            into the object store and moves no ref, so nothing a reader sees changes; the
            older trivial-merge form is left out because nobody used it. `git grep` is NOT
            here: `-O<cmd>` runs a command, so a prefix rule would approve that too.
            claude_guard.judge allows it through remote_guards.git_readonly instead, which
            refuses `-O`. `git -C <path> <sub>` is judged there as `git <sub>` too. */}}
-      "Bash(git merge-base:*)",
       "Bash(git check-ignore:*)",
       "Bash(git merge-tree --write-tree:*)",
       {{/* Branch-level git the reflog recovers. autoMode.allow already calls this routine
