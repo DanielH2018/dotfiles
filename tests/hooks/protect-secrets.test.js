@@ -145,22 +145,16 @@ test('token stores denied to Bash are denied to Read/Edit/Write too', { skip }, 
 });
 
 // The two gates guard the same secrets and drifted apart once already. This is the
-// check that says so: every path in claude_guard.deny's SECRET_PATHS must be denied
-// here too, derived from that file rather than hand-copied, so adding one there and
-// forgetting this hook fails instead of passing quietly. claude-guard's slice 4 cutover
-// unregistered block-dangerous-bash.sh from the host (deny.py:482 has the ported
-// SECRET_PATHS); deny.py is the host's oracle now.
+// check that says so: every Bash-side fragment in the secret table
+// (claude_guard/secret_paths.json, which builds claude_guard.deny's SECRET_PATHS) must be
+// denied here too, so an entry that gains a `bash_re` without a case arm fails instead of
+// passing quietly.
 test('every SECRET_PATHS entry in the deny gate is covered by this one', { skip }, () => {
-  const denyPy = fs.readFileSync(
-    srcPath('dot_local', 'share', 'claude-guard', 'claude_guard', 'deny.py'),
+  const table = JSON.parse(fs.readFileSync(
+    srcPath('dot_local', 'share', 'claude-guard', 'claude_guard', 'secret_paths.json'),
     'utf8',
-  );
-  const block = /^SECRET_PATHS = \(\n([\s\S]*?)^\)$/m.exec(denyPy);
-  assert.ok(block, 'located SECRET_PATHS in deny.py');
-  const joined = [...block[1].matchAll(/r"([^"]*)"/g)].map((x) => x[1]).join('');
-  assert.ok(joined.startsWith('(') && joined.endsWith(')'), 'SECRET_PATHS is not a single (...) group');
-  // Strip the outer (...) group, the same content the old bash-string extraction captured.
-  const inner = joined.slice(1, -1);
+  ));
+  const inner = table.entries.flatMap((e) => e.bash_re).join('|');
 
   // Turn each alternation branch into a concrete path this hook can be asked about.
   const SAMPLE = {
@@ -228,7 +222,7 @@ test('every SECRET_PATHS entry in the deny gate is covered by this one', { skip 
   for (const branch of branches) {
     const sample = SAMPLE[branch];
     assert.strictEqual(decision(runHook(sample)), 'deny',
-      `block-dangerous-bash.sh denies ${branch} to Bash, but Read/Edit/Write allows ${sample}`);
+      `claude_guard.deny denies ${branch} to Bash, but Read/Edit/Write allows ${sample}`);
   }
 });
 

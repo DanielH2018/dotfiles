@@ -1,116 +1,72 @@
-// Which paths count as secret is declared once, in .chezmoidata/secrets.toml, and
-// re-expressed in three dialects that share no source: a regex in claude_guard.deny
-// (block-dangerous-bash.sh's SECRET_PATHS, ported there; that hook is unregistered on
-// the host as of the claude-guard slice 4 cutover, so deny.py is the host's live
-// decision-maker), `case` arms in protect-secrets.sh, and Read/Edit globs in the settings
-// template. `~/.claude/.credentials.json` — the live OAuth token on Linux and WSL — was
-// missing from every one of them independently (BDB-01, PS-01, A1-01, A1-18).
-//
-// Until the dialects are generated from the registry, this is what holds them together:
-// an entry that is not carried by every dialect it declares fails the suite.
+// Which paths count as secret is declared once, in claude-guard's
+// claude_guard/secret_paths.json, and rendered into three dialects: the Bash deny rules
+// (claude_guard.deny builds SECRET_PATHS from the table at import), the case arms in
+// protect-secrets.sh, and the Read()/Edit() denies in settings.permissions.json. The last
+// two are generated blocks; claude-guard's tests/test_secret_table.py fails when either has
+// drifted from the table. This file checks what those blocks become once deployed: the
+// RENDERED settings deny every glob the table names, and the hook denies the conformance
+// corpus. `~/.claude/.credentials.json`, the live OAuth token on Linux and WSL, was missing
+// from every dialect independently before the table existed (BDB-01, PS-01, A1-01, A1-18).
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const { skipUnless } = require('./lib/probe');
 const { srcPath } = require('./lib/paths');
+const { renderFile, chezmoiAvailable } = require('./lib/render');
 
-const REGISTRY = srcPath('.chezmoidata', 'secrets.toml');
-const DENY_PY = srcPath('dot_local', 'share', 'claude-guard', 'claude_guard', 'deny.py');
+const TABLE = srcPath('dot_local', 'share', 'claude-guard', 'claude_guard', 'secret_paths.json');
 const PS = srcPath('private_dot_claude', 'hooks', 'executable_protect-secrets.sh');
-// The deny rules moved out of settings.base.json when the permission model was split into
-// its own template; base now only splices it in. The assertion below requires each rule to
-// be PRESENT, so a stale path here fails loudly rather than finding nothing to complain about.
-const SETTINGS = srcPath('.chezmoitemplates', 'settings.permissions.json');
+const BASE = srcPath('.chezmoitemplates', 'settings.base.json');
 
-// Minimal reader for the shape this file uses: [[secretPaths.entries]] tables of
-// scalars and string arrays. Avoids adding a TOML dependency for one fixture.
-function parseEntries(src, table) {
-  const out = [];
-  let cur = null;
-  for (const raw of src.split('\n')) {
-    const line = raw.trim();
-    if (line.startsWith('#') || line === '') continue;
-    if (line === `[[${table}]]`) { cur = {}; out.push(cur); continue; }
-    if (line.startsWith('[')) { cur = null; continue; }
-    if (!cur) continue;
-    const m = line.match(/^(\w+)\s*=\s*(.+)$/);
-    if (!m) continue;
-    const [, key, rhs] = m;
-    cur[key] = rhs.startsWith('[')
-      ? [...rhs.matchAll(/"([^"]*)"|'([^']*)'/g)].map((x) => x[1] ?? x[2])
-      : (rhs.match(/^"([^"]*)"$|^'([^']*)'$/) || [rhs, rhs])[1] ?? rhs.replace(/^'|'$/g, '');
-  }
-  return out;
+const { entries, cases } = JSON.parse(fs.readFileSync(TABLE, 'utf8'));
+const skipHook = skipUnless('bash', 'jq');
+const skipRender = chezmoiAvailable ? false : 'chezmoi unavailable';
+
+let renderedDeny = null;
+function settingsDeny() {
+  renderedDeny ??= new Set(JSON.parse(renderFile(BASE)).permissions.deny);
+  return renderedDeny;
 }
 
-const registry = fs.readFileSync(REGISTRY, 'utf8');
-const entries = parseEntries(registry, 'secretPaths.entries');
-const cases = parseEntries(registry, 'secretPaths.cases');
-const denyPy = fs.readFileSync(DENY_PY, 'utf8');
-const ps = fs.readFileSync(PS, 'utf8');
-const settings = fs.readFileSync(SETTINGS, 'utf8');
-// deny.py spells SECRET_PATHS as a parenthesised Python string concatenation
-// (r"..." per line), not a single shell-quoted line -- join it back into one
-// string, the same shape secretPathsLine[1] used to be when it came from bash.
-const denySecretPathsBlock = denyPy.match(/^SECRET_PATHS = \(\n([\s\S]*?)^\)$/m);
-const secretPathsLine = denySecretPathsBlock
-  ? [null, [...denySecretPathsBlock[1].matchAll(/r"([^"]*)"/g)].map((m) => m[1]).join('')]
-  : null;
+function hookDecision(file_path) {
+  const payload = JSON.stringify({ tool_name: 'Read', tool_input: { file_path } });
+  const out = execFileSync('bash', [PS], { input: payload, encoding: 'utf8' });
+  return out.trim() === '' ? 'none' : JSON.parse(out).hookSpecificOutput?.permissionDecision ?? 'none';
+}
 
-const skip = skipUnless('bash', 'jq');
-
-test('the registry parses and is not empty', () => {
-  assert.ok(entries.length >= 5, `expected entries, got ${entries.length}`);
+test('the table parses, and every entry names itself, says why, and is refused somewhere', () => {
+  assert.ok(entries.length >= 10, `expected entries, got ${entries.length}`);
+  assert.strictEqual(new Set(entries.map((e) => e.id)).size, entries.length, 'ids are unique');
   for (const e of entries) {
-    assert.ok(e.id, 'every entry has an id');
-    assert.ok(e.why, `${e.id} explains why it is secret`);
+    assert.ok(e.id && e.why, `${e.id} has an id and a why`);
+    const dialects = [e.bash_re, e.case_arms ?? [], e.read_globs, e.edit_globs];
+    assert.ok(dialects.some((d) => d.length > 0), `${e.id} is refused by no dialect`);
   }
 });
 
-test('every entry appears in claude_guard.deny SECRET_PATHS', () => {
-  assert.ok(secretPathsLine, 'located SECRET_PATHS');
-  const missing = entries.filter((e) => e.bash_re && !secretPathsLine[1].includes(e.bash_re));
-  assert.deepStrictEqual(missing.map((e) => e.id), [], 'entries absent from the deny guard');
+test('the rendered settings deny every glob the table names, to its tool', { skip: skipRender }, () => {
+  const deny = settingsDeny();
+  const missing = entries.flatMap((e) => [
+    ...e.read_globs.map((g) => `Read(${g})`),
+    ...e.edit_globs.map((g) => `Edit(${g})`),
+  ]).filter((rule) => !deny.has(rule));
+  assert.deepStrictEqual(missing, [], 'table rules absent from the rendered settings');
 });
 
-test('every entry appears in protect-secrets case arms', () => {
-  const missing = [];
-  for (const e of entries) {
-    for (const arm of e.case_arms || []) {
-      if (!ps.includes(arm)) missing.push(`${e.id}:${arm}`);
-    }
-  }
-  assert.deepStrictEqual(missing, [], 'case arms absent from protect-secrets.sh');
+test('the OAuth token store is refused by all three dialects', { skip: skipHook || skipRender }, () => {
+  // The finding that motivated the table, asserted directly so a refactor that loosens the
+  // generic checks above still cannot drop this one.
+  const e = entries.find((x) => x.id === 'claude-oauth-credentials');
+  assert.ok(e && e.bash_re.length > 0 && e.case_arms.length > 0, 'the table carries it');
+  assert.ok(settingsDeny().has('Read(~/.claude/.credentials.json)'));
+  assert.ok(settingsDeny().has('Edit(~/.claude/.credentials.json)'));
+  assert.strictEqual(hookDecision('/home/u/.claude/.credentials.json'), 'deny');
 });
 
-test('every entry is denied to both Read and Edit in the settings template', () => {
-  const missing = [];
-  for (const e of entries) {
-    for (const glob of e.tool_globs || []) {
-      for (const tool of ['Read', 'Edit']) {
-        if (!settings.includes(`"${tool}(${glob})"`)) missing.push(`${e.id}:${tool}(${glob})`);
-      }
-    }
-  }
-  assert.deepStrictEqual(missing, [], 'deny rules absent from settings.permissions.json');
-});
-
-test('the OAuth token store is covered by all four dialects', () => {
-  // The finding that motivated the registry, asserted directly so a refactor that
-  // loosens the generic checks above still cannot drop this one.
-  assert.match(secretPathsLine[1], /\\\.claude\/\\\.credentials\\\.json/);
-  assert.match(ps, /\.credentials\.json\)/);
-  assert.ok(settings.includes('"Read(~/.claude/.credentials.json)"'));
-  assert.ok(settings.includes('"Edit(~/.claude/.credentials.json)"'));
-});
-
-test('protect-secrets denies every conformance case', { skip }, () => {
+test('protect-secrets denies every conformance case', { skip: skipHook }, () => {
+  assert.ok(cases.length > 0, 'the conformance corpus is not empty');
   for (const c of cases) {
-    const payload = JSON.stringify({ tool_name: 'Read', tool_input: { file_path: c.input } });
-    const out = execFileSync('bash', [PS], { input: payload, encoding: 'utf8' });
-    const decision = out.trim() === '' ? 'none'
-      : JSON.parse(out).hookSpecificOutput?.permissionDecision ?? 'none';
-    assert.strictEqual(decision, 'deny', `${c.input} (${c.entry}) must be denied, got ${decision}`);
+    assert.strictEqual(hookDecision(c.input), 'deny', `${c.input} (${c.entry}) must be denied`);
   }
 });

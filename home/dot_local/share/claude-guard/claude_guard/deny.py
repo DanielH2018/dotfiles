@@ -58,6 +58,7 @@ from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
+from claude_guard import secret_table
 from claude_guard.gitargv import (
     GLOBALS_RE,
     PUSH_SUBCOMMANDS,
@@ -631,12 +632,11 @@ def disk_wipe(sc: Scan, target: str) -> Verdict | None:
 # words. It applies only when no further path character follows, so `.env.example.local`,
 # `.env.examples` and `.env.example/x` are still refused. A symlink named like a template
 # is not resolved here; the sandbox resolves it and refuses a read that lands on a `.env`.
-SECRET_PATHS = (
-    r"((?<!process)(?<!\.\.)\.env(?!iron(?:ments?|b)?\b)(?!\.(?:example|sample|template)(?![A-Za-z0-9_./-]))|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|"
-    r"\.pypirc|\.npmrc|/secrets/|\.git-credentials|\.kube/config|\.docker/config\.json|"
-    r"\.config/gh/hosts\.yml|\.claude/\.credentials\.json|\.claude\.json|/etc/shadow|"
-    r"/etc/gshadow|/proc/[^/[:space:]]+/environ|(^|[A-Za-z0-9_~/-])\.(pem|key|p12|pfx)\b)"
-)
+# The fragments come from the secret table (secret_paths.json, one entry per secret), which
+# also feeds protect-secrets.sh and the settings Read()/Edit() denies. The `.env` fragment
+# is the `dotenv` entry's. A missing or unreadable table raises here at import, and the
+# PreToolUse shim answers a guard that cannot run with an ask, never an allow.
+SECRET_PATHS = secret_table.deny_pattern()
 # :884.
 READERS = (
     r"(cat|tac|nl|head|tail|less|more|most|bat|batcat|strings|xxd|hexdump|hd|od|base32|base64|"

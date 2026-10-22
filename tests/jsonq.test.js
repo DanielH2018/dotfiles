@@ -27,11 +27,9 @@ const { srcPath } = require('./lib/paths');
 const { run } = require('./lib/run');
 
 const JSONQ = srcPath('dot_local', 'bin', 'executable_jsonq');
-// claude-guard slice 4 cutover unregistered block-dangerous-bash.sh from the host (it stays
-// deployed for the sandbox -- see its own header comment); deny.py (claude_guard's port,
-// ported rule for rule -- see git show 7a85ffec:docs/plans/2026-09-17-claude-guard-slice-4-cutover.md) is now
-// the host's live decision-maker and the oracle SECRET_PATHS mirrors.
-const DENY_PY = srcPath('dot_local', 'share', 'claude-guard', 'claude_guard', 'deny.py');
+// The secret table claude_guard.deny builds SECRET_PATHS from, and the oracle jsonq's
+// SECRET_PATHS in limits.py mirrors.
+const SECRET_TABLE = srcPath('dot_local', 'share', 'claude-guard', 'claude_guard', 'secret_paths.json');
 
 let python = 'python3';
 let skip = false;
@@ -586,23 +584,47 @@ test('refuses a symlink that launders a secret path', { skip }, () => {
   assert.match(r.err, /secret-path pattern/);
 });
 
-test('jsonq SECRET_PATHS matches the oracle it mirrors', { skip }, () => {
-  const denyPy = fs.readFileSync(DENY_PY, 'utf8');
-  const denyBlock = denyPy.match(/^SECRET_PATHS = \(\n([\s\S]*?)^\)$/m);
-  assert.ok(denyBlock, 'could not find SECRET_PATHS in deny.py');
-  const fromDenyPy = [...denyBlock[1].matchAll(/r"([^"]*)"/g)].map((m) => m[1]).join('');
-  // POSIX bracket classes are the one permitted divergence — Python's re has no [:space:].
-  // deny.py keeps them (it has its own POSIX-class translation for the bash-ported matchers);
-  // limits.py, driving Python's re directly, spells the same class \s.
-  const fromHook = fromDenyPy.replace(/\[:space:\]/g, '\\s');
+// jsonq refuses a path when SECRET_PATHS matches it anywhere (documents.py: one re.search,
+// one message), so fragment order changes nothing it does and the two are compared as
+// multisets of fragments. The table orders its fragments by protect-secrets.sh's arm order,
+// which is first-match and so does matter there.
+function splitTopLevel(body) {
+  const out = [];
+  let depth = 0;
+  let inClass = false;
+  let cur = '';
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (c === '\\') { cur += c + (body[i + 1] ?? ''); i++; continue; }
+    if (inClass) inClass = c !== ']';
+    else if (c === '[') inClass = true;
+    else if (c === '(') depth++;
+    else if (c === ')') depth--;
+    else if (c === '|' && depth === 0) { out.push(cur); cur = ''; continue; }
+    cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+
+test('jsonq SECRET_PATHS carries every fragment of the secret table, and no other', { skip }, () => {
+  const table = JSON.parse(fs.readFileSync(SECRET_TABLE, 'utf8'));
+  // POSIX bracket classes are the one permitted divergence: the table keeps them for
+  // claude_guard.deny's own translation, and limits.py, driving Python's re directly,
+  // spells the same class \s.
+  const fromTable = table.entries.flatMap((e) => e.bash_re)
+    .map((f) => f.replace(/\[:space:\]/g, '\\s'));
 
   const limits = fs.readFileSync(path.join(SHARE, 'limits.py'), 'utf8');
   const block = limits.match(/^SECRET_PATHS = \(\n([\s\S]*?)^\)$/m);
   assert.ok(block, 'could not find SECRET_PATHS in limits.py');
-  const fromJsonq = [...block[1].matchAll(/r"([^"]*)"/g)].map((m) => m[1]).join('');
+  const joined = [...block[1].matchAll(/r"([^"]*)"/g)].map((m) => m[1]).join('');
+  assert.ok(joined.startsWith('(') && joined.endsWith(')'), 'SECRET_PATHS is not one (...) group');
+  const fromJsonq = splitTopLevel(joined.slice(1, -1));
 
-  assert.strictEqual(fromJsonq, fromHook,
-    'jsonq and claude_guard.deny have drifted apart');
+  assert.ok(fromTable.length >= 20, 'located the table fragments');
+  assert.deepStrictEqual([...fromJsonq].sort(), [...fromTable].sort(),
+    'jsonq and the secret table (claude_guard/secret_paths.json) have drifted apart');
 });
 
 test('reports bad input without a traceback', { skip }, () => {

@@ -53,59 +53,76 @@ is_env_template_read() {
   is_env_template_name "$real"
 }
 
-# The .env arm sits last, so a template under ~/.ssh/ or a secrets/ directory is refused
-# by that arm before the template exception is ever considered.
+# The arms below are generated from the secret table,
+# home/dot_local/share/claude-guard/claude_guard/secret_paths.json, which also feeds the Bash
+# deny rules (claude_guard.deny) and the Read()/Edit() denies in settings.permissions.json.
+# Edit the table and run `python -m claude_guard.secret_table` from the package directory;
+# claude-guard's tests/test_secret_table.py fails when these arms and the table disagree.
+# The arms stay literal in this file rather than read from the table at run time: the hook
+# keeps its jq-only path, and its list stays under ~/.claude/hooks/**, which settings
+# ask-lists for Edit, where the package directory has no such rule.
+#
+# The table's order is the arm order. The .env arm sits last, so a template under ~/.ssh/ or
+# a secrets/ directory is refused by an earlier arm before the template exception is ever
+# considered. Each arm carries the bare form as well as the */-prefixed one where a relative
+# path can name the file: `.aws/credentials` from a cwd of $HOME is /home/u/.aws/credentials.
 case "$FILE_PATH" in
+  # BEGIN secret arms, generated from claude_guard/secret_paths.json
+  # Edit the table and re-run claude_guard.secret_table, not these arms.
+  # ssh-keys: private keys, known_hosts and the agent config
   */.ssh/*|*/id_rsa*|*/id_ed25519*|*/id_ecdsa*)
     deny "Blocked: SSH keys are never safe to read or modify automatically."
     ;;
-  # Each arm carries the bare form as well as the */-prefixed one. A relative path has no
-  # separator to match — `.aws/credentials` from a cwd of $HOME is the same file as
-  # /home/u/.aws/credentials, and only the .env arm handled that shape.
-  # The OAuth token store on Linux and WSL. A different file from ~/.claude.json below,
-  # which is where the deny list stopped — see .chezmoidata/secrets.toml.
+  # claude-oauth-credentials: the live Claude Code OAuth access and refresh token on Linux and WSL, a different file from ~/.claude.json
   .credentials.json|*/.claude/.credentials.json)
     deny "Blocked: this is the Claude Code OAuth token store."
     ;;
+  # aws: AWS access keys and profile config
   .aws/credentials|.aws/config|*/.aws/credentials|*/.aws/config)
     deny "Blocked: AWS credentials file."
     ;;
+  # token-rc-files: registry and machine tokens for curl, pip and npm
   .netrc|.pypirc|.npmrc|*/.netrc|*/.pypirc|*/.npmrc)
     deny "Blocked: this file commonly contains auth tokens."
     ;;
+  # gnupg: the GnuPG keyring
   .gnupg/*|*/.gnupg/*)
     deny "Blocked: GPG keyring."
     ;;
+  # key-files: private keys and certificates by suffix
   *.pem|*.key|*.p12|*.pfx)
     deny "Blocked: looks like a private key or certificate."
     ;;
+  # secrets-directory: anything under a directory named secrets
   secrets/*|*/secrets/*)
     deny "Blocked: files under a secrets/ directory."
     ;;
-  # Everything below was denied for Bash by block-dangerous-bash.sh's SECRET_PATHS but
-  # reachable through Read/Edit/Write, which is the gate this hook is. `cat ~/.claude.json`
-  # was blocked while Read(~/.claude.json) returned the OAuth token into the transcript.
-  # Of the set only ~/.config/gh/** had a settings deny standing behind it. Keep this list
-  # and SECRET_PATHS in step — tests/hooks/protect-secrets.test.js fails if they drift.
+  # claude-config: the account block and, on some platforms, the OAuth token
   .claude.json|*/.claude.json)
     deny "Blocked: ~/.claude.json holds the Claude Code account OAuth token."
     ;;
+  # git-credentials: plaintext git remote credentials
   .git-credentials|*/.git-credentials)
     deny "Blocked: .git-credentials stores host credentials in plaintext."
     ;;
+  # cluster-and-registry: cluster certs and tokens, registry auth, the gh token
   */.kube/config|*/.docker/config.json|*/.config/gh/hosts.yml)
     deny "Blocked: this file holds cluster or registry credentials."
     ;;
+  # password-database: local user and group password hashes
   /etc/shadow|/etc/gshadow)
     deny "Blocked: system password database."
     ;;
+  # process-environment: another process's exported environment
   /proc/*/environ)
     deny "Blocked: /proc/<pid>/environ exposes another process's exported secrets."
     ;;
+  # dotenv: dotenv files; the committed templates hold placeholder keys and stay readable
   .env|*/.env|.env.*|*/.env.*)
     is_env_template_read ||
       deny "Blocked: .env files may contain secrets. Ask the user to share the specific value needed."
     ;;
+  # END secret arms
 esac
 
 # The files git reads config and hooks from (dotfiles #711). A write to one makes a later
