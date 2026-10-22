@@ -25,7 +25,7 @@ const SCRIPT = repoPath('bin', 'lint-bsd-portability');
 const hookConfig = fs.readFileSync(repoPath('.pre-commit-config.yaml'), 'utf8');
 
 function run(args) {
-  return spawnSync('bash', [SCRIPT, ...args], { cwd: repoPath(), encoding: 'utf8' });
+  return spawnSync(process.execPath, [SCRIPT, ...args], { cwd: repoPath(), encoding: 'utf8' });
 }
 
 function fixture(name, body) {
