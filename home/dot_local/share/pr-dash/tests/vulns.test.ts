@@ -38,10 +38,14 @@ function rawAlert(number: number, overrides: Partial<RawAlert> = {}): RawAlert {
   };
 }
 
-type Page = { nodes: (RawAlert | null)[]; next?: string } | { error: string } | { throws: string };
+type Page =
+  | { nodes: (RawAlert | null)[]; next?: string; total?: number }
+  | { error: string }
+  | { throws: string };
 
 // A Client that answers each repository from a list of pages, keyed by `owner/name`, and
-// records every request so a test can count them.
+// records every request so a test can count them. A page's totalCount defaults to its own
+// node count, which is right for a single-page answer; a multi-page answer sets `total`.
 function fakeClient(pages: Record<string, Page[]>) {
   const calls: Record<string, unknown>[] = [];
   const client: Client = {
@@ -56,8 +60,9 @@ function fakeClient(pages: Record<string, Page[]>) {
         return { data: { repository: { url: `https://github.com/${key}`, vulnerabilityAlerts: null } } as T, errors: [page.error] };
       }
       const pageInfo = { hasNextPage: page.next !== undefined, endCursor: page.next ?? null };
+      const totalCount = page.total ?? page.nodes.length;
       return {
-        data: { repository: { url: `https://github.com/${key}`, vulnerabilityAlerts: { pageInfo, nodes: page.nodes } } } as T,
+        data: { repository: { url: `https://github.com/${key}`, vulnerabilityAlerts: { totalCount, pageInfo, nodes: page.nodes } } } as T,
         errors: [],
       };
     },
@@ -90,7 +95,7 @@ test('a malformed PR_DASH_VULN_REPOS entry rejects the whole value, naming the e
 
 test('fetchRepoAlerts follows pagination and flattens each alert', async () => {
   const { client, calls } = fakeClient({
-    'acme/api': [{ nodes: [rawAlert(1)], next: 'c1' }, { nodes: [rawAlert(2)] }],
+    'acme/api': [{ nodes: [rawAlert(1)], next: 'c1', total: 2 }, { nodes: [rawAlert(2)] }],
   });
   const { alerts, errors } = await fetchRepoAlerts(client, API);
   assert.deepStrictEqual(errors, []);
@@ -113,6 +118,14 @@ test('fetchRepoAlerts follows pagination and flattens each alert', async () => {
     createdAt: '2026-10-01T00:00:00Z',
   });
   assert.strictEqual(alerts[1]?.number, 2);
+});
+
+test('fetchRepoAlerts reports a list that stops short of the totalCount GitHub gave', async () => {
+  // The 2026-10-22 shape: one page, hasNextPage false, no error, 100 of 243 alerts.
+  const { client } = fakeClient({ 'acme/api': [{ nodes: [rawAlert(1), rawAlert(2)], total: 3 }] });
+  const { alerts, errors } = await fetchRepoAlerts(client, API);
+  assert.deepStrictEqual(alerts.map((a) => a.number), [1, 2]);
+  assert.deepStrictEqual(errors, ['GitHub reported 3 open alerts but returned 2']);
 });
 
 test('fetchRepoAlerts throws when the repository answers no alert data, carrying GitHub\'s reason', async () => {

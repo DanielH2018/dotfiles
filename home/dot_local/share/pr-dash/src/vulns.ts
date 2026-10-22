@@ -77,6 +77,7 @@ query($owner: String!, $name: String!, $cursor: String) {
   repository(owner: $owner, name: $name) {
     url
     vulnerabilityAlerts(states: OPEN, first: 100, after: $cursor) {
+      totalCount
       pageInfo { hasNextPage endCursor }
       nodes {
         number createdAt vulnerableManifestPath dependencyScope
@@ -116,6 +117,7 @@ type AlertsData = {
   repository: {
     url: string;
     vulnerabilityAlerts: {
+      totalCount: number | null | undefined;
       pageInfo: { hasNextPage: boolean; endCursor: string | null } | null | undefined;
       nodes: (RawAlert | null)[];
     } | null;
@@ -166,7 +168,8 @@ export type RepoAlerts = { alerts: VulnAlert[]; errors: string[] };
  *
  * Throws when the repository answered nothing usable: not found, or no access to its alerts,
  * which GitHub reports as a null `vulnerabilityAlerts` with an error beside it. Returns a
- * partial result, with `errors` naming the gap, when some rows did arrive.
+ * partial result, with `errors` naming the gap, when some rows did arrive. That includes a
+ * result whose row count disagrees with the `totalCount` GitHub reported on the first page.
  */
 export async function fetchRepoAlerts(client: Client, repo: VulnRepo): Promise<RepoAlerts> {
   const label = `${repo.owner}/${repo.name}`;
@@ -174,6 +177,10 @@ export async function fetchRepoAlerts(client: Client, repo: VulnRepo): Promise<R
   const errors: string[] = [];
   let dropped = 0;
   let cursor: string | null = null;
+  // From the first page only. During GitHub's 2026-10-22 incident one repository's listing
+  // stopped after 100 of its 243 alerts with hasNextPage false and no error, so pagination
+  // alone cannot tell a short list from a complete one.
+  let totalCount: number | undefined;
 
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const variables: Record<string, unknown> = { owner: repo.owner, name: repo.name, cursor };
@@ -192,6 +199,7 @@ export async function fetchRepoAlerts(client: Client, repo: VulnRepo): Promise<R
       break;
     }
 
+    if (page === 0 && typeof connection.totalCount === 'number') totalCount = connection.totalCount;
     for (const node of connection.nodes) {
       const alert = node === null ? null : normalizeAlert(node, label, repository.url);
       if (alert === null) dropped += 1;
@@ -208,6 +216,10 @@ export async function fetchRepoAlerts(client: Client, repo: VulnRepo): Promise<R
   }
 
   if (dropped > 0) errors.push(`${dropped} alert(s) arrived without advisory details`);
+  const received = alerts.length + dropped;
+  if (totalCount !== undefined && received !== totalCount) {
+    errors.push(`GitHub reported ${totalCount} open alerts but returned ${received}`);
+  }
   return { alerts, errors };
 }
 
