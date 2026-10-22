@@ -137,3 +137,16 @@ test('allowed_signers keeps only the 1Password key without a local one', { skip 
   assert.strictEqual(renderSigners({}).trim().split('\n').length, 1);
 });
 
+
+// rerere's cache lives in the shared .git, so with autoupdate a resolution another session
+// recorded for the same conflict text was replayed and staged into this one's merge, dropping
+// the PR's own lines behind a "clean" result (#862). Without autoupdate the replayed path stays
+// unmerged and `git commit` refuses until it is reviewed and added.
+test('rerere never stages a replayed resolution', { skip }, () => {
+  const configLines = (text) => text.split('\n').filter((l) => !l.trimStart().startsWith('#'));
+  assert.deepStrictEqual(configLines(fs.readFileSync(TMPL, 'utf8')).filter((l) => /^\s*autoupdate\s*=/.test(l)), [],
+    'no branch of the template sets rerere.autoupdate');
+  const out = render(fakeHome([]));
+  assert.doesNotMatch(out, /^\s*autoupdate\s*=/m, 'nor does a render');
+  assert.match(out, /^\[rerere\]\n\s*enabled = true$/m, 'rerere itself stays on for stacked rebases');
+});

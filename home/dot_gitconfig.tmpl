@@ -90,11 +90,15 @@
 {{- end }}
 [branch]
 	sort = -committerdate
+# rerere stays on so a conflict resolved once in a stacked rebase replays on every layer above
+# it, but autoupdate stays off on every OS. The rerere cache lives in the shared .git, so every
+# worktree and every parallel Claude session reads one cache. With autoupdate, a resolution
+# another session recorded for the same conflict text was replayed AND staged: on 2026-10-17 a
+# merge into a server-repo PR came out "clean" after rerere kept only master's side and dropped
+# the PR's own test rows (dotfiles#862). Without it the replayed file stays unmerged in the
+# index, so `git commit` refuses until someone reads it and runs `git add`.
 [rerere]
 	enabled = true
-{{- if ne .chezmoi.os "darwin" }}
-	autoupdate = true
-{{- end }}
 [diff]
 	colorMoved = {{ if eq .chezmoi.os "darwin" }}zebra{{ else }}plain{{ end }}
 {{- if ne .chezmoi.os "darwin" }}
