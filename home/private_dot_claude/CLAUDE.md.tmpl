@@ -45,18 +45,18 @@ to memory files and status lines as much as to docs.
 
 ## Config & dotfiles management (chezmoi)
 
-My dotfiles and Claude config are managed across **two repos**. Edit the *source*, never the deployed copy under `~`; `chezmoi source-path <file>` names it, and `chezmoi-guard.sh` warns after an edit to a deployed file.
+My dotfiles and Claude config are managed across **two repos**. Edit the *source*, never the deployed copy under `~`; `chezmoi source-path <file>` names it, and `chezmoi-guard.sh` resyncs or warns after an edit to a deployed file.
 
-- **Personal / general** → chezmoi, source `~/.local/share/chezmoi` (remote `DanielH2018/dotfiles`, `.chezmoiroot=home`). Owns most of `~/.claude` as **real files** under `home/private_dot_claude/`. `~/.claude/settings.json` is **generated**; that repo's `CLAUDE.md` says from what.
+- **Personal / general** → chezmoi, source `~/.local/share/chezmoi` (remote `DanielH2018/dotfiles`, `.chezmoiroot=home`). Owns most of `~/.claude` as **real files** under `home/private_dot_claude/`. `~/.claude/settings.json` is **generated** from `home/.chezmoitemplates/settings.base.json`. To change settings or permissions, edit that base template, then `chezmoi apply ~/.claude/settings.json`.
 - **Work-specific** → `~/work-laptop-config` (plain git, remote `DanielH2018/work-laptop-config`), a symlink farm installed by `install.sh`. Owns `CLAUDE.local.md`, `docs/{integrations,enforcement}.md`, work agents, and PCI/redaction hooks — these appear as **symlinks** in `~/.claude`.
 
 ## Working in isolation
 
-Isolate before editing. **Retry `EnterWorktree` once. If it fails again, make no edits —
-report the failure and stop.** `repeat-failure-guard.py` enforces the stop, and
-`isolation-guard.sh` backstops a background job that edits without isolating. Reading,
-searching and answering happen in place, and a session inside `.claude/worktrees/` is
-already isolated.
+Where a task calls for isolation, isolate before editing. **Retry `EnterWorktree` once. If
+it fails again, make no edits — report the failure and stop.** `repeat-failure-guard.py`
+enforces the stop, and `isolation-guard.sh` backstops a background job that edits without
+isolating. Reading, searching and answering happen in place, and a session inside
+`.claude/worktrees/` is already isolated.
 
 ## Git conventions
 
