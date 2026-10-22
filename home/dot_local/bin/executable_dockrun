@@ -667,7 +667,11 @@ def plan(ns, docker: str, env: dict, cwd: str) -> list[str]:
     if r.returncode != 0:
         raise DockrunError(f"compose config failed: {r.stderr.strip()}")
     model = json.loads(r.stdout)
-    check_model(model, roots)
+    # up creates containers from the model and exec runs inside one, so both need
+    # the model to pass. down, ps and logs create nothing, and refusing them would
+    # only stop a stack being read or torn down.
+    if ns.verb in ("up", "exec"):
+        check_model(model, roots)
     project = _check(_NAME, model.get("name") or "", "project name")
     check_project_owner(docker, env, project, roots)
     return build_compose(ns, prefix)

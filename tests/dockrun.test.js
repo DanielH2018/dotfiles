@@ -197,6 +197,11 @@ test('compose refuses a service that asks for what run refuses', { skip }, () =>
     volumes: { v: { driver_opts: { type: 'none', o: 'bind', device: '/' } } } } });
   assertRefused(['compose', 'up'], { model: { name: 'repo', services: {},
     secrets: { s: { environment: 'GITHUB_TOKEN' } } } });
+  // exec runs inside a container the model describes, so it is checked like up. down
+  // creates nothing, so a stack whose model fails can still be torn down.
+  const privileged = { model: { name: 'repo', services: { a: { privileged: true } } } };
+  assertRefused(['compose', 'exec', 'a', 'id'], privileged);
+  assert.strictEqual(dockrun(['compose', 'down'], privileged).code, 0);
 });
 
 test('compose refuses a file or a project that belongs elsewhere', { skip }, () => {
