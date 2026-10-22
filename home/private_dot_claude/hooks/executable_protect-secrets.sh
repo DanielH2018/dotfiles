@@ -70,7 +70,7 @@ case "$FILE_PATH" in
   # BEGIN secret arms, generated from claude_guard/secret_paths.json
   # Edit the table and re-run claude_guard.secret_table, not these arms.
   # ssh-keys: private keys, known_hosts and the agent config
-  */.ssh/*|*/id_rsa*|*/id_ed25519*|*/id_ecdsa*)
+  */.ssh/*|*/id_rsa*|*/id_ed25519*|*/id_ecdsa*|.ssh/*|id_rsa*|id_ed25519*|id_ecdsa*)
     deny "Blocked: SSH keys are never safe to read or modify automatically."
     ;;
   # claude-oauth-credentials: the live Claude Code OAuth access and refresh token on Linux and WSL, a different file from ~/.claude.json
@@ -116,6 +116,18 @@ case "$FILE_PATH" in
   # process-environment: another process's exported environment
   /proc/*/environ)
     deny "Blocked: /proc/<pid>/environ exposes another process's exported secrets."
+    ;;
+  # secret-suffix: files named *.secret
+  *.secret)
+    deny "Blocked: a *.secret file holds a secret by name."
+    ;;
+  # sops-age-keys: the SOPS age private keys, which decrypt every secret in a public repo; *.key misses them because the file is keys.txt
+  .config/sops/age/*|*/.config/sops/age/*|*.agekey)
+    deny "Blocked: a SOPS age private key decrypts every secret in the repo."
+    ;;
+  # gcloud: Google Cloud credentials and access tokens
+  .config/gcloud/*|*/.config/gcloud/*)
+    deny "Blocked: Google Cloud credentials and access tokens."
     ;;
   # dotenv: dotenv files; the committed templates hold placeholder keys and stay readable
   .env|*/.env|.env.*|*/.env.*)

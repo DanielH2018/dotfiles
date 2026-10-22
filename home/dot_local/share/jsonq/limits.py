@@ -31,5 +31,8 @@ SECRET_PATHS = (
     r"|\.kube/config|\.docker/config\.json|\.config/gh/hosts\.yml"
     r"|\.claude/\.credentials\.json|\.claude\.json"
     r"|/etc/shadow|/etc/gshadow|/proc/[^/\s]+/environ"
-    r"|(^|[A-Za-z0-9_~/-])\.(pem|key|p12|pfx)\b)"
+    r"|(^|[A-Za-z0-9_~/-])\.(pem|key|p12|pfx)\b"
+    r"|(^|[A-Za-z0-9_~/-])\.secret\b"
+    r"|\.config/sops/age/|(^|[A-Za-z0-9_~/-])\.agekey\b"
+    r"|\.config/gcloud/)"
 )

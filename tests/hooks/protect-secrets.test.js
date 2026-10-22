@@ -183,6 +183,10 @@ test('every SECRET_PATHS entry in the deny gate is covered by this one', { skip 
     '\\.key': '/opt/app/tls.key',
     '\\.p12': '/opt/app/cert.p12',
     '\\.pfx': '/opt/app/cert.pfx',
+    '(^|[A-Za-z0-9_~/-])\\.secret\\b': '/opt/app/db.secret',
+    '\\.config/sops/age/': '/home/u/.config/sops/age/keys.txt',
+    '(^|[A-Za-z0-9_~/-])\\.agekey\\b': '/home/u/repo/ci.agekey',
+    '\\.config/gcloud/': '/home/u/.config/gcloud/credentials.db',
   };
 
   // The file-extension branches are grouped as `\.(pem|key|p12|pfx)\b` rather than
