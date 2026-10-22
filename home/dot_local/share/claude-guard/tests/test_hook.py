@@ -190,10 +190,14 @@ def test_shim_prints_nothing_and_exits_zero_when_the_package_is_missing(tmp_path
     assert (r.returncode, r.stdout) == (0, "")
 
 
+# The shims resolve their interpreter through one shared library, not inline.
+LOOKUP_LIB = HOOKS / "lib" / "guard-python.sh"
+
+
 def shim_lookup_argv(shim_path: Path) -> list[str]:
-    """Extract the `uv python find ...` argv straight from a shim's own source text, so this
-    test tracks whatever flags the shim actually passes rather than a hand-copied duplicate
-    that could silently drift out of sync with it."""
+    """Extract the `uv python find ...` argv straight from the lookup's own source text, so
+    this test tracks whatever flags the shims actually pass rather than a hand-copied
+    duplicate that could silently drift out of sync with them."""
     text = shim_path.read_text()
     m = re.search(r"uv python find ((?:\S+\s*)+)", text)
     assert m, f"no `uv python find` invocation found in {shim_path}"
@@ -213,7 +217,7 @@ def test_the_shims_lookup_ignores_a_real_cwd_venv_only_because_of_system(tmp_pat
     # this test). The one shape that actually differs is a REAL, version-matching venv found
     # by walking up from cwd -- exactly what a project's own `.venv` is -- which uv prefers
     # over the managed install unless `--system` is present.
-    argv = shim_lookup_argv(SHIM)
+    argv = shim_lookup_argv(LOOKUP_LIB)
     assert "--system" in argv, argv
 
     venv = tmp_path / ".venv"
