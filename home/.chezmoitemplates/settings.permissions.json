@@ -234,7 +234,7 @@
       "Bash(gh run watch:*)",
       "Bash(gh pr status:*)",
       {{/* gh's read verbs that ghread covers left this list on 2026-10-22: pr view/list/diff/
-           checks, issue view/list, run list/view, search, api and stack view. A prefix rule
+           checks, issue view/list, run list/view, search and api. A prefix rule
            on raw gh approves every flag after the verb, so `Bash(gh api:*)` granted any call
            and left the ask rules below to catch -X/-f, which miss spellings such as
            `--method=POST`. ghread builds each call from constants instead (see its entry
@@ -271,6 +271,11 @@
       "Bash(gh ruleset list:*)",
       "Bash(gh variable list:*)",
       "Bash(gh org list:*)",
+      {{/* gh-stack's one read verb. `link` and `submit` push branches and open PRs, so
+           only `view` is here. It stays although `ghread stack view` covers it: the gh-stack
+           skill tells sessions to run `gh stack view --json`, and claude-guard's
+           tests/test_judge.py replays it as a read the real template allows. */}}
+      "Bash(gh stack view:*)",
       {{/* Read-only kubectl against the homelab k3s cluster. autoMode.allow states these
            verbs are routine because the default credential is a read-only ServiceAccount —
            the same reasoning, restated as prefixes so claude_guard.judge can act on it.
