@@ -1,547 +1,1075 @@
-#!/usr/bin/env bash
-# claude-transcript-scan: find credentials that have already landed in a session transcript.
-#
-# The preventive half of this problem is block-dangerous-bash.sh, which denies a command
-# before it runs. It cannot close the whole gap, and the reason is structural rather than a
-# missing rule: no hook can rewrite a tool result. Verified 2026-08-29 against Claude Code
-# 2.1.251 — the PreToolUse output fields are permissionDecision, permissionDecisionReason,
-# updatedInput, additionalContext and systemMessage, and none of them replaces output.
-# Claude Code's own redactor (sk-ant-*, Bearer, JWT, gh*_/gl*-/xox*-) is called from the
-# logger and from redactForDisplay, so it covers the journal and the terminal, not the
-# transcript the model reads back.
-#
-# So a `grep` that happens to print a line CARRYING a key is undecidable at the gate: the
-# command names no secret path and no decrypt verb. Detection is the only layer left, and it
-# is a bounded problem where prevention is an asymptotic one. This is that layer.
-#
-# What it does NOT do: un-leak anything. A secret in a transcript stays there. The output of
-# this script is a rotation trigger — the value is already spent, and the only question left
-# is how long it stays valid.
-#
-#   claude-transcript-scan                    # transcripts touched in the last 24h
-#   claude-transcript-scan --since 72         # ...or a different window, in hours
-#   claude-transcript-scan --session PATH     # one transcript (what the SessionEnd hook runs)
-#   claude-transcript-scan --all              # every transcript on the machine
-#   claude-transcript-scan --accept-baseline  # record today's findings as known; report only new ones
-#   claude-transcript-scan --paranoid         # gitleaks' FULL ruleset, for a deliberate audit
-#   claude-transcript-scan --no-loki          # transcripts only; skip the Loki store
-#
-# BOTH stores are scanned by default. Claude Code sends the full command text to Loki as
-# tool_input/tool_parameters and the prompt as `prompt`, and Loki keeps them for 744h, so
-# a credential typed inline on a command line has two lifetimes. Every verdict names the
-# stores it covered, because "clean across 37 source(s)" cannot be told apart from a scan
-# that skipped one. A leak present in both reports twice, under `loki` and under the
-# transcript's name, and each needs accepting separately -- two copies, two lifetimes.
-#
-# --no-loki is for a machine with no otelq or no reachable Loki. Without it a missing
-# otelq is exit 3, could-not-evaluate, the same as a missing gitleaks: skipping a store
-# silently is the failure this tool exists to prevent.
-#
-# macOS is the exception: Loki is off there by default, and the verdict says so. The work
-# Mac has no Loki by design: the org's managed settings send its telemetry, metrics only, to
-# Lithic's collector, and its local stack was removed on 2026-10-20 (home/claude-otel/
-# README.md, "The org override on the work Mac"). There is no second store to cover, so
-# defaulting to Loki only made every SessionEnd scan fail 24 hourly slices. --loki still
-# turns it back on, for a Mac that runs its own collector.
-#   claude-transcript-scan --clear-pending    # dismiss the statusline alert WITHOUT baselining anything
-#
-# Exit 0 clean or nothing new, 1 NEW findings, 2 usage error, 3 could-not-evaluate. 3 is
-# deliberately not 0: a missing gitleaks means the question was never asked, and a detector
-# that reports clean when it did not run is worse than no detector. A run where SOME sources
-# failed is 3 as well, unless the sources that did scan produced a new finding: then it is 1,
-# because a failed Loki slice must never hide a real leak found elsewhere. Either way the
-# failed sources are named in the verdict and in the pending marker.
-#
-# WHY A BASELINE. The first real sweep, 2026-08-29, returned 52 findings across 82
-# transcripts: 45 of them gitleaks' `generic-api-key`, which fires on a k8s `secretKeyRef:`
-# field name and on a SOPS key listing as readily as on a credential. A daily unit that goes
-# red every day on noise gets muted inside a week, and then it caps nothing — the same
-# failure mode as a monitor nobody trusts. So known findings are accepted once, by hand,
-# after triage, and only what is NEW alerts.
-#
-# The risk runs the other way too, which is why accepting is never automatic and never part
-# of the timer: a blanket --accept-baseline over an untriaged sweep is exactly how a real
-# leak gets buried. Triage first, accept second.
-#
-# WHY A NARROWED RULESET. The baseline clears the historical backlog; it does not stop the
-# drip. Live sessions kept producing fresh `generic-api-key` matches — 4 in the two minutes
-# after the first baseline was accepted — because that rule matches on entropy alone and a
-# transcript is full of long high-entropy identifiers that are not credentials. So the daily
-# run uses ~/.config/gitleaks/transcript-scan.toml, which disables that one rule and keeps
-# every named, structured rule. The reasoning and the measurements are in that file.
-#
-# --paranoid restores the full set. The cost of narrowing is real and is named there: it is
-# the rule that flagged the Sonarr and Radarr admin passwords, so a deliberate audit should
-# use --paranoid rather than trusting the daily run to have looked everywhere.
+#!/usr/bin/env python3
+"""claude-transcript-scan: find credentials that have already landed in a session transcript.
 
-set -uo pipefail
+The preventive half of this problem is block-dangerous-bash.sh, which denies a command
+before it runs. It cannot close the whole gap, and the reason is structural rather than a
+missing rule: no hook can rewrite a tool result. Verified 2026-08-29 against Claude Code
+2.1.251 — the PreToolUse output fields are permissionDecision, permissionDecisionReason,
+updatedInput, additionalContext and systemMessage, and none of them replaces output.
+Claude Code's own redactor (sk-ant-*, Bearer, JWT, gh*_/gl*-/xox*-) is called from the
+logger and from redactForDisplay, so it covers the journal and the terminal, not the
+transcript the model reads back.
 
-PROJECTS=${CLAUDE_TRANSCRIPT_ROOT:-$HOME/.claude/projects}
-LOG=${CLAUDE_TRANSCRIPT_LEAK_LOG:-$HOME/.claude/logs/transcript-leaks.jsonl}
-BASELINE=${CLAUDE_TRANSCRIPT_LEAK_BASELINE:-$HOME/.claude/logs/transcript-leaks-baseline.txt}
-GL_CONFIG=${CLAUDE_TRANSCRIPT_GITLEAKS_CONFIG:-$HOME/.config/gitleaks/transcript-scan.toml}
-GL_LOKI_CONFIG=${CLAUDE_TRANSCRIPT_GITLEAKS_LOKI_CONFIG:-$HOME/.config/gitleaks/transcript-scan-loki.toml}
-# A finding outlives the process that found it, and neither unattended caller keeps the
-# verdict: session-end.sh backgrounds this with its output discarded, and the timer's
-# journal line is read by nobody. A desktop notification does not close that gap either —
-# notify-send needs a running daemon and osascript needs a Mac, and a headless host has
-# neither. So the durable alert is a FILE, which the Claude Code statusline shows to the
-# operator on every platform. Cleared by --accept-baseline or --clear-pending.
-PENDING=${CLAUDE_TRANSCRIPT_LEAK_PENDING:-$HOME/.claude/logs/transcript-leaks-pending}
-SINCE_H=24
-MODE=window
-ONE=
-ACCEPT=0
-PARANOID=0
-CLEAR=0
-# Loki is scanned by DEFAULT. It was opt-in for one day and that was a mistake: --loki
-# lived only in the systemd unit, so a hand-run scan quietly covered one store of two and
-# printed a clean verdict for a store it never opened. "The obvious invocation does less
-# than the timer" is the same could-not-run-reads-as-clean failure this tool exists to
-# prevent. --no-loki is the explicit way out, for a machine with no otelq or no Loki.
-# On macOS the default is off; see the header. CLAUDE_TRANSCRIPT_SCAN_OS stands in for
-# uname in the tests.
-LOKI=1
-LOKI_SKIP_WHY=--no-loki
-if [ "${CLAUDE_TRANSCRIPT_SCAN_OS:-$(uname -s)}" = Darwin ]; then
-  LOKI=0
-  LOKI_SKIP_WHY="no Loki on macOS; --loki to scan it"
-fi
+So a `grep` that happens to print a line CARRYING a key is undecidable at the gate: the
+command names no secret path and no decrypt verb. Detection is the only layer left, and it
+is a bounded problem where prevention is an asymptotic one. This is that layer.
 
-while [ $# -gt 0 ]; do
-  case $1 in
-    --since) SINCE_H=${2:-}; shift 2 || true ;;
-    --session) MODE=one; ONE=${2:-}; shift 2 || true ;;
-    --all) MODE=all; shift ;;
-    --accept-baseline) ACCEPT=1; shift ;;
-    --paranoid) PARANOID=1; shift ;;
-    --loki) LOKI=1; shift ;;          # kept: still accepted, now the default
-    --no-loki) LOKI=0; LOKI_SKIP_WHY=--no-loki; shift ;;
-    --clear-pending) CLEAR=1; shift ;;
-    -h|--help) sed -n '2,57p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) echo "claude-transcript-scan: unknown argument: $1" >&2; exit 2 ;;
-  esac
-done
+What it does NOT do: un-leak anything. A secret in a transcript stays there. The output of
+this script is a rotation trigger — the value is already spent, and the only question left
+is how long it stays valid.
 
-# The way out that does not also accept anything. Triaging a finding — rotating the
-# credential and confirming it — settles it without adding a fingerprint to the baseline,
-# and with no way to say so the banner would either persist forever or push you toward a
-# blanket accept, which is the one thing this whole tool warns against.
-if [ "$CLEAR" = 1 ]; then
-  rm -f "$PENDING"
-  echo "claude-transcript-scan: cleared the pending-findings marker. The log at $LOG is untouched."
-  exit 0
-fi
-case $SINCE_H in ''|*[!0-9]*) echo "claude-transcript-scan: --since wants whole hours" >&2; exit 2 ;; esac
+  claude-transcript-scan                    # transcripts touched in the last 24h
+  claude-transcript-scan --since 72         # ...or a different window, in hours
+  claude-transcript-scan --session PATH     # one transcript (what the SessionEnd hook runs)
+  claude-transcript-scan --all              # every transcript on the machine
+  claude-transcript-scan --accept-baseline  # record today's findings as known; report only new ones
+  claude-transcript-scan --paranoid         # gitleaks' FULL ruleset, for a deliberate audit
+  claude-transcript-scan --no-loki          # transcripts only; skip the Loki store
 
-# The daily run uses a narrowed ruleset; --paranoid uses gitleaks' full default set. The
-# reason is in the config file itself — `generic-api-key` matches on entropy alone, and a
-# transcript is full of long high-entropy identifiers that are not credentials.
-#
-# A MISSING config falls back to the full set rather than refusing. That direction is
-# deliberate and is the opposite of the missing-gitleaks case below: no gitleaks means the
-# question was never asked, while no config means it was asked too broadly. Over-reporting
-# is recoverable by reading the findings; under-reporting is not.
-GL_RULES=
-if [ "$PARANOID" = 0 ]; then
-  if [ -f "$GL_CONFIG" ]; then
-    GL_RULES="--config $GL_CONFIG"
-  else
-    echo "claude-transcript-scan: no ruleset at $GL_CONFIG — falling back to gitleaks' full set, expect noise" >&2
-  fi
-fi
-# The Loki arm has its own ruleset: the FULL default set (generic-api-key stays live, see
-# the Loki section below for why) plus allowlists for the two public-text shapes that
-# produced 127 of the 247 rows triaged on 2026-09-18. A missing file falls back to the bare
-# default set, which is what this arm ran until then -- noisier, never narrower.
-GL_LOKI_RULES=
-if [ "$PARANOID" = 0 ] && [ -f "$GL_LOKI_CONFIG" ]; then
-  GL_LOKI_RULES="--config $GL_LOKI_CONFIG"
-fi
+BOTH stores are scanned by default. Claude Code sends the full command text to Loki as
+tool_input/tool_parameters and the prompt as `prompt`, and Loki keeps them for 744h, so
+a credential typed inline on a command line has two lifetimes. Every verdict names the
+stores it covered, because "clean across 37 source(s)" cannot be told apart from a scan
+that skipped one. A leak present in both reports twice, under `loki` and under the
+transcript's name, and each needs accepting separately -- two copies, two lifetimes.
 
-# Exit 3 is could-not-evaluate, and it is the one verdict with no other durable trace: a
-# finding lands in $LOG, but a scan that never ran leaves nothing behind at all. Record it
-# in the same marker, as a zero-count row, so the statusline reports "the detector
-# could not run" rather than the silence that is indistinguishable from "clean". A partial
-# run also lands here, and the statusline tells it apart by the `failed to scan:` text in
-# its reason, so keep that wording in $PARTIAL below.
-mark_unavailable() {
-  mkdir -p "$(dirname "$PENDING")" 2>/dev/null
-  printf '%s\t0\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "$PENDING"
-}
+--no-loki is for a machine with no otelq or no reachable Loki. Without it a missing
+otelq is exit 3, could-not-evaluate, the same as a missing gitleaks: skipping a store
+silently is the failure this tool exists to prevent.
 
-# gitleaks is not installed system-wide here; prek fetches it into its own cache for the
-# repo hook. Take it from PATH first so a real install wins, then the cache, and refuse
-# rather than skip if neither exists.
-GITLEAKS=${GITLEAKS_BIN:-}
-[ -z "$GITLEAKS" ] && GITLEAKS=$(command -v gitleaks 2>/dev/null)
-if [ -z "$GITLEAKS" ]; then
-  for c in "$HOME"/.cache/prek/hooks/golang-*/bin/gitleaks; do
-    [ -x "$c" ] && GITLEAKS=$c && break
-  done
-fi
-if [ -z "$GITLEAKS" ] || [ ! -x "$GITLEAKS" ]; then
-  echo "claude-transcript-scan: no gitleaks binary (PATH, \$GITLEAKS_BIN, or the prek cache) — did not scan" >&2
-  mark_unavailable "no gitleaks binary"
-  exit 3
-fi
-command -v jq >/dev/null 2>&1 || {
-  echo "claude-transcript-scan: jq unavailable — did not scan" >&2
-  mark_unavailable "jq unavailable"
-  exit 3
-}
-# A systemd user unit starts with a minimal PATH and otelq lives in ~/.local/bin, so this
-# is a live failure mode rather than a theoretical one. Same rule as gitleaks: refuse
-# loudly, because a missing query tool would otherwise read as a clean Loki store.
-if [ "$LOKI" = 1 ]; then
-  command -v otelq >/dev/null 2>&1 || {
-    echo "claude-transcript-scan: otelq unavailable — did not scan Loki. Pass --no-loki to scan transcripts only." >&2
-    mark_unavailable "otelq unavailable"
-    exit 3
-  }
-fi
+macOS is the exception: Loki is off there by default, and the verdict says so. The work
+Mac has no Loki by design: the org's managed settings send its telemetry, metrics only, to
+Lithic's collector, and its local stack was removed on 2026-10-20 (home/claude-otel/
+README.md, "The org override on the work Mac"). There is no second store to cover, so
+defaulting to Loki only made every SessionEnd scan fail 24 hourly slices. --loki still
+turns it back on, for a Mac that runs its own collector.
+  claude-transcript-scan --clear-pending    # dismiss the statusline alert WITHOUT baselining anything
 
-# gitleaks exits 1 both for "leaks found" and for a ruleset it cannot load, and only the
-# first writes a report. scan_work accepts 1 and counts the report's entries, so a broken
-# ruleset read as a clean scan of every source. A targetRules entry naming a rule that
-# gitleaks no longer ships is enough to break one. So each ruleset is loaded once against
-# empty input before any source is scanned: empty input exits 0, and any other exit there
-# can only come from the config.
-check_ruleset() { # check_ruleset <flags> <label>
-  # shellcheck disable=SC2086  # $1 is a flag pair or empty; word-splitting is the point
-  printf '' | "$GITLEAKS" stdin --no-banner $1 --report-format json --report-path /dev/null >/dev/null 2>&1 && return 0
-  echo "claude-transcript-scan: gitleaks could not load the $2 ruleset (${1:-default set}) — did not scan" >&2
-  mark_unavailable "gitleaks could not load the $2 ruleset"
-  exit 3
-}
-check_ruleset "$GL_RULES" transcript
-[ "$LOKI" = 1 ] && check_ruleset "$GL_LOKI_RULES" loki
+Exit 0 clean or nothing new, 1 NEW findings, 2 usage error, 3 could-not-evaluate. 3 is
+deliberately not 0: a missing gitleaks means the question was never asked, and a detector
+that reports clean when it did not run is worse than no detector. A run where SOME sources
+failed is 3 as well, unless the sources that did scan produced a new finding: then it is 1,
+because a failed Loki slice must never hide a real leak found elsewhere. Either way the
+failed sources are named in the verdict and in the pending marker.
 
-case $MODE in
-  one)
-    [ -f "$ONE" ] || { echo "claude-transcript-scan: no such transcript: $ONE" >&2; exit 2; }
-    FILES=$(printf '%s\n' "$ONE") ;;
-  all)
-    FILES=$(find "$PROJECTS" -name '*.jsonl' -type f 2>/dev/null) ;;
-  *)
-    # -mmin rather than -mtime: the window is given in hours and -mtime rounds to days,
-    # which would silently widen a 1h sweep to 24.
-    FILES=$(find "$PROJECTS" -name '*.jsonl' -type f -mmin "-$((SINCE_H * 60))" 2>/dev/null) ;;
-esac
+WHY A BASELINE. The first real sweep, 2026-08-29, returned 52 findings across 82
+transcripts: 45 of them gitleaks' `generic-api-key`, which fires on a k8s `secretKeyRef:`
+field name and on a SOPS key listing as readily as on a credential. A daily unit that goes
+red every day on noise gets muted inside a week, and then it caps nothing — the same
+failure mode as a monitor nobody trusts. So known findings are accepted once, by hand,
+after triage, and only what is NEW alerts.
 
-# An empty transcript list is only a reason to stop when transcripts are the whole job.
-# With --loki there is a second store to scan, and exiting here would have made the Loki
-# arm silently conditional on a transcript having been written in the same window.
-if [ -z "$FILES" ] && [ "$LOKI" = 0 ]; then
-  echo "claude-transcript-scan: no transcripts in scope"
-  exit 0
-fi
+The risk runs the other way too, which is why accepting is never automatic and never part
+of the timer: a blanket --accept-baseline over an untriaged sweep is exactly how a real
+leak gets buried. Triage first, accept second.
 
-mkdir -p "$(dirname "$LOG")"
-FOUND=0
-KNOWN=0
-SCANNED=0
-FAILED=0
-# The sources behind FAILED, comma-separated, for the verdict and the pending marker. A count
-# alone says the scan was incomplete without saying which slice or transcript to re-run.
-FAILED_SOURCES=
-# Named in every verdict. "clean across 37 source(s)" cannot be told apart from a scan
-# that skipped a whole store; "clean across 37 source(s) (transcripts)" can.
-STORES="transcripts"
+WHY A NARROWED RULESET. The baseline clears the historical backlog; it does not stop the
+drip. Live sessions kept producing fresh `generic-api-key` matches — 4 in the two minutes
+after the first baseline was accepted — because that rule matches on entropy alone and a
+transcript is full of long high-entropy identifiers that are not credentials. So the daily
+run uses ~/.config/gitleaks/transcript-scan.toml, which disables that one rule and keeps
+every named, structured rule. The reasoning and the measurements are in that file.
 
-# The extracted text goes to a temp file rather than straight down a pipe, because the
-# fingerprint below has to read the matched line back. Mode 0600, removed on exit: it holds
-# nothing the transcript does not already hold in the same home directory, but it holds it
-# under a predictable-ish name, so it does not outlive the run.
-WORK=$(mktemp) || { echo "claude-transcript-scan: mktemp failed — did not scan" >&2; exit 3; }
-chmod 600 "$WORK"
-SEEN=$(mktemp) || { echo "claude-transcript-scan: mktemp failed — did not scan" >&2; exit 3; }
-chmod 600 "$SEEN"
-# This run's unbaselined fingerprints, one per line, for the pending marker's dedupe below.
-NEWFP=$(mktemp) || { echo "claude-transcript-scan: mktemp failed — did not scan" >&2; exit 3; }
-trap 'rm -f "$WORK" "$SEEN" "$NEWFP"' EXIT INT TERM
+--paranoid restores the full set. The cost of narrowing is real and is named there: it is
+the rule that flagged the Sonarr and Radarr admin passwords, so a deliberate audit should
+use --paranoid rather than trusting the daily run to have looked everywhere.
+"""  # noqa: E501
 
-# Counts one source as not scanned, or not scanned fully. $1 names it in the verdict.
-note_failed() {
-  FAILED=$((FAILED + 1))
-  FAILED_SOURCES="${FAILED_SOURCES:+$FAILED_SOURCES, }$1"
-}
+from __future__ import annotations
 
-# Both stores scan the same way once their text is in $WORK, so the gitleaks call, the
-# fingerprint and the report live here rather than being written twice. $1 is what the log
-# records as the source, $2 the token that goes in the fingerprint, $3 the ruleset flags.
-scan_work() {
-  _src=$1 _tok=$2 _rules=$3
-  # The human column wants something short; $_src is a full path or a slice range. Basename
-  # for a transcript, the range itself for Loki -- both already identify the finding, and
-  # the JSONL record keeps the unabridged source either way.
-  _tok_label=${_src##*/}
-  # --redact keeps the finding from repeating the secret into the journal and the log file.
-  # A detector that prints what it found is a second copy of the leak.
-  # shellcheck disable=SC2086  # _rules is a flag pair or empty; word-splitting is the point
-  report=$("$GITLEAKS" stdin --redact --no-banner $_rules --report-format json --report-path - < "$WORK" 2>/dev/null)
-  rc=$?
-  if [ $rc -ne 0 ] && [ $rc -ne 1 ]; then
-    echo "claude-transcript-scan: scan failed (rc=$rc): $_src" >&2
-    note_failed "$_src"
-    return 1
-  fi
-  SCANNED=$((SCANNED + 1))
-  n=$(printf '%s' "$report" | jq 'length' 2>/dev/null || echo 0)
-  [ "${n:-0}" -gt 0 ] || return 0
+import contextlib
+import glob
+import hashlib
+import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import time
+from decimal import Decimal
 
-  while IFS=$'\t' read -r rule line; do
-    [ -n "$rule" ] || continue
-    # Fingerprint on CONTENT, not on position. gitleaks' own Fingerprint is `:<rule>:<line>`
-    # and the line is an offset into a derived projection of the source, so compacting a
-    # transcript or changing that projection renumbers every finding and a position-keyed
-    # baseline silently stops matching. Hashing the matched line survives both. The hash
-    # never leaves this machine and cannot be reversed into the value.
-    h=$(sed -n "${line}p" "$WORK" | sha256sum | cut -c1-16)
-    fp="${rule}:${_tok}:${h}"
-    # Seen already in THIS run: the overlap above hands the same finding back twice, and
-    # counting it twice would make the total meaningless. Distinct from the baseline check
-    # below, which is about findings accepted in an EARLIER run.
-    if grep -qxF "$fp" "$SEEN" 2>/dev/null; then
-      continue
-    fi
-    printf '%s\n' "$fp" >> "$SEEN"
-    if [ -f "$BASELINE" ] && grep -qxF "$fp" "$BASELINE" 2>/dev/null; then
-      KNOWN=$((KNOWN + 1))
-      [ "$ACCEPT" = 1 ] || continue
-    fi
-    if [ "$ACCEPT" = 1 ]; then
-      printf '%s\n' "$fp" >> "$BASELINE.new"
-      continue
-    fi
-    FOUND=$((FOUND + 1))
-    printf '%s\n' "$fp" >> "$NEWFP"
-    # Rule id, line, source and fingerprint only. Enough to find it and to name what to
-    # rotate, and to accept it later; never enough to re-leak it.
-    # Two audiences, two formats. The JSONL record is what --accept-baseline and any
-    # later triage read, so it keeps every field; stdout gets a line a person can scan.
-    # `tee` used to serve both, which is why a run printed raw JSON at a human.
-    jq -cn --arg f "$_src" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-      --arg r "$rule" --argjson l "$line" --arg p "$fp" \
-      '{ts:$t, transcript:$f, rule:$r, line:$l, fingerprint:$p, secret:"[redacted]"}' \
-      >> "$LOG"
-    printf '  %-18s %-34s line %s\n' "$rule" "$_tok_label" "$line"
-  done <<EOF
-$(printf '%s' "$report" | jq -r '.[] | "\(.RuleID)\t\(.StartLine)"')
-EOF
-  return 0
-}
+PROG = "claude-transcript-scan"
 
-_n_files=$(printf '%s\n' "$FILES" | grep -c . || true)
-if [ "$LOKI" = 1 ]; then
-  echo "claude-transcript-scan: scanning ${_n_files} transcript(s) and ${SINCE_H} hourly Loki slice(s)"
-else
-  echo "claude-transcript-scan: scanning ${_n_files} transcript(s); Loki skipped (${LOKI_SKIP_WHY})"
-fi
+# Loki refuses limit > max_entries_limit_per_query (5000) outright, so a window holding
+# more entries than that must be walked in slices. ~620 entries/hour here, so an hourly
+# slice sits an order of magnitude under the cap -- and a slice that DOES reach it is
+# counted as a failure rather than silently under-scanned, because under-reporting is
+# the one failure this tool cannot recover from.
+LOKI_LIMIT = 5000
+LOKI_QUERY = (
+    '{service_name="claude-code"} | event_name=~`tool_result|user_prompt` '
+    "| keep tool_input, tool_parameters, prompt"
+)
+NOTIFY_TITLE = "Credential in a Claude transcript"
+OSASCRIPT = (
+    "on run argv\n"
+    "      display notification (item 2 of argv) with title (item 1 of argv)\n"
+    "    end run"
+)
 
-# Section headers print unconditionally, before their arm runs. A header with nothing under
-# it is the useful case: it says the store was searched and was clean, which an absent
-# header cannot. The whole reason this output was reshaped is that a clean verdict and a
-# skipped store looked the same.
-printf '\ntranscripts\n'
-_found_before_transcripts=$FOUND
+# --- jq-compatible JSON handling
+# --------------------------------------------------------- The shell version ran every
+# extraction through jq, and what it scans is whatever jq printed. These helpers
+# reproduce the parts of jq that decide that text: a stream of concatenated values, a
+# parse error anywhere failing the whole source, a UTF-8 BOM skipped, invalid UTF-8 and
+# a lone low-surrogate escape read as U+FFFD, and a lone high surrogate escape a parse
+# error (jq 1.8). jq also tolerates number spellings Python's parser rejects (01, +1,
+# .5, nan); a transcript carrying one counts as a failed source here, never as a clean
+# one.
+_JSON_WS = " \t\n\r"
+_SURROGATE_ESCAPE = re.compile(r"\\u[dD][89a-fA-F]")
+_LONE_HIGH = re.compile("[\ud800-\udbff]")
+_ANY_SURROGATE = re.compile("[\ud800-\udfff]")
+# A huge integer literal must not fail the parse: jq reads it, and so must this.
+if hasattr(sys, "set_int_max_str_digits"):
+    sys.set_int_max_str_digits(0)
 
-while IFS= read -r f; do
-  [ -n "$f" ] || continue
-  # `[.. | strings]` takes every string leaf of every record, which is what makes this
-  # independent of the transcript schema: a value moving from .message.content to some new
-  # field stays covered without a change here.
-  # A transcript deleted since `find` listed it holds nothing to leak, so it is skipped
-  # before jq can count it as a failed source.
-  [ -f "$f" ] || continue
-  if ! jq -r '[.. | strings] | join("\n")' "$f" > "$WORK" 2>/dev/null; then
-    echo "claude-transcript-scan: jq could not read $f — treat as not scanned" >&2
-    note_failed "$f"
-    continue
-  fi
-  scan_work "$f" "$(basename "$f")" "$GL_RULES" || true
-done <<EOF
-$FILES
-EOF
 
-# ---- the Loki store -------------------------------------------------------------------
-# Claude Code attaches the full command text to every tool_result as tool_input and
-# tool_parameters, and the prompt to every user_prompt, so a credential typed inline on a
-# command line lands in Loki as well as in the transcript. Loki keeps it for 744h. Nothing
-# scanned there before 2026-08-31.
-#
-# TWO deliberate differences from the transcript arm, and they depend on each other:
-#
-#  * The extraction is NARROW -- three named fields, not `[.. | strings]`. A Loki payload is
-#    mostly trace_id/span_id/session_id/user_id: high-entropy hex, which is exactly what
-#    generic-api-key matches on.
-#  * The ruleset is therefore the FULL default set, never $GL_RULES. generic-api-key is
-#    disabled for the daily transcript run because it produced 45 false positives there,
-#    and it is the only rule that catches an unstructured `NAME=<32 hex>` -- the shape of
-#    every *arr API key. Scanning Loki with the narrowed ruleset would find the same
-#    nothing the transcript run finds, which is the entire reason this arm exists.
-#
-# Measured 2026-08-31 on this host: the full ruleset over one hour of narrowed Loki text
-# (378KB) returned 0 findings, and over the events holding a real leaked *arr key it
-# returned 12. Narrow the extraction and the expensive rule becomes affordable.
-#
-# $GL_LOKI_RULES is that full set plus allowlists, never a narrowing: transcript-scan-loki.toml
-# keeps generic-api-key on and removes two public-text shapes (an SSH key fingerprint, a
-# backtick-quoted kebab identifier in prose) that were re-logged on every run between
-# 2026-09-03 and 2026-09-13. The rule caught the jellyfin key on 2026-09-09 through the
-# same arm, so the allowlists are scoped to the shapes measured, not to the rule.
-FOUND_TRANSCRIPTS=$((FOUND - _found_before_transcripts))
-[ "$FOUND_TRANSCRIPTS" -gt 0 ] || echo "  none"
+class _Bad(Exception):
+    """A parse error: jq stops reading at the first one."""
 
-if [ "$LOKI" = 1 ]; then
-  printf '\nloki\n'
-  _found_before_loki=$FOUND
-  # Loki refuses limit > max_entries_limit_per_query (5000) outright, so a window holding
-  # more entries than that must be walked in slices. ~620 entries/hour here, so an hourly
-  # slice sits an order of magnitude under the cap -- and a slice that DOES reach it is
-  # counted as a failure rather than silently under-scanned, because under-reporting is the
-  # one failure this tool cannot recover from.
-  # --since is the window WIDTH and --until moves its END, so an hourly slice is
-  # `--since <width>`. It read `--since ${h}h` until 2026-08-31 and every slice was
-  # therefore a full h-hour window ending ${h-1}h ago -- slice 30 re-scanned the whole
-  # 30 hours after it. Two abutting slices returned an identical 4858 entries, which is
-  # what exposed it, and a 30h scan reported 30x the events Loki actually held.
-  #
-  # 70m for a 60m step, so consecutive slices OVERLAP by ten minutes. Each query computes
-  # `now` when it runs, so a sequence of them drifts forward and exactly-abutting windows
-  # leave a sliver uncovered between each pair: measured 4087 of an authoritative 4130
-  # events over 30h before the overlap. Duplicates are free here because the fingerprint
-  # is a content hash and $SEEN drops a repeat within the run; a gap is not recoverable.
-  LOKI_LIMIT=5000
-  h=$SINCE_H
-  while [ "$h" -gt 0 ]; do
-    until_h=$((h - 1))
-    slice=$(otelq logs \
-      '{service_name="claude-code"} | event_name=~`tool_result|user_prompt` | keep tool_input, tool_parameters, prompt' \
-      --stream --since 70m --until "${until_h}h" --limit "$LOKI_LIMIT" --timeout 60 2>/dev/null)
-    if [ -z "$slice" ]; then
-      echo "claude-transcript-scan: Loki slice ${h}h..${until_h}h did not return — treat as not scanned" >&2
-      note_failed "Loki slice ${h}h..${until_h}h"
-      h=$until_h
-      continue
-    fi
-    entries=$(printf '%s' "$slice" | jq '[.data.result[]] | length' 2>/dev/null || echo 0)
-    if [ "${entries:-0}" -ge "$LOKI_LIMIT" ]; then
-      echo "claude-transcript-scan: Loki slice ${h}h..${until_h}h hit the ${LOKI_LIMIT}-entry cap — scanned PARTIALLY" >&2
-      note_failed "Loki slice ${h}h..${until_h}h (truncated at $LOKI_LIMIT entries)"
-    fi
-    printf '%s' "$slice" \
-      | jq -r '[.data.result[].stream | .tool_input, .tool_parameters, .prompt]
-               | map(select(. != null)) | join("\n")' > "$WORK" 2>/dev/null || {
-      echo "claude-transcript-scan: jq could not read Loki slice ${h}h..${until_h}h — treat as not scanned" >&2
-      note_failed "Loki slice ${h}h..${until_h}h"; h=$until_h; continue; }
-    # The fingerprint token is a constant, never the slice bounds: a re-scan with different
-    # boundaries must produce the same fingerprint or the baseline stops matching. A leak
-    # present in both stores therefore reports twice, under `loki` and under the transcript
-    # name, and needs acknowledging twice -- which is correct, since they are two copies
-    # with two lifetimes.
-    scan_work "${h}h..${until_h}h ago" "loki" "$GL_LOKI_RULES" || true
-    h=$until_h
-  done
-  STORES="transcripts+loki"
-  FOUND_LOKI=$((FOUND - _found_before_loki))
-  [ "$FOUND_LOKI" -gt 0 ] || echo "  none"
-fi
 
-if [ "$FAILED" -gt 0 ] && [ "$SCANNED" -eq 0 ]; then
-  echo "claude-transcript-scan: every source failed to scan — treat as not run" >&2
-  mark_unavailable "every source failed to scan"
-  exit 3
-fi
+class _JqError(Exception):
+    """A runtime error in one input value: jq reports it and moves to the next."""
 
-# Some sources failed and the rest scanned. Checking FAILED only when SCANNED was 0 let one
-# Loki slice that timed out sit behind a "clean" verdict, with no marker for the statusline
-# to show (dotfiles #832). The daily timer cannot afford that: a slice it misses has left
-# its 25h window by the next run. One marker row per run, written here rather than where
-# each source failed, so the statusline counts one incomplete scan as one.
-PARTIAL=
-if [ "$FAILED" -gt 0 ]; then
-  PARTIAL="$FAILED source(s) failed to scan: $FAILED_SOURCES"
-  echo "claude-transcript-scan: $PARTIAL — treat those as not scanned" >&2
-fi
 
-if [ "$ACCEPT" = 1 ]; then
-  sort -u "$BASELINE.new" 2>/dev/null > "$BASELINE" && rm -f "$BASELINE.new"
-  # Everything outstanding is now baselined, so the marker has nothing left to report --
-  # except the sources this run never saw, which nothing was accepted for.
-  rm -f "$PENDING"
-  [ -n "$PARTIAL" ] && mark_unavailable "$PARTIAL"
-  echo "claude-transcript-scan: accepted $(wc -l < "$BASELINE" | tr -d ' ') finding(s) as baseline in $BASELINE"
-  echo "Only findings NOT in that file are reported from now on. Triage before accepting — accepting is how a real leak gets buried."
-  exit 0
-fi
+class _Num:
+    """A number kept as its source text, which is what jq 1.8 prints back."""
 
-[ -n "$PARTIAL" ] && mark_unavailable "$PARTIAL"
+    __slots__ = ("text",)
 
-if [ "$FOUND" -gt 0 ]; then
-  # Per-store counts, because "18 findings" does not tell you which store to go and read,
-  # and the two have different remedies: a transcript is a local file, a Loki record is
-  # queryable by anything on the LAN for 744h.
-  _split="${FOUND_TRANSCRIPTS:-0} in transcripts"
-  [ "$LOKI" = 1 ] && _split="$_split, ${FOUND_LOKI:-0} in loki"
-  printf '\n%d new finding(s) — %s. %d baselined, %d source(s) scanned.\n' \
-    "$FOUND" "$_split" "$KNOWN" "$SCANNED"
-  [ -z "$PARTIAL" ] || echo "  Not scanned: $FAILED_SOURCES"
-  echo "  Full records: $LOG"
-  echo "  Rotate the named credential: uv run python scripts/secrets_mgmt/secret_rotation.py rotate <name>" >&2
+    def __init__(self, text):
+        self.text = text
 
-  # One finding, one count. Loki is machine-wide, so every session's SessionEnd scan
-  # re-finds the same unbaselined event inside its window, and a row per scan made the
-  # statusline sum one leak into "3 transcript leak(s)" (dotfiles #785). So each row
-  # carries its fingerprints in a fourth column, and a run records only the ones no row
-  # already holds. The statusline still sums column 2, which is now a distinct count.
-  # FILENAME, not NR==FNR: an absent marker reads as /dev/null, and an empty first file
-  # makes NR==FNR true for the second one too.
-  _pending_in=$PENDING
-  [ -f "$_pending_in" ] || _pending_in=/dev/null
-  _fresh=$(awk -F'\t' -v pend="$_pending_in" '
-    FILENAME == pend { n = split($4, a, ","); for (i = 1; i <= n; i++) held[a[i]] = 1; next }
-    !($0 in held) && !dup[$0]++
-  ' "$_pending_in" "$NEWFP" | paste -sd, -)
-  if [ -z "$_fresh" ]; then
-    echo "  Already in the pending marker from an earlier scan: $PENDING"
-    exit 1
-  fi
-  _fresh_n=$(printf '%s\n' "$_fresh" | tr ',' '\n' | grep -c .)
+    def render(self):
+        return str(Decimal(self.text))
 
-  # The durable half. Written before either banner is attempted, so a machine with no
-  # notification path at all still records the finding rather than losing it.
-  printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_fresh_n" "$LOG" "$_fresh" >> "$PENDING"
 
-  # The immediate half, best-effort. Same platform order as hooks/notify.sh: osascript is
-  # the Mac's only working path, notify-send the Linux desktop's, and a headless host
-  # matches neither and is covered by the file above.
-  if command -v osascript >/dev/null 2>&1; then
-    osascript -e 'on run argv
-      display notification (item 2 of argv) with title (item 1 of argv)
-    end run' -- "Credential in a Claude transcript" "$FOUND new finding(s). See $LOG." >/dev/null 2>&1
-  elif command -v notify-send >/dev/null 2>&1; then
-    notify-send -u critical "Credential in a Claude transcript" "$FOUND new finding(s). See $LOG." 2>/dev/null
-  fi
-  exit 1
-fi
+class _Literal(_Num):
+    def render(self):
+        return self.text
 
-# Never "clean" over a source that was not scanned. Nothing turned up in what did scan, but
-# the question was not answered for the rest, which is could-not-evaluate.
-if [ -n "$PARTIAL" ]; then
-  printf '\nincomplete — nothing new in %d source(s) scanned in %s, %d baselined; %d failed: %s.\n' \
-    "$SCANNED" "$STORES" "$KNOWN" "$FAILED" "$FAILED_SOURCES"
-  exit 3
-fi
 
-# "nothing new" and "nothing found" are deliberately different sentences. Collapsing them
-# hides whether the baseline is doing any work, and a baseline nobody can see is one nobody
-# trusts — which is how it ends up suppressing something that mattered.
-if [ "$KNOWN" -gt 0 ]; then
-  printf '\nno new findings — %d source(s) scanned in %s, %d already baselined.\n' \
-    "$SCANNED" "$STORES" "$KNOWN"
-  exit 0
-fi
+def _constant(name):
+    if name == "NaN":
+        return None
+    sign = "-" if name == "-Infinity" else ""
+    return _Literal(f"{sign}1.7976931348623157e+308")
 
-printf '\nclean — %d source(s) scanned in %s.\n' "$SCANNED" "$STORES"
-exit 0
+
+_PLAIN = json.JSONDecoder()
+_KEEP_NUMBERS = json.JSONDecoder(
+    parse_int=_Num, parse_float=_Num, parse_constant=_constant
+)
+
+
+def _walk(value, keys=False):
+    """Yield every string in `value`, pre-order, object keys in document order."""
+    stack = [value]
+    while stack:
+        v = stack.pop()
+        if isinstance(v, str):
+            yield v
+        elif isinstance(v, dict):
+            if keys:
+                yield from v
+            stack.extend(reversed(list(v.values())))
+        elif isinstance(v, list):
+            stack.extend(reversed(v))
+
+
+def _values(raw, decoder):
+    """Yield each top-level JSON value of `raw`; raise _Bad at the first parse error."""
+    text = raw.decode("utf-8", "replace")
+    if text.startswith("\ufeff"):
+        text = text[1:]
+    check = bool(_SURROGATE_ESCAPE.search(text))
+    i, n = 0, len(text)
+    while True:
+        while i < n and text[i] in _JSON_WS:
+            i += 1
+        if i >= n:
+            return
+        try:
+            value, i = decoder.raw_decode(text, i)
+        except (ValueError, RecursionError):
+            raise _Bad from None
+        if check and any(_LONE_HIGH.search(s) for s in _walk(value, keys=True)):
+            raise _Bad
+        yield value
+
+
+def _jq_each(raw, decoder, fn):
+    """Run `fn` over every value like jq: (outputs, ok). A parse error stops it."""
+    outs, ok = [], True
+    try:
+        for value in _values(raw, decoder):
+            try:
+                outs.append(fn(value))
+            except _JqError:
+                ok = False
+    except _Bad:
+        ok = False
+    return outs, ok
+
+
+def _strings_text(value):
+    """`[.. | strings] | join("\\n")`: every string leaf, whatever the schema."""
+    return "\n".join(_walk(value))
+
+
+def _index(value, key):
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value.get(key)
+    raise _JqError
+
+
+def _iterate(value):
+    if isinstance(value, list):
+        return list(value)
+    if isinstance(value, dict):
+        return list(value.values())
+    raise _JqError
+
+
+def _loki_text(value):
+    """The Loki extraction: three named fields per stream, nulls dropped, joined."""
+    parts = []
+    for item in _iterate(_index(_index(value, "data"), "result")):
+        stream = _index(item, "stream")
+        for field in ("tool_input", "tool_parameters", "prompt"):
+            got = _index(stream, field)
+            if got is not None:
+                parts.append(got)
+    rendered = []
+    for part in parts:
+        if isinstance(part, str):
+            rendered.append(part)
+        elif isinstance(part, bool):
+            rendered.append("true" if part else "false")
+        elif isinstance(part, _Num):
+            rendered.append(part.render())
+        else:
+            # join cannot add an object or an array to a string.
+            raise _JqError
+    return "\n".join(rendered)
+
+
+def _loki_entries(value):
+    """The number of entries in `.data.result`."""
+    return len(_iterate(_index(_index(value, "data"), "result")))
+
+
+def _json_str(s):
+    """A string as `jq -c` prints it: raw non-ASCII, DEL escaped, bad bytes U+FFFD."""
+    s = s.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+    return json.dumps(s, ensure_ascii=False).replace("\x7f", "\\u007f")
+
+
+# --- small shell-compat helpers  ------------------------------------------------------
+def _now():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _out(msg=""):
+    sys.stdout.write(msg + "\n")
+
+
+def _err(msg):
+    sys.stderr.write(msg + "\n")
+
+
+def _pad(s, width):
+    """`printf %-Ns`: libc pads by bytes, so a non-ASCII name sits narrower than N."""
+    return s + " " * max(0, width - len(s.encode("utf-8", "surrogateescape")))
+
+
+def _dirname(path):
+    return os.path.dirname(path.rstrip("/") or "/") or "."
+
+
+def _env(name, default):
+    return os.environ.get(name) or default
+
+
+def _read_lines(path):
+    with open(path, "rb") as fh:
+        data = fh.read().decode("utf-8", "surrogateescape")
+    lines = data.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
+def _find_jsonl(top, minutes):
+    """`find TOP -name '*.jsonl' -type f [-mmin -MINUTES]`, in sorted directory order.
+
+    find lists a directory in whatever order the filesystem returns it. Sorting makes
+    the order of the report, the log and the pending marker repeatable, and no verdict
+    depends on it.
+    """
+    found = []
+    cutoff = None if minutes is None else time.time_ns() - minutes * 60 * 10**9
+
+    def wanted(name, st):
+        return (
+            stat.S_ISREG(st.st_mode)
+            and name.endswith(".jsonl")
+            and (cutoff is None or st.st_mtime_ns > cutoff)
+        )
+
+    def walk(directory):
+        try:
+            with os.scandir(directory) as it:
+                entries = sorted(it, key=lambda e: e.name)
+        except OSError:
+            return
+        for entry in entries:
+            path = os.path.join(directory, entry.name)
+            try:
+                st = entry.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            if stat.S_ISDIR(st.st_mode):
+                walk(path)
+            elif wanted(entry.name, st):
+                found.append(path)
+
+    try:
+        st = os.lstat(top)
+        if stat.S_ISLNK(st.st_mode):
+            # find does not follow a symlink given as the start point, unless it ends in
+            # /.
+            if not top.endswith("/"):
+                return found
+            st = os.stat(top)
+    except OSError:
+        return found
+    if stat.S_ISDIR(st.st_mode):
+        walk(top)
+    elif wanted(os.path.basename(top), st):
+        found.append(top)
+    return found
+
+
+def _lines_bytes(outs):
+    """One line per input value, which is what `jq -r` prints, as the bytes scanned."""
+    text = "".join(f"{o}\n" for o in outs)
+    if _ANY_SURROGATE.search(text):
+        text = _ANY_SURROGATE.sub("�", text)
+    return text.encode("utf-8")
+
+
+class Scanner:
+    def __init__(self):
+        home = os.environ.get("HOME") or os.path.expanduser("~")
+        self.home = home
+        self.projects = _env("CLAUDE_TRANSCRIPT_ROOT", f"{home}/.claude/projects")
+        self.log = _env(
+            "CLAUDE_TRANSCRIPT_LEAK_LOG", f"{home}/.claude/logs/transcript-leaks.jsonl"
+        )
+        self.baseline = _env(
+            "CLAUDE_TRANSCRIPT_LEAK_BASELINE",
+            f"{home}/.claude/logs/transcript-leaks-baseline.txt",
+        )
+        self.gl_config = _env(
+            "CLAUDE_TRANSCRIPT_GITLEAKS_CONFIG",
+            f"{home}/.config/gitleaks/transcript-scan.toml",
+        )
+        self.gl_loki_config = _env(
+            "CLAUDE_TRANSCRIPT_GITLEAKS_LOKI_CONFIG",
+            f"{home}/.config/gitleaks/transcript-scan-loki.toml",
+        )
+        # A finding outlives the process that found it, and neither unattended caller
+        # keeps the verdict: session-end.sh backgrounds this with its output discarded,
+        # and the timer's journal line is read by nobody. A desktop notification does
+        # not close that gap either — notify-send needs a running daemon and osascript
+        # needs a Mac, and a headless host has neither. So the durable alert is a FILE,
+        # which the Claude Code statusline shows to the operator on every platform.
+        # Cleared by --accept-baseline or --clear-pending.
+        self.pending = _env(
+            "CLAUDE_TRANSCRIPT_LEAK_PENDING",
+            f"{home}/.claude/logs/transcript-leaks-pending",
+        )
+        self.since_h = "24"
+        self.mode = "window"
+        self.one = ""
+        self.accept = False
+        self.paranoid = False
+        self.clear = False
+        # Loki is scanned by DEFAULT. It was opt-in for one day and that was a mistake:
+        # --loki lived only in the systemd unit, so a hand-run scan quietly covered one
+        # store of two and printed a clean verdict for a store it never opened. "The
+        # obvious invocation does less than the timer" is the same
+        # could-not-run-reads-as-clean failure this tool exists to prevent. --no-loki is
+        # the explicit way out, for a machine with no otelq or no Loki. On macOS the
+        # default is off; see the header. CLAUDE_TRANSCRIPT_SCAN_OS stands in for uname
+        # in the tests.
+        self.loki = True
+        self.loki_skip_why = "--no-loki"
+        if _env("CLAUDE_TRANSCRIPT_SCAN_OS", os.uname().sysname) == "Darwin":
+            self.loki = False
+            self.loki_skip_why = "no Loki on macOS; --loki to scan it"
+
+        self.gitleaks = ""
+        self.found = 0
+        self.known = 0
+        self.scanned = 0
+        self.failed = 0
+        # The sources behind `failed`, for the verdict and the pending marker. A count
+        # alone says the scan was incomplete without saying which slice or transcript to
+        # re-run.
+        self.failed_sources = []
+        # Findings already reported in THIS run: the overlap between Loki slices hands
+        # the same finding back twice, and counting it twice would make the total
+        # meaningless. Distinct from the baseline check, which is about findings
+        # accepted in an EARLIER run.
+        self.seen = set()
+        self.baselined = set()
+        # This run's unbaselined fingerprints, in order, for the pending marker's dedupe
+        # below.
+        self.new_fps = []
+
+    # -- arguments
+    # ------------------------------------------------------------------------
+    def parse(self, argv):
+        i = 0
+        while i < len(argv):
+            arg = argv[i]
+            # A flag whose value is missing takes the empty string. The shell version
+            # ran `shift 2 || true`, which leaves the flag in place when only one
+            # argument remains, so it re-read the same flag forever.
+            nxt = argv[i + 1] if i + 1 < len(argv) else ""
+            if arg == "--since":
+                self.since_h = nxt
+                i += 2
+            elif arg == "--session":
+                self.mode = "one"
+                self.one = nxt
+                i += 2
+            elif arg == "--all":
+                self.mode = "all"
+                i += 1
+            elif arg == "--accept-baseline":
+                self.accept = True
+                i += 1
+            elif arg == "--paranoid":
+                self.paranoid = True
+                i += 1
+            elif arg == "--loki":  # kept: still accepted, now the default
+                self.loki = True
+                i += 1
+            elif arg == "--no-loki":
+                self.loki = False
+                self.loki_skip_why = "--no-loki"
+                i += 1
+            elif arg == "--clear-pending":
+                self.clear = True
+                i += 1
+            elif arg in ("-h", "--help"):
+                _out("\n".join((__doc__ or "").split("\n")[:56]))
+                sys.exit(0)
+            else:
+                _err(f"{PROG}: unknown argument: {arg}")
+                sys.exit(2)
+
+    # -- the pending marker
+    # ---------------------------------------------------------------
+    def _append(self, path, text):
+        with contextlib.suppress(OSError), open(path, "ab") as fh:
+            fh.write(text.encode("utf-8", "surrogateescape"))
+
+    # Exit 3 is could-not-evaluate, and it is the one verdict with no other durable
+    # trace: a finding lands in $LOG, but a scan that never ran leaves nothing behind at
+    # all. Record it in the same marker, as a zero-count row, so the statusline reports
+    # "the detector could not run" rather than the silence that is indistinguishable
+    # from "clean". A partial run also lands here, and the statusline tells it apart by
+    # the `failed to scan:` text in its reason, so keep that wording in `partial` below.
+    def mark_unavailable(self, why):
+        with contextlib.suppress(OSError):
+            os.makedirs(_dirname(self.pending), exist_ok=True)
+        self._append(self.pending, f"{_now()}\t0\t{why}\n")
+
+    # Counts one source as not scanned, or not scanned fully. `name` names it in the
+    # verdict.
+    def note_failed(self, name):
+        self.failed += 1
+        self.failed_sources.append(name)
+
+    # -- gitleaks
+    # -------------------------------------------------------------------------
+    def _gitleaks(self, args, data):
+        try:
+            proc = subprocess.run(
+                [self.gitleaks, *args],
+                input=data,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError:
+            return 127, b""
+        rc = proc.returncode
+        return (128 - rc if rc < 0 else rc), proc.stdout
+
+    def find_gitleaks(self):
+        # gitleaks is not installed system-wide here; prek fetches it into its own cache
+        # for the repo hook. Take it from PATH first so a real install wins, then the
+        # cache, and refuse rather than skip if neither exists.
+        gl = os.environ.get("GITLEAKS_BIN") or ""
+        if not gl:
+            gl = shutil.which("gitleaks") or ""
+        if not gl:
+            cache = os.path.join(
+                glob.escape(self.home), ".cache/prek/hooks/golang-*/bin/gitleaks"
+            )
+            for candidate in sorted(glob.glob(cache)):
+                if os.access(candidate, os.X_OK):
+                    gl = candidate
+                    break
+        self.gitleaks = gl
+
+    # gitleaks exits 1 both for "leaks found" and for a ruleset it cannot load, and only
+    # the first writes a report. scan_work accepts 1 and counts the report's entries, so
+    # a broken ruleset read as a clean scan of every source. A targetRules entry naming
+    # a rule that gitleaks no longer ships is enough to break one. So each ruleset is
+    # loaded once against empty input before any source is scanned: empty input exits 0,
+    # and any other exit there can only come from the config.
+    def check_ruleset(self, flags, label):
+        args = [
+            "stdin",
+            "--no-banner",
+            *flags,
+            "--report-format",
+            "json",
+            "--report-path",
+            "/dev/null",
+        ]
+        if self._gitleaks(args, b"")[0] == 0:
+            return
+        _err(
+            f"{PROG}: gitleaks could not load the {label} ruleset "
+            f"({' '.join(flags) or 'default set'}) — did not scan"
+        )
+        self.mark_unavailable(f"gitleaks could not load the {label} ruleset")
+        sys.exit(3)
+
+    # Both stores scan the same way once their text is in `work`, so the gitleaks call,
+    # the fingerprint and the report live here rather than being written twice. `src` is
+    # what the log records as the source, `tok` the token that goes in the fingerprint,
+    # `rules` the ruleset flags.
+    def scan_work(self, src, tok, rules, work):
+        # The human column wants something short; `src` is a full path or a slice range.
+        # Basename for a transcript, the range itself for Loki -- both already identify
+        # the finding, and the JSONL record keeps the unabridged source either way.
+        tok_label = src.rsplit("/", 1)[-1]
+        # --redact keeps the finding from repeating the secret into the journal and the
+        # log file. A detector that prints what it found is a second copy of the leak.
+        args = [
+            "stdin",
+            "--redact",
+            "--no-banner",
+            *rules,
+            "--report-format",
+            "json",
+            "--report-path",
+            "-",
+        ]
+        rc, report = self._gitleaks(args, work)
+        if rc not in (0, 1):
+            _err(f"{PROG}: scan failed (rc={rc}): {src}")
+            self.note_failed(src)
+            return
+        self.scanned += 1
+        outs, ok = _jq_each(report, _PLAIN, lambda v: v)
+        if not ok or len(outs) != 1 or not isinstance(outs[0], list):
+            return
+        lines = None
+        for item in outs[0]:
+            rule, line = self._rule_and_line(item)
+            if not rule:
+                continue
+            if lines is None:
+                lines = work.split(b"\n")
+            # Fingerprint on CONTENT, not on position. gitleaks' own Fingerprint is
+            # `:<rule>:<line>` and the line is an offset into a derived projection of
+            # the source, so compacting a transcript or changing that projection
+            # renumbers every finding and a position-keyed baseline silently stops
+            # matching. Hashing the matched line survives both. The hash never leaves
+            # this machine and cannot be reversed into the value.
+            number = int(line) if re.fullmatch(r"[0-9]+", line) else 0
+            digest = self._line_hash(lines, number)
+            fp = f"{rule}:{tok}:{digest}"
+            if fp in self.seen:
+                continue
+            self.seen.add(fp)
+            if fp in self.baselined:
+                self.known += 1
+                if not self.accept:
+                    continue
+            if self.accept:
+                self._append(self.baseline + ".new", fp + "\n")
+                continue
+            self.found += 1
+            self.new_fps.append(fp)
+            # Rule id, line, source and fingerprint only. Enough to find it and to name
+            # what to rotate, and to accept it later; never enough to re-leak it. Two
+            # audiences, two formats. The JSONL record is what --accept-baseline and any
+            # later triage read, so it keeps every field; stdout gets a line a person
+            # can scan.
+            self._append(
+                self.log,
+                f'{{"ts":{_json_str(_now())},"transcript":{_json_str(src)},"rule":{_json_str(rule)},'
+                f'"line":{number},"fingerprint":{_json_str(fp)},"secret":"[redacted]"}}\n',
+            )
+            _out(f"  {_pad(rule, 18)} {_pad(tok_label, 34)} line {line}")
+
+    @staticmethod
+    def _rule_and_line(item):
+        """Split `RuleID<TAB>StartLine` the way `IFS=$'\\t' read -r rule line` does."""
+        if not isinstance(item, dict):
+            return "", ""
+
+        def text(v):
+            if isinstance(v, str):
+                return v
+            return json.dumps(v, ensure_ascii=False, separators=(",", ":"))
+
+        joined = f"{text(item.get('RuleID'))}\t{text(item.get('StartLine'))}".strip(
+            "\t"
+        )
+        parts = re.split(r"\t+", joined, maxsplit=1)
+        return parts[0], parts[1] if len(parts) > 1 else ""
+
+    @staticmethod
+    def _line_hash(lines, number):
+        """First 16 hex of sha256 of the line `sed -n "${number}p"` prints."""
+        last = len(lines) - 1
+        # `lines` came from splitting on \n, so its last element is what follows the
+        # final newline. sed adds no newline to a final line that lacked one.
+        count = last if lines[last] == b"" else last + 1
+        data = b""
+        if 1 <= number <= count:
+            data = lines[number - 1] + (b"\n" if number - 1 < last else b"")
+        return hashlib.sha256(data).hexdigest()[:16]
+
+    # -- the run
+    # --------------------------------------------------------------------------
+    def run(self, argv):
+        sys.stdout.reconfigure(
+            encoding="utf-8", errors="surrogateescape", line_buffering=True
+        )
+        sys.stderr.reconfigure(encoding="utf-8", errors="surrogateescape")
+        self.parse(argv)
+
+        # The way out that does not also accept anything. Triaging a finding — rotating
+        # the credential and confirming it — settles it without adding a fingerprint to
+        # the baseline, and with no way to say so the banner would either persist
+        # forever or push you toward a blanket accept, which is the one thing this whole
+        # tool warns against.
+        if self.clear:
+            with contextlib.suppress(OSError):
+                os.remove(self.pending)
+            _out(
+                f"{PROG}: cleared the pending-findings marker. "
+                f"The log at {self.log} is untouched."
+            )
+            return 0
+        if not re.fullmatch(r"[0-9]+", self.since_h):
+            _err(f"{PROG}: --since wants whole hours")
+            return 2
+
+        # The daily run uses a narrowed ruleset; --paranoid uses gitleaks' full default
+        # set. The reason is in the config file itself — `generic-api-key` matches on
+        # entropy alone, and a transcript is full of long high-entropy identifiers that
+        # are not credentials.
+        #
+        # A MISSING config falls back to the full set rather than refusing. That
+        # direction is deliberate and is the opposite of the missing-gitleaks case
+        # below: no gitleaks means the question was never asked, while no config means
+        # it was asked too broadly. Over-reporting is recoverable by reading the
+        # findings; under-reporting is not.
+        gl_rules = []
+        if not self.paranoid:
+            if os.path.isfile(self.gl_config):
+                gl_rules = ["--config", self.gl_config]
+            else:
+                _err(
+                    f"{PROG}: no ruleset at {self.gl_config} — "
+                    "falling back to gitleaks' full set, expect noise"
+                )
+        # The Loki arm has its own ruleset: the FULL default set (generic-api-key stays
+        # live, see the Loki section below for why) plus allowlists for the two
+        # public-text shapes that produced 127 of the 247 rows triaged on 2026-09-18. A
+        # missing file falls back to the bare default set, which is what this arm ran
+        # until then -- noisier, never narrower.
+        gl_loki_rules = []
+        if not self.paranoid and os.path.isfile(self.gl_loki_config):
+            gl_loki_rules = ["--config", self.gl_loki_config]
+
+        self.find_gitleaks()
+        if not self.gitleaks or not os.access(self.gitleaks, os.X_OK):
+            _err(
+                f"{PROG}: no gitleaks binary (PATH, $GITLEAKS_BIN, or the prek cache) "
+                "— did not scan"
+            )
+            self.mark_unavailable("no gitleaks binary")
+            return 3
+        # A systemd user unit starts with a minimal PATH and otelq lives in
+        # ~/.local/bin, so this is a live failure mode rather than a theoretical one.
+        # Same rule as gitleaks: refuse loudly, because a missing query tool would
+        # otherwise read as a clean Loki store.
+        if self.loki and not shutil.which("otelq"):
+            _err(
+                f"{PROG}: otelq unavailable — did not scan Loki. "
+                "Pass --no-loki to scan transcripts only."
+            )
+            self.mark_unavailable("otelq unavailable")
+            return 3
+        self.check_ruleset(gl_rules, "transcript")
+        if self.loki:
+            self.check_ruleset(gl_loki_rules, "loki")
+
+        if self.mode == "one":
+            if not os.path.isfile(self.one):
+                _err(f"{PROG}: no such transcript: {self.one}")
+                return 2
+            files = [self.one]
+        elif self.mode == "all":
+            files = _find_jsonl(self.projects, None)
+        else:
+            # -mmin rather than -mtime: the window is given in hours and -mtime rounds
+            # to days, which would silently widen a 1h sweep to 24.
+            files = _find_jsonl(self.projects, int(self.since_h) * 60)
+
+        # An empty transcript list is only a reason to stop when transcripts are the
+        # whole job. With --loki there is a second store to scan, and exiting here would
+        # have made the Loki arm silently conditional on a transcript having been
+        # written in the same window.
+        if not files and not self.loki:
+            _out(f"{PROG}: no transcripts in scope")
+            return 0
+
+        with contextlib.suppress(OSError):
+            os.makedirs(_dirname(self.log), exist_ok=True)
+        if os.path.isfile(self.baseline):
+            self.baselined = set(_read_lines(self.baseline))
+        # Named in every verdict. "clean across 37 source(s)" cannot be told apart from
+        # a scan that skipped a whole store; "clean across 37 source(s) (transcripts)"
+        # can.
+        stores = "transcripts"
+
+        if self.loki:
+            _out(
+                f"{PROG}: scanning {len(files)} transcript(s) and "
+                f"{self.since_h} hourly Loki slice(s)"
+            )
+        else:
+            _out(
+                f"{PROG}: scanning {len(files)} transcript(s); "
+                f"Loki skipped ({self.loki_skip_why})"
+            )
+
+        # Section headers print unconditionally, before their arm runs. A header with
+        # nothing under it is the useful case: it says the store was searched and was
+        # clean, which an absent header cannot. The whole reason this output was
+        # reshaped is that a clean verdict and a skipped store looked the same.
+        _out("\ntranscripts")
+        found_before_transcripts = self.found
+
+        for path in files:
+            # A transcript deleted since the listing holds nothing to leak, so it is
+            # skipped before it can count as a failed source.
+            if not os.path.isfile(path):
+                continue
+            # Every string leaf of every record takes part, which is what makes this
+            # independent of the transcript schema: a value moving from .message.content
+            # to some new field stays covered without a change here.
+            try:
+                with open(path, "rb") as fh:
+                    raw = fh.read()
+                outs, ok = _jq_each(raw, _PLAIN, _strings_text)
+            except OSError:
+                outs, ok = [], False
+            if not ok:
+                _err(f"{PROG}: jq could not read {path} — treat as not scanned")
+                self.note_failed(path)
+                continue
+            self.scan_work(path, os.path.basename(path), gl_rules, _lines_bytes(outs))
+
+        # ---- the Loki store
+        # --------------------------------------------------------------- Claude Code
+        # attaches the full command text to every tool_result as tool_input and
+        # tool_parameters, and the prompt to every user_prompt, so a credential typed
+        # inline on a command line lands in Loki as well as in the transcript. Loki
+        # keeps it for 744h. Nothing scanned there before 2026-08-31.
+        #
+        # TWO deliberate differences from the transcript arm, and they depend on each
+        # other:
+        #
+        #  * The extraction is NARROW -- three named fields, not every string leaf. A
+        #    Loki payload is mostly trace_id/span_id/session_id/user_id: high-entropy
+        #    hex, which is exactly what generic-api-key matches on.
+        #  * The ruleset is therefore the FULL default set, never the transcript one.
+        #    generic-api-key is disabled for the daily transcript run because it
+        #    produced 45 false positives there, and it is the only rule that catches an
+        #    unstructured `NAME=<32 hex>` -- the shape of every *arr API key. Scanning
+        #    Loki with the narrowed ruleset would find the same nothing the transcript
+        #    run finds, which is the entire reason this arm exists.
+        #
+        # Measured 2026-08-31 on this host: the full ruleset over one hour of narrowed
+        # Loki text (378KB) returned 0 findings, and over the events holding a real
+        # leaked *arr key it returned 12. Narrow the extraction and the expensive rule
+        # becomes affordable.
+        #
+        # The Loki ruleset is that full set plus allowlists, never a narrowing:
+        # transcript-scan-loki.toml keeps generic-api-key on and removes two public-text
+        # shapes (an SSH key fingerprint, a backtick-quoted kebab identifier in prose)
+        # that were re-logged on every run between 2026-09-03 and 2026-09-13. The rule
+        # caught the jellyfin key on 2026-09-09 through the same arm, so the allowlists
+        # are scoped to the shapes measured, not to the rule.
+        found_transcripts = self.found - found_before_transcripts
+        if found_transcripts <= 0:
+            _out("  none")
+
+        found_loki = 0
+        if self.loki:
+            _out("\nloki")
+            found_before_loki = self.found
+            self.scan_loki(gl_loki_rules)
+            stores = "transcripts+loki"
+            found_loki = self.found - found_before_loki
+            if found_loki <= 0:
+                _out("  none")
+
+        if self.failed > 0 and self.scanned == 0:
+            _err(f"{PROG}: every source failed to scan — treat as not run")
+            self.mark_unavailable("every source failed to scan")
+            return 3
+
+        # Some sources failed and the rest scanned. Checking `failed` only when
+        # `scanned` was 0 let one Loki slice that timed out sit behind a "clean"
+        # verdict, with no marker for the statusline to show (dotfiles #832). The daily
+        # timer cannot afford that: a slice it misses has left its 25h window by the
+        # next run. One marker row per run, written here rather than where each source
+        # failed, so the statusline counts one incomplete scan as one.
+        failed_names = ", ".join(self.failed_sources)
+        partial = ""
+        if self.failed > 0:
+            partial = f"{self.failed} source(s) failed to scan: {failed_names}"
+            _err(f"{PROG}: {partial} — treat those as not scanned")
+
+        if self.accept:
+            self.write_baseline()
+            # Everything outstanding is now baselined, so the marker has nothing left to
+            # report -- except the sources this run never saw, which nothing was
+            # accepted for.
+            with contextlib.suppress(OSError):
+                os.remove(self.pending)
+            if partial:
+                self.mark_unavailable(partial)
+            try:
+                with open(self.baseline, "rb") as fh:
+                    accepted = fh.read().count(b"\n")
+            except OSError:
+                accepted = 0
+            _out(
+                f"{PROG}: accepted {accepted} finding(s) as baseline in {self.baseline}"
+            )
+            _out(
+                "Only findings NOT in that file are reported from now on. "
+                "Triage before accepting — accepting is how a real leak gets buried."
+            )
+            return 0
+
+        if partial:
+            self.mark_unavailable(partial)
+
+        if self.found > 0:
+            return self.report_found(
+                found_transcripts, found_loki, partial, failed_names
+            )
+
+        # Never "clean" over a source that was not scanned. Nothing turned up in what
+        # did scan, but the question was not answered for the rest, which is
+        # could-not-evaluate.
+        if partial:
+            _out(
+                f"\nincomplete — nothing new in {self.scanned} source(s) scanned in "
+                f"{stores}, {self.known} baselined; {self.failed} failed: "
+                f"{failed_names}."
+            )
+            return 3
+
+        # "nothing new" and "nothing found" are deliberately different sentences.
+        # Collapsing them hides whether the baseline is doing any work, and a baseline
+        # nobody can see is one nobody trusts — which is how it ends up suppressing
+        # something that mattered.
+        if self.known > 0:
+            _out(
+                f"\nno new findings — {self.scanned} source(s) scanned in {stores}, "
+                f"{self.known} already baselined."
+            )
+            return 0
+
+        _out(f"\nclean — {self.scanned} source(s) scanned in {stores}.")
+        return 0
+
+    def scan_loki(self, rules):
+        # --since is the window WIDTH and --until moves its END, so an hourly slice is
+        # `--since <width>`. It read `--since ${h}h` until 2026-08-31 and every slice
+        # was therefore a full h-hour window ending ${h-1}h ago -- slice 30 re-scanned
+        # the whole 30 hours after it. Two abutting slices returned an identical 4858
+        # entries, which is what exposed it, and a 30h scan reported 30x the events Loki
+        # actually held.
+        #
+        # 70m for a 60m step, so consecutive slices OVERLAP by ten minutes. Each query
+        # computes `now` when it runs, so a sequence of them drifts forward and
+        # exactly-abutting windows leave a sliver uncovered between each pair: measured
+        # 4087 of an authoritative 4130 events over 30h before the overlap. Duplicates
+        # are free here because the fingerprint is a content hash and `seen` drops a
+        # repeat within the run; a gap is not recoverable.
+        h = int(self.since_h)
+        while h > 0:
+            until_h = h - 1
+            label = f"{h}h..{until_h}h"
+            query = [
+                "otelq", "logs", LOKI_QUERY,
+                "--stream", "--since", "70m", "--until", f"{until_h}h",
+                "--limit", str(LOKI_LIMIT), "--timeout", "60",
+            ]  # fmt: skip
+            try:
+                proc = subprocess.run(
+                    query, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+                )
+                slice_raw = proc.stdout
+            except OSError:
+                slice_raw = b""
+            if not slice_raw.rstrip(b"\n"):
+                _err(
+                    f"{PROG}: Loki slice {label} did not return — treat as not scanned"
+                )
+                self.note_failed(f"Loki slice {label}")
+                h = until_h
+                continue
+            counts, counted = _jq_each(slice_raw, _KEEP_NUMBERS, _loki_entries)
+            lines = [str(c) for c in counts] + ([] if counted else ["0"])
+            # A multi-line count made the shell's integer test fail, which reads as
+            # under the cap.
+            if len(lines) == 1 and int(lines[0]) >= LOKI_LIMIT:
+                _err(
+                    f"{PROG}: Loki slice {label} hit the {LOKI_LIMIT}-entry cap "
+                    "— scanned PARTIALLY"
+                )
+                self.note_failed(
+                    f"Loki slice {label} (truncated at {LOKI_LIMIT} entries)"
+                )
+            outs, ok = _jq_each(slice_raw, _KEEP_NUMBERS, _loki_text)
+            if not ok:
+                _err(
+                    f"{PROG}: jq could not read Loki slice {label} "
+                    "— treat as not scanned"
+                )
+                self.note_failed(f"Loki slice {label}")
+                h = until_h
+                continue
+            # The fingerprint token is a constant, never the slice bounds: a re-scan
+            # with different boundaries must produce the same fingerprint or the
+            # baseline stops matching. A leak present in both stores therefore reports
+            # twice, under `loki` and under the transcript name, and needs acknowledging
+            # twice -- which is correct, since they are two copies with two lifetimes.
+            self.scan_work(f"{label} ago", "loki", rules, _lines_bytes(outs))
+            h = until_h
+
+    def write_baseline(self):
+        new = self.baseline + ".new"
+        try:
+            lines = _read_lines(new)
+        except OSError:
+            lines = None
+        # The shell redirected into the baseline before it sorted, so a run that found
+        # nothing truncated it. The sorted, de-duplicated findings of THIS run are the
+        # whole new baseline.
+        try:
+            with open(self.baseline, "wb") as fh:
+                if lines is not None:
+                    body = "".join(f"{fp}\n" for fp in sorted(set(lines)))
+                    fh.write(body.encode("utf-8", "surrogateescape"))
+        except OSError:
+            return
+        if lines is not None:
+            with contextlib.suppress(OSError):
+                os.remove(new)
+
+    def report_found(self, found_transcripts, found_loki, partial, failed_names):
+        # Per-store counts, because "18 findings" does not tell you which store to go
+        # and read, and the two have different remedies: a transcript is a local file, a
+        # Loki record is queryable by anything on the LAN for 744h.
+        split = f"{found_transcripts} in transcripts"
+        if self.loki:
+            split += f", {found_loki} in loki"
+        _out(
+            f"\n{self.found} new finding(s) — {split}. "
+            f"{self.known} baselined, {self.scanned} source(s) scanned."
+        )
+        if partial:
+            _out(f"  Not scanned: {failed_names}")
+        _out(f"  Full records: {self.log}")
+        _err(
+            "  Rotate the named credential: "
+            "uv run python scripts/secrets_mgmt/secret_rotation.py rotate <name>"
+        )
+
+        # One finding, one count. Loki is machine-wide, so every session's SessionEnd
+        # scan re-finds the same unbaselined event inside its window, and a row per scan
+        # made the statusline sum one leak into "3 transcript leak(s)" (dotfiles #785).
+        # So each row carries its fingerprints in a fourth column, and a run records
+        # only the ones no row already holds. The statusline still sums column 2, which
+        # is now a distinct count.
+        held = set()
+        if os.path.isfile(self.pending):
+            for row in _read_lines(self.pending):
+                cols = row.split("\t")
+                if len(cols) >= 4:
+                    held.update(cols[3].split(","))
+        fresh, dup = [], set()
+        for fp in self.new_fps:
+            if fp not in held and fp not in dup:
+                dup.add(fp)
+                fresh.append(fp)
+        if not fresh:
+            _out(
+                f"  Already in the pending marker from an earlier scan: {self.pending}"
+            )
+            return 1
+        joined = ",".join(fresh)
+        fresh_n = len([f for f in joined.split(",") if f])
+
+        # The durable half. Written before either banner is attempted, so a machine with
+        # no notification path at all still records the finding rather than losing it.
+        self._append(self.pending, f"{_now()}\t{fresh_n}\t{self.log}\t{joined}\n")
+
+        # The immediate half, best-effort. Same platform order as hooks/notify.sh:
+        # osascript is the Mac's only working path, notify-send the Linux desktop's, and
+        # a headless host matches neither and is covered by the file above.
+        body = f"{self.found} new finding(s). See {self.log}."
+        with contextlib.suppress(OSError):
+            if shutil.which("osascript"):
+                subprocess.run(
+                    ["osascript", "-e", OSASCRIPT, "--", NOTIFY_TITLE, body],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            elif shutil.which("notify-send"):
+                subprocess.run(
+                    ["notify-send", "-u", "critical", NOTIFY_TITLE, body],
+                    stderr=subprocess.DEVNULL,
+                )
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(Scanner().run(sys.argv[1:]))

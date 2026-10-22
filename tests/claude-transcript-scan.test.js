@@ -21,7 +21,6 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
-const { have, skipUnless } = require('./lib/probe');
 const { srcPath } = require('./lib/paths');
 
 // The synthetic tokens that must NOT be allowlisted are derived at run time rather than
@@ -57,6 +56,15 @@ function syntheticPat(label = 'pat one') {
 
 const SCANNER = srcPath('dot_local', 'bin', 'executable_claude-transcript-scan');
 
+// The scanner is a Python script. Its absolute interpreter path is what every spawn below
+// uses, so a test that narrows PATH to hide gitleaks or otelq does not also hide python3.
+function findPython() {
+  try {
+    return execFileSync('python3', ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' }).trim();
+  } catch { return ''; }
+}
+const PYTHON = findPython();
+
 // gitleaks is not installed system-wide; prek fetches it into its own cache. Resolve it the
 // same way the scanner does, and skip rather than fail when the cache has not been populated
 // (a fresh clone that has never run `prek`).
@@ -72,7 +80,7 @@ function findGitleaks() {
   return '';
 }
 const GITLEAKS = findGitleaks();
-const skip = GITLEAKS && skipUnless('bash', 'jq');
+const skip = !PYTHON ? 'python3 unavailable' : (GITLEAKS ? false : 'gitleaks unavailable');
 
 const DIRTY = [
   { type: 'user', message: { role: 'user', content: 'hello' } },
@@ -119,7 +127,7 @@ function run(args, sb, extraEnv = {}) {
   // so everything opts out unless it asked for the Loki arm by name.
   const wantsLoki = args.some((a) => a === '--loki');
   const argv = wantsLoki ? args : ['--no-loki', ...args];
-  return spawnSync('bash', [SCANNER, ...argv], {
+  return spawnSync(PYTHON, [SCANNER, ...argv], {
     encoding: 'utf8',
     env: {
       ...process.env,
@@ -171,11 +179,11 @@ test('the window sweep reaches both fixtures and flags only the dirty one', { sk
     'exactly one finding');
 });
 
-test('a missing gitleaks reports could-not-evaluate, never clean', { skip: (have('bash') && have('jq')) ? false : skip }, () => {
+test('a missing gitleaks reports could-not-evaluate, never clean', { skip: PYTHON ? false : skip }, () => {
   const sb = sandbox();
   // The whole point of exit 3. Reporting 0 here would make an unrunnable detector
   // indistinguishable from a clean machine, which is the failure this file exists to stop.
-  const r = spawnSync('bash', [SCANNER, '--session', path.join(sb.projects, 'dirty.jsonl')], {
+  const r = spawnSync(PYTHON, [SCANNER, '--session', path.join(sb.projects, 'dirty.jsonl')], {
     encoding: 'utf8',
     env: { ...process.env, PATH: '/usr/bin:/bin', GITLEAKS_BIN: '/nonexistent', HOME: sb.dir, CLAUDE_TRANSCRIPT_ROOT: path.join(sb.dir, 'projects') },
   });
@@ -211,6 +219,18 @@ test('a finding the baseline does not cover is still reported', { skip }, () => 
   const r = run(['--since', '1'], sb);
   assert.strictEqual(r.status, 1, `expected exit 1, got ${r.status}: ${r.stdout}${r.stderr}`);
   assert.match(r.stdout, /1 new finding/);
+});
+
+test('the fingerprint is rule, file name and a hash of the matched line', { skip }, () => {
+  // Baselines already on disk were written by the shell version, whose fingerprint was the
+  // first 16 hex of `sed -n "${line}p" | sha256sum`: the matched line WITH its newline.
+  // Computed here without the scanner, so a change in how the line is hashed fails this
+  // instead of silently un-baselining every accepted finding.
+  const sb = sandbox();
+  run(['--session', path.join(sb.projects, 'dirty.jsonl')], sb);
+  const hash = crypto.createHash('sha256')
+    .update('GITHUB_TOKEN=ghp_9tQz3XbW7kR2mYvL8pJdN4sH6cF1aE0uG5iT\n').digest('hex').slice(0, 16);
+  assert.match(fs.readFileSync(sb.log, 'utf8'), new RegExp(`"fingerprint":"github-pat:dirty.jsonl:${hash}"`));
 });
 
 test('the fingerprint keys on content, not on line position', { skip }, () => {
@@ -632,9 +652,9 @@ test('macOS skips Loki by default, says why, and --loki still turns it on', { sk
   // The work Mac has no Loki by design (org telemetry override), so defaulting to Loki there
   // only failed every slice. Spawned directly: run() would add --no-loki and hide the default.
   const sb = sandbox();
-  // jq and gitleaks stay on PATH; otelq does not, so the --loki half never reaches a real Loki.
+  // gitleaks stays on PATH; otelq does not, so the --loki half never reaches a real Loki.
   const noOtelq = process.env.PATH.split(':').filter((d) => !fs.existsSync(path.join(d, 'otelq'))).join(':');
-  const scan = (args) => spawnSync('bash', [SCANNER, ...args], {
+  const scan = (args) => spawnSync(PYTHON, [SCANNER, ...args], {
     encoding: 'utf8',
     env: {
       ...process.env,
@@ -666,11 +686,18 @@ test('an hourly slice asks for an hourly WIDTH, not a window back to now', { ski
   // 2026-08-31, making slice 30 a THIRTY-hour window ending 29h ago -- every slice
   // re-scanned everything newer than it. Two abutting slices returned an identical 4858
   // entries against an authoritative 4130 for the whole 30h period.
-  const src = fs.readFileSync(SCANNER, 'utf8');
-  assert.match(src, /--stream --since 70m --until "\$\{until_h\}h"/,
-    'the width must be a fixed slice width, never the distance back to now');
-  assert.ok(!/--since "\$\{h\}h" --until/.test(src),
-    'the superseded form must be gone');
+  const sb = sandbox();
+  const env = stubOtelq(sb, lokiPayload({ prompt: 'ordinary text' }));
+  const argsLog = path.join(sb.dir, 'otelq-args.txt');
+  fs.writeFileSync(path.join(sb.dir, 'bin', 'otelq'),
+    `#!/bin/sh\necho "$*" >> '${argsLog}'\ncat <<'JSON'\n${lokiPayload({ prompt: 'ordinary text' })}\nJSON\n`);
+  const r = run(['--loki', '--since', '2'], sb, env);
+  assert.strictEqual(r.status, 0, `${r.stdout}${r.stderr}`);
+  const calls = fs.readFileSync(argsLog, 'utf8').trim().split('\n');
+  assert.strictEqual(calls.length, 2, 'one query per hourly slice');
+  assert.match(calls[0], /--stream --since 70m --until 1h /, 'the width is a fixed slice width');
+  assert.match(calls[1], /--stream --since 70m --until 0h /);
+  assert.ok(!calls.some((c) => /--since \d+h /.test(c)), 'never the distance back to now');
 });
 
 test('a finding reached twice in one run is counted once', { skip }, () => {
@@ -709,6 +736,10 @@ test('a bad argument is a usage error, not a silent pass', { skip }, () => {
   const sb = sandbox();
   assert.strictEqual(run(['--nope'], sb).status, 2);
   assert.strictEqual(run(['--since', 'yesterday'], sb).status, 2);
+  // A flag with no value takes the empty string. The shell version re-read the same flag
+  // forever here, because `shift 2` fails when one argument remains.
+  assert.strictEqual(run(['--since'], sb).status, 2);
+  assert.strictEqual(run(['--session'], sb).status, 2);
   assert.strictEqual(run(['--session', path.join(sb.dir, 'absent.jsonl')], sb).status, 2);
 });
 
@@ -782,10 +813,10 @@ test('--accept-baseline also disarms the banner', { skip }, () => {
 
 // Exit 3 is the one verdict with no other durable trace: a finding lands in the log, but a
 // scan that never ran leaves nothing at all — which is indistinguishable from a clean run.
-test('a scan that could not run records that it could not run', { skip: skipUnless('bash', 'jq') }, () => {
+test('a scan that could not run records that it could not run', { skip: PYTHON ? false : skip }, () => {
   const sb = sandbox();
-  // PATH stays real — emptying it means bash itself cannot be spawned, and the test fails
-  // for a reason that has nothing to do with the scanner. HOME is redirected so the prek
+  // PATH stays real — emptying it means the interpreter itself cannot be found, and the
+  // test fails for a reason that has nothing to do with the scanner. HOME is redirected so the prek
   // cache glob finds nothing either; between them the scanner has no gitleaks to resolve.
   const r = run(['--session', path.join(sb.projects, 'dirty.jsonl')], sb, {
     PATH: '/usr/bin:/bin',
@@ -796,5 +827,5 @@ test('a scan that could not run records that it could not run', { skip: skipUnle
   const [ts, count, why] = fs.readFileSync(sb.pending, 'utf8').trim().split('\t');
   assert.match(ts, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
   assert.strictEqual(count, '0', 'a could-not-evaluate row carries count 0, not a finding count');
-  assert.match(why, /gitleaks|jq/, `the row says what was missing, got: ${why}`);
+  assert.match(why, /gitleaks/, `the row says what was missing, got: ${why}`);
 });

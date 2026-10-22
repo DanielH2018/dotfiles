@@ -7,6 +7,7 @@ extend = "pyproject.toml"
 extend-include = [
   "bin/skill-usage",
   "home/dot_local/bin/executable_claude-rc-resume",
+  "home/dot_local/bin/executable_claude-transcript-scan",
   "home/dot_local/bin/executable_dockq",
   "home/dot_local/bin/executable_dockrun",
   "home/dot_local/bin/executable_ghread",
