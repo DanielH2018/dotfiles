@@ -40,6 +40,14 @@ test('a hook runs under the managed 3.14 with -S -P and its own arguments', { sk
   assert.strictEqual(r.stderr, '');
 });
 
+test('a hook named without a path resolves in the hooks directory', { skip }, () => {
+  const r = spawnSync('bash', [LAUNCHER, 'stop-checks.py'], {
+    encoding: 'utf8',
+    env: { ...process.env, PATH: `${BIN}:${process.env.PATH}`, UV_PYTHON_INSTALL_DIR: MANAGED, GUARD_PYTHON_CACHE: '0', UV_ANSWER: PY },
+  });
+  assert.strictEqual(r.stdout.trim(), `managed -S -P ${path.dirname(LAUNCHER)}/../stop-checks.py`);
+});
+
 test('with no managed 3.14 the hook still runs, under python3, and says so', { skip }, () => {
   const r = launch({ UV_ANSWER: '' });
   assert.strictEqual(r.stdout.trim(), 'python3 /hooks/stop-checks.py --prune');

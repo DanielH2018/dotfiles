@@ -651,7 +651,7 @@
           },
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/lib/run-python.sh ~/.claude/hooks/memory-upkeep.py",
+            "command": "bash ~/.claude/hooks/lib/run-python.sh memory-upkeep.py",
             "timeout": 10
           }
         ]
@@ -661,7 +661,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/lib/run-python.sh ~/.claude/hooks/prune-worktrees.py --prune",
+            "command": "bash ~/.claude/hooks/lib/run-python.sh prune-worktrees.py --prune",
             "timeout": 15
           }
         ]
@@ -831,7 +831,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/lib/run-python.sh ~/.claude/hooks/repeat-failure-guard.py",
+            "command": "bash ~/.claude/hooks/lib/run-python.sh repeat-failure-guard.py",
             "timeout": 5
           }
         ]
@@ -876,7 +876,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/lib/run-python.sh ~/.claude/hooks/stop-checks.py",
+            "command": "bash ~/.claude/hooks/lib/run-python.sh stop-checks.py",
             "timeout": 10
           },
           {

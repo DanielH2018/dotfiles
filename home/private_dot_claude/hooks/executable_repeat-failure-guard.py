@@ -3,7 +3,7 @@
 #   event: PostToolUseFailure
 #   timeout: 5
 #   order: 50
-#   command: bash ~/.claude/hooks/lib/run-python.sh ~/.claude/hooks/repeat-failure-guard.py
+#   command: bash ~/.claude/hooks/lib/run-python.sh repeat-failure-guard.py
 """PostToolUseFailure hook: stop a session after a second identical failure in a turn.
 
 A session that repeats one failing call spins rather than corrects. On 2026-10-10 one

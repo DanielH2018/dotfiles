@@ -3,6 +3,9 @@
 #
 # Usage, as a gen-hooks `command:` line:  bash ~/.claude/hooks/lib/run-python.sh <hook.py> [args]
 #
+# A hook named without a `/` resolves in the hooks directory above lib/. That keeps the
+# `command:` line, which gen-hooks reads to the end of the line, inside ruff's 88 columns.
+#
 # DECIDED: every Python hook runs under uv's managed CPython 3.14 (lib/guard-python.sh), not
 # `#!/usr/bin/env python3`. Three reasons, in order of weight:
 #
@@ -27,6 +30,10 @@
 
 set -u
 dir=${BASH_SOURCE[0]%/*}
+case "${1:-}" in
+  */* | '') ;;
+  *) set -- "$dir/../$1" "${@:2}" ;;
+esac
 # shellcheck source=/dev/null
 if . "${RUN_BOUNDED_LIB:-$dir/run-bounded.sh}" 2>/dev/null && . "$dir/guard-python.sh" 2>/dev/null \
   && guard_python 2; then
