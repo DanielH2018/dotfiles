@@ -215,8 +215,9 @@ const PYTEST_PROJECTS = [
   { root: SHARE, dir: 'claude-guard', deps: ['pytest>=8.0'], env: { PYTHONPATH: '.' }, python: '3.14' },
   // cc-wait runs under the same managed 3.14 (spec: docs/specs/2026-10-04-cc-wait-design.md).
   { root: SHARE, dir: 'cc-wait', deps: ['pytest>=8.0'], env: { PYTHONPATH: '.' }, python: '3.14' },
-  // claude-worktree runs under the system interpreter (the prune-worktrees.py hook is a
-  // bare python3 shebang), so it names no interpreter; its floor is 3.10, not the root's 3.9.
+  // claude-worktree names no interpreter. The prune-worktrees.py hook runs it under the
+  // managed 3.14 (hooks/lib/run-python.sh), but falls back to the system python3 on a host
+  // without one, so its floor stays 3.10, not the root's 3.9.
   { root: SHARE, dir: 'claude-worktree', deps: ['pytest>=8.0'], env: { PYTHONPATH: '.' } },
 ];
 
