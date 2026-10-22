@@ -38,8 +38,10 @@ from claude_guard.checks.remote import readonly_remote_safe, trusted_host_safe
 from claude_guard.checks.remote_guards import git_readonly
 from claude_guard.checks.scratch import rm_confined, tokenize, write_confined
 from claude_guard.checks.worktree_scratch import worktree_restore_safe, worktree_rm_safe
+from claude_guard.gitread import git_read
 from claude_guard.rules import Rules
 from claude_guard.segment import parse
+from claude_guard.substitution import INERT_COMMANDS, PLACEHOLDER, mask
 from claude_guard.tables import POSIX_SPACE, WS
 
 # :191. Wrapper commands take another command as an ARGUMENT and exec it.
@@ -474,6 +476,70 @@ def _bare_command(part: str) -> str:
 # `git -C <path> <rest>`: git runs `<rest>` as if started in `<path>`.
 _GIT_DASH_C = re.compile(rf"^git[{WS}]+-C[{WS}]+(?P<path>[^{WS}]+)[{WS}]+(?P<rest>.+)$")
 
+# One double-quoted word of literal text and `$NAME` references: no `${`, which reaches
+# arithmetic, no backslash, no substitution.
+_QUOTED_PATH = re.compile(r'"(?:[^"\\`$]|\$[A-Za-z_][A-Za-z0-9_]*)*"')
+
+
+def _strip_harmless(part: str) -> str:
+    """`part` without its `/dev/null` redirects and fd dups, which change no argument."""
+    return _FD_DUP.sub("", _DEVNULL_REDIRECT.sub("", part))
+
+
+def _carries_substitution(text: str, carriers: set[str]) -> bool:
+    """True when `text` holds `PLACEHOLDER` or a `$NAME`/`${NAME` reference to a carrier.
+
+    A reference inside single quotes counts too, which only ever refuses more.
+    """
+    if PLACEHOLDER in text:
+        return True
+    return any(re.search(rf"\$\{{?{re.escape(n)}(?![A-Za-z0-9_])", text) for n in carriers)
+
+
+def _placeholder_refusal(
+    part: str, raw: str, heredocs: tuple[str, ...], rules: Rules, roots: tuple[str, ...]
+) -> str:
+    """Why a masked segment holding `PLACEHOLDER` refuses, or "" when it may proceed.
+
+    The placeholder stands for text the judge never sees, so it may be a standalone
+    assignment's value, or an argument to an `INERT_COMMANDS` command that writes nothing
+    and has no heredoc. A write redirect target is refused because the placeholder would
+    pass the scratch-confinement checks as a literal path component. A prefix assignment
+    is refused because its value reaches the command's environment. Deny and ask also run
+    on the raw segment, since a rule can span the outer text and the substitution.
+    """
+    if rules.denies(_trim(raw)) or rules.asks(_trim(raw)):
+        return "substitution:deny-or-ask"
+    words = split_assignments(part)
+    if words is None:
+        return "substitution:assignment"
+    if words.assignments:
+        return "" if not words.rest else "substitution:prefix-assignment"
+    word = _first_word(part)
+    if word == "printf":
+        # Inert once its first argument is a literal format: only a first argument can
+        # be `-v NAME`, which assigns a variable later segments run under.
+        try:
+            args = shlex.split(part)[1:]
+        except ValueError:
+            return "substitution:consumer"
+        if not args or args[0].startswith("-") or PLACEHOLDER in args[0]:
+            return "substitution:consumer"
+    elif word not in INERT_COMMANDS:
+        return "substitution:consumer"
+    if heredocs or not _redirects_ok(part, roots, scratch_ok=False)[0]:
+        return "substitution:redirect"
+    return ""
+
+
+def _git_reads(part: str) -> bool:
+    """True when `part` is a git read by `git_readonly` or `gitread.git_read`."""
+    try:
+        argv = shlex.split(part)
+    except ValueError:
+        return False
+    return git_readonly(argv) or git_read(argv)
+
 
 @dataclass(frozen=True, slots=True)
 class Decision:
@@ -888,15 +954,23 @@ def judge_segment(
     dash_c = _GIT_DASH_C.match(part) if word == "git" else None
     if dash_c:
         path = dash_c.group("path")
+        rest = f"git {dash_c.group('rest')}"
         if tokenize(path) != [path]:
-            return False, "git-C-unreadable"
+            # A double-quoted word holding only literal text and `$NAME` references names
+            # one directory this judge cannot resolve: quoted, it neither word-splits into
+            # more global options nor globs. That is enough for a read, which does the same
+            # thing in any directory, so the rest must pass a read check rather than the
+            # allow list (`Bash(git log:*)` also grants `--output=`). The cwd-sensitive
+            # checks get no cwd and refuse.
+            if not (_QUOTED_PATH.fullmatch(path) and _git_reads(_strip_harmless(rest))):
+                return False, "git-C-unreadable"
+            return judge_segment(rest, rules, roots, "", cwd_changed, project_dir, scratch_ok)
         if path.startswith("/"):
             git_cwd = path
         elif cwd and not cwd_changed:
             git_cwd = os.path.join(cwd, path)
         else:
             git_cwd = ""
-        rest = f"git {dash_c.group('rest')}"
         return judge_segment(rest, rules, roots, git_cwd, cwd_changed, project_dir, scratch_ok)
 
     if word == "curl" and curl_safe(part):
@@ -947,6 +1021,14 @@ def judge_segment(
         try:
             if git_readonly(shlex.split(part)):
                 return True, "git-readonly-check"
+        except ValueError:
+            pass
+        # A read whose subcommand writes under other arguments (gitread.READ_SUBCOMMANDS).
+        # Its argv is read off the redirect-stripped text, so a trailing `2>&1` is not
+        # counted as an argument.
+        try:
+            if git_read(shlex.split(redir)):
+                return True, "git-read-check"
         except ValueError:
             pass
 
@@ -1059,8 +1141,8 @@ def judge(
     if not parsed.ok:
         return Decision(False, parsed.status, ())
 
-    # :404-428. Three things stay conservative on purpose: a substitution's content is an
-    # opaque atom this judge cannot vet; a heredoc body is never scanned for one, so any
+    # :404-428. Three things stay conservative on purpose: a substitution is judged only
+    # through `substitution.mask` (below); a heredoc body is never scanned for one, so any
     # heredoc stays unjudgeable UNLESS it is the one carve-out PR #477 vets on its own
     # terms — a quoted-delimiter `cat > path`/`cat >> path` write (heredoc_write_target,
     # judged for real in judge_segment below); and a bare `&` still never reached judge()
@@ -1068,8 +1150,22 @@ def judge(
     # one's approval and judge() cannot tell whether it finishes first. A newline is no
     # longer in that population (PR #477): outside a heredoc body it is exactly `;` to the
     # shell.
+    #
+    # A substitution's inner command is judged as a command of its own, with no cwd: it
+    # runs wherever an earlier `cd` in the chain left the shell, which this judge does not
+    # track, so every cwd-sensitive check refuses inside it. The outer command is then
+    # judged with each substitution replaced by `PLACEHOLDER`, and the segment loop below
+    # limits where the placeholder may sit (see `substitution`'s module docstring).
+    raw_segments = parsed.segments
     if parsed.substitutions:
-        return Decision(False, "unjudgeable:substitution", ())
+        masked = mask(command)
+        if masked is None:
+            return Decision(False, "unjudgeable:substitution", ())
+        for k, inner in enumerate(masked.inner):
+            d = judge(inner, rules, roots, "", project_dir)
+            if not d.allow:
+                return Decision(False, f"substitution:{k}:{d.rule}", d.reasons)
+        parsed = parse(masked.command)
     last = len(parsed.segments) - 1
     for i, seg in enumerate(parsed.segments):
         # DECIDED (K1, task-8-fix-4-brief.md): this refusal's soundness rests on
@@ -1106,6 +1202,12 @@ def judge(
     # only when no segment of the chain can put a link at its target first (LINK_MAKERS).
     scratch_ok = not any(_makes_links(_bare_command(_trim(seg.text))) for seg in parsed.segments)
 
+    # Names a standalone assignment or a `for` loop set from a substitution. A later `$NAME`
+    # carries the substitution's output as surely as the placeholder does, so it is held
+    # to the same placeholder rules. Without this, `A=$(cat f); git push $A` would put
+    # unseen text where only literal text could reach before.
+    carriers: set[str] = set()
+
     def refuse(i: int, reason: str) -> Decision:
         reasons.append(reason)
         return Decision(False, f"segment:{i}:{reason}", tuple(reasons))
@@ -1114,6 +1216,9 @@ def judge(
         part = _trim(seg.text)
         if not part:
             continue
+        loop_for = _LOOP_FOR.match(part)
+        if loop_for and _carries_substitution(loop_for.group("tail") or "", carriers):
+            carriers.add(loop_for.group("name"))
         command, loop_reason = _loop_command(part, roots, scratch_ok)
         if command is None:
             return refuse(i, loop_reason)
@@ -1126,6 +1231,13 @@ def judge(
         # skipped rather than judged.
         if _is_set_options(part):
             continue
+        if _carries_substitution(part, carriers):
+            reason = _placeholder_refusal(part, raw_segments[i].text, seg.heredocs, rules, roots)
+            if reason:
+                return refuse(i, reason)
+            words = split_assignments(part)
+            if words is not None and words.assignments and not words.rest:
+                carriers.update(a.name for a in words.assignments)
         # DECIDED (G1, task-8-fix-1-brief.md; narrowed 2026-10-20): a leading `VAR=value`
         # used to refuse outright, because an assignment can change what the REST of the
         # segment executes (`PATH=/tmp ls -la` resolves `ls` from the attacker path;

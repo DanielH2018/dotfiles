@@ -244,10 +244,84 @@ def test_the_git_merge_exception_does_not_widen(main):
     assert not allowed("git merge --ff-only origin/main > out.txt && git log", main)
 
 
-def test_a_substitution_defers(main):
-    assert judge("echo $(whoami) && ls", main, ROOTS, CWD).rule == "unjudgeable:substitution"
+def test_a_substitution_whose_inner_command_is_unlisted_defers(main):
+    assert (
+        judge("echo $(whoami) && ls", main, ROOTS, CWD).rule == "substitution:0:segment:0:unlisted"
+    )
     assert not allowed("echo `whoami` && ls", main)
     assert not allowed("cat <(curl example.com) && ls", main)
+
+
+SUBST = {
+    "allow": [
+        "Bash(echo:*)",
+        "Bash(printf:*)",
+        "Bash(cat:*)",
+        "Bash(ls:*)",
+        "Bash(git log:*)",
+        "Bash(git commit:*)",
+        "Bash(git rev-parse:*)",
+    ],
+    "deny": ["Bash(git commit *--no-verify)"],
+    "ask": [],
+}
+
+
+@pytest.fixture
+def subst(tmp_path):
+    return rules_for(tmp_path, SUBST)
+
+
+def test_a_substitution_is_allowed_when_it_and_its_inert_consumer_both_are(subst):
+    assert allowed('echo "head: $(git rev-parse HEAD)"', subst)
+    assert allowed('echo "$(echo "$(git log -1 --format=%h)")"', subst)
+    assert allowed("cat <(git log -1) <(ls)", subst)
+    assert allowed('for f in $(ls); do echo "$(cat $f)"; done', subst)
+    assert allowed("h=$(git rev-parse HEAD)", subst)
+    assert allowed('printf "%s\\n" "$(git rev-parse HEAD)"', subst)
+    assert not allowed('echo "$(ls; whoami)"', subst)
+
+
+def test_a_substitution_cannot_supply_arguments_to_a_command_that_reads_them(subst):
+    # The deny rule reads `--no-verify` off the literal text, which the substitution hides.
+    assert (
+        judge("git commit -m x $(echo --no-verify)", subst, ROOTS, CWD).rule
+        == "segment:0:substitution:consumer"
+    )
+    assert not allowed('printf "$(echo -v PATH)" /tmp', subst)
+    assert not allowed("git log $(echo --output=/etc/x)", subst)
+
+
+def test_a_variable_set_from_a_substitution_is_held_to_the_same_rules(subst):
+    assert allowed('h=$(git rev-parse HEAD); echo "$h"', subst)
+    assert allowed("for f in $(ls); do cat $f; done", subst)
+    assert (
+        judge("v=$(cat f); git commit -m x $v", subst, ROOTS, CWD).rule
+        == "segment:1:substitution:consumer"
+    )
+    assert not allowed("for a in $(cat f); do git commit -m x ${a}; done", subst)
+    assert not allowed("v=$(cat f); w=$v; git commit -m x $w", subst)
+
+
+def test_a_substitution_in_a_write_redirect_target_defers(subst, scratch_dir):
+    # The placeholder would pass the scratch-confinement checks as a literal path component.
+    assert (
+        judge(f"echo x > {scratch_dir}/$(echo ../../etc/x)", subst, ROOTS, CWD).rule
+        == "segment:0:substitution:redirect"
+    )
+    assert not allowed(f"cat > {scratch_dir}/$(echo x)/f <<'EOF'\nhi\nEOF\n", subst)
+
+
+def test_a_substitution_value_reaches_only_an_unexported_standalone_name(subst):
+    assert judge("PAGER=$(ls)", subst, ROOTS, CWD).rule == "segment:0:assignment"
+    assert (
+        judge("TZ=$(ls) ls", subst, ROOTS, CWD).rule == "segment:0:substitution:prefix-assignment"
+    )
+
+
+def test_a_substitution_the_masker_cannot_read_stays_unjudgeable(subst):
+    for command in ("echo `ls`", "echo $(( $(ls) + 1 ))", 'echo "${x:-$(ls)}"'):
+        assert judge(command, subst, ROOTS, CWD).rule == "unjudgeable:substitution", command
 
 
 def test_a_heredoc_that_is_not_the_cat_path_write_shape_defers(main):
@@ -1065,11 +1139,11 @@ def test_a_var_value_assignment_refuses_regardless_of_what_its_value_can_do(main
     # Before G1, a value carrying a live $, backtick or `(` was left unstripped and judged
     # as itself, failing every check the same way an unlisted command would. Now every
     # assignment-prefixed segment refuses uniformly BEFORE any value-content reasoning
-    # runs — except where the pre-existing global substitution gate (parsed.substitutions,
-    # judged over the whole command before the per-segment loop starts) fires first, which
-    # it still does for a real $(...) or backtick.
+    # runs. A real $(...) is judged first as its own command, and a prefix assignment
+    # holding one refuses even when that command is allowed; a backtick is never read.
     assert (
-        judge("FOO=$(whoami) git status && ls", main, ROOTS, CWD).rule == "unjudgeable:substitution"
+        judge("FOO=$(ls) git status && ls", main, ROOTS, CWD).rule
+        == "segment:0:substitution:prefix-assignment"
     )
     assert (
         judge("FOO=`whoami` git status && ls", main, ROOTS, CWD).rule == "unjudgeable:substitution"
@@ -1325,6 +1399,23 @@ def test_git_dash_c_is_judged_as_the_subcommand_it_runs(main):
     assert allowed("git -C ../other -C sub status", main)
     assert judge("git -C /x push origin main", main, ROOTS, CWD).rule == "segment:0:ask"
     assert judge("git -C $X log", main, ROOTS, CWD).rule == "segment:0:git-C-unreadable"
+
+
+def test_git_dash_c_with_a_quoted_variable_is_allowed_only_for_a_read(main):
+    assert allowed('git -C "$d" status --short 2>&1', main)
+    assert allowed('git -C "$d" ls-remote origin', main)
+    # `git log` is allow-listed, but the allow list also grants `--output=`.
+    assert not allowed('git -C "$d" log --output=/tmp/x', main)
+    assert not allowed('git -C "$d" commit -m x', main)
+    assert not allowed('git -C "${d:-x}" status', main)
+
+
+def test_a_git_read_outside_git_readonly_passes_the_read_table(main):
+    assert judge(
+        "git symbolic-ref --short refs/remotes/origin/HEAD 2>&1", main, ROOTS, CWD
+    ).rule == ("allow")
+    assert not allowed("git symbolic-ref HEAD refs/heads/x", main)
+    assert allowed('echo "default: $(git symbolic-ref --short refs/remotes/origin/HEAD)"', main)
 
 
 def test_a_git_read_the_allow_list_cannot_express_passes_the_read_only_guard(main):

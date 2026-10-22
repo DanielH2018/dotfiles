@@ -54,7 +54,16 @@ ask, or when the whole command passes one of `checks/remote.py`'s `readonly_remo
 `checks/git_reset.py`'s `clean_reset_safe()`. Before a segment is judged, the judge reads
 past a loop keyword (`for … in`, `while`, `until`, `do`, `done`) and a literal leading
 `NAME=value` whose name `assignments.py` allows, and `git -C <path> <sub>` is judged as
-`git <sub>` run in `<path>`. A redirect is found on the quote-masked text, so a quoted
+`git <sub>` run in `<path>`. A path that is one double-quoted word of literal text and
+`$NAME` references (`git -C "$d" status`) is admitted only for a read. A git read the allow
+list cannot express safely goes through `gitread.py`, a table of subcommands that read with
+some arguments and write with others (`symbolic-ref`, `ls-remote`, `range-diff`,
+`merge-base`). A `$( )`, `<( )` or `>( )` is judged as a command of its own, with no cwd,
+and `substitution.py` replaces it in the outer command with a placeholder. The placeholder,
+and any variable assigned from it, may stand only in a standalone assignment, a `for` word
+list, an argument to a command whose arguments cannot write or exec (`echo`, `cat`, `grep`,
+`diff`, …), or a `printf` argument after a literal format. A backtick, or a substitution
+inside `$(( ))` or `${ }`, stays `unjudgeable:substitution`. A redirect is found on the quote-masked text, so a quoted
 `>` is an argument, and a `>`/`>>` into a scratch root is allowed when
 `checks/scratch.py`'s `write_confined()` vets the target and no segment of the chain can
 place a link there first. The two remote checks also run per segment,
