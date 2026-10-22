@@ -24,6 +24,11 @@ constants and validated values:
     `--input` and graphql are never sent.
   - `--out` writes only under a scratch root, and refuses a symlink or hard link
     as the target, so it replaces `> file` without becoming a write primitive.
+  - gh is found in fixed system directories, never through the caller's $PATH,
+    and its environment drops GH_HOST, GH_CONFIG_DIR, the enterprise tokens and
+    every DYLD_/LD_ variable, with HOME pinned to the account's home. So a
+    prefix such as `PATH=./bin ghread ...` or `GH_HOST=x ghread ...` cannot
+    choose the binary or aim the token at another host.
 
   ghread pr view 123 -R owner/repo --json title,state
   ghread pr comments 123 -R owner/repo --kind issue
@@ -40,13 +45,25 @@ from __future__ import annotations
 
 import argparse
 import os
+import pwd
 import re
-import shutil
 import stat
 import subprocess
 import sys
 
 PROG = "ghread"
+
+# Where gh is looked up. Not $PATH: a caller-supplied PATH would let a repo file
+# named `gh` run unsandboxed under this rule.
+GH_DIRS = ("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin")
+_DROP_ENV = (
+    "GH_HOST",
+    "GH_CONFIG_DIR",
+    "GH_ENTERPRISE_TOKEN",
+    "GITHUB_ENTERPRISE_TOKEN",
+    "DYLD_",
+    "LD_",
+)
 
 # A selector is a PR or issue number, a branch name, or a github.com URL. The
 # first character class is what keeps a value from ever reading as a flag.
@@ -459,25 +476,34 @@ BUILDERS = {
 }
 
 
+def find_gh() -> str:
+    for d in GH_DIRS:
+        path = os.path.join(d, "gh")
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    raise GhreadError(f"gh is not in {', '.join(GH_DIRS)}")
+
+
+def gh_env() -> dict:
+    env = {k: v for k, v in os.environ.items() if not k.startswith(_DROP_ENV)}
+    env["HOME"] = pwd.getpwuid(os.getuid()).pw_dir
+    env["PATH"] = ":".join(GH_DIRS + ("/bin", "/usr/sbin", "/sbin"))
+    # gh pages to $PAGER on a terminal and prompts on stdin; neither belongs in
+    # a non-interactive reader.
+    env.update(GH_PAGER="cat", GH_PROMPT_DISABLED="1", GH_NO_UPDATE_NOTIFIER="1")
+    return env
+
+
 def main(argv: list[str] | None = None) -> int:
     ns = _parser().parse_args(argv)
     try:
         gh_args = BUILDERS[ns.cmd](ns)
-        gh = shutil.which("gh")
-        if gh is None:
-            raise GhreadError("gh is not on PATH")
+        gh = find_gh()
         out_fd = open_out(ns.out) if ns.out else None
     except GhreadError as exc:
         print(f"{PROG}: {exc}", file=sys.stderr)
         return 2
-    # gh pages to $PAGER on a terminal and prompts on stdin; neither belongs in
-    # a non-interactive reader.
-    env = {
-        **os.environ,
-        "GH_PAGER": "cat",
-        "GH_PROMPT_DISABLED": "1",
-        "GH_NO_UPDATE_NOTIFIER": "1",
-    }
+    env = gh_env()
     try:
         return subprocess.run(
             [gh, *gh_args],

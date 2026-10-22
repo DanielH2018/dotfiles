@@ -2,8 +2,10 @@
 // ghread carries a blanket `Bash(ghread:*)` allow rule on the unsandboxed path, and that
 // rule is defensible only while every gh invocation is built from constants: GET only, a
 // field only ever as a raw query parameter, no body and no graphql, no caller text that can
-// become a flag, and an --out that cannot leave scratch. A fake `gh` first on PATH prints the argv it was given, so each
-// test asserts the exact invocation, and an empty stdout proves gh was never started.
+// become a flag, an --out that cannot leave scratch, and a gh the caller's environment
+// cannot choose. ghread looks gh up in fixed directories, never $PATH, so the tests load it
+// as a module and point GH_DIRS at a fake `gh` that prints the argv it was given. Each test
+// asserts the exact invocation, and an empty stdout proves gh was never started.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
@@ -25,14 +27,33 @@ try {
 
 const DIR = scratch(os.tmpdir(), 'ghread-');
 const BIN = path.join(DIR, 'bin');
+const DECOY = path.join(DIR, 'decoy');
 fs.mkdirSync(BIN);
-fs.writeFileSync(path.join(BIN, 'gh'),
-  '#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify(process.argv.slice(2)));\n');
-fs.chmodSync(path.join(BIN, 'gh'), 0o755);
+fs.mkdirSync(DECOY);
+// The absolute node path in the shebang matters: ghread pins gh's PATH to system
+// directories, where `env node` would not find an fnm-managed node.
+fs.writeFileSync(path.join(BIN, 'gh'), `#!${process.execPath}
+if (process.env.FAKE_GH_ENV) {
+  process.stdout.write(JSON.stringify({ host: process.env.GH_HOST ?? null, path: process.env.PATH }));
+} else {
+  process.stdout.write(JSON.stringify(process.argv.slice(2)));
+}
+`);
+fs.writeFileSync(path.join(DECOY, 'gh'), `#!${process.execPath}\nprocess.stdout.write('DECOY');\n`);
+for (const dir of [BIN, DECOY]) fs.chmodSync(path.join(dir, 'gh'), 0o755);
+
+const SEAM = `
+import importlib.machinery, importlib.util, sys
+loader = importlib.machinery.SourceFileLoader('ghread', sys.argv[1])
+mod = importlib.util.module_from_spec(importlib.util.spec_from_loader('ghread', loader))
+loader.exec_module(mod)
+mod.GH_DIRS = (sys.argv[2],)
+sys.exit(mod.main(sys.argv[3:]))
+`;
 
 function ghread(args, env = {}) {
-  return run('python3', [GHREAD, ...args], {
-    env: { ...process.env, PATH: `${BIN}:${process.env.PATH}`, TMPDIR: DIR, ...env },
+  return run('python3', ['-c', SEAM, GHREAD, BIN, ...args], {
+    env: { ...process.env, TMPDIR: DIR, ...env },
   });
 }
 
@@ -146,4 +167,18 @@ test('--out refuses a symlink or a hard link as the target', { skip }, (t) => {
     assert.strictEqual(r.stdout, '');
   }
   assert.strictEqual(fs.readFileSync(victim, 'utf8'), 'keep');
+});
+
+test('the caller cannot choose gh through PATH or aim it at another host', { skip }, () => {
+  // A gh earlier on PATH is never run: ghread looks only in its fixed directories.
+  const viaPath = ghread(['pr', 'view', '1'], { PATH: `${DECOY}:${process.env.PATH}` });
+  assert.strictEqual(viaPath.code, 0, viaPath.stderr);
+  assert.notStrictEqual(viaPath.stdout, 'DECOY');
+  assert.deepStrictEqual(JSON.parse(viaPath.stdout), ['pr', 'view', '--', '1']);
+  const env = ghread(['pr', 'view', '1'],
+    { FAKE_GH_ENV: '1', GH_HOST: 'evil.example', PATH: `${DECOY}:${process.env.PATH}` });
+  assert.strictEqual(env.code, 0, env.stderr);
+  const seen = JSON.parse(env.stdout);
+  assert.strictEqual(seen.host, null);
+  assert.ok(!seen.path.includes(DECOY), seen.path);
 });
