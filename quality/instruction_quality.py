@@ -37,7 +37,7 @@ WEIGHTS = {
 SECURITY_GATE = 70  # security below this fails verify regardless of composite
 DEFAULT_MIN_SCORE = 75
 
-# "AI-writing" / vague-filler tells, reused from the vault /lint style rules.
+# "AI-writing" / vague-filler tells, reused from the vault /wiki-lint style rules.
 FILLER = re.compile(
     r"\b(leverage|seamless(ly)?|robust|cutting[- ]edge|unlock|elevate|delve into|"
     r"navigate the complexities|game[- ]changer|plays? a (vital|crucial|pivotal) role|"

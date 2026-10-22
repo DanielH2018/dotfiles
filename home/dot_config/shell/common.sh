@@ -127,7 +127,7 @@ if getent passwd claude >/dev/null 2>&1 && [ "$(id -un)" != claude ]; then
   }
 fi
 
-# --- Vault (LLM Wiki) location for /lint, /healthcheck, /rebuild ---
+# --- Vault (LLM Wiki) location for /wiki-lint, /healthcheck, /rebuild ---
 # The vault lives on the Windows side under WSL; other machines don't have it. Export the var
 # only when a candidate path exists, so this is a clean no-op elsewhere (the vault skills skip
 # when CLAUDE_VAULT_DIR is unset/absent).
@@ -374,7 +374,7 @@ alias ..='cd ..'
 alias ...='cd ../..'
 command -v ncdu >/dev/null 2>&1 && alias duu='ncdu .'
 mkcd() { mkdir -p -- "$1" && cd -- "$1" || return; }
-# Jump to the Obsidian vault. Not CLAUDE_VAULT_DIR: that points at the LLM Wiki that /lint and
+# Jump to the Obsidian vault. Not CLAUDE_VAULT_DIR: that points at the LLM Wiki that /wiki-lint and
 # /healthcheck rewrite in place (index.md + frontmatter), a different tree from the personal
 # vault — pointing it here would aim those commands at the wrong notes. Override with
 # OBSIDIAN_VAULT_DIR on a machine that keeps the vault elsewhere.
