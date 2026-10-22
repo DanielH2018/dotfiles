@@ -4,6 +4,7 @@
 #   matcher: Skill|Agent|Task
 #   timeout: 10
 #   order: 100
+#   command: bash ~/.claude/hooks/lib/run-python.sh skill-usage-log.py
 # Fire-count logging: nothing recorded which of the skills and agents under
 # private_dot_claude/{skills,agents} ever actually fire, so a scaffolding-
 # delete-pass had no evidence to weigh a removal against. Both "Agent" and
