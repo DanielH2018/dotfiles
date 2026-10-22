@@ -14,6 +14,7 @@ extend-include = [
   "home/dot_local/bin/executable_jsonq",
   "home/dot_local/bin/executable_otel-sweep",
   "home/dot_local/bin/executable_otelq",
+  "home/dot_local/bin/executable_retention-sweep",
   "home/dot_local/bin/executable_stdio-blocking",
   "home/dot_local/bin/executable_streamdeck-usb-reset",
   "home/dot_local/bin/executable_tq",

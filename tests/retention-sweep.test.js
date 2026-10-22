@@ -1,5 +1,5 @@
 // Tests for M12 slices 1-2: the retention manifest data file + the sweeper
-// (executable_retention-sweep).
+// (executable_retention-sweep, a single-file Python script).
 //
 // Slice 1's guarantee was that no delete code path existed at all, asserted structurally.
 // Slice 2 introduces exactly one, so the structural assertions change shape rather than
@@ -25,7 +25,7 @@ const { srcPath } = require('./lib/paths');
 const SWEEP = srcPath('dot_local', 'bin', 'executable_retention-sweep');
 const MANIFEST = srcPath('private_dot_claude', 'retention-manifest.json');
 
-const skip = skipUnless('bash', 'jq');
+const skip = skipUnless('python3');
 
 // Every fixture manifest is written into its own scratch root, so that root is also the
 // right sandbox for everything else the sweeper touches.
@@ -40,7 +40,7 @@ const skip = skipUnless('bash', 'jq');
 // cannot reach outside the scratch directory.
 function runSweep(manifestPath, args = [], extraEnv = {}) {
   const home = path.dirname(manifestPath);
-  return execFileSync('bash', [SWEEP, ...args], {
+  return execFileSync('python3', [SWEEP, ...args], {
     env: {
       ...process.env,
       HOME: home,
@@ -72,105 +72,107 @@ const manifestFile = (root, rows) => {
 
 // --- Structural no-delete guarantee -----------------------------------------------
 
+// The script's code with its module docstring, other triple-quoted strings and `#` comments
+// blanked, so a structural assertion scans what runs and not the prose around it.
 const codeOf = (file) => fs.readFileSync(file, 'utf8')
-  .split('\n').slice(1)
+  .split('\n').slice(1).join('\n')
+  .replace(/"""[\s\S]*?"""/g, '')
+  .split('\n')
   .map((line) => line.replace(/#.*/, ''))
   .join('\n');
 
-test('removal is exactly two rm forms plus rmdir', () => {
+// A top-level `def name(...)`, from its signature to the next top-level statement.
+const defOf = (code, name) => {
+  const m = code.match(new RegExp(`^def ${name}\\([\\s\\S]*?(?=^\\S)`, 'm'));
+  assert.ok(m, `${name} function not found`);
+  return { body: m[0], start: m.index, end: m.index + m[0].length };
+};
+
+test('removal is exactly one file unlink, one tree remove, plus rmdir', () => {
   const codeOnly = codeOf(SWEEP);
 
-  // Exactly two rm call sites — the file form and the directory form — both with `--`, so
-  // a dash-leading name can never be read as a flag. Rotation's generation drop is a mv
-  // overwrite, not a delete (see the next test), so this count is unaffected by it.
-  const rms = codeOnly.match(/\brm\s+[^\n]*/g) || [];
-  assert.strictEqual(rms.length, 2, `expected exactly two rm call sites, found ${rms.length}: ${rms.join(' | ')}`);
-  assert.ok(rms.some((r) => r.startsWith('rm -rf -- "$f"')), 'the directory form must be rm -rf -- "$f"');
-  assert.ok(rms.some((r) => r.startsWith('rm -f -- "$f"')), 'the file form must be rm -f -- "$f"');
+  // Exactly two deletion call sites -- the file form and the directory form. Rotation's
+  // generation drop is an os.replace overwrite, not a delete (see the next test), so this
+  // count is unaffected by it.
+  const unlinks = codeOnly.match(/\bos\.(unlink|remove|removedirs)\(/g) || [];
+  assert.deepStrictEqual(unlinks, ['os.unlink('], `expected exactly one file-delete call site, found ${unlinks.join(' | ')}`);
+  const trees = codeOnly.match(/\bshutil\.rmtree\(/g) || [];
+  assert.strictEqual(trees.length, 1, `expected exactly one recursive-remove call site, found ${trees.length}`);
+  assert.match(defOf(codeOnly, 'remove_file').body, /os\.unlink\(path\)/, 'the file form must unlink the one path it is given');
+  assert.match(defOf(codeOnly, 'remove_tree').body, /shutil\.rmtree\(path\b/, 'the directory form must remove the one path it is given');
 
   // The empty-dir rule must use rmdir, which refuses a non-empty directory in the kernel
   // rather than trusting an emptiness check that could race a writer.
-  assert.match(codeOnly, /\brmdir "\$f"/, 'prune-empty-dir must use rmdir, not rm -r');
+  assert.match(codeOnly, /\bos\.rmdir\(f\)/, 'prune-empty-dir must use rmdir, not a recursive remove');
+
+  // Nothing is delegated to another process, so no rm/mv/tail can hide behind a shell.
+  assert.doesNotMatch(codeOnly, /\bsubprocess\b|\bos\.system\b|\bos\.exec|\bos\.popen\b/, 'the sweeper must not shell out');
 });
 
-// Slice 3 deferred rotate/truncate entirely — no `mv`/`tail -n` anywhere in the source.
-// This slice implements them, so the guarantee narrows rather than disappears: the
-// primitives may exist, but only inside the functions that implement
-// rename-then-create-fresh, never reachable from the removal path or anywhere else.
-// write_measurements (slice 4's measurement write-back) joins rotate_by_size and
-// truncate_lines_file here for the same reason it joined them in the source: it is a
-// third legitimate mv, not a leak.
-test('rotate/truncate/measure primitives (mv, tail -n) exist only inside their own functions', () => {
+// Slice 3 deferred rotate/truncate entirely. Slice 4 implements them, so the guarantee
+// narrows rather than disappears: the rename primitive may exist, but only inside the
+// functions that implement rename-then-create-fresh, never reachable from the removal path
+// or anywhere else. write_measurements (slice 4's measurement write-back) joins
+// rotate_by_size and truncate_lines_file here for the same reason it joined them in the
+// source: it is a third legitimate rename, not a leak.
+test('rotate/truncate/measure primitives (os.replace, tail selection) exist only inside their own functions', () => {
   const codeOnly = codeOf(SWEEP);
 
-  const extractFn = (name) => {
-    const at = codeOnly.indexOf(`${name}() {`);
-    assert.ok(at > -1, `${name} function not found`);
-    const start = codeOnly.indexOf('{', at);
-    let depth = 0, i = start;
-    for (; i < codeOnly.length; i += 1) {
-      if (codeOnly[i] === '{') depth += 1;
-      else if (codeOnly[i] === '}') { depth -= 1; if (depth === 0) break; }
-    }
-    return { body: codeOnly.slice(start, i + 1), start: at, end: i + 1 };
-  };
-
-  const rotateFn = extractFn('rotate_by_size');
-  const truncateFn = extractFn('truncate_lines_file');
-  const measureFn = extractFn('write_measurements');
+  const rotateFn = defOf(codeOnly, 'rotate_by_size');
+  const truncateFn = defOf(codeOnly, 'truncate_lines_file');
+  const measureFn = defOf(codeOnly, 'write_measurements');
   assert.ok(rotateFn.start < truncateFn.start, 'rotate_by_size must be defined before truncate_lines_file');
   assert.ok(truncateFn.start < measureFn.start, 'truncate_lines_file must be defined before write_measurements');
 
-  assert.match(rotateFn.body, /\bmv\b/, 'rotate_by_size must use mv for rename-then-create-fresh');
-  assert.doesNotMatch(rotateFn.body, /\btail\s+-n\b/, 'rotate_by_size has no business reading lines');
-  assert.match(truncateFn.body, /\btail\s+-n\b/, 'truncate_lines_file must use tail -n to select the kept lines');
-  assert.match(truncateFn.body, /\bmv\b/, 'truncate_lines_file must rename the temp file atomically over the original');
-  assert.match(measureFn.body, /\bmv\b/, 'write_measurements must rename the temp file atomically over the measurements file');
-  assert.doesNotMatch(measureFn.body, /\btail\s+-n\b/, 'write_measurements has no business reading lines');
+  assert.match(rotateFn.body, /\bos\.replace\(/, 'rotate_by_size must rename for rename-then-create-fresh');
+  assert.doesNotMatch(rotateFn.body, /_tail_offset\(/, 'rotate_by_size has no business reading lines');
+  assert.match(truncateFn.body, /_tail_offset\(/, 'truncate_lines_file must select the kept lines with the tail helper');
+  assert.match(truncateFn.body, /\bos\.replace\(tmp, f\)/, 'truncate_lines_file must rename the temp file atomically over the original');
+  assert.match(measureFn.body, /\bos\.replace\(tmp, out\)/, 'write_measurements must rename the temp file atomically over the measurements file');
+  assert.doesNotMatch(measureFn.body, /_tail_offset\(/, 'write_measurements has no business reading lines');
 
   // Outside these three functions, none of the primitives that would let a rule rewrite a
   // file in place may appear. "truncate-lines"/"rotate-size" are rule-name literals, not
-  // the primitive itself, so they are stripped before scanning for leaks.
-  const outside = (codeOnly.slice(0, rotateFn.start)
-    + codeOnly.slice(rotateFn.end, truncateFn.start)
-    + codeOnly.slice(truncateFn.end, measureFn.start)
-    + codeOnly.slice(measureFn.end))
+  // the primitive itself, so they are stripped before scanning for leaks. copyfileobj, the
+  // one allowed copy, lives inside truncate_lines_file and is cut out with it.
+  const outside = [measureFn, truncateFn, rotateFn]
+    .sort((a, b) => b.start - a.start)
+    .reduce((acc, fn) => acc.slice(0, fn.start) + acc.slice(fn.end), codeOnly)
     .replace(/truncate-lines/g, '').replace(/rotate-size/g, '');
-  const primitive = /\btruncate\b|\bmv\b|\bshred\b|\bdd\b|\bsed\s+-i\b|\btail\s+-n\b|:>\s*\S/i;
+  const primitive = /\bos\.(replace|rename|truncate|ftruncate|link|symlink|write|pwrite|sendfile)\b|\bshutil\.(move|copy\w*)\b|\.truncate\(/;
   const leaked = outside.match(primitive);
   assert.strictEqual(leaked, null, `found a rotate/truncate/measure primitive outside its function: ${leaked && leaked[0]}`);
 });
 
 // Recursive removal is the sharpest edge slice 3 adds, so its guard is pinned in source
-// as well as in behaviour: rm -rf must be unreachable without contained() having passed.
+// as well as in behaviour: remove_tree must be unreachable without contained() having passed.
 test('recursive removal is gated behind the containment check', () => {
   const codeOnly = codeOf(SWEEP);
-  const guardAt = codeOnly.indexOf('if ! contained "$prefix" "$f"');
-  const rmAt = codeOnly.indexOf('rm -rf -- "$f"');
+  const guardAt = codeOnly.indexOf('if not contained(prefix, f)');
+  const rmAt = codeOnly.indexOf('remove_tree(f)');
   assert.ok(guardAt > -1, 'the containment guard is missing');
-  assert.ok(rmAt > guardAt, 'rm -rf must come after the containment guard, not before it');
-  assert.match(codeOnly, /\[ -L "\$entry" \] && return 1/, 'contained() must refuse a symlink outright');
+  assert.ok(rmAt > guardAt, 'remove_tree must come after the containment guard, not before it');
+  assert.match(defOf(codeOnly, 'contained').body, /if os\.path\.islink\(entry\):\s*return False/, 'contained() must refuse a symlink outright');
 });
 
-test('the only files the sweeper writes are the run marker, the manifest write-back, and truncate-lines\' own temp file', () => {
+test('the only files the sweeper writes are the run marker, the measurements file, the lock, and the rotate/truncate temp files', () => {
   const codeOnly = codeOf(SWEEP);
-  const redirects = codeOnly.match(/(?<!-)\d*>>?(&\d+|\s*\S+)/g) || [];
-  // Allowed: /dev/null, an fd dup or close, the flock descriptor (a zero-byte mutex, not
-  // data), the run marker, the manifest write-back's own temp file (rename-then-replace,
-  // same shape as truncate_lines_file's), and truncate_lines_file's own "$tmp" -- written
-  // once, in the same directory as the file it will atomically replace, never left behind
-  // on success.
-  const bad = redirects.filter((r) => !/\/dev\/null/.test(r)
-    && !/^\d*>>?&[\d-]/.test(r)
-    && !/\$LOCK/.test(r)
-    && !/\$MARKER/.test(r)
-    && !/"\$tmp"/.test(r)
-    && !/"\$MANIFEST\.tmp\.\$\$"/.test(r));
-  assert.deepStrictEqual(bad, [], 'the marker, the manifest write-back temp file, and the truncate temp file are the only real files the sweeper may write');
+  const writes = [...codeOnly.matchAll(/(?<![.\w])open\(\s*([^,]+?)\s*,\s*"([^"]*)"/g)]
+    .filter(([, , mode]) => /[wax+]/.test(mode))
+    .map(([, target]) => target);
+  // Allowed: truncate_lines_file's own `tmp` and the measurements write-back's `tmp`
+  // (rename-then-replace: written once in the same directory as the file it will replace,
+  // never left behind on success), and the run marker.
+  const bad = writes.filter((t) => t !== 'tmp' && t !== 'cfg["marker"]');
+  assert.deepStrictEqual(bad, [], 'the marker and the two temp files are the only real files the sweeper may open for writing');
+  assert.ok(writes.includes('cfg["marker"]'), 'non-vacuity: the marker write must still be found by this scan');
+  // os.open is the lock descriptor (a zero-byte mutex, not data) and rotation's fresh file.
+  const raw = [...codeOnly.matchAll(/\bos\.open\(\s*([^,]+?)\s*,/g)].map(([, target]) => target);
+  assert.deepStrictEqual(raw.sort(), ['f', 'lock'], 'os.open may create only the lock and the fresh rotated-in file');
   // No append anywhere: an append is how a log grows without bound, which is the very
-  // thing this module exists to prevent. The marker is overwritten each run, and the
-  // temp file is written once with `>`, never `>>`.
-  assert.doesNotMatch(codeOnly, />>/, 'the sweeper must never append to a file');
+  // thing this module exists to prevent. The marker is overwritten each run, and the temp
+  // files are written once, never appended to.
+  assert.doesNotMatch(codeOnly, /O_APPEND|"a[b+]?"|'a[b+]?'/, 'the sweeper must never append to a file');
 });
 
 // The row set is the blast radius. Reading it from the manifest would mean adding a row
@@ -180,7 +182,7 @@ test('the only files the sweeper writes are the run marker, the manifest write-b
 test('the acting and rotating row sets are source literals covering their rules and no others', () => {
   const src = fs.readFileSync(SWEEP, 'utf8');
 
-  const m = src.match(/^APPLY_ROWS="([^"]*)"/m);
+  const m = src.match(/^APPLY_ROWS = "([^"]*)"/m);
   assert.ok(m, 'APPLY_ROWS literal not found');
   const rows = m[1].trim().split(/\s+/).sort();
   assert.deepStrictEqual(rows,
@@ -190,15 +192,15 @@ test('the acting and rotating row sets are source literals covering their rules 
   for (const deferred of ['G8', 'G9', 'G10', 'G11', 'G13']) {
     assert.ok(!rows.includes(deferred), `${deferred} is a rotate/truncate row and must not act under --apply alone`);
   }
-  assert.doesNotMatch(codeOf(SWEEP), /APPLY_ROWS=\$\(|APPLY_ROWS=.*jq/, 'the row set must not be derived from the manifest');
+  assert.strictEqual((codeOf(SWEEP).match(/^APPLY_ROWS\s*=/gm) || []).length, 1, 'the row set must be assigned exactly once, from the literal');
 
-  const mr = src.match(/^ROTATE_ROWS="([^"]*)"/m);
+  const mr = src.match(/^ROTATE_ROWS = "([^"]*)"/m);
   assert.ok(mr, 'ROTATE_ROWS literal not found');
   const rotateRows = mr[1].trim().split(/\s+/).sort();
   assert.deepStrictEqual(rotateRows, ['G10', 'G13', 'G19', 'G8', 'G9'].sort());
   assert.ok(!rotateRows.includes('G11'),
     'G11 stays cwd-skipped at runtime for every rule and must not gain a rotate row');
-  assert.doesNotMatch(codeOf(SWEEP), /ROTATE_ROWS=\$\(|ROTATE_ROWS=.*jq/, 'the rotate row set must not be derived from the manifest');
+  assert.strictEqual((codeOf(SWEEP).match(/^ROTATE_ROWS\s*=/gm) || []).length, 1, 'the rotate row set must be assigned exactly once, from the literal');
 });
 
 // --- Manifest shape ----------------------------------------------------------------
@@ -833,4 +835,52 @@ test('an unknown argument is refused rather than ignored', { skip }, () => {
     assert.strictEqual(e.status, 2);
     assert.match(String(e.stderr), /unknown argument --force/);
   }
+});
+
+// --- Behaviour the Python port reimplements from the shell's own expansion ----------------
+// The shell leaned on `shopt -s globstar dotglob` for the `**` in G5's `tasks/**/.lock` and on
+// `du -sb` for the byte totals. Python has neither, so both are code here and get a fixture.
+
+test('a `**` glob reaches hidden files at every depth, and does not descend through a symlinked directory', { skip }, () => {
+  const root = scratch(os.tmpdir(), 'retention-globstar-');
+  const week = 20 * 86400 * 1000;
+  const top = aged(path.join(root, 'tasks', '.lock'), '', week);
+  const nested = aged(path.join(root, 'tasks', 'a', 'b', '.lock'), '', week);
+  const hiddenDir = aged(path.join(root, 'tasks', '.hid', '.lock'), '', week);
+  const fresh = aged(path.join(root, 'tasks', 'c', '.lock'), '', 60 * 1000);
+  const behindLink = aged(path.join(root, 'elsewhere', 'deep', '.lock'), '', week);
+  fs.symlinkSync(path.join(root, 'elsewhere'), path.join(root, 'tasks', 'linked'));
+  const m = manifestFile(root, [ageRow('G5', path.join(root, 'tasks', '**', '.lock'), '14d')]);
+
+  const out = runSweep(m, ['--apply']);
+  for (const f of [top, nested, hiddenDir]) assert.ok(!fs.existsSync(f), `${path.relative(root, f)} should have been pruned`);
+  assert.ok(fs.existsSync(fresh), 'a lock inside the cap must survive');
+  assert.ok(fs.existsSync(behindLink), '`**` must not walk through a symlink into another tree');
+  assert.match(out, /G5: .*matched=4 .*pruned=3 /);
+});
+
+test('a manifest id that merely contains an acting id is not an acting row', { skip }, () => {
+  const root = scratch(os.tmpdir(), 'retention-idtoken-');
+  const f = aged(path.join(root, 'sessions', `${DEAD_PID}.json`), '{}', 7 * 86400 * 1000);
+  const m = manifestFile(root, [deadPidRow('G2 G3', path.join(root, 'sessions', '*.json'))]);
+
+  const out = runSweep(m, ['--apply']);
+  assert.ok(fs.existsSync(f), 'a row id is matched as a whole token, never as a substring of the row set');
+  assert.match(out, /\[dry-run\] G2 G3/);
+});
+
+test('directory bytes are apparent file bytes: a hard link counts once and directories add nothing', { skip }, () => {
+  const root = scratch(os.tmpdir(), 'retention-bytes-');
+  const dir = path.join(root, 'env', 'tree');
+  aged(path.join(dir, 'sub', 'a'), 'x'.repeat(100));
+  aged(path.join(dir, 'b'), 'y'.repeat(50));
+  fs.linkSync(path.join(dir, 'b'), path.join(dir, 'sub', 'b-link'));
+  const m = manifestFile(root, [{
+    id: 'G1', path: path.join(root, 'env', '*'), kind: 'dir-glob', rule: 'prune-empty-dir',
+    cap: 'unconditional once eligible', grace: '1h', owner: 'retention-sweep', finding: 'test',
+  }]);
+
+  runSweep(m);
+
+  assert.strictEqual(measuredOf(root).G1.bytes, 150);
 });
