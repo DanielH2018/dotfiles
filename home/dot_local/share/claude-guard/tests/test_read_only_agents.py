@@ -160,6 +160,17 @@ READS = [
     "psql -c 'select 1 where 2 > 1'",
     "ssh host 'journalctl -u x | grep y'",
     "timeout 60 uv run pytest -q",
+    # An assignment a runner holds is checked only when it names a variable git reads, and
+    # a quoted argument is shell text only when it opens with a command this module knows.
+    "PYTHONPATH=. uv run pytest -k git",
+    "PYTHONPATH=. uv run git log -1",
+    "docker run -e FOO=1 img git log",
+    "pytest -k 'not ln' tests/",
+    "uv run pytest -k 'not ln' tests/",
+    "uv run pytest -k '(cp or mv) and not slow'",
+    "ug -n 'echo x > y' src",
+    "xmllint --xpath '//a[@b > 1]' f.xml",
+    "pip index versions 'requests >= 2'",
 ]
 
 

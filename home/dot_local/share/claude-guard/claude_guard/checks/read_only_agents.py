@@ -18,21 +18,38 @@ A `$( )` body is judged as a command of its own. So is the command after a reser
 it could run without knowing which runner it is:
 
   - each later word that names a command this module judges (`uv run git push`,
-    `ionice git push`), with every assignment ahead of it in the segment;
-  - each argument with a space in it, as shell text of its own (`watch 'true; rm a'`,
-    `flock l -c 'echo x > a'`). Text that does not parse is denied when a word in it names
-    a judged command.
+    `ionice git push`). For a git or gh found this way, an assignment ahead of it in the
+    segment is refused when it names a variable git or gh reads (`GIT_EXTERNAL_DIFF=…
+    uv run git diff`), and `PYTHONPATH=. uv run …` is not refused;
+  - each argument with a space in it whose first word is a command this module knows,
+    as shell text of its own (`watch 'true; rm a'`, `flock l -c 'echo x > a'`). Text that
+    does not parse is denied when a word in it names a judged command. A pytest `-k`
+    expression (`'not ln'`) or an XPath (`'//a[@b > 1]'`) opens with no such word, and
+    is not read as shell.
 
 After a word that names a code runner (`python`, `node`, `psql`, ...), a string argument
 is code in another language, and Python's `a > b` or SQL's `where a > b` read as shell
 would be a redirect. Such a string is still judged, but its redirects are not. Later words
 are judged past a code runner too, since a runner's operand can carry that name
-(`flock /tmp/python git push`). An unlisted wrapper therefore cannot hide a judged
-command, and an unlisted code runner fails toward deny, which the deny-not-ask decision
-accepts. What is left is a redirect-only write in a string that follows a code-runner
-name (`flock /tmp/psql -c 'echo x > a'`).
+(`flock /tmp/python git push`).
+
 A function definition, a `case`, and a command named by a variable are denied, as is a
 command the segmenter cannot read, since none can be shown to be a read.
+
+These rules narrow what an unlisted wrapper can hide; they do not close it. Known
+residuals, left for the default-deny arm that replaces this denylist:
+
+  - a redirect-only write in a string that follows a code-runner name
+    (`flock /tmp/psql -c 'echo x > a'`);
+  - a command string fused to its option (`flock /tmp/l -c'git push origin HEAD'`,
+    `flock /tmp/l --command='git push'`), or opening with a word the module does not
+    know (`watch '(rm a)'`, `frobnicate 'mytool > src/a'`);
+  - a command string with no space in it (`flock /tmp/l -c 'git${IFS}push'`);
+  - an assignment a runner carries to git under a name outside `_GIT_ENV`.
+
+A false positive that remains is the shape a must-refuse row shares: `uv run pytest -k
+'git push'` reads exactly as `flock /tmp/l -c 'git push'`, and `-k patch` as a runner
+handing `patch` its argv.
 
 The server repo has the same arm for its own agents (server #4617), reading only that
 checkout's `.claude/agents/`. This one runs from the user-level PreToolUse hook, so it
@@ -639,6 +656,8 @@ _DATA_READERS = frozenset(
         "file",
         "stat",
         "diff",
+        "ug",
+        "ugrep",
         "jq",
         "yq",
         "test",
@@ -662,12 +681,37 @@ _CODE_RUNNER = re.compile(
     r"|sqlite3|psql|mysql|mariadb|duckdb"
 )
 _WORD_BREAK = re.compile(r"[\s;&|()<>`'\"]+")
+# The first word of an argument read as a command string: up to the first space or
+# operator, and absent when the text opens with `(` (`'(cp or mv) and not slow'`).
+_FIRST_WORD = re.compile(r"\s*([^\s;&|()<>]+)")
+# Words that open shell text: a command this module knows, a builtin, a reserved word.
+# An argument that opens with anything else (`not ln`, `requests >= 2`) is data.
+_SHELL_OPENERS = (
+    _JUDGED
+    | _DATA_READERS
+    | _WRAPPERS
+    | _LEADING_WORDS
+    | frozenset({"cd", "pushd", "popd", "true", "false", ":", "export", "unset", "set"})
+    | frozenset({"for", "select", "case", "{", "exit", "return", "read", "wait"})
+)
+# Variables git or gh read that change what it runs or where its config comes from. A
+# git found as a later word checks only these among the segment's assignments, since an
+# unknown runner's own assignments (`PYTHONPATH=. uv run`, `docker run -e FOO=1 img`) do
+# not show they reach git.
+_GIT_ENV = re.compile(
+    r"(GIT|GH|SSH|GPG)_\w*|GNUPGHOME|LESS\w*|PAGER|EDITOR|VISUAL|BROWSER|HOME|XDG_\w+|PATH"
+)
 
 
 def _command_problem(
-    argv: list[str], words: list[str], via_xargs: bool, roots: tuple[str, ...]
+    argv: list[str],
+    words: list[str],
+    via_xargs: bool,
+    roots: tuple[str, ...],
+    later: bool = False,
 ) -> str | None:
-    """Why the command `argv` writes, or None when it is not one this module judges."""
+    """Why the command `argv` writes, or None when it is not one this module judges.
+    `later` marks an `argv` found as a later word of an unknown command."""
     name = os.path.basename(argv[0])
     if "$" in argv[0] or "`" in argv[0]:
         return f"runs a command named by `{argv[0]}`, which this hook cannot resolve"
@@ -678,7 +722,9 @@ def _command_problem(
         # run a command, so a prefix must be on the judge's allowlist of inert names.
         for word in words[: len(words) - len(argv)]:
             key = word.split("=", 1)[0]
-            if _ASSIGNMENT.match(word) and key not in PREFIX_NAMES:
+            if not _ASSIGNMENT.match(word):
+                continue
+            if _GIT_ENV.fullmatch(key) if later else key not in PREFIX_NAMES:
                 return f"sets `{key}`, which can make {name} run a command"
         return _git_problem(argv) if name == "git" else _gh_problem(argv)
     check = WRITERS.get(name)
@@ -729,8 +775,8 @@ def _segment_problem(
         later = os.path.basename(argv[j])
         code = code or bool(_CODE_RUNNER.fullmatch(later))
         if later in _LATER_JUDGED:
-            # `words`, not `argv`: an assignment ahead of the runner reaches git too.
-            found = _command_problem(argv[j:], words, via_xargs, roots)
+            # `words`, not `argv`: an assignment ahead of the runner can reach git too.
+            found = _command_problem(argv[j:], words, via_xargs, roots, later=True)
         elif any(c.isspace() for c in argv[j]):
             found = _string_problem(argv[j], roots, depth, redirects=not code)
         if found:
@@ -742,7 +788,14 @@ def _string_problem(text: str, roots: tuple[str, ...], depth: int, redirects: bo
     """Why an argument that may be a command string writes. Shell text is judged as a
     command of its own, without its redirects when `redirects` is False. Text the segmenter
     cannot read (a regex, a pytest `-k` expression) is denied only when a word in it names
-    a judged command."""
+    a judged command. Text whose first word opens no shell text is data."""
+    first = _FIRST_WORD.match(text)
+    if not first:
+        return None
+    word = first.group(1)
+    opener = os.path.basename(word)
+    if not (opener in _SHELL_OPENERS or _ASSIGNMENT.match(word) or "$" in word or "`" in word):
+        return None
     if parse(text).ok:
         return problem(text, roots, depth + 1, redirects=redirects)
     names = {os.path.basename(w) for w in _WORD_BREAK.split(text)}
