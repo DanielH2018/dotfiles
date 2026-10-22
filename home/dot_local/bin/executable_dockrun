@@ -1,0 +1,753 @@
+#!/usr/bin/env python3
+"""dockrun — run, pull and tear down Docker work under a fixed policy.
+
+dockq is the read tier; this is the write tier beside it. `docker` cannot run in
+the sandbox (it cannot reach its socket), so every docker call runs unsandboxed,
+and before dockrun a write such as `docker run -v /:/host` reached the auto-mode
+classifier with nothing else in front of it. The docker daemon writes wherever a
+bind mount points and runs whatever a container asks for, so the policy has to
+sit in front of the daemon, not in the sandbox.
+
+What makes a blanket `Bash(dockrun:*)` allow rule defensible is construction,
+as with dockq and ghread:
+
+  - Every flag is on an allowlist. argparse refuses anything else, abbreviations
+    included, so `--privileged`, `--cap-add`, `--security-opt`, `--device`,
+    `--pid/--ipc/--uts/--userns/--cgroupns`, `--volumes-from`, `--env-file` and
+    `--label` are refused because they do not exist here, not because a list
+    names them. `--network host` and `container:<id>` are refused by value.
+  - A bind mount's source is resolved with realpath. It must sit under the cwd's
+    repository or under Claude's scratch root (/private/tmp/claude-<uid>, the
+    sandbox's $TMPDIR). A bind under the repository is always read-only: dockrun
+    runs unsandboxed, and a writable bind would let a container write
+    .git/hooks or .claude/settings.local.json, which the sandbox's denyWrite
+    protects. The Docker socket is refused outright, and so is any bind whose
+    tree holds a file the sandbox read-denies (.env, *.pem, *.key, id_rsa, ...).
+  - compose runs only for files under the repository or scratch. dockrun reads
+    the resolved model with `compose config --format json` and refuses a
+    service that asks for anything `run` refuses. It also refuses a project
+    whose existing containers came from compose files outside those roots, so
+    `-p <someone else's project> down -v` cannot reach another stack.
+  - `rm`, `exec` and `logs` act only on containers `run` started, which carry the
+    `dev.dockrun.managed` label. The label check and the action use the same
+    container ID, so a name reassigned in between is not acted on.
+  - docker is resolved from fixed system directories, and its environment drops
+    DOCKER_*, COMPOSE_*, BUILDKIT_*, BUILDX_*, DYLD_* and LD_*, with HOME pinned
+    to the account's home. So a `DOCKER_HOST=` or `COMPOSE_FILE=` prefix cannot
+    aim a call at another daemon or another compose file.
+
+  dockrun run --entrypoint pip3 amazon/mwaa-local:2_10_3 --version
+  dockrun run -v "$PWD:/repo:ro" -w /repo rhysd/actionlint:1.7.7 -oneline
+  dockrun compose -p mwaa-m3 -f docker-compose.yml up -d --wait
+  dockrun compose -f docker-compose.yml exec -T postgres psql -U airflow -Atc 'select 1'
+  dockrun logs mwaa-check-db --tail 200
+
+docker's exit status is dockrun's exit status. A refusal dockrun raises itself
+exits 2.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import pwd
+import re
+import subprocess
+import sys
+
+PROG = "dockrun"
+LABEL = "dev.dockrun.managed"
+
+# Where docker is looked up. Not $PATH: a caller-supplied PATH would let a repo
+# file named `docker` run unsandboxed under this rule.
+DOCKER_DIRS = (
+    "/usr/local/bin",
+    "/opt/homebrew/bin",
+    "/Applications/Docker.app/Contents/Resources/bin",
+    "/usr/bin",
+)
+_DROP_ENV = ("DOCKER_", "COMPOSE_", "BUILDKIT_", "BUILDX_", "DYLD_", "LD_")
+
+_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+_IMAGE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:@-]*$")
+_SINCE = re.compile(r"^[0-9]+[smh]$")
+_ENV = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_USER = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.:-]*$")
+_ENTRYPOINT = re.compile(r"^[A-Za-z0-9_./][A-Za-z0-9_./-]*$")
+_PLATFORM = re.compile(r"^[a-z0-9]+/[a-z0-9]+(?:/[a-z0-9]+)?$")
+# A container path. No comma, because it travels inside one --mount value.
+_CONTAINER_PATH = re.compile(r"^/[A-Za-z0-9_./@+-]*$")
+_PORT = re.compile(r"^(?:127\.0\.0\.1:)?([0-9]{1,5}):([0-9]{1,5})(/tcp|/udp)?$")
+_CONTROL = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")
+
+MAX_TAIL = 5000
+DEFAULT_TAIL = 1000
+MAX_TEXT = 4096
+# How many entries a bind's tree may hold before the secret scan gives up and
+# refuses, so `-v /big/tree` cannot make the scan the slow part.
+MAX_SCAN = 50000
+_BIND_OPTIONS = {"ro", "rw", "z", "Z", "cached", "delegated", "consistent"}
+_COMPOSE_DEFAULTS = (
+    "compose.yaml",
+    "compose.yml",
+    "docker-compose.yaml",
+    "docker-compose.yml",
+)
+
+
+class DockrunError(Exception):
+    """A refusal dockrun raises itself, reported without a traceback."""
+
+
+def _within(path: str, root: str) -> bool:
+    return path == root or path.startswith(root.rstrip("/") + "/")
+
+
+def _check(pattern: re.Pattern, value: str, what: str) -> str:
+    if not pattern.match(value):
+        raise DockrunError(f"refusing {what} {value!r}")
+    return value
+
+
+def _text(value: str, what: str) -> str:
+    if len(value) > MAX_TEXT or _CONTROL.search(value):
+        raise DockrunError(f"refusing {what}: too long or contains a control character")
+    return value
+
+
+def _tail(value: str) -> int:
+    try:
+        n = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"must be a number 1..{MAX_TAIL}, not {value!r}"
+        ) from None
+    if not 1 <= n <= MAX_TAIL:
+        raise argparse.ArgumentTypeError(f"must be 1..{MAX_TAIL}")
+    return n
+
+
+# --- roots ------------------------------------------------------------------
+
+
+def scratch_root() -> str:
+    """Claude's scratch area: the sandbox's $TMPDIR and every session scratchpad."""
+    return os.path.realpath(f"/tmp/claude-{os.getuid()}")
+
+
+def repo_roots(cwd: str) -> list[str]:
+    """The cwd's repository and, for a linked worktree, its main checkout.
+
+    Found by walking up to a `.git` entry rather than by running git, so no
+    GIT_DIR or GIT_WORK_TREE prefix can choose the answer. A root of `/` or the
+    home directory is refused: a bind "under the repository" would then be a
+    bind of everything.
+    """
+    here = os.path.realpath(cwd)
+    while True:
+        dotgit = os.path.join(here, ".git")
+        if os.path.lexists(dotgit):
+            break
+        parent = os.path.dirname(here)
+        if parent == here:
+            return []
+        here = parent
+    home = os.path.realpath(pwd.getpwuid(os.getuid()).pw_dir)
+    if here in ("/", home):
+        raise DockrunError(f"refusing repository root {here!r}")
+    roots = [here]
+    if os.path.isfile(dotgit):
+        with open(dotgit, encoding="utf-8") as f:
+            line = f.readline().strip()
+        if line.startswith("gitdir: "):
+            gitdir = os.path.realpath(os.path.join(here, line[len("gitdir: ") :]))
+            common = os.path.dirname(os.path.dirname(gitdir))
+            if os.path.basename(gitdir) and os.path.basename(common) == ".git":
+                main = os.path.dirname(common)
+                if main not in ("/", home):
+                    roots.append(main)
+    return roots
+
+
+# --- bind mounts --------------------------------------------------------------
+
+
+def _secret_name(rel: str) -> bool:
+    """Whether a path is one the sandbox read-denies (settings.permissions.json)."""
+    parts = rel.split("/")
+    name = parts[-1]
+    if name == ".env":
+        return True
+    if name.startswith(".env."):
+        return name[len(".env.") :].lower() not in ("example", "sample", "template")
+    if name.endswith((".pem", ".key", ".p12", ".pfx", ".secret", ".agekey")):
+        return True
+    if name in ("id_rsa", "id_ed25519"):
+        return True
+    if ".ssh" in parts[:-1] or "secrets" in parts[:-1]:
+        return True
+    return len(parts) >= 2 and parts[-2] == ".aws" and name in ("credentials", "config")
+
+
+def scan_for_secrets(source: str) -> None:
+    """Refuse a bind whose tree holds a file the sandbox would not let Claude read.
+
+    A container with that bind could print the file, and it runs outside the
+    sandbox, so the mount would undo the read-deny.
+    """
+    if os.path.isfile(source):
+        if _secret_name(os.path.basename(source)):
+            raise DockrunError(f"refusing bind of {source!r}: a read-denied file")
+        return
+    seen = 0
+    for top, dirs, files in os.walk(source):
+        dirs[:] = [d for d in dirs if d != ".git"]
+        for name in dirs + files:
+            seen += 1
+            if seen > MAX_SCAN:
+                raise DockrunError(
+                    f"refusing bind of {source!r}: over {MAX_SCAN} entries to check; "
+                    "bind a narrower path"
+                )
+            rel = os.path.relpath(os.path.join(top, name), source)
+            if name in files and _secret_name(rel):
+                raise DockrunError(
+                    f"refusing bind of {source!r}: it contains {rel!r}, "
+                    "which the sandbox read-denies"
+                )
+
+
+def check_bind(source: str, read_only: bool, roots: list[str]) -> str:
+    """Validate one bind source. Returns its realpath.
+
+    Raises:
+      DockrunError: the source is the Docker socket, sits outside the repository
+        and scratch, is a writable bind under the repository, or holds a
+        read-denied file.
+    """
+    if os.path.basename(source.rstrip("/")) == "docker.sock":
+        raise DockrunError(f"refusing bind of the Docker socket {source!r}")
+    real = os.path.realpath(source)
+    if os.path.basename(real) == "docker.sock":
+        raise DockrunError(f"refusing bind of the Docker socket {source!r}")
+    if not os.path.exists(real):
+        raise DockrunError(f"refusing bind of {source!r}: it does not exist")
+    if "," in real:
+        raise DockrunError(f"refusing bind of {source!r}: a comma in the path")
+    scratch = scratch_root()
+    in_repo = any(_within(real, r) for r in roots)
+    if not in_repo and not _within(real, scratch):
+        raise DockrunError(
+            f"refusing bind of {source!r}: not under the repository or {scratch}"
+        )
+    if in_repo and not _within(real, scratch) and not read_only:
+        raise DockrunError(
+            f"refusing writable bind of {source!r}: a bind under the repository "
+            "must be read-only (:ro); write output under $TMPDIR instead"
+        )
+    scan_for_secrets(real)
+    return real
+
+
+def _volume(spec: str, roots: list[str]) -> str:
+    parts = spec.split(":")
+    if len(parts) not in (2, 3):
+        raise DockrunError(f"refusing -v {spec!r}: expected SRC:DST[:OPTS]")
+    source, target = parts[0], parts[1]
+    options = set(parts[2].split(",")) if len(parts) == 3 else set()
+    if not source.startswith(("/", ".")):
+        raise DockrunError(
+            f"refusing -v {spec!r}: a named volume; only bind mounts of a path"
+        )
+    if options - _BIND_OPTIONS:
+        raise DockrunError(f"refusing -v options {sorted(options - _BIND_OPTIONS)}")
+    _check(_CONTAINER_PATH, target, "-v target")
+    read_only = "ro" in options
+    real = check_bind(source, read_only, roots)
+    mount = f"--mount=type=bind,source={real},target={target}"
+    return mount + (",readonly" if read_only else "")
+
+
+# --- run / pull / rm / exec / logs ------------------------------------------
+
+
+def _env_flags(values) -> list[str]:
+    # KEY=VALUE only. A bare KEY copies the host's value in, which would hand a
+    # container whatever the caller's environment holds.
+    return [f"--env={_text(_check(_ENV, v, '-e'), '-e')}" for v in values or []]
+
+
+def _network(value: str) -> str:
+    _check(_NAME, value, "--network")
+    if value == "host":
+        raise DockrunError("refusing --network host")
+    return f"--network={value}"
+
+
+def build_run(ns, roots: list[str]) -> list[str]:
+    argv = ["run", "--rm", f"--label={LABEL}=1"]
+    if ns.detach:
+        argv.append("--detach")
+    if ns.init:
+        argv.append("--init")
+    if ns.name:
+        argv.append(f"--name={_check(_NAME, ns.name, '--name')}")
+    if ns.workdir:
+        argv.append(f"--workdir={_check(_CONTAINER_PATH, ns.workdir, '-w')}")
+    if ns.user:
+        argv.append(f"--user={_check(_USER, ns.user, '-u')}")
+    if ns.entrypoint:
+        argv.append(
+            f"--entrypoint={_check(_ENTRYPOINT, ns.entrypoint, '--entrypoint')}"
+        )
+    if ns.network:
+        argv.append(_network(ns.network))
+    if ns.platform:
+        argv.append(f"--platform={_check(_PLATFORM, ns.platform, '--platform')}")
+    if ns.pull:
+        argv.append(f"--pull={ns.pull}")
+    argv += _env_flags(ns.env)
+    for spec in ns.publish or []:
+        # Loopback only: a bare `-p 8080:80` would listen on every interface.
+        m = _PORT.match(spec)
+        if not m:
+            raise DockrunError(f"refusing -p {spec!r}")
+        argv.append(f"--publish=127.0.0.1:{m.group(1)}:{m.group(2)}{m.group(3) or ''}")
+    argv += [_volume(v, roots) for v in ns.volume or []]
+    image = _check(_IMAGE, ns.image, "image")
+    return argv + ["--", image, *ns.command]
+
+
+def build_pull(ns) -> list[str]:
+    argv = ["pull"]
+    if ns.quiet:
+        argv.append("--quiet")
+    if ns.platform:
+        argv.append(f"--platform={_check(_PLATFORM, ns.platform, '--platform')}")
+    return argv + ["--", _check(_IMAGE, ns.image, "image")]
+
+
+def owned_container(docker: str, env: dict, name: str) -> str:
+    """The ID of a container `dockrun run` started, or a refusal."""
+    _check(_NAME, name, "container")
+    r = subprocess.run(
+        [
+            docker,
+            "inspect",
+            "--type=container",
+            f'--format={{{{.Id}}}} {{{{index .Config.Labels "{LABEL}"}}}}',
+            "--",
+            name,
+        ],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    fields = r.stdout.split()
+    if r.returncode != 0 or len(fields) != 2 or fields[1] != "1":
+        raise DockrunError(
+            f"refusing {name!r}: not a container dockrun started (no {LABEL} label)"
+        )
+    return fields[0]
+
+
+def _logs_flags(ns) -> list[str]:
+    argv = [f"--tail={ns.tail}"]
+    if ns.since:
+        argv.append(f"--since={_check(_SINCE, ns.since, '--since')}")
+    if ns.timestamps:
+        argv.append("--timestamps")
+    return argv
+
+
+def _exec_flags(ns) -> list[str]:
+    argv = []
+    if ns.detach:
+        argv.append("--detach")
+    if ns.user:
+        argv.append(f"--user={_check(_USER, ns.user, '-u')}")
+    if ns.workdir:
+        argv.append(f"--workdir={_check(_CONTAINER_PATH, ns.workdir, '-w')}")
+    return argv + _env_flags(ns.env)
+
+
+# --- compose --------------------------------------------------------------------
+
+
+def compose_files(ns, cwd: str, roots: list[str]) -> list[str]:
+    """The compose files to pass as --file, each validated.
+
+    With no -f, compose would search the cwd's parents and then load the override
+    file beside what it found. dockrun searches the cwd alone and adds the
+    override itself, so every file compose reads is one dockrun checked.
+    """
+    files = list(ns.file or [])
+    if not files:
+        found = [n for n in _COMPOSE_DEFAULTS if os.path.isfile(os.path.join(cwd, n))]
+        if not found:
+            raise DockrunError("no compose file in the cwd; pass -f")
+        base, ext = found[0].rsplit(".", 1)
+        files = [found[0]]
+        override = f"{base}.override.{ext}"
+        if os.path.isfile(os.path.join(cwd, override)):
+            files.append(override)
+    scratch = scratch_root()
+    out = []
+    for f in files:
+        real = os.path.realpath(os.path.join(cwd, f))
+        if not os.path.isfile(real):
+            raise DockrunError(f"refusing -f {f!r}: not a file")
+        if not any(_within(real, r) for r in roots + [scratch]):
+            raise DockrunError(
+                f"refusing -f {f!r}: not under the repository or {scratch}"
+            )
+        out.append(real)
+    if not any(_within(f, r) for f in out for r in roots):
+        raise DockrunError("refusing compose: no compose file is under the repository")
+    return out
+
+
+def compose_prefix(ns, files: list[str]) -> list[str]:
+    argv = ["compose"] + [f"--file={f}" for f in files]
+    if ns.project:
+        argv.append(f"--project-name={_check(_NAME, ns.project, '-p')}")
+    for profile in ns.profile or []:
+        argv.append(f"--profile={_check(_NAME, profile, '--profile')}")
+    return argv
+
+
+_HOST_NAMESPACES = ("pid", "ipc", "uts", "userns_mode", "cgroup")
+
+
+def _local_path(value: str, what: str, roots: list[str]) -> None:
+    real = os.path.realpath(value)
+    if not any(_within(real, r) for r in roots + [scratch_root()]):
+        raise DockrunError(f"refusing {what} {value!r}: outside the repository")
+
+
+def check_service(name: str, svc: dict, model: dict, roots: list[str]) -> None:
+    """Apply run's refusals to one service of the resolved compose model."""
+    where = f"service {name!r}"
+    if svc.get("privileged"):
+        raise DockrunError(f"refusing {where}: privileged")
+    for key in ("cap_add", "security_opt", "devices", "device_cgroup_rules"):
+        if svc.get(key):
+            raise DockrunError(f"refusing {where}: {key}")
+    for key in ("cgroup_parent", "provider", "use_api_socket"):
+        if svc.get(key):
+            raise DockrunError(f"refusing {where}: {key}")
+    mode = str(svc.get("network_mode") or "")
+    if mode == "host" or mode.startswith("container:"):
+        raise DockrunError(f"refusing {where}: network_mode {mode}")
+    for key in _HOST_NAMESPACES:
+        value = str(svc.get(key) or "")
+        if value == "host" or value.startswith("container:"):
+            raise DockrunError(f"refusing {where}: {key} {value}")
+    for source in svc.get("volumes_from") or []:
+        if str(source).startswith("container:"):
+            raise DockrunError(f"refusing {where}: volumes_from {source}")
+    for vol in svc.get("volumes") or []:
+        kind = vol.get("type")
+        if kind == "bind":
+            check_bind(vol.get("source", ""), bool(vol.get("read_only")), roots)
+        elif kind == "volume":
+            source = vol.get("source")
+            if source:
+                check_named_volume(source, model)
+        elif kind not in ("tmpfs", "image"):
+            raise DockrunError(f"refusing {where}: a {kind} mount")
+    for env_file in svc.get("env_file") or []:
+        path = env_file.get("path") if isinstance(env_file, dict) else env_file
+        _local_path(path, f"{where} env_file", roots)
+    build = svc.get("build") or {}
+    if build:
+        context = str(build.get("context", "."))
+        if "://" in context:
+            raise DockrunError(f"refusing {where}: a remote build context")
+        _local_path(context, f"{where} build context", roots)
+        if build.get("ssh"):
+            raise DockrunError(f"refusing {where}: build ssh forwards the agent")
+        dockerfile = build.get("dockerfile")
+        if dockerfile and os.path.isabs(dockerfile):
+            _local_path(dockerfile, f"{where} dockerfile", roots)
+        for ctx in (build.get("additional_contexts") or {}).values():
+            if not str(ctx).startswith(("docker-image://", "service:")):
+                if "://" in str(ctx):
+                    raise DockrunError(f"refusing {where}: additional context {ctx}")
+                _local_path(str(ctx), f"{where} additional context", roots)
+
+
+def check_named_volume(source: str, model: dict) -> None:
+    spec = (model.get("volumes") or {}).get(source) or {}
+    if (
+        spec.get("external")
+        or spec.get("driver_opts")
+        or spec.get("driver")
+        not in (
+            None,
+            "local",
+        )
+    ):
+        raise DockrunError(
+            f"refusing volume {source!r}: external, or a driver option that can "
+            "bind a host path"
+        )
+
+
+def check_model(model: dict, roots: list[str]) -> None:
+    for name, svc in (model.get("services") or {}).items():
+        check_service(name, svc, model, roots)
+    # Every top-level volume, used or not: an unused one is one service edit away.
+    for name in model.get("volumes") or {}:
+        check_named_volume(name, model)
+    for name, net in (model.get("networks") or {}).items():
+        if (net or {}).get("name") == "host" or (net or {}).get("driver") == "host":
+            raise DockrunError(f"refusing network {name!r}: the host network")
+    for kind in ("secrets", "configs"):
+        for name, spec in (model.get(kind) or {}).items():
+            spec = spec or {}
+            if spec.get("environment"):
+                raise DockrunError(
+                    f"refusing {kind} {name!r}: it copies a host environment variable"
+                )
+            if spec.get("file"):
+                _local_path(spec["file"], f"{kind} {name!r}", roots)
+
+
+def check_project_owner(docker: str, env: dict, project: str, roots: list[str]) -> None:
+    """Refuse a project whose containers came from compose files elsewhere."""
+    r = subprocess.run(
+        [
+            docker,
+            "ps",
+            "--all",
+            f"--filter=label=com.docker.compose.project={project}",
+            '--format={{.Label "com.docker.compose.project.config_files"}}',
+        ],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    if r.returncode != 0:
+        raise DockrunError(f"cannot list project {project!r}: {r.stderr.strip()}")
+    # Scratch is shared by every session, so a project built only from scratch
+    # files belongs to no repository; one file under this repository is required.
+    allowed = roots + [scratch_root()]
+    for line in r.stdout.splitlines():
+        files = [os.path.realpath(f) for f in line.split(",") if f]
+        outside = [f for f in files if not any(_within(f, a) for a in allowed)]
+        if outside or not any(_within(f, root) for f in files for root in roots):
+            raise DockrunError(
+                f"refusing project {project!r}: its containers came from "
+                f"{','.join(outside or files)!r}, outside this repository"
+            )
+
+
+def build_compose(ns, prefix: list[str]) -> list[str]:
+    verb = ns.verb
+    if verb == "up":
+        flags = [
+            f
+            for f, on in (
+                ("--detach", ns.detach),
+                ("--wait", ns.wait),
+                ("--build", ns.build),
+                ("--quiet-pull", ns.quiet_pull),
+                ("--remove-orphans", ns.remove_orphans),
+                ("--force-recreate", ns.force_recreate),
+                ("--no-deps", ns.no_deps),
+            )
+            if on
+        ]
+        services = [_check(_NAME, s, "service") for s in ns.services]
+        return prefix + ["up", *flags, "--", *services]
+    if verb == "down":
+        flags = (["--volumes"] if ns.volumes else []) + (
+            ["--remove-orphans"] if ns.remove_orphans else []
+        )
+        return prefix + ["down", *flags]
+    if verb == "ps":
+        flags = ["--all"] if ns.all else []
+        if ns.format:
+            flags.append(f"--format={_text(ns.format, '--format')}")
+        return prefix + ["ps", *flags]
+    if verb == "logs":
+        services = [_check(_NAME, s, "service") for s in ns.services]
+        flags = ["--no-color"] + _logs_flags(ns)
+        if ns.no_log_prefix:
+            flags.append("--no-log-prefix")
+        return prefix + ["logs", *flags, "--", *services]
+    # exec
+    flags = (["-T"] if ns.no_tty else []) + _exec_flags(ns)
+    return prefix + [
+        "exec",
+        *flags,
+        "--",
+        _check(_NAME, ns.service, "service"),
+        *ns.command,
+    ]
+
+
+# --- plumbing -------------------------------------------------------------------
+
+
+def find_docker() -> str:
+    for d in DOCKER_DIRS:
+        path = os.path.join(d, "docker")
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    raise DockrunError(f"docker is not in {', '.join(DOCKER_DIRS)}")
+
+
+def docker_env() -> dict:
+    env = {k: v for k, v in os.environ.items() if not k.startswith(_DROP_ENV)}
+    env["HOME"] = pwd.getpwuid(os.getuid()).pw_dir
+    env["PATH"] = ":".join(DOCKER_DIRS + ("/bin", "/usr/sbin", "/sbin"))
+    return env
+
+
+def plan(ns, docker: str, env: dict, cwd: str) -> list[str]:
+    """Check the request and return docker's argv, or raise DockrunError."""
+    roots = repo_roots(cwd)
+    if ns.cmd == "run":
+        return build_run(ns, roots)
+    if ns.cmd == "pull":
+        return build_pull(ns)
+    if ns.cmd == "rm":
+        ids = [owned_container(docker, env, n) for n in ns.containers]
+        return ["rm"] + (["--force"] if ns.force else []) + ["--", *ids]
+    if ns.cmd == "exec":
+        cid = owned_container(docker, env, ns.container)
+        return ["exec", *_exec_flags(ns), "--", cid, *ns.command]
+    if ns.cmd == "logs":
+        cid = owned_container(docker, env, ns.container)
+        return ["logs", *_logs_flags(ns), "--", cid]
+    # compose
+    if not roots:
+        raise DockrunError("refusing compose outside a git repository")
+    prefix = compose_prefix(ns, compose_files(ns, cwd, roots))
+    r = subprocess.run(
+        [docker, *prefix, "config", "--format=json"],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    if r.returncode != 0:
+        raise DockrunError(f"compose config failed: {r.stderr.strip()}")
+    model = json.loads(r.stdout)
+    check_model(model, roots)
+    project = _check(_NAME, model.get("name") or "", "project name")
+    check_project_owner(docker, env, project, roots)
+    return build_compose(ns, prefix)
+
+
+def _parser() -> argparse.ArgumentParser:
+    def sub_parser(parent, name, **kw):
+        # allow_abbrev=False on every parser: `--net` must not reach --network,
+        # and a future flag must not make an old abbreviation mean something new.
+        return parent.add_parser(name, allow_abbrev=False, **kw)
+
+    parser = argparse.ArgumentParser(
+        prog=PROG,
+        allow_abbrev=False,
+        description="Docker writes under a fixed policy (see the module docstring).",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    env = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    env.add_argument("-e", "--env", action="append", metavar="KEY=VALUE")
+    env.add_argument("-u", "--user")
+    env.add_argument("-w", "--workdir")
+    env.add_argument("-d", "--detach", action="store_true")
+    bounded = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    bounded.add_argument(
+        "-n", "--tail", type=_tail, default=DEFAULT_TAIL, help=f"1..{MAX_TAIL}"
+    )
+    bounded.add_argument("--since", help="e.g. 30m, 2h")
+    bounded.add_argument("-t", "--timestamps", action="store_true")
+
+    p = sub_parser(sub, "run", parents=[env], help="docker run --rm, labelled")
+    p.add_argument("--name")
+    p.add_argument("--entrypoint")
+    p.add_argument("--network")
+    p.add_argument("--platform")
+    p.add_argument("--pull", choices=("missing", "always", "never"))
+    p.add_argument("--init", action="store_true")
+    p.add_argument("--rm", action="store_true", help="accepted; always on")
+    p.add_argument("-v", "--volume", action="append", metavar="SRC:DST[:ro]")
+    p.add_argument("-p", "--publish", action="append", metavar="HOST:CONTAINER")
+    p.add_argument("image")
+    p.add_argument("command", nargs=argparse.REMAINDER)
+
+    p = sub_parser(sub, "pull")
+    p.add_argument("-q", "--quiet", action="store_true")
+    p.add_argument("--platform")
+    p.add_argument("image")
+
+    p = sub_parser(sub, "rm", help="containers dockrun started")
+    p.add_argument("-f", "--force", action="store_true")
+    p.add_argument("containers", nargs="+")
+    p = sub_parser(sub, "exec", parents=[env], help="in a container dockrun started")
+    p.add_argument("container")
+    p.add_argument("command", nargs=argparse.REMAINDER)
+    p = sub_parser(
+        sub, "logs", parents=[bounded], help="of a container dockrun started"
+    )
+    p.add_argument("container")
+
+    compose = sub_parser(sub, "compose", help="compose up/down/ps/logs/exec")
+    compose.add_argument("-f", "--file", action="append")
+    compose.add_argument("-p", "--project-name", dest="project")
+    compose.add_argument("--profile", action="append")
+    verbs = compose.add_subparsers(dest="verb", required=True)
+    p = sub_parser(verbs, "up")
+    for flag in (
+        "--wait",
+        "--build",
+        "--quiet-pull",
+        "--remove-orphans",
+        "--force-recreate",
+        "--no-deps",
+    ):
+        p.add_argument(flag, action="store_true")
+    p.add_argument("-d", "--detach", action="store_true")
+    p.add_argument("services", nargs="*")
+    p = sub_parser(verbs, "down")
+    p.add_argument("-v", "--volumes", action="store_true")
+    p.add_argument("--remove-orphans", action="store_true")
+    p = sub_parser(verbs, "ps")
+    p.add_argument("-a", "--all", action="store_true")
+    p.add_argument("--format")
+    p = sub_parser(verbs, "logs", parents=[bounded])
+    p.add_argument("--no-log-prefix", action="store_true")
+    p.add_argument("services", nargs="*")
+    p = sub_parser(verbs, "exec", parents=[env])
+    p.add_argument("-T", "--no-tty", dest="no_tty", action="store_true")
+    p.add_argument("service")
+    p.add_argument("command", nargs=argparse.REMAINDER)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    ns = _parser().parse_args(argv)
+    env = docker_env()
+    try:
+        docker = find_docker()
+        docker_args = plan(ns, docker, env, os.getcwd())
+    except DockrunError as exc:
+        print(f"{PROG}: {exc}", file=sys.stderr)
+        return 2
+    return subprocess.run(
+        [docker, *docker_args], stdin=subprocess.DEVNULL, env=env, check=False
+    ).returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())
