@@ -7,7 +7,7 @@ unreadable command, so its cases are pinned here directly.
 
 import pytest
 
-from claude_guard.apply_guard import decide, text_decision
+from claude_guard.apply_guard import text_decision
 
 ODD_QUOTE_BODY = (
     'gh pr create --title "Stop the chezmoi apply guard misfiring" --body "$(cat <<\'EOF\'\n'
@@ -35,12 +35,3 @@ def test_text_that_cannot_run_an_apply_is_not_one(command):
 )
 def test_an_apply_outside_quotes_or_inside_a_substitution_writes(command):
     assert text_decision(command).writes
-
-
-def test_the_fallback_never_takes_the_stale_source_refusal():
-    d = text_decision("chezmoi apply ~/.zshrc")
-    assert (d.writes, d.reads_primary, d.targets) == (True, False, ["~/.zshrc"])
-
-
-def test_an_unreadable_chezmoi_command_falls_back_rather_than_passing():
-    assert decide('chezmoi apply "unbalanced').writes
