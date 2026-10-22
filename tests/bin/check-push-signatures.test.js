@@ -13,12 +13,15 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { have } = require('../lib/probe');
-const { repoPath } = require('../lib/paths');
+const { repoPath, srcPath } = require('../lib/paths');
+const { renderFile, chezmoiAvailable } = require('../lib/render');
 
 const SCRIPT = repoPath('bin', 'check-push-signatures');
 const skip = !have('bash') ? 'bash unavailable'
   : !have('git') ? 'git unavailable'
   : !have('ssh-keygen') ? 'ssh-keygen unavailable' : false;
+
+const chezmoiSkip = chezmoiAvailable ? false : 'chezmoi unavailable';
 
 const ZERO = '0'.repeat(40);
 
@@ -447,3 +450,12 @@ test('an unsigned commit is still caught once a signers path is set', { skip }, 
   assert.match(res.stderr, /sneaky/);
 });
 
+
+// Other repos (work-laptop-config's .githooks/pre-push) exec the copy chezmoi deploys to
+// ~/.local/bin rather than carrying their own. Those copies drifted once: the work repo's
+// hand-synced one missed this script's #581 fix and its --range mode. The deployed copy must
+// be this file byte for byte, so a rendered template that wraps, trims or re-templates it fails.
+test('the copy chezmoi deploys to ~/.local/bin is this script verbatim', { skip: chezmoiSkip }, () => {
+  const rendered = renderFile(srcPath('dot_local', 'bin', 'executable_check-push-signatures.tmpl'));
+  assert.strictEqual(rendered, fs.readFileSync(SCRIPT, 'utf8'));
+});

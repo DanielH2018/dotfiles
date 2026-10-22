@@ -1,0 +1,4 @@
+{{- /* One copy of the push-signature gate, deployed. bin/check-push-signatures is the source:
+     this repo's .githooks/pre-push and CI run it there, and other repos exec this deployed
+     copy so their gate cannot drift from it. include returns the file verbatim, untemplated. */ -}}
+{{ include (joinPath .chezmoi.workingTree "bin/check-push-signatures") -}}
