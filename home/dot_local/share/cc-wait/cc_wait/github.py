@@ -203,7 +203,8 @@ class CiWait:
         workflow_runs = data.get("workflow_runs") if isinstance(data, dict) else None
         if not isinstance(workflow_runs, list):
             raise ReadError(f"no workflow_runs list for {sha[:8]}")
-        # Any status but `completed` holds the pass: queued, pending, waiting, in_progress, requested.
+        # Every status but `completed` holds the pass: queued, pending, waiting, in_progress and
+        # requested alike.
         unfinished = [r for r in workflow_runs if r.get("status") != "completed"]
         if not unfinished:
             return ""
