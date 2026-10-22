@@ -23,11 +23,14 @@ it could run without knowing which runner it is:
     `flock l -c 'echo x > a'`). Text that does not parse is denied when a word in it names
     a judged command.
 
-The scan stops at a code runner (`python`, `node`, `psql`, ...): the words after it are
-code in another language, which the denylist below leaves unjudged, and Python's `a > b`
-read as shell would be a redirect. An unlisted wrapper therefore cannot hide a judged
+After a word that names a code runner (`python`, `node`, `psql`, ...), a string argument
+is code in another language, and Python's `a > b` or SQL's `where a > b` read as shell
+would be a redirect. Such a string is still judged, but its redirects are not. Later words
+are judged past a code runner too, since a runner's operand can carry that name
+(`flock /tmp/python git push`). An unlisted wrapper therefore cannot hide a judged
 command, and an unlisted code runner fails toward deny, which the deny-not-ask decision
-accepts.
+accepts. What is left is a redirect-only write in a string that follows a code-runner
+name (`flock /tmp/psql -c 'echo x > a'`).
 A function definition, a `case`, and a command named by a variable are denied, as is a
 command the segmenter cannot read, since none can be shown to be a read.
 
@@ -651,8 +654,9 @@ _JUDGED = _SHELLS | frozenset({"git", "gh", "script"}) | frozenset(WRITERS)
 # runner that hands its words to `sh -c` (`watch . /tmp/x`) reaches a scratch script, which
 # running `/tmp/x` reaches without a runner.
 _LATER_JUDGED = _JUDGED - {"."}
-# Programs whose later words are code in another language. The DECIDED denylist leaves
-# that code unjudged, and read as shell it is noise: `print(1 > 0)` is a redirect.
+# Programs whose string arguments are code in another language, where `print(1 > 0)` read
+# as shell is a redirect. Only redirects are dropped after one: the name is matched on any
+# word, and a runner's operand (`flock /tmp/python ...`) can carry it.
 _CODE_RUNNER = re.compile(
     r"(python|pypy)[0-9.]*|node(js)?|deno|bun|php|lua(jit)?|Rscript|julia"
     r"|sqlite3|psql|mysql|mariadb|duckdb"
@@ -685,8 +689,10 @@ def _command_problem(
     return check(argv[1:], roots)
 
 
-def _segment_problem(text: str, roots: tuple[str, ...], depth: int) -> str | None:
-    redirect = _redirect_problem(text, roots)
+def _segment_problem(
+    text: str, roots: tuple[str, ...], depth: int, redirects: bool = True
+) -> str | None:
+    redirect = _redirect_problem(text, roots) if redirects else None
     if redirect:
         return redirect
     if _FUNCTION.match(text):
@@ -713,44 +719,48 @@ def _segment_problem(text: str, roots: tuple[str, ...], depth: int) -> str | Non
         return None
     found = _command_problem(argv, words, via_xargs, roots)
     name = os.path.basename(argv[0])
-    if found or name in _JUDGED | _DATA_READERS or _CODE_RUNNER.fullmatch(name):
+    if found or name in _JUDGED | _DATA_READERS:
         return found
     # An unknown command may be a runner. Which runner it is does not matter: judge each
     # later word that names a command this module judges, and each argument that could be
-    # a command string, up to the first code runner.
+    # a command string, without its redirects once a code runner has been named.
+    code = not redirects or bool(_CODE_RUNNER.fullmatch(name))
     for j in range(1, len(argv)):
         later = os.path.basename(argv[j])
-        if _CODE_RUNNER.fullmatch(later):
-            return None
+        code = code or bool(_CODE_RUNNER.fullmatch(later))
         if later in _LATER_JUDGED:
             # `words`, not `argv`: an assignment ahead of the runner reaches git too.
             found = _command_problem(argv[j:], words, via_xargs, roots)
         elif any(c.isspace() for c in argv[j]):
-            found = _string_problem(argv[j], roots, depth)
+            found = _string_problem(argv[j], roots, depth, redirects=not code)
         if found:
             return found
     return None
 
 
-def _string_problem(text: str, roots: tuple[str, ...], depth: int) -> str | None:
+def _string_problem(text: str, roots: tuple[str, ...], depth: int, redirects: bool) -> str | None:
     """Why an argument that may be a command string writes. Shell text is judged as a
-    command of its own. Text the segmenter cannot read (a regex, a pytest `-k` expression)
-    is denied only when a word in it names a judged command."""
+    command of its own, without its redirects when `redirects` is False. Text the segmenter
+    cannot read (a regex, a pytest `-k` expression) is denied only when a word in it names
+    a judged command."""
     if parse(text).ok:
-        return problem(text, roots, depth + 1)
+        return problem(text, roots, depth + 1, redirects=redirects)
     names = {os.path.basename(w) for w in _WORD_BREAK.split(text)}
     if names & _LATER_JUDGED:
         return "passes a command string this hook cannot read"
     return None
 
 
-def problem(command: str, roots: tuple[str, ...], depth: int = 0) -> str | None:
+def problem(
+    command: str, roots: tuple[str, ...], depth: int = 0, redirects: bool = True
+) -> str | None:
     """Why `command` writes, or None when nothing in it is a write this module knows.
 
     Args:
         command: the Bash text.
         roots: the scratch roots a write may land in.
         depth: how many `$( )` bodies deep this text is.
+        redirects: False for a string a code runner holds, whose `>` is not a redirect.
     """
     if depth > _MAX_DEPTH:
         return "nests commands deeper than this hook reads"
@@ -758,11 +768,11 @@ def problem(command: str, roots: tuple[str, ...], depth: int = 0) -> str | None:
     if not parsed.ok:
         return f"cannot be read as shell ({parsed.status}), so it cannot be shown to be a read"
     for seg in parsed.segments:
-        found = _segment_problem(seg.text, roots, depth)
+        found = _segment_problem(seg.text, roots, depth, redirects)
         if found:
             return found
     for body in parsed.substitutions:
-        found = problem(body, roots, depth + 1)
+        found = problem(body, roots, depth + 1, redirects)
         if found:
             return f"runs a substitution that {found}"
     return None

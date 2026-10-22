@@ -124,7 +124,11 @@ UNKNOWN_RUNNERS = [
     "flock /tmp/l -c 'timeout 5 rm src/a'",
     "flock /tmp/l -c 'FOO=1 git push'",
     "busybox ash -c 'cd s; rm a'",
-    "frobnicate 'rm src/a; <(('",
+    "frobnicate 'true; rm src/a; <(('",
+    # An operand named like a code runner does not end the scan.
+    "flock /tmp/python git push",
+    "frobnicate node rm src/a",
+    "flock /tmp/psql -c 'true; rm src/a'",
     "GIT_EXTERNAL_DIFF=/tmp/x.sh uv run git diff",
     "env GIT_EXTERNAL_DIFF=/tmp/x.sh uv run git diff",
 ]
@@ -213,6 +217,14 @@ def test_a_command_name_held_in_a_variable_is_a_write_in_the_arm_itself():
 
     for command in ["G=git; $G push", "X=rm; $X -rf src", '"$G" log']:
         assert problem(command, ("/tmp",)) is not None, command
+
+
+def test_a_string_the_segmenter_cannot_read_is_denied_for_the_command_it_names():
+    from claude_guard.checks.read_only_agents import problem
+
+    found = problem("frobnicate 'true; rm src/a; <(('", ("/tmp",))
+    assert found == "passes a command string this hook cannot read"
+    assert problem("frobnicate 'a.b; <(('", ("/tmp",)) is None
 
 
 def test_the_three_read_only_agents_declare_it_in_their_frontmatter():
