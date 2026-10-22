@@ -1,477 +1,1087 @@
-#!/usr/bin/env bash
-# retention-sweep: M12 sweeper over the retention manifest (slices 1-3).
-#
-# Reads retention-manifest.json and, for every row, reports how many entries currently
-# match its glob and their combined size. With --apply it also acts on them.
-#
-# Slice 3 turns this from a hand-run tool into an unattended one, so the containment
-# that mattered in slice 2 matters more here:
-#
-#   1. Acting still requires --apply. The default is a pure report.
-#   2. A row acts only if it is in APPLY_ROWS below — a source literal, never derived
-#      from the manifest, so adding a manifest row cannot grant itself a delete path.
-#   3. Every removal must resolve to a path *underneath its own glob's literal prefix*.
-#      That prefix comes from the manifest entry being processed, so a rule can only
-#      ever reach inside the directory it names. Symlinks are refused outright.
-#   4. An unparseable cap is a refusal, not a default. A typo in the manifest reports
-#      "cap not understood" and acts on nothing.
-#   5. One sweep at a time, via flock. A hook-fired run colliding with the timer exits
-#      quietly rather than racing it.
-#
-# The grace floor sits under all of it: nothing younger than its row's grace is
-# eligible, whatever else is true of it.
-#
-# SCOPE: removal rules act under --apply, via APPLY_ROWS, same as before. rotate-size
-# and truncate-lines rewrite a file a live process may hold open, a different failure
-# mode from removing a stale one, so they do not inherit --apply's automation for free.
-# They get a second, explicit flag, --rotate, and a second source-level row set,
-# ROTATE_ROWS. --apply alone must never rotate or truncate anything: acting on a
-# ROTATE_ROWS row requires --apply AND --rotate together. The hourly timer passes
-# --apply only, so rotation stays manual until it earns its own supervised run and a
-# separate, deliberate decision to add --rotate to the timer unit.
-#
-# ROTATE_ROWS covers G8, G9, G10, G13, G19. G11 is excluded on purpose: its glob contains the
-# literal "cwd" marker and is skipped for every rule, unconditionally, before any row set
-# is consulted (see the cwd check in the sweep loop) — it is out of scope for every
-# sweeper mode, not specifically for rotation.
-#
-# There is no log file on purpose. stdout goes to the systemd journal, which is already
-# rotated; a hand-rolled ~/.claude/logs/retention-sweep.log would be a new unbounded
-# path, and the rotation rule that would have capped it is exactly what this slice
-# defers. The run marker below is a fixed-size file, overwritten each run.
-#
-# On kill -0 and pid reuse: for a *deletion* decision the failure directions are safe.
-# A live same-user process always answers "alive", so a live session's file is never
-# pruned. A reused pid answers "alive" and the stale file survives to the next run. A
-# pid inherited by another user's process answers "dead" (EPERM), but reuse means the
-# original exited, so the file it named really is stale. This is NOT the origin
-# reaper's problem, which sends SIGTERM and does need identity.sh's (pid, procStart).
-#
-# Test seams: RETENTION_MANIFEST, RETENTION_SIBLING_CANDIDATES (G12's live-sibling
-# search list), RETENTION_STATE_DIR (run marker and measurements), RETENTION_LOCK.
-set -u
+#!/usr/bin/env python3
+"""retention-sweep: M12 sweeper over the retention manifest (slices 1-3).
 
-MANIFEST="${RETENTION_MANIFEST:-$HOME/.claude/retention-manifest.json}"
-STATE_DIR="${RETENTION_STATE_DIR:-$HOME/.claude}"
-MARKER="$STATE_DIR/.retention-sweep-last-run"
-MEASURED="$STATE_DIR/.retention-sweep-measured.json"
-LOCK="${RETENTION_LOCK:-${XDG_RUNTIME_DIR:-/tmp}/retention-sweep.lock}"
+Reads retention-manifest.json and, for every row, reports how many entries currently
+match its glob and their combined size. With --apply it also acts on them.
+
+Slice 3 turns this from a hand-run tool into an unattended one, so the containment
+that mattered in slice 2 matters more here:
+
+  1. Acting still requires --apply. The default is a pure report.
+  2. A row acts only if it is in APPLY_ROWS below — a source literal, never derived
+     from the manifest, so adding a manifest row cannot grant itself a delete path.
+  3. Every removal must resolve to a path *underneath its own glob's literal prefix*.
+     That prefix comes from the manifest entry being processed, so a rule can only
+     ever reach inside the directory it names. Symlinks are refused outright.
+  4. An unparseable cap is a refusal, not a default. A typo in the manifest reports
+     "cap not understood" and acts on nothing.
+  5. One sweep at a time, via flock. A hook-fired run colliding with the timer exits
+     quietly rather than racing it.
+
+The grace floor sits under all of it: nothing younger than its row's grace is
+eligible, whatever else is true of it.
+
+SCOPE: removal rules act under --apply, via APPLY_ROWS, same as before. rotate-size
+and truncate-lines rewrite a file a live process may hold open, a different failure
+mode from removing a stale one, so they do not inherit --apply's automation for free.
+They get a second, explicit flag, --rotate, and a second source-level row set,
+ROTATE_ROWS. --apply alone must never rotate or truncate anything: acting on a
+ROTATE_ROWS row requires --apply AND --rotate together. The hourly timer passes
+--apply only, so rotation stays manual until it earns its own supervised run and a
+separate, deliberate decision to add --rotate to the timer unit.
+
+ROTATE_ROWS covers G8, G9, G10, G13, G19. G11 is excluded on purpose: its glob contains the
+literal "cwd" marker and is skipped for every rule, unconditionally, before any row set
+is consulted (see the cwd check in the sweep loop) — it is out of scope for every
+sweeper mode, not specifically for rotation.
+
+There is no log file on purpose. stdout goes to the systemd journal, which is already
+rotated; a hand-rolled ~/.claude/logs/retention-sweep.log would be a new unbounded
+path, and the rotation rule that would have capped it is exactly what this slice
+defers. The run marker below is a fixed-size file, overwritten each run.
+
+On kill -0 and pid reuse: for a *deletion* decision the failure directions are safe.
+A live same-user process always answers "alive", so a live session's file is never
+pruned. A reused pid answers "alive" and the stale file survives to the next run. A
+pid inherited by another user's process answers "dead" (EPERM), but reuse means the
+original exited, so the file it named really is stale. This is NOT the origin
+reaper's problem, which sends SIGTERM and does need identity.sh's (pid, procStart).
+
+Test seams: RETENTION_MANIFEST, RETENTION_SIBLING_CANDIDATES (G12's live-sibling
+search list), RETENTION_STATE_DIR (run marker and measurements), RETENTION_LOCK.
+"""  # noqa: E501
+
+from __future__ import annotations
+
+import contextlib
+import fcntl
+import json
+import os
+import re
+import shutil
+import stat
+import sys
+import time
+
+PROG = "retention-sweep"
 
 # Every row the sweeper may act on: the removal rules only. N1/N2 are native or
 # self-managed; G8/G9/G10/G11/G13 are rotate/truncate, gated separately below.
-APPLY_ROWS=" G1 G2 G3 G4 G5 G6 G7 G12 G14 G15 G16 G17 "
+# Membership is tested against the whitespace-separated tokens of this literal, so a
+# manifest id can never match by being a substring of it.
+APPLY_ROWS = " G1 G2 G3 G4 G5 G6 G7 G12 G14 G15 G16 G17 "
 
 # The rotate/truncate rows. A source literal, same reasoning as APPLY_ROWS: reading it
 # from the manifest would mean a manifest edit could grant itself a rewrite path. Acting
 # on a row here additionally requires --rotate, on top of --apply.
-ROTATE_ROWS=" G8 G9 G10 G13 G19 "
+ROTATE_ROWS = " G8 G9 G10 G13 G19 "
 
-APPLY=0
-ROTATE=0
-for arg in "$@"; do
-  case "$arg" in
-    --apply) APPLY=1 ;;
-    --rotate) ROTATE=1 ;;
-    -h|--help) sed -n '2,52p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) echo "retention-sweep: unknown argument $arg" >&2; exit 2 ;;
-  esac
-done
+# A grace the parser cannot read makes nothing eligible. Ten digits of seconds is
+# three decades, which no mtime is older than.
+UNREADABLE_GRACE = 999999999
 
-command -v jq >/dev/null 2>&1 || { echo "retention-sweep: jq required" >&2; exit 1; }
-[ -f "$MANIFEST" ] || { echo "retention-sweep: manifest not found at $MANIFEST" >&2; exit 1; }
+# The shell original ended its --help text with its `set -u` line, because the help
+# printed lines 2-52 of the file. The line is kept so --help output is byte-identical.
+HELP_TAIL = "set -u"
 
-NOW=$(date +%s)
-MEASURED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-# --- stat/du portability --------------------------------------------------------------
-# `stat -c` and `du -sb` are GNU spellings. Only the systemd timer that drives this is
-# Linux-only; the script itself deploys to every machine (nothing in .chezmoiignore holds
-# it back), so on a Mac without coreutils every one of these calls failed and the whole
-# sweeper degraded silently: mtime came back empty, so each entry was kept as "unreadable
-# mtime", and both rewrite primitives returned 1 before touching a file. A report that
-# prunes nothing and blames the filesystem looks exactly like a converged box.
+def _out(text: str = "") -> None:
+    sys.stdout.write(text + "\n")
+
+
+def _err(text: str) -> None:
+    sys.stderr.write(text + "\n")
+
+
+# --- stat/du --------------------------------------------------------------------------
+# os.lstat replaces `stat -c`/`stat -f`, which spelled the same question two ways on GNU
+# and BSD userland. The shell version probed for a GNU stat and, on a Mac without
+# coreutils, silently degraded: mtime came back empty, so every entry was kept as
+# "unreadable mtime" and both rewrite primitives returned 1 before touching a file. A
+# report that prunes nothing and blames the filesystem looks exactly like a converged
+# box.
+# One implementation removes the failure mode instead of probing for it.
 #
-# Probed once rather than branched on uname: what matters is which stat is first on PATH,
-# and a Mac with coreutils installed gets the GNU one.
-if stat -c%Y . >/dev/null 2>&1; then
-  file_mtime() { stat -c%Y "$1"; }
-  file_size()  { stat -c%s "$1"; }
-  file_mode()  { stat -c%a "$1"; }
-  dir_bytes()  { du -sb "$1" 2>/dev/null | cut -f1; }
-else
-  file_mtime() { stat -f%m "$1"; }
-  file_size()  { stat -f%z "$1"; }
-  file_mode()  { stat -f%Lp "$1"; }
-  # BSD du has no apparent-size flag, so this reports allocated KiB rather than the sum of
-  # file sizes. It feeds the report's byte totals only — no decision reads it.
-  dir_bytes()  { local k; k=$(du -sk "$1" 2>/dev/null | cut -f1) && echo $(( k * 1024 )); }
-fi
+# lstat, not stat: GNU `stat` does not follow a symlink, and neither does this. A link's
+# own mtime and size are what the sweep reports, which is what makes a backdated link
+# reach the containment check instead of being held by the grace floor.
+
+
+def file_mtime(path: str) -> int | None:
+    try:
+        return os.lstat(path).st_mtime_ns // 1_000_000_000
+    except OSError:
+        return None
+
+
+def file_size(path: str) -> int | None:
+    try:
+        return os.lstat(path).st_size
+    except OSError:
+        return None
+
+
+def file_mode(path: str) -> int:
+    """Permission bits, as `stat -c%a` prints them (OSError if the file is gone)."""
+    return stat.S_IMODE(os.lstat(path).st_mode)
+
+
+def dir_bytes(path: str) -> int:
+    """Apparent bytes under `path`, matching GNU `du -sb`.
+
+    Regular files and symlinks count at their lstat size and a hard-linked file counts
+    once. Directories contribute nothing themselves, and a symlink named on the command
+    line is measured as a link rather than followed. An unreadable subdirectory is
+    skipped and the partial total stands, as it did when `du` printed its error to a
+    discarded stderr. It feeds the report's byte totals only; no decision reads it.
+
+    On Linux this equals the old `du -sb`. On macOS the old fallback was
+    `du -sk` * 1024, which reports allocated blocks rounded up to KiB; this reports
+    apparent bytes there as well.
+    """
+    try:
+        root = os.lstat(path)
+    except OSError:
+        return 0
+    if not stat.S_ISDIR(root.st_mode):
+        return root.st_size
+    total = 0
+    seen: set[tuple[int, int]] = set()
+    pending = [path]
+    while pending:
+        here = pending.pop()
+        try:
+            with os.scandir(here) as it:
+                entries = list(it)
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                st = entry.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            if stat.S_ISDIR(st.st_mode):
+                pending.append(entry.path)
+                continue
+            if st.st_nlink > 1:
+                key = (st.st_dev, st.st_ino)
+                if key in seen:
+                    continue
+                seen.add(key)
+            total += st.st_size
+    return total
+
+
+def trunc_div(a: int, b: int) -> int:
+    """Integer division rounding toward zero, as shell arithmetic does."""
+    q = abs(a) // b
+    return -q if a < 0 else q
+
 
 # --- cap and grace parsing ------------------------------------------------------------
 # Caps in the manifest are prose ("14d", "mtime+24h", "kill -0 fails / 14d"). Each
-# parser returns empty when it cannot understand its input, and an empty parse is always
-# a refusal at the call site — never a fallback value.
+# parser returns None when it cannot understand its input, and None is always a
+# refusal at the call site — never a fallback value.
 
-grace_seconds() {
-  case "$1" in
-    ''|null) echo 0 ;;
-    *h) echo $(( ${1%h} * 3600 )) ;;
-    *d) echo $(( ${1%d} * 86400 )) ;;
-    *m) echo $(( ${1%m} * 60 )) ;;
-    *) echo 999999999 ;;   # unreadable grace = nothing is ever eligible
-  esac
+_ARITH_LITERAL = re.compile(r"\s*([+-]?)\s*(0[xX][0-9a-fA-F]+|0[0-7]*|[1-9][0-9]*)\s*")
+
+
+def shell_int(text: str) -> int | None:
+    """Read one integer the way shell arithmetic would: 010 is octal, 0x10 is hex.
+
+    The shell original fed these numbers to `$(( ))`, so "014d" meant twelve days. The
+    port keeps that reading rather than quietly changing what an existing manifest says.
+    Anything shell arithmetic would reject (08, 1.5, a bare word) is None.
+    """
+    m = _ARITH_LITERAL.fullmatch(text)
+    if not m:
+        return None
+    sign, digits = m.groups()
+    if digits[:2] in ("0x", "0X"):
+        value = int(digits, 16)
+    elif len(digits) > 1 and digits.startswith("0"):
+        value = int(digits, 8)
+    else:
+        value = int(digits)
+    return -value if sign == "-" else value
+
+
+def grace_seconds(grace: str) -> int:
+    if grace in ("", "null"):
+        return 0
+    for suffix, unit in (("h", 3600), ("d", 86400), ("m", 60)):
+        if grace.endswith(suffix):
+            n = shell_int(grace[: -len(suffix)])
+            # An unreadable number is as unreadable as an unreadable suffix.
+            return UNREADABLE_GRACE if n is None else n * unit
+    return UNREADABLE_GRACE
+
+
+def age_cap_seconds(cap: str) -> int | None:
+    """ "14d" | "mtime+24h" | "kill -0 fails / 14d" -> seconds."""
+    m = re.search(r"mtime\+([0-9]+)h", cap)
+    if m:
+        n = shell_int(m.group(1))
+        return None if n is None else n * 3600
+    m = re.search(r"[0-9]+d", cap)
+    if m:
+        n = shell_int(m.group(0)[:-1])
+        return None if n is None else n * 86400
+    return None
+
+
+def rotate_size_bytes(cap: str) -> int | None:
+    """ "1MB, keep 3 gen" | "5MB" -> bytes.
+
+    None on anything not matching a leading <number><MB|KB|GB>: an unparseable cap is a
+    refusal at the call site, never a default.
+    """
+    for unit, mult in (("GB", 1 << 30), ("MB", 1 << 20), ("KB", 1 << 10)):
+        m = re.search(r"^([0-9]+)" + unit, cap, re.MULTILINE)
+        if m:
+            n = shell_int(m.group(1))
+            return None if n is None else n * mult
+    return None
+
+
+def rotate_gens(cap: str) -> int | None:
+    """ "1MB, keep 3 gen" -> 3; "5MB" (no generation count given) -> the default, 3.
+
+    Unlike the size portion, a missing generation count is not a parse failure — the
+    manifest rows that omit it (G11) mean "use the default", per spec.
+    """
+    m = re.search(r"keep ([0-9]+) gen", cap)
+    if m:
+        return shell_int(m.group(1))
+    return 3
+
+
+def truncate_lines_n(cap: str) -> int | None:
+    """ "keep last 2000" -> 2000. None on anything else — refusal, not a default."""
+    m = re.search(r"keep last ([0-9]+)", cap)
+    return int(m.group(1)) if m else None
+
+
+def pid_is_live(pid: str) -> bool:
+    """`kill -0` semantics: only a successful signal check means alive.
+
+    EPERM counts as dead, because the shell builtin returned failure for it. Pids reach
+    kill(2) narrowed to a 32-bit pid_t, as the shell builtin narrowed them.
+    """
+    n = int(pid)
+    if n >= 1 << 63:
+        return False
+    n = ((n + (1 << 31)) % (1 << 32)) - (1 << 31)
+    try:
+        os.kill(n, 0)
+    except (OSError, OverflowError):
+        return False
+    return True
+
+
+def pid_from_path(path: str) -> str | None:
+    """The pid comes from the filename shape, not a manifest field, so the manifest
+    stays pure policy data. A name matching no known shape yields no pid and is never
+    pruned."""
+    base = path.rsplit("/", 1)[-1]
+    if base.startswith(".agentview-fzfport."):
+        p = base[len(".agentview-fzfport.") :]
+    elif base.startswith(".claude.json.tmp."):
+        # contents never opened
+        p = base[len(".claude.json.tmp.") :].split(".", 1)[0]
+    elif base.endswith(".json"):
+        p = base[: -len(".json")]
+    else:
+        p = ""
+    if p and p.isascii() and p.isdigit():
+        return p
+    return None
+
+
+# --- globbing -------------------------------------------------------------------------
+# The shell original expanded each manifest path as an unquoted `$expanded` under
+# `shopt -s nullglob globstar dotglob`. That is word splitting on whitespace, then
+# pathname expansion per word, with these properties, all reproduced here:
+#   * a word without a wildcard stands for itself, whether or not it exists;
+#   * a wildcard word that matches nothing vanishes (nullglob);
+#   * `*`, `?` and `[...]` match dotfiles (dotglob), never `.` or `..`;
+#   * a `**` component matches zero or more directories. It lists a symlink to a
+#     directory but does not descend through one, and as the last component it matches
+#     everything beneath;
+#   * results come back sorted bytewise (the C locale), over the whole path string.
+# The sort is the C locale because the systemd unit that runs this sets no locale.
+# Order is observable: the last kept entry's reason becomes a row's kept_example.
+
+_POSIX_CLASSES = {
+    "alpha": "a-zA-Z",
+    "digit": "0-9",
+    "alnum": "a-zA-Z0-9",
+    "upper": "A-Z",
+    "lower": "a-z",
+    "space": " \\t\\n\\r\\f\\v",
+    "blank": " \\t",
+    "punct": "!-/:-@\\[-`{-~",
+    "xdigit": "0-9a-fA-F",
+    "word": "a-zA-Z0-9_",
 }
 
-# "14d" | "mtime+24h" | "kill -0 fails / 14d" -> seconds
-age_cap_seconds() {
-  local h d
-  h=$(printf '%s' "$1" | grep -oE 'mtime\+[0-9]+h' | head -1)
-  if [ -n "$h" ]; then h=${h#mtime+}; echo $(( ${h%h} * 3600 )); return; fi
-  d=$(printf '%s' "$1" | grep -oE '[0-9]+d' | head -1)
-  if [ -n "$d" ]; then echo $(( ${d%d} * 86400 )); return; fi
-  echo ""
-}
 
-# "1MB, keep 3 gen" | "5MB" -> bytes. Empty on anything not matching a leading
-# <number><MB|KB|GB> — an unparseable cap is a refusal at the call site, never a default.
-rotate_size_bytes() {
-  local m
-  m=$(printf '%s' "$1" | grep -oE '^[0-9]+GB'); [ -n "$m" ] && { echo $(( ${m%GB} * 1024 * 1024 * 1024 )); return; }
-  m=$(printf '%s' "$1" | grep -oE '^[0-9]+MB'); [ -n "$m" ] && { echo $(( ${m%MB} * 1024 * 1024 )); return; }
-  m=$(printf '%s' "$1" | grep -oE '^[0-9]+KB'); [ -n "$m" ] && { echo $(( ${m%KB} * 1024 )); return; }
-  echo ""
-}
+def _bracket_regex(pat: str, start: int) -> tuple[str, int] | None:
+    """Translate the bracket expression at pat[start] == '[' to (regex, next index)."""
+    j = start + 1
+    negate = j < len(pat) and pat[j] in "!^"
+    if negate:
+        j += 1
+    first = j
+    body = []
+    while j < len(pat):
+        c = pat[j]
+        if c == "]" and j > first:
+            return "[" + ("^" if negate else "") + "".join(body) + "]", j + 1
+        if c == "[" and pat.startswith("[:", j):
+            end = pat.find(":]", j + 2)
+            if end > 0 and pat[j + 2 : end] in _POSIX_CLASSES:
+                body.append(_POSIX_CLASSES[pat[j + 2 : end]])
+                j = end + 2
+                continue
+        if c == "\\" and j + 1 < len(pat):
+            c = pat[j + 1]
+            j += 1
+        body.append("\\" + c if c in "\\]^[" else c)
+        j += 1
+    return None
 
-# "1MB, keep 3 gen" -> 3; "5MB" (no generation count given) -> the default, 3. Unlike the
-# size portion, a missing generation count is not a parse failure — the manifest rows
-# that omit it (G11) mean "use the default", per spec.
-rotate_gens() {
-  local g
-  g=$(printf '%s' "$1" | grep -oE 'keep [0-9]+ gen')
-  if [ -n "$g" ]; then g=${g#keep }; echo "${g% gen}"; return; fi
-  echo 3
-}
 
-# "keep last 2000" -> 2000. Empty on anything else — refusal, not a default.
-truncate_lines_n() {
-  local n
-  n=$(printf '%s' "$1" | grep -oE 'keep last [0-9]+')
-  if [ -n "$n" ]; then echo "${n#keep last }"; return; fi
-  echo ""
-}
+def _component_regex(comp: str) -> re.Pattern[str]:
+    out = []
+    i = 0
+    while i < len(comp):
+        c = comp[i]
+        if c == "\\" and i + 1 < len(comp):
+            out.append(re.escape(comp[i + 1]))
+            i += 2
+        elif c == "*":
+            out.append(".*")
+            i += 1
+        elif c == "?":
+            out.append(".")
+            i += 1
+        elif c == "[":
+            br = _bracket_regex(comp, i)
+            if br is None:
+                out.append(re.escape(c))
+                i += 1
+            else:
+                out.append(br[0])
+                i = br[1]
+        else:
+            out.append(re.escape(c))
+            i += 1
+    return re.compile("".join(out), re.DOTALL)
 
-pid_is_live() { kill -0 "$1" 2>/dev/null; }
 
-# The pid comes from the filename shape, not a manifest field, so the manifest stays
-# pure policy data. A name matching no known shape yields no pid and is never pruned.
-pid_from_path() {
-  local base=${1##*/} p=
-  case "$base" in
-    .agentview-fzfport.*) p=${base#.agentview-fzfport.} ;;
-    .claude.json.tmp.*)   p=${base#.claude.json.tmp.}; p=${p%%.*} ;;   # contents never opened
-    *.json)               p=${base%.json} ;;
-  esac
-  case "$p" in
-    ''|*[!0-9]*) return 1 ;;
-    *) printf '%s' "$p" ;;
-  esac
-}
+def _has_wildcard(text: str) -> bool:
+    i = 0
+    while i < len(text):
+        if text[i] == "\\":
+            i += 2
+            continue
+        if text[i] in "*?[":
+            return True
+        i += 1
+    return False
 
-# G12 only. Candidates are an explicit, bounded list — never a filesystem walk.
-live_sibling_newer_than() {
-  local target_mtime=$1 cands=${RETENTION_SIBLING_CANDIDATES:-} c m
-  [ -n "$cands" ] || cands="${CLAUDE_PROJECT_DIR:-}/.claude/logs/permissions.json:$PWD/.claude/logs/permissions.json"
-  local IFS=:
-  for c in $cands; do
-    [ -n "$c" ] && [ -f "$c" ] || continue
-    m=$(file_mtime "$c" 2>/dev/null) || continue
-    [ "$m" -gt "$target_mtime" ] && { printf '%s' "$c"; return 0; }
-  done
-  return 1
-}
+
+def _unescape(text: str) -> str:
+    return re.sub(r"\\(.)", r"\1", text, flags=re.DOTALL)
+
+
+def _join(base: str, name: str) -> str:
+    if not base:
+        return name
+    return base + name if base.endswith("/") else base + "/" + name
+
+
+def _entries(base: str) -> list[os.DirEntry[str]]:
+    try:
+        with os.scandir(base or ".") as it:
+            return list(it)
+    except OSError:
+        return []
+
+
+def _dirs_under(base: str) -> list[str]:
+    """`base` and every directory beneath it, for a `**` that has more path after it."""
+    if base and not os.path.isdir(base):
+        return []
+    found = [base]
+    pending = [base]
+    while pending:
+        here = pending.pop()
+        for entry in _entries(here):
+            if entry.is_dir():
+                path = _join(here, entry.name)
+                found.append(path)
+                if not entry.is_symlink():
+                    pending.append(path)
+    return found
+
+
+def _everything_under(base: str, dirs_only: bool, slash: bool, found: set[str]) -> None:
+    """A final `**`: the directory itself, then everything beneath it.
+
+    The directory carries a trailing slash when the pattern named it literally
+    (`a/**` lists `a/`) or asked for directories only, and none when a wildcard or an
+    earlier `**` produced it.
+    """
+    if base:
+        if not os.path.isdir(base):
+            return
+        found.add(
+            base if base.endswith("/") or not (slash or dirs_only) else base + "/"
+        )
+    pending = [base]
+    while pending:
+        here = pending.pop()
+        for entry in _entries(here):
+            path = _join(here, entry.name)
+            is_dir = entry.is_dir()
+            if is_dir and not entry.is_symlink():
+                pending.append(path)
+            if dirs_only:
+                if is_dir:
+                    found.add(path + "/")
+            else:
+                found.add(path)
+
+
+def _glob_walk(
+    base: str, parts: list[str], trail: bool, found: set[str], literal: bool = True
+) -> None:
+    if not parts:
+        if not base:
+            return
+        if trail:
+            if os.path.isdir(base):
+                found.add(base if base.endswith("/") else base + "/")
+        elif os.path.lexists(base):
+            found.add(base)
+        return
+    comp, rest = parts[0], parts[1:]
+    if comp == "**":
+        collapsed = False
+        while rest and rest[0] == "**":
+            rest = rest[1:]
+            collapsed = True
+        if not rest:
+            _everything_under(base, trail, literal and not collapsed, found)
+            return
+        for d in _dirs_under(base):
+            _glob_walk(d, rest, trail, found, False)
+        return
+    if not _has_wildcard(comp):
+        path = _join(base, _unescape(comp))
+        if not rest or os.path.isdir(path):
+            _glob_walk(path, rest, trail, found, literal)
+        return
+    rx = _component_regex(comp)
+    for entry in _entries(base):
+        if rx.fullmatch(entry.name) and (not rest or entry.is_dir()):
+            _glob_walk(_join(base, entry.name), rest, trail, found, False)
+
+
+def glob_expand(pattern: str) -> list[str]:
+    """Pathname expansion of one word that contains a wildcard; no match gives []."""
+    found: set[str] = set()
+    parts = [p for p in pattern.split("/") if p]
+    _glob_walk(
+        "/" if pattern.startswith("/") else "", parts, pattern.endswith("/"), found
+    )
+    return sorted(found, key=os.fsencode)
+
+
+def expand_words(text: str) -> list[str]:
+    """What `for f in $text` iterates: whitespace-split words, each globbed alone."""
+    words: list[str] = []
+    for word in re.split(r"[ \t\n]+", text):
+        if not word:
+            continue
+        if _has_wildcard(word):
+            words.extend(glob_expand(word))
+        else:
+            words.append(word)
+    return words
+
+
+def _logical_cwd() -> str:
+    pwd = os.environ.get("PWD", "")
+    with contextlib.suppress(OSError):
+        if pwd.startswith("/") and os.path.samefile(pwd, "."):
+            return pwd
+    return os.getcwd()
+
+
+def live_sibling_newer_than(target_mtime: int) -> str | None:
+    """G12 only. Candidates are an explicit, bounded list — never a filesystem walk."""
+    cands = os.environ.get("RETENTION_SIBLING_CANDIDATES", "")
+    if not cands:
+        project = os.environ.get("CLAUDE_PROJECT_DIR", "")
+        log = ".claude/logs/permissions.json"
+        cands = f"{project}/{log}:{_logical_cwd()}/{log}"
+    for field in cands.split(":"):
+        # The shell expanded the list unquoted, so a candidate may itself be a glob.
+        for c in glob_expand(field) if _has_wildcard(field) else [field]:
+            if not c or not os.path.isfile(c):
+                continue
+            m = file_mtime(c)
+            if m is not None and m > target_mtime:
+                return c
+    return None
+
 
 # --- containment ----------------------------------------------------------------------
 # The literal directory prefix of a glob: everything before the first wildcard. A rule
 # may only remove something underneath its own prefix, so a row's blast radius is the
 # directory the manifest names for it and nothing else. This is what makes the recursive
 # removal below safe enough to run unattended.
-glob_prefix() {
-  local p=${1%%[*?[]*}
-  printf '%s' "${p%/*}"
-}
 
-# Contained iff the resolved entry sits strictly under the resolved prefix. Refuses a
-# symlink outright, so a link inside a swept directory cannot redirect a removal out of
-# it, and refuses the prefix itself so a rule can never delete its own parent.
-contained() {
-  local prefix=$1 entry=$2 rp re
-  [ -L "$entry" ] && return 1
-  rp=$(readlink -f "$prefix" 2>/dev/null) || return 1
-  re=$(readlink -f "$entry" 2>/dev/null) || return 1
-  { [ -n "$rp" ] && [ -n "$re" ] && [ "$rp" != "$re" ]; } || return 1
-  case "$re" in "$rp"/*) return 0 ;; esac
-  return 1
-}
 
-# --- rotate/truncate primitives ---------------------------------------------------------
+def glob_prefix(pattern: str) -> str:
+    m = re.search(r"[*?[]", pattern)
+    p = pattern[: m.start()] if m else pattern
+    return p.rsplit("/", 1)[0] if "/" in p else p
+
+
+def readlink_f(path: str) -> str | None:
+    """Fully resolved path, or None if it cannot be resolved (`readlink -f` failing)."""
+    if not path:
+        return None
+    try:
+        return os.path.realpath(path, strict=True)
+    except OSError:
+        return None
+
+
+def contained(prefix: str, entry: str) -> bool:
+    """Contained iff the resolved entry sits strictly under the resolved prefix.
+
+    Refuses a symlink outright, so a link inside a swept directory cannot redirect a
+    removal out of it, and refuses the prefix itself so a rule can never delete its own
+    parent.
+    """
+    if os.path.islink(entry):
+        return False
+    rp = readlink_f(prefix)
+    re_ = readlink_f(entry)
+    if not rp or not re_ or rp == re_:
+        return False
+    return re_.startswith(rp + "/")
+
+
+# --- removal primitives ---------------------------------------------------------------
+# remove_file and remove_tree hold the only two deletion call sites in this script, plus
+# the os.rmdir that prune-empty-dir uses. A structural test pins that.
+
+
+def remove_file(path: str) -> bool:
+    """`rm -f -- path`: a file that is already gone is success."""
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def remove_tree(path: str) -> bool:
+    """`rm -rf -- path`: keeps going past an entry it cannot remove, then reports it."""
+    failed = []
+
+    def note(_func, _path, exc):
+        # onexc passes the exception; onerror, on Python before 3.12, passes exc_info.
+        value = exc[1] if isinstance(exc, tuple) else exc
+        if not isinstance(value, FileNotFoundError):
+            failed.append(value)
+
+    hook = {"onexc": note} if sys.version_info >= (3, 12) else {"onerror": note}
+    try:
+        shutil.rmtree(path, **hook)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return not failed
+
+
+# --- rotate/truncate primitives -------------------------------------------------------
 # Rotation and truncation rewrite a file a live process may hold open — a different
 # failure mode from removing a stale one. Both primitives are rename-then-create-fresh:
 # the original inode is never opened for in-place writing, so the worst case of a race
 # with a concurrent writer is a few interleaved lines landing in the old segment, never
-# data loss. These two functions are the only place `mv` or `tail -n` appear in this
-# script — a structural test pins that.
+# data loss. These two functions and write_measurements are the only place os.replace
+# appears in this script — a structural test pins that.
 
-# f -> f.1 -> f.2 ... -> f.$gens, dropping whatever was at f.$gens. Shifting from the
-# oldest surviving generation upward means the drop is an ordinary mv overwrite, not a
-# separate delete: mv f.$((gens-1)) onto an existing f.$gens replaces it atomically, so
-# rotation never needs its own rm call site.
-rotate_by_size() {
-  local f=$1 gens=$2 mode i
-  mode=$(file_mode "$f") || return 1
-  i=$((gens - 1))
-  while [ "$i" -ge 1 ]; do
-    if [ -e "$f.$i" ]; then
-      mv -f -- "$f.$i" "$f.$((i + 1))" || return 1
-    fi
-    i=$((i - 1))
-  done
-  mv -f -- "$f" "$f.1" || return 1
-  touch -- "$f" || return 1
-  chmod "$mode" "$f"
-}
 
-# Writes the last N lines to a temp file in the same directory, restores the original
-# mode on the temp file, then renames it over the original — never truncates in place.
-truncate_lines_file() {
-  local f=$1 n=$2 mode tmp
-  mode=$(file_mode "$f") || return 1
-  tmp="$f.tmp.$$"
-  tail -n "$n" -- "$f" > "$tmp" || return 1
-  chmod "$mode" "$tmp" || return 1
-  mv -f -- "$tmp" "$f"
-}
+def rotate_by_size(f: str, gens: int) -> bool:
+    """f -> f.1 -> f.2 ... -> f.$gens, dropping whatever was at f.$gens.
 
-# Records this run's per-row measurements in $MEASURED as {"<id>": {at, count, bytes}},
-# replacing the stale, hand-typed notes prose ("1180 dirs, 4.7M dirents", "measured
-# 2026-07-30") with a number the sweep itself just produced. Runs on every invocation,
-# dry-run included: the measurement reflects what currently matches, independent of
-# whether this run acted on it. `updates` is a JSON array of {id, at, count, bytes}
-# objects, one per row the loop in sweep() processed -- native/self-managed rows never
-# reach it. The manifest itself is never written: chezmoi deploys it, so a sweep that
-# edited it left the deployed copy permanently different from the source, and every later
-# `chezmoi apply` stopped to ask whether to overwrite it. Same rename-then-replace shape as
-# truncate_lines_file above.
-write_measurements() {
-  local out=$1 updates=$2 tmp updated prior
-  [ "$updates" = "[]" ] && return 0
-  prior=$(jq -c 'if type == "object" then . else {} end' "$out" 2>/dev/null) || prior='{}'
-  [ -n "$prior" ] || prior='{}'
-  updated=$(printf '%s' "$prior" | jq --argjson updates "$updates" '
-      reduce $updates[] as $u (.; .[$u.id] = {at: $u.at, count: $u.count, bytes: $u.bytes})
-    ') || return 1
-  [ -n "$updated" ] || return 1
-  tmp="$out.tmp.$$"
-  printf '%s\n' "$updated" > "$tmp" && mv -f -- "$tmp" "$out"
-}
+    Shifting from the oldest surviving generation upward means the drop is an ordinary
+    rename overwrite, not a separate delete: renaming f.$((gens-1)) onto an existing
+    f.$gens replaces it atomically, so rotation never needs its own unlink call site.
+    """
+    try:
+        mode = file_mode(f)
+        for i in range(gens - 1, 0, -1):
+            if os.path.exists(f"{f}.{i}"):
+                os.replace(f"{f}.{i}", f"{f}.{i + 1}")
+        os.replace(f, f"{f}.1")
+        os.close(os.open(f, os.O_WRONLY | os.O_CREAT, 0o666))
+        os.chmod(f, mode)
+    except OSError:
+        return False
+    return True
+
+
+def _tail_offset(fh, n: int) -> int:
+    """Byte offset where the last n lines of fh start, as `tail -n` counts them."""
+    size = fh.seek(0, os.SEEK_END)
+    if n <= 0:
+        return size
+    if size == 0:
+        return 0
+    fh.seek(size - 1)
+    end = size - 1 if fh.read(1) == b"\n" else size
+    seen = 0
+    pos = end
+    while pos > 0:
+        step = min(65536, pos)
+        pos -= step
+        fh.seek(pos)
+        chunk = fh.read(step)
+        idx = len(chunk)
+        while True:
+            idx = chunk.rfind(b"\n", 0, idx)
+            if idx < 0:
+                break
+            seen += 1
+            if seen == n:
+                return pos + idx + 1
+    return 0
+
+
+def truncate_lines_file(f: str, n: int) -> bool:
+    """Writes the last N lines to a temp file in the same directory, restores the
+    original mode on the temp file, then renames it over the original — never truncates
+    in place."""
+    tmp = f"{f}.tmp.{os.getpid()}"
+    try:
+        mode = file_mode(f)
+        with open(f, "rb") as src, open(tmp, "wb") as dst:
+            src.seek(_tail_offset(src, n))
+            shutil.copyfileobj(src, dst)
+        os.chmod(tmp, mode)
+        os.replace(tmp, f)
+    except OSError:
+        return False
+    return True
+
+
+def write_measurements(out: str, updates: list[dict]) -> bool:
+    """Records this run's per-row measurements in `out` as {"<id>": {at, count, bytes}},
+    replacing the stale, hand-typed notes prose ("1180 dirs, 4.7M dirents", "measured
+    2026-07-30") with a number the sweep itself just produced.
+
+    Runs on every invocation, dry-run included: the measurement reflects what currently
+    matches, independent of whether this run acted on it. `updates` has one entry per
+    row the loop in sweep() processed -- native/self-managed rows never reach it. The
+    manifest itself is never written: chezmoi deploys it, so a sweep that edited it left
+    the deployed copy permanently different from the source, and every later `chezmoi
+    apply` stopped to ask whether to overwrite it. Same rename-then-replace shape as
+    truncate_lines_file above.
+    """
+    if not updates:
+        return True
+    try:
+        with open(out, "rb") as fh:
+            prior = json.load(fh)
+    except (OSError, ValueError):
+        prior = {}
+    if not isinstance(prior, dict):
+        prior = {}
+    for u in updates:
+        prior[u["id"]] = {"at": u["at"], "count": u["count"], "bytes": u["bytes"]}
+    tmp = f"{out}.tmp.{os.getpid()}"
+    try:
+        with open(tmp, "w", encoding="utf-8", errors="surrogateescape") as fh:
+            fh.write(json.dumps(prior, indent=2, ensure_ascii=False) + "\n")
+        os.replace(tmp, out)
+    except OSError:
+        return False
+    return True
+
+
+# --- manifest values ------------------------------------------------------------------
+
+
+def jq_raw(value) -> str:
+    """How `jq -r` prints a JSON value: strings bare, null as the word null."""
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return "null"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, indent=2, ensure_ascii=False)
+    return json.dumps(value)
+
+
+def row_field(row, key: str):
+    return row.get(key) if isinstance(row, dict) else None
+
+
+def row_globs(row) -> list[str]:
+    """One glob per `path` entry, in the manifest's order (a string or an array)."""
+    path = row_field(row, "path")
+    items = path if isinstance(path, list) else [path]
+    globs: list[str] = []
+    for item in items:
+        globs.extend(jq_raw(item).split("\n"))
+    return globs
+
 
 # --- the sweep ------------------------------------------------------------------------
 
-sweep() {
-  local total_pruned=0 total_bytes=0 total_rotated=0 total_rotated_bytes=0 rows=0 errors=0
 
-  if [ "$APPLY" -eq 1 ]; then echo "retention-sweep — APPLY"; else echo "retention-sweep — DRY RUN"; fi
-  echo "manifest: $MANIFEST"
-  echo
+def sweep(cfg: dict) -> int:
+    apply_ = cfg["apply"]
+    rotate = cfg["rotate"]
+    now = cfg["now"]
+    home = cfg["home"]
+    manifest_path = cfg["manifest"]
+    measured_at = cfg["measured_at"]
 
-  shopt -s nullglob globstar dotglob
+    total_pruned = total_bytes = total_rotated = total_rotated_bytes = rows = errors = 0
 
-  # Every processed row's live match count/bytes, written back into the manifest as a
-  # `measured` object once the loop finishes -- see the write-back after the loop for
-  # why this replaces the file's stale, hand-typed notes prose ("1180 dirs, 4.7M
-  # dirents", "measured 2026-07-30") with a number the sweep itself produced.
-  local measure_updates='[]'
+    _out("retention-sweep — APPLY" if apply_ else "retention-sweep — DRY RUN")
+    _out(f"manifest: {manifest_path}")
+    _out()
 
-  local row_count i row id rule finding grace cap acting rotating tag
-  row_count=$(jq 'length' "$MANIFEST")
-  i=0
-  while [ "$i" -lt "$row_count" ]; do
-    row=$(jq -c ".[$i]" "$MANIFEST")
-    i=$((i + 1))
-    rows=$((rows + 1))
+    try:
+        with open(manifest_path, "rb") as fh:
+            manifest = json.load(fh)
+    except (OSError, ValueError) as e:
+        _err(f"{PROG}: cannot read manifest {manifest_path}: {e}")
+        manifest = []
+    if not isinstance(manifest, list):
+        _err(f"{PROG}: manifest {manifest_path} is not a JSON array")
+        manifest = []
 
-    id=$(printf '%s' "$row" | jq -r '.id')
-    rule=$(printf '%s' "$row" | jq -r '.rule')
-    finding=$(printf '%s' "$row" | jq -r '.finding')
-    grace=$(printf '%s' "$row" | jq -r '.grace // ""')
-    cap=$(printf '%s' "$row" | jq -r '.cap')
+    # Every processed row's live match count/bytes, written to the measurements file
+    # once the loop finishes -- see write_measurements for why this replaces the
+    # manifest's stale, hand-typed notes prose with a number the sweep itself produced.
+    measure_updates: list[dict] = []
 
-    if [ "$rule" = "native" ] || [ "$rule" = "self-managed" ]; then
-      echo "[dry-run] $id: rule=$rule -> no action, out of scope for this sweeper ($finding)"
-      continue
-    fi
+    for row in manifest:
+        rows += 1
 
-    acting=0
-    case "$APPLY_ROWS" in *" $id "*) [ "$APPLY" -eq 1 ] && acting=1 ;; esac
-    rotating=0
-    case "$ROTATE_ROWS" in *" $id "*) [ "$APPLY" -eq 1 ] && [ "$ROTATE" -eq 1 ] && rotating=1 ;; esac
-    if [ "$acting" -eq 1 ]; then tag='[apply]'; elif [ "$rotating" -eq 1 ]; then tag='[rotate]'; else tag='[dry-run]'; fi
+        id_ = jq_raw(row_field(row, "id"))
+        rule = jq_raw(row_field(row, "rule"))
+        finding = jq_raw(row_field(row, "finding"))
+        grace_value = row_field(row, "grace")
+        grace = "" if grace_value in (None, False) else jq_raw(grace_value)
+        cap = jq_raw(row_field(row, "cap"))
 
-    local globs count bytes oldest_days pruned pruned_bytes kept_reason min_age
-    mapfile -t globs < <(printf '%s' "$row" | jq -r 'if (.path | type) == "array" then .path[] else .path end')
-    count=0; bytes=0; oldest_days=""; pruned=0; pruned_bytes=0; kept_reason=""
-    min_age=$(grace_seconds "$grace")
-
-    local g expanded prefix f b mtime age_days pid sibling n lc newsize
-    for g in "${globs[@]}"; do
-      expanded="${g/#\~/$HOME}"
-      [[ "$expanded" == *cwd* ]] && continue   # G11: per-cwd, not a fixed glob
-      prefix=$(glob_prefix "$expanded")
-      for f in $expanded; do
-        [ -e "$f" ] || continue
-        count=$((count + 1))
-        if [ -d "$f" ]; then b=$(dir_bytes "$f"); else b=$(file_size "$f" 2>/dev/null); fi
-        bytes=$((bytes + ${b:-0}))
-        mtime=$(file_mtime "$f" 2>/dev/null || echo "")
-        if [ -n "$mtime" ]; then
-          age_days=$(( (NOW - mtime) / 86400 ))
-          if [ -z "$oldest_days" ] || [ "$age_days" -gt "$oldest_days" ]; then oldest_days=$age_days; fi
-        fi
-
-        [ "$acting" -eq 1 ] || [ "$rotating" -eq 1 ] || continue
-        [ -n "$mtime" ] || { kept_reason="unreadable mtime"; continue; }
-
-        # Gate 1: the grace floor, before any rule-specific reasoning.
-        if [ $((NOW - mtime)) -lt "$min_age" ]; then
-          kept_reason="younger than grace=$grace"; continue
-        fi
-
-        # Gate 2: containment. Nothing is removed unless it resolves under its own
-        # glob's prefix and is not a symlink.
-        if ! contained "$prefix" "$f"; then
-          kept_reason="outside its glob prefix or a symlink"; continue
-        fi
-
-        # Gate 3: the rule itself.
-        case "$rule" in
-          prune-dead-pid*)
-            pid=$(pid_from_path "$f") || { kept_reason="no pid in filename"; continue; }
-            if pid_is_live "$pid"; then kept_reason="pid $pid is alive"; continue; fi
-            ;;
-          prune-stale-duplicate)
-            if [ $((NOW - mtime)) -lt $((48 * 3600)) ]; then kept_reason="newer than 48h"; continue; fi
-            if ! sibling=$(live_sibling_newer_than "$mtime"); then
-              kept_reason="no live sibling is newer — cannot prove it is the stale copy"; continue
-            fi
-            echo "  $id: live sibling is $sibling"
-            ;;
-          prune-age)
-            n=$(age_cap_seconds "$cap")
-            [ -n "$n" ] || { kept_reason="cap not understood: $cap"; continue; }
-            if [ $((NOW - mtime)) -lt "$n" ]; then kept_reason="younger than cap=$cap"; continue; fi
-            ;;
-          prune-empty-dir)
-            [ -d "$f" ] || { kept_reason="not a directory"; continue; }
-            # rmdir, not rm -r: it refuses a non-empty directory itself, so "empty" is
-            # enforced by the kernel rather than by a check that could race a writer.
-            if rmdir "$f" 2>/dev/null; then
-              pruned=$((pruned + 1))
-            else
-              kept_reason="directory is not empty"
-            fi
+        if rule in ("native", "self-managed"):
+            _out(
+                f"[dry-run] {id_}: rule={rule} -> no action, "
+                f"out of scope for this sweeper ({finding})"
+            )
             continue
-            ;;
-          rotate-size)
-            [ "$rotating" -eq 1 ] || { kept_reason="rotate rows require --apply --rotate"; continue; }
-            n=$(rotate_size_bytes "$cap")
-            [ -n "$n" ] || { kept_reason="cap not understood: $cap"; continue; }
-            if [ "${b:-0}" -le "$n" ]; then kept_reason="under cap=$cap"; continue; fi
-            if rotate_by_size "$f" "$(rotate_gens "$cap")"; then
-              pruned=$((pruned + 1)); pruned_bytes=$((pruned_bytes + ${b:-0}))
-            else
-              echo "  $id: failed to rotate $f" >&2; errors=$((errors + 1))
-            fi
-            continue
-            ;;
-          truncate-lines)
-            [ "$rotating" -eq 1 ] || { kept_reason="rotate rows require --apply --rotate"; continue; }
-            n=$(truncate_lines_n "$cap")
-            [ -n "$n" ] || { kept_reason="cap not understood: $cap"; continue; }
-            if ! lc=$(wc -l < "$f" 2>/dev/null); then kept_reason="cannot read"; continue; fi
-            if [ "$lc" -le "$n" ]; then kept_reason="under cap=$cap"; continue; fi
-            if truncate_lines_file "$f" "$n"; then
-              newsize=$(file_size "$f" 2>/dev/null || echo 0)
-              pruned=$((pruned + 1)); pruned_bytes=$((pruned_bytes + ${b:-0} - newsize))
-            else
-              echo "  $id: truncate-lines failed for $f" >&2; errors=$((errors + 1))
-            fi
-            continue
-            ;;
-          *)
-            kept_reason="rule $rule has no implementation in this slice"; continue
-            ;;
-        esac
 
-        # Removal. A directory entry (G4's file-history/<uuid>/, G5's task dirs) needs a
-        # recursive remove; containment above is what bounds it.
-        if [ -d "$f" ]; then
-          rm -rf -- "$f" || { echo "  $id: failed to remove $f" >&2; errors=$((errors + 1)); continue; }
-        else
-          rm -f -- "$f" || { echo "  $id: failed to remove $f" >&2; errors=$((errors + 1)); continue; }
-        fi
-        pruned=$((pruned + 1)); pruned_bytes=$((pruned_bytes + ${b:-0}))
-      done
-    done
+        acting = apply_ and id_ in APPLY_ROWS.split()
+        rotating = apply_ and rotate and id_ in ROTATE_ROWS.split()
+        if acting:
+            tag = "[apply]"
+        elif rotating:
+            tag = "[rotate]"
+        else:
+            tag = "[dry-run]"
 
-    local line="$tag $id: rule=$rule cap=$cap matched=$count bytes=$bytes oldest_age_days=${oldest_days:-n/a}"
-    if [ "$acting" -eq 1 ]; then
-      line="$line pruned=$pruned reclaimed=$pruned_bytes"
-      if [ "$pruned" -lt "$count" ] && [ -n "$kept_reason" ]; then line="$line kept_example=\"$kept_reason\""; fi
-      total_pruned=$((total_pruned + pruned)); total_bytes=$((total_bytes + pruned_bytes))
-    elif [ "$rotating" -eq 1 ]; then
-      # "moved" not "reclaimed": rotation relocates bytes to a numbered generation (or, for
-      # truncate-lines, drops only the trimmed lines) rather than freeing them outright.
-      line="$line rotated=$pruned moved=$pruned_bytes"
-      if [ "$pruned" -lt "$count" ] && [ -n "$kept_reason" ]; then line="$line kept_example=\"$kept_reason\""; fi
-      total_rotated=$((total_rotated + pruned)); total_rotated_bytes=$((total_rotated_bytes + pruned_bytes))
-    fi
-    echo "$line ($finding)"
+        count = bytes_ = pruned = pruned_bytes = 0
+        oldest_days: int | None = None
+        kept_reason = ""
+        min_age = grace_seconds(grace)
 
-    measure_updates=$(printf '%s' "$measure_updates" | jq -c \
-      --arg id "$id" --arg at "$MEASURED_AT" --argjson count "$count" --argjson bytes "$bytes" \
-      '. + [{id: $id, at: $at, count: $count, bytes: $bytes}]')
-  done
+        for g in row_globs(row):
+            expanded = home + g[1:] if g.startswith("~") else g
+            if "cwd" in expanded:
+                continue  # G11: per-cwd, not a fixed glob
+            prefix = glob_prefix(expanded)
+            for f in expand_words(expanded):
+                if not os.path.exists(f):
+                    continue
+                count += 1
+                b = (dir_bytes(f) if os.path.isdir(f) else file_size(f)) or 0
+                bytes_ += b
+                mtime = file_mtime(f)
+                if mtime is not None:
+                    age_days = trunc_div(now - mtime, 86400)
+                    if oldest_days is None or age_days > oldest_days:
+                        oldest_days = age_days
 
-  write_measurements "$MEASURED" "$measure_updates" \
-    || echo "retention-sweep: could not write measurements to $MEASURED" >&2
+                if not (acting or rotating):
+                    continue
+                if mtime is None:
+                    kept_reason = "unreadable mtime"
+                    continue
 
-  echo
-  if [ "$APPLY" -eq 1 ]; then
-    echo "Pruned $total_pruned entries, reclaimed $total_bytes bytes, $errors error(s)."
-    if [ "$ROTATE" -eq 1 ]; then
-      echo "Rotated/truncated $total_rotated entries, moved $total_rotated_bytes bytes."
-    fi
-    mkdir -p "$STATE_DIR" 2>/dev/null
-    printf '{"timestamp":"%s","rows_processed":%s,"entries_pruned":%s,"bytes_reclaimed":%s,"errors":%s}\n' \
-      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$rows" "$total_pruned" "$total_bytes" "$errors" > "$MARKER"
-  else
-    echo "Reported matched/bytes/age only — deletes nothing. Re-run with --apply to act."
-  fi
-  [ "$errors" -eq 0 ]
-}
+                # Gate 1: the grace floor, before any rule-specific reasoning.
+                if now - mtime < min_age:
+                    kept_reason = f"younger than grace={grace}"
+                    continue
 
-# One sweep at a time: the hourly timer and any hand-run sweep must not overlap.
-# Contention is normal, not a failure, so it exits 0.
-if command -v flock >/dev/null 2>&1; then
-  mkdir -p "$(dirname "$LOCK")" 2>/dev/null
-  exec 9>"$LOCK" || { echo "retention-sweep: cannot open $LOCK" >&2; exit 1; }
-  if ! flock -n 9; then
-    echo "retention-sweep: another sweep is running; skipping this one"
-    exit 0
-  fi
-fi
+                # Gate 2: containment. Nothing is removed unless it resolves under
+                # its own glob's prefix and is not a symlink.
+                if not contained(prefix, f):
+                    kept_reason = "outside its glob prefix or a symlink"
+                    continue
 
-# fd 9 is closed in the child: a bash redirect sets no close-on-exec, so anything forked
-# from a sweep would otherwise inherit the lock and could hold it indefinitely. bin/land
-# was bitten by exactly this. The lock lives on the open file description this shell
-# keeps, so the mutex itself is unchanged.
-( sweep ) 9>&-
+                # Gate 3: the rule itself.
+                if rule.startswith("prune-dead-pid"):
+                    pid = pid_from_path(f)
+                    if pid is None:
+                        kept_reason = "no pid in filename"
+                        continue
+                    if pid_is_live(pid):
+                        kept_reason = f"pid {pid} is alive"
+                        continue
+                elif rule == "prune-stale-duplicate":
+                    if now - mtime < 48 * 3600:
+                        kept_reason = "newer than 48h"
+                        continue
+                    sibling = live_sibling_newer_than(mtime)
+                    if sibling is None:
+                        kept_reason = (
+                            "no live sibling is newer — "
+                            "cannot prove it is the stale copy"
+                        )
+                        continue
+                    _out(f"  {id_}: live sibling is {sibling}")
+                elif rule == "prune-age":
+                    n = age_cap_seconds(cap)
+                    if n is None:
+                        kept_reason = f"cap not understood: {cap}"
+                        continue
+                    if now - mtime < n:
+                        kept_reason = f"younger than cap={cap}"
+                        continue
+                elif rule == "prune-empty-dir":
+                    if not os.path.isdir(f):
+                        kept_reason = "not a directory"
+                        continue
+                    # rmdir, not a recursive remove: it refuses a non-empty directory
+                    # itself, so "empty" is enforced by the kernel rather than by a
+                    # check that could race a writer.
+                    try:
+                        os.rmdir(f)
+                    except OSError:
+                        kept_reason = "directory is not empty"
+                    else:
+                        pruned += 1
+                    continue
+                elif rule == "rotate-size":
+                    if not rotating:
+                        kept_reason = "rotate rows require --apply --rotate"
+                        continue
+                    n = rotate_size_bytes(cap)
+                    gens = rotate_gens(cap)
+                    if n is None or gens is None:
+                        kept_reason = f"cap not understood: {cap}"
+                        continue
+                    if b <= n:
+                        kept_reason = f"under cap={cap}"
+                        continue
+                    if rotate_by_size(f, gens):
+                        pruned += 1
+                        pruned_bytes += b
+                    else:
+                        _err(f"  {id_}: failed to rotate {f}")
+                        errors += 1
+                    continue
+                elif rule == "truncate-lines":
+                    if not rotating:
+                        kept_reason = "rotate rows require --apply --rotate"
+                        continue
+                    n = truncate_lines_n(cap)
+                    if n is None:
+                        kept_reason = f"cap not understood: {cap}"
+                        continue
+                    try:
+                        with open(f, "rb") as fh:
+                            lc = sum(
+                                chunk.count(b"\n")
+                                for chunk in iter(lambda: fh.read(1 << 20), b"")
+                            )
+                    except OSError:
+                        kept_reason = "cannot read"
+                        continue
+                    if lc <= n:
+                        kept_reason = f"under cap={cap}"
+                        continue
+                    if truncate_lines_file(f, n):
+                        newsize = file_size(f) or 0
+                        pruned += 1
+                        pruned_bytes += b - newsize
+                    else:
+                        _err(f"  {id_}: truncate-lines failed for {f}")
+                        errors += 1
+                    continue
+                else:
+                    kept_reason = f"rule {rule} has no implementation in this slice"
+                    continue
+
+                # Removal. A directory entry (G4's file-history/<uuid>/, G5's task dirs)
+                # needs a recursive remove; containment above is what bounds it.
+                removed = remove_tree(f) if os.path.isdir(f) else remove_file(f)
+                if not removed:
+                    _err(f"  {id_}: failed to remove {f}")
+                    errors += 1
+                    continue
+                pruned += 1
+                pruned_bytes += b
+
+        line = (
+            f"{tag} {id_}: rule={rule} cap={cap} matched={count} bytes={bytes_} "
+            f"oldest_age_days={'n/a' if oldest_days is None else oldest_days}"
+        )
+        if acting:
+            line += f" pruned={pruned} reclaimed={pruned_bytes}"
+            if pruned < count and kept_reason:
+                line += f' kept_example="{kept_reason}"'
+            total_pruned += pruned
+            total_bytes += pruned_bytes
+        elif rotating:
+            # "moved" not "reclaimed": rotation relocates bytes to a numbered
+            # generation (or, for truncate-lines, drops only the trimmed lines) rather
+            # than freeing them outright.
+            line += f" rotated={pruned} moved={pruned_bytes}"
+            if pruned < count and kept_reason:
+                line += f' kept_example="{kept_reason}"'
+            total_rotated += pruned
+            total_rotated_bytes += pruned_bytes
+        _out(f"{line} ({finding})")
+
+        measure_updates.append(
+            {"id": id_, "at": measured_at, "count": count, "bytes": bytes_}
+        )
+
+    if not write_measurements(cfg["measured"], measure_updates):
+        _err(f"{PROG}: could not write measurements to {cfg['measured']}")
+
+    _out()
+    if apply_:
+        _out(
+            f"Pruned {total_pruned} entries, reclaimed {total_bytes} bytes, "
+            f"{errors} error(s)."
+        )
+        if rotate:
+            _out(
+                f"Rotated/truncated {total_rotated} entries, "
+                f"moved {total_rotated_bytes} bytes."
+            )
+        with contextlib.suppress(OSError):
+            os.makedirs(cfg["state_dir"], exist_ok=True)
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        try:
+            with open(cfg["marker"], "w", encoding="utf-8") as fh:
+                fh.write(
+                    f'{{"timestamp":"{stamp}","rows_processed":{rows},'
+                    f'"entries_pruned":{total_pruned},'
+                    f'"bytes_reclaimed":{total_bytes},"errors":{errors}}}\n'
+                )
+        except OSError as e:
+            _err(f"{PROG}: cannot write run marker {cfg['marker']}: {e.strerror}")
+    else:
+        _out(
+            "Reported matched/bytes/age only — deletes nothing. "
+            "Re-run with --apply to act."
+        )
+    return 0 if errors == 0 else 1
+
+
+def main(argv: list[str]) -> int:
+    sys.stdout.reconfigure(
+        encoding="utf-8", errors="surrogateescape", line_buffering=True
+    )
+    sys.stderr.reconfigure(
+        encoding="utf-8", errors="surrogateescape", line_buffering=True
+    )
+
+    apply_ = rotate = False
+    for arg in argv:
+        if arg == "--apply":
+            apply_ = True
+        elif arg == "--rotate":
+            rotate = True
+        elif arg in ("-h", "--help"):
+            _out((__doc__ or "").rstrip("\n") + "\n" + HELP_TAIL)
+            return 0
+        else:
+            _err(f"{PROG}: unknown argument {arg}")
+            return 2
+
+    home = os.environ.get("HOME")
+    if home is None:
+        _err(f"{PROG}: HOME: unbound variable")
+        return 1
+    manifest = (
+        os.environ.get("RETENTION_MANIFEST")
+        or f"{home}/.claude/retention-manifest.json"
+    )
+    state_dir = os.environ.get("RETENTION_STATE_DIR") or f"{home}/.claude"
+    lock = (
+        os.environ.get("RETENTION_LOCK")
+        or f"{os.environ.get('XDG_RUNTIME_DIR') or '/tmp'}/retention-sweep.lock"
+    )
+
+    if not os.path.isfile(manifest):
+        _err(f"{PROG}: manifest not found at {manifest}")
+        return 1
+
+    cfg = {
+        "apply": apply_,
+        "rotate": rotate,
+        "home": home,
+        "manifest": manifest,
+        "state_dir": state_dir,
+        "marker": f"{state_dir}/.retention-sweep-last-run",
+        "measured": f"{state_dir}/.retention-sweep-measured.json",
+        "now": int(time.time()),
+        "measured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+
+    # One sweep at a time: the hourly timer and any hand-run sweep must not overlap.
+    # Contention is normal, not a failure, so it exits 0. The descriptor stays open for
+    # the life of the process, which is what holds the lock. Python opens it
+    # non-inheritable, so anything forked from a sweep cannot inherit the lock and hold
+    # it indefinitely, which bin/land was bitten by when this was a shell redirect.
+    # fcntl.flock is flock(2), the call flock(1) makes, so a hand-run `flock` and this
+    # script still exclude each other.
+    with contextlib.suppress(OSError):
+        os.makedirs(os.path.dirname(lock) or ".", exist_ok=True)
+    try:
+        lock_fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o666)
+    except OSError:
+        _err(f"{PROG}: cannot open {lock}")
+        return 1
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        _out(f"{PROG}: another sweep is running; skipping this one")
+        return 0
+
+    return sweep(cfg)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
