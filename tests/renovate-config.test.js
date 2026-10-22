@@ -10,10 +10,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { repoPath } = require('./lib/paths');
+const { HOMELAB_CANDIDATES, homelabFile } = require('./lib/homelab');
 
 const config = JSON.parse(fs.readFileSync(repoPath('renovate.json'), 'utf8'));
 const tracked = execFileSync('git', ['ls-files', '-z'], { cwd: repoPath(), encoding: 'utf8' })
@@ -123,20 +122,8 @@ test('the pre-commit manager is switched on', () => {
 // .pre-commit-config.yaml pins gitleaks to the rev the homelab repo's prek.toml runs, so the two
 // repos scan with the same rules. Each repo's Renovate bumps its own copy, on its own schedule.
 //
-// The oracle is the homelab repo's own prek.toml: a local checkout where one exists, and
-// otherwise that repo's master copy fetched from GitHub (the repo is public). CI has no checkout,
-// so without the fetch this test skipped there on every run. A committed copy of the homelab's
-// rev would be an oracle this repo supplies about itself: Renovate bumps it along with the pin,
-// and the test would then pass with the two repos apart.
-//
-// Only a transport failure or a 5xx skips, which is the offline case. A 404 fails: the file
-// moving or the repo going private is exactly the change this test has to report.
-const HOMELAB_PREK_URL = 'https://raw.githubusercontent.com/DanielH2018/server/master/prek.toml';
-const HOMELAB_CANDIDATES = [
-  process.env.HOMELAB_REPO,
-  path.join(os.homedir(), 'server'),
-  path.join(os.homedir(), 'dev', 'server'),
-].filter(Boolean);
+// The oracle is the homelab repo's own prek.toml, read through tests/lib/homelab.js. That file
+// says why the oracle is never a copy committed here, and when the test skips.
 
 // The rev on the line after `repo = ".../gitleaks/gitleaks"` in a prek.toml.
 function prekGitleaksRev(text) {
@@ -175,36 +162,8 @@ test('the lockstep check accepts equal revs and reports different ones', () => {
   assert.match(lockstepProblem(ours, 'rev = "v8.30.1"\n'), /no longer pins gitleaks/);
 });
 
-// The homelab prek.toml as { text, from }, or { skip } with the reason it could not be reached.
-async function homelabPrek(candidates, fetchImpl) {
-  const dir = candidates.find((d) => fs.existsSync(path.join(d, 'prek.toml')));
-  if (dir) return { text: fs.readFileSync(path.join(dir, 'prek.toml'), 'utf8'), from: dir };
-  const offline = `no homelab checkout at ${candidates.join(', ')}, and ${HOMELAB_PREK_URL}`;
-  let res;
-  try {
-    res = await fetchImpl(HOMELAB_PREK_URL, { signal: AbortSignal.timeout(15000) });
-  } catch (err) {
-    return { skip: `${offline} is unreachable (${err.cause?.code ?? err.name})` };
-  }
-  if (res.status >= 500) return { skip: `${offline} answered ${res.status}` };
-  if (res.status !== 200) {
-    throw new Error(`${HOMELAB_PREK_URL} answered ${res.status}: the homelab prek.toml moved, or the repo is no longer public`);
-  }
-  return { text: await res.text(), from: HOMELAB_PREK_URL };
-}
-
-test('the homelab prek.toml source skips only when offline', async () => {
-  const none = [path.join(os.tmpdir(), 'no-homelab-here')];
-  const answer = (status) => async () => ({ status, text: async () => 'body' });
-  assert.deepStrictEqual(await homelabPrek(none, answer(200)), { text: 'body', from: HOMELAB_PREK_URL });
-  assert.match((await homelabPrek(none, answer(503))).skip, /answered 503/);
-  const refused = async () => { throw new TypeError('fetch failed', { cause: { code: 'ECONNREFUSED' } }); };
-  assert.match((await homelabPrek(none, refused)).skip, /unreachable \(ECONNREFUSED\)/);
-  await assert.rejects(homelabPrek(none, answer(404)), /answered 404/);
-});
-
 test('the gitleaks rev matches the homelab repo', async (t) => {
-  const src = await homelabPrek(HOMELAB_CANDIDATES, fetch);
+  const src = await homelabFile('prek.toml', HOMELAB_CANDIDATES, fetch);
   if (src.skip) return t.skip(src.skip);
   const problem = lockstepProblem(read('.pre-commit-config.yaml'), src.text);
   assert.strictEqual(problem, null, `${problem} (${src.from}); bump the one that is behind`);

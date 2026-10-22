@@ -16,9 +16,11 @@
 # The Flux CLI, for the operator-only `flux diff kustomization` step before a role PR that moves
 # a service to Flux (DanielH2018/server, docs/target-architecture/deploy/d5-bulk-move.md). The
 # version follows `flux_version` in that repo's ansible/roles/k8s/flux/defaults/main.yml, so the
-# CLI matches the controllers it diffs against. Renovate does not track this pin. To move it after
-# the server bumps `flux_version`, change both versions in the URL, then take the new tarball's
-# hash from that release's flux_<version>_checksums.txt and check it against the downloaded bytes.
+# CLI matches the controllers it diffs against. tests/chezmoi/flux-cli-external.test.js fails
+# when the two differ. Renovate does not track this pin, because it cannot recompute the
+# checksum. To move it after the server bumps `flux_version`, change both versions in the URL,
+# then take the new tarball's hash from that release's flux_<version>_checksums.txt and check it
+# against the downloaded bytes.
 # The admin kubeconfig is root-only, so the operator runs:
 #   sudo /home/ubuntu/.local/bin/flux --kubeconfig /etc/rancher/k3s/k3s.yaml \
 #     diff kustomization <tag> --path <render>/cluster/<tag> \
