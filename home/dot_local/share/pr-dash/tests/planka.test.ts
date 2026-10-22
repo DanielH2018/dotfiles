@@ -53,10 +53,48 @@ test('reads the configured board under --strict and keeps only the fields the pa
       boardName: 'Board',
       included: {
         lists: [{ id: '1', name: 'In Progress' }],
-        cards: [{ id: '10', name: 'Card', listId: '1', position: 2, listChangedAt: '2026-10-01T00:00:00.000Z' }],
+        cards: [
+          {
+            id: '10',
+            name: 'Card',
+            listId: '1',
+            position: 2,
+            listChangedAt: '2026-10-01T00:00:00.000Z',
+            prUrl: null,
+          },
+        ],
       },
     },
   });
+});
+
+// The `pr` field is found by name. Another field's value on the same card, and a `pr`
+// value with no card in the body, must not leak into the answer.
+test("each card carries the content of its custom field named pr, or null", async () => {
+  const body = {
+    ...BOARD_BODY,
+    included: {
+      ...BOARD_BODY.included,
+      cards: [...BOARD_BODY.included.cards, { id: '11', name: 'Other', listId: '1', position: 3 }],
+      customFields: [
+        { id: '70', name: 'branch' },
+        { id: '71', name: 'pr' },
+      ],
+      customFieldValues: [
+        { cardId: '10', customFieldId: '70', content: 'feature-x' },
+        { cardId: '10', customFieldId: '71', content: 'https://github.com/org/repo/pull/7' },
+      ],
+    },
+  };
+  const run = fakeRun({ board: () => BOARD_SHOW, api: () => JSON.stringify(body) });
+  const result = await createLoadPlanka(run)();
+  assert.deepStrictEqual(
+    result.board?.included.cards.map((c) => [c.id, c.prUrl]),
+    [
+      ['10', 'https://github.com/org/repo/pull/7'],
+      ['11', null],
+    ],
+  );
 });
 
 test('a missing CLI is an error naming where pr-dash looked', async () => {

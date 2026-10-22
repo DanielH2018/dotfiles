@@ -709,7 +709,7 @@ const board: PlankaBoard = {
   boardName: 'Board',
   included: {
     lists: [{ id: '1', name: 'In Progress' }],
-    cards: [{ id: '10', name: 'Card', listId: '1', position: 1, listChangedAt: null }],
+    cards: [{ id: '10', name: 'Card', listId: '1', position: 1, listChangedAt: null, prUrl: null }],
   },
 };
 

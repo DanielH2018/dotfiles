@@ -29,15 +29,24 @@ export type RunPlanka = (args: string[]) => Promise<{ stdout: string }>;
 /**
  * The trimmed board `/api/planka` serves. `included.lists` and `included.cards` keep the
  * names and fields Planka's own `GET /api/boards/:id` uses, so the extension's
- * `activeCards` reads either body. Everything else Planka returns — card descriptions,
- * users, custom field values — is dropped, since the panel shows none of it.
+ * `activeCards` reads either body. Each card also carries `prUrl`: the content of its
+ * custom field named `pr`, which the planka CLI stamps with the card's PR URL, or null.
+ * The extension's board-page script turns it into a link. Everything else Planka returns
+ * — card descriptions, users, the other custom field values — is dropped.
  */
 export type PlankaBoard = {
   boardId: string;
   boardName: string;
   included: {
     lists: { id: string; name: string }[];
-    cards: { id: string; name: string; listId: string; position: number; listChangedAt: string | null }[];
+    cards: {
+      id: string;
+      name: string;
+      listId: string;
+      position: number;
+      listChangedAt: string | null;
+      prUrl: string | null;
+    }[];
   };
 };
 
@@ -84,12 +93,29 @@ function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
+// The planka CLI's config holds the `pr` field's id and pr-dash never reads that config,
+// so the field is found by its name. A board with no such field yields an empty map.
+function prUrlsByCard(included: Record<string, unknown>): Map<string, string> {
+  const fields = Array.isArray(included['customFields']) ? included['customFields'] : [];
+  const prField = fields.filter(isRecord).find((f) => f['name'] === 'pr');
+  const urls = new Map<string, string>();
+  if (prField === undefined) return urls;
+  const values = Array.isArray(included['customFieldValues']) ? included['customFieldValues'] : [];
+  for (const v of values.filter(isRecord)) {
+    if (v['customFieldId'] === prField['id'] && typeof v['content'] === 'string' && v['content'] !== '') {
+      urls.set(String(v['cardId']), v['content']);
+    }
+  }
+  return urls;
+}
+
 function trimBoard(raw: unknown, boardId: string): PlankaBoard | undefined {
   if (!isRecord(raw) || !isRecord(raw['included'])) return undefined;
   const included = raw['included'];
   const lists = Array.isArray(included['lists']) ? included['lists'] : [];
   const cards = Array.isArray(included['cards']) ? included['cards'] : [];
   const item = isRecord(raw['item']) ? raw['item'] : {};
+  const prUrls = prUrlsByCard(included);
   return {
     boardId,
     boardName: typeof item['name'] === 'string' ? item['name'] : '',
@@ -103,6 +129,7 @@ function trimBoard(raw: unknown, boardId: string): PlankaBoard | undefined {
         listId: String(c['listId']),
         position: typeof c['position'] === 'number' ? c['position'] : 0,
         listChangedAt: typeof c['listChangedAt'] === 'string' ? c['listChangedAt'] : null,
+        prUrl: prUrls.get(String(c['id'])) ?? null,
       })),
     },
   };
