@@ -185,8 +185,9 @@ function renderRow(alert, now, showRepo) {
  * @param {string} label
  * @param {readonly VulnAlert[]} alerts
  * @param {VulnAxis} axis
+ * @param {boolean} stale
  */
-function groupHeader(key, label, alerts, axis) {
+function groupHeader(key, label, alerts, axis, stale) {
   const isCollapsed = collapsed.has(key);
   const h2 = document.createElement('h2');
   h2.className = 'section-header';
@@ -223,6 +224,12 @@ function groupHeader(key, label, alerts, axis) {
   }
   h2.append(name);
   h2.append(span(alerts.length === 1 ? '1 alert' : `${alerts.length} alerts`, 'section-count'));
+  if (stale) {
+    // The banner says why; this marks which group the retained alerts are in.
+    const badge = span('out of date', 'badge ambiguous');
+    badge.title = 'GitHub suddenly listed no alerts for this repository, so these are from an earlier fetch.';
+    h2.append(badge);
+  }
 
   if (axis !== 'severity') {
     const counts = severityCounts(alerts);
@@ -263,7 +270,8 @@ function render() {
   for (const group of groupAlerts(shown, axis)) {
     const key = `${axis}:${group.key}`;
     const section = document.createElement('section');
-    section.append(groupHeader(key, group.label, group.alerts, axis));
+    const stale = axis === 'repo' && current.staleRepos.includes(group.key);
+    section.append(groupHeader(key, group.label, group.alerts, axis, stale));
     if (!collapsed.has(key)) {
       for (const alert of sortAlerts(group.alerts, sort)) section.append(renderRow(alert, now, axis !== 'repo'));
     }

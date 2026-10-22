@@ -220,9 +220,9 @@ async function handle(
     if (opts.loadVulns === undefined) return refuse(res, 502, 'vulnerabilities are not configured in pr-dash');
     // Same contract as /api/prs: only the exact `refresh=1` reaches the loader, as a boolean.
     const force = url.searchParams.get('refresh') === '1';
-    const { alerts, repos, fetchedAt, partialErrors, stale, error } = await opts.loadVulns({ force });
+    const { alerts, repos, fetchedAt, partialErrors, staleRepos, stale, error } = await opts.loadVulns({ force });
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ alerts, repos, fetchedAt, partialErrors, stale, error: error ?? null }));
+    res.end(JSON.stringify({ alerts, repos, fetchedAt, partialErrors, staleRepos, stale, error: error ?? null }));
     return;
   }
 

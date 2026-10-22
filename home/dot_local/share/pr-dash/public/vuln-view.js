@@ -29,6 +29,7 @@ export const VULN_SORTS = ['severity', 'age', 'package'];
  * @property {string[]} repos
  * @property {string} fetchedAt
  * @property {string[]} partialErrors
+ * @property {string[]} staleRepos
  * @property {boolean} stale
  * @property {string | null} error
  */
@@ -90,6 +91,7 @@ export function parseVulnsBody(body) {
     !isStringArray(body['repos']) ||
     typeof body['fetchedAt'] !== 'string' ||
     !isStringArray(body['partialErrors']) ||
+    !isStringArray(body['staleRepos']) ||
     typeof body['stale'] !== 'boolean' ||
     !(typeof body['error'] === 'string' || body['error'] === null)
   ) {
@@ -104,6 +106,7 @@ export function parseVulnsBody(body) {
     repos: /** @type {string[]} */ (body['repos']),
     fetchedAt: body['fetchedAt'],
     partialErrors,
+    staleRepos: /** @type {string[]} */ (body['staleRepos']),
     stale: body['stale'],
     error: /** @type {string | null} */ (body['error']),
   };

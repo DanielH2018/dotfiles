@@ -169,6 +169,33 @@ test('every repository failing serves the last good result marked stale, or reje
   assert.strictEqual(result.alerts.length, 2);
 });
 
+test('a repository suddenly listed with no alerts keeps its previous alerts until that holds for an hour', async () => {
+  // The 2026-10-22 GitHub incident: an empty listing, no error, for alerts still open.
+  let clock = Date.parse('2026-10-22T15:00:00Z');
+  const { client } = fakeClient({
+    'acme/api': [{ nodes: [rawAlert(1), rawAlert(2)] }, { nodes: [] }, { nodes: [] }, { nodes: [] }],
+    'acme/web': [{ nodes: [] }, { nodes: [] }, { nodes: [] }, { nodes: [] }],
+  });
+  const load = createVulnLoader(client, [API, WEB], createCache<VulnLoadResult>(-1), { now: () => clock });
+
+  await load();
+  clock += 5 * 60 * 1000;
+  const retained = await load();
+  assert.deepStrictEqual(retained.alerts.map((a) => a.number), [1, 2]);
+  assert.deepStrictEqual(retained.staleRepos, ['acme/api']);
+  assert.match(retained.partialErrors[0] ?? '', /^acme\/api: GitHub listed no open alerts, down from 2; showing the alerts fetched 2026-10-22T15:00:00\.000Z/);
+
+  // One millisecond short of an hour after the first empty answer: still retained.
+  clock += 60 * 60 * 1000 - 1;
+  assert.deepStrictEqual((await load()).staleRepos, ['acme/api']);
+
+  // A repository that never had alerts is not held back; one whose empty answer has held for
+  // the full hour is accepted as clean.
+  clock += 1;
+  const accepted = await load();
+  assert.deepStrictEqual([accepted.alerts, accepted.staleRepos, accepted.partialErrors], [[], [], []]);
+});
+
 test('a load inside the cache TTL does not query GitHub again, and a forced one does', async () => {
   const { client, calls } = fakeClient({ 'acme/api': [{ nodes: [] }, { nodes: [] }] });
   const load = createVulnLoader(client, [API], createCache<VulnLoadResult>(60_000));
@@ -203,11 +230,19 @@ test('/api/vulns serves the loader result, passing only refresh=1 through as for
   const forces: (boolean | undefined)[] = [];
   const loadVulns: LoadVulns = async (opts) => {
     forces.push(opts?.force);
-    return { alerts: [], repos: ['acme/api'], fetchedAt: 'T', partialErrors: ['x'], stale: false };
+    return { alerts: [], repos: ['acme/api'], fetchedAt: 'T', partialErrors: ['x'], staleRepos: ['acme/api'], stale: false };
   };
   await withVulnServer(loadVulns, async (base) => {
     const body = await (await fetch(`${base}/api/vulns`)).json();
-    assert.deepStrictEqual(body, { alerts: [], repos: ['acme/api'], fetchedAt: 'T', partialErrors: ['x'], stale: false, error: null });
+    assert.deepStrictEqual(body, {
+      alerts: [],
+      repos: ['acme/api'],
+      fetchedAt: 'T',
+      partialErrors: ['x'],
+      staleRepos: ['acme/api'],
+      stale: false,
+      error: null,
+    });
     await fetch(`${base}/api/vulns?refresh=1`);
     await fetch(`${base}/api/vulns?refresh=true`);
   });

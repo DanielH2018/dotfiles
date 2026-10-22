@@ -220,7 +220,25 @@ export type VulnLoadResult = {
   repos: string[];
   fetchedAt: string;
   partialErrors: string[];
+  /**
+   * Repositories whose alerts are retained from an earlier fetch because GitHub suddenly
+   * listed none — see {@link ZERO_CONFIRM_MS}. Each one also has a line in `partialErrors`.
+   */
+  staleRepos: string[];
 };
+
+/**
+ * How long GitHub must keep listing no alerts for a repository that had some before the page
+ * accepts that the repository is clean.
+ *
+ * During GitHub's 2026-10-22 incident the alert listing returned an empty page, with no error,
+ * for repositories whose alerts were still open when fetched by number. Taken at face value,
+ * that showed three repositories as having no open alerts. A real drop to zero (every alert
+ * fixed or dismissed at once) is rare and can wait an hour to show; a false "clean" on a
+ * security page cannot wait at all. An hour spans twelve fetches at the cache TTL, so a
+ * single good answer within it resets the clock.
+ */
+export const ZERO_CONFIRM_MS = 60 * 60 * 1000;
 
 /**
  * What the route serves: a load result, plus whether it is a retained payload behind a failed
@@ -244,6 +262,11 @@ export type LoadVulns = (opts?: { force?: boolean }) => Promise<VulnResponse>;
  * fails does the load fail, and then the last good result is served marked stale; with
  * nothing to fall back on, the failure propagates.
  *
+ * A repository that had alerts and is suddenly listed with none keeps its previous alerts,
+ * named in `staleRepos` and `partialErrors`, until the empty answer has held for
+ * {@link ZERO_CONFIRM_MS}. That memory lives in this process only, so a restart during an
+ * outage has nothing to retain.
+ *
  * With no repositories configured there is nothing to query, so it answers an empty result
  * and a machine that never set the list never resolves a token on this route's account.
  */
@@ -258,16 +281,42 @@ export function createVulnLoader(
   let inFlight: Promise<VulnLoadResult> | undefined;
   let lastGood: VulnLoadResult | undefined;
   let lastForcedAt: number | undefined;
+  // Per repository: the last non-empty alert list GitHub returned and when, and since when it
+  // has been answering with none. Only a fulfilled answer touches either map.
+  const lastNonEmpty = new Map<string, { alerts: VulnAlert[]; fetchedAt: string }>();
+  const emptySince = new Map<string, number>();
 
   async function fetchAll(): Promise<VulnLoadResult> {
     const settled = await Promise.allSettled(repos.map((r) => fetchRepoAlerts(client, r)));
+    const at = now();
     const alerts: VulnAlert[] = [];
     const partialErrors: string[] = [];
+    const staleRepos: string[] = [];
     let failed = 0;
     settled.forEach((outcome, i) => {
       const label = labels[i] ?? '';
       if (outcome.status === 'fulfilled') {
-        alerts.push(...outcome.value.alerts);
+        const fetched = outcome.value.alerts;
+        const previous = lastNonEmpty.get(label);
+        if (fetched.length === 0 && previous !== undefined) {
+          const since = emptySince.get(label) ?? at;
+          emptySince.set(label, since);
+          if (at - since < ZERO_CONFIRM_MS) {
+            alerts.push(...previous.alerts);
+            staleRepos.push(label);
+            partialErrors.push(
+              `${label}: GitHub listed no open alerts, down from ${previous.alerts.length}; ` +
+                `showing the alerts fetched ${previous.fetchedAt} until that holds for an hour`,
+            );
+          } else {
+            lastNonEmpty.delete(label);
+            emptySince.delete(label);
+          }
+        } else {
+          emptySince.delete(label);
+          if (fetched.length > 0) lastNonEmpty.set(label, { alerts: fetched, fetchedAt: new Date(at).toISOString() });
+          alerts.push(...fetched);
+        }
         partialErrors.push(...outcome.value.errors.map((e) => `${label}: ${e}`));
       } else {
         failed += 1;
@@ -280,7 +329,7 @@ export function createVulnLoader(
       // limit — so the distinct reasons are what the banner needs, not one line per repo.
       throw new Error([...new Set(partialErrors.map((e) => e.slice(e.indexOf(': ') + 2)))].join('; '));
     }
-    return { alerts, repos: labels, fetchedAt: new Date(now()).toISOString(), partialErrors };
+    return { alerts, repos: labels, fetchedAt: new Date(at).toISOString(), partialErrors, staleRepos };
   }
 
   return async function loadVulns(loadOpts = {}): Promise<VulnResponse> {

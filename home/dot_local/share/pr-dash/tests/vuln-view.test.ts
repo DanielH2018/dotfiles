@@ -41,6 +41,7 @@ test('parseVulnsBody drops a malformed alert and says so, and rejects a malforme
     repos: ['acme/api'],
     fetchedAt: 'T',
     partialErrors: [],
+    staleRepos: [],
     stale: false,
     error: null,
   };
