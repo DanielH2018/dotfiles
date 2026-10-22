@@ -37,7 +37,7 @@ BIN = HERE.parent.parent.parent / "bin" / "skill-usage"
 def run(env_extra):
     env = {**os.environ, **env_extra}
     result = subprocess.run(
-        ["bash", str(BIN)],
+        [str(BIN)],
         capture_output=True,
         text=True,
         env=env,
