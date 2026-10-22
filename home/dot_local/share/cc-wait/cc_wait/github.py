@@ -14,6 +14,11 @@ can finish its one run seconds before GitHub Actions registers the rest, so a pa
 the commit's check suites to agree: none still running with check runs in it, and none younger
 than `SETTLE_S`. A suite with no check runs that stays queued past `SETTLE_S` belongs to an app
 that never runs on the commit (Renovate's does this) and is ignored.
+
+That exemption cannot tell such an app from GitHub Actions running late: a `CI` run queued behind
+the cancellation of the previous head's run keeps its suite empty for longer than `SETTLE_S`. So
+a pass also needs every GitHub Actions workflow run on the commit to have completed, read from
+`actions/runs`, which lists a run as soon as it is queued and before it has any check runs.
 """
 
 import json
@@ -158,7 +163,7 @@ class CiWait:
         done = [r for r in runs if r.get("status") == "completed"]
         if len(done) < len(runs):
             return Reading("running", f"{sha[:8]}: {len(done)}/{len(runs)} check runs complete")
-        unsettled = self._unsettled_suites(sha)
+        unsettled = self._unsettled_suites(sha) or self._unfinished_workflows(sha)
         if unsettled:
             return Reading("running", f"{sha[:8]}: {len(runs)} check runs complete; {unsettled}")
         cancelled = [r for r in runs if r.get("conclusion") == "cancelled"]
@@ -189,6 +194,21 @@ class CiWait:
         parts = [f"{young} check suites under {SETTLE_S:.0f}s old"] if young else []
         parts += [f"{busy} check suites still running"] if busy else []
         return ", ".join(parts)
+
+    def _unfinished_workflows(self, sha: str) -> str:
+        """Which GitHub Actions workflow runs on `sha` have not completed, or "" when none."""
+        data = gh_json(
+            ["api", f"repos/{self.repo}/actions/runs?head_sha={sha}&per_page=100"], self.run
+        )
+        workflow_runs = data.get("workflow_runs") if isinstance(data, dict) else None
+        if not isinstance(workflow_runs, list):
+            raise ReadError(f"no workflow_runs list for {sha[:8]}")
+        # Any status but `completed` holds the pass: queued, pending, waiting, in_progress, requested.
+        unfinished = [r for r in workflow_runs if r.get("status") != "completed"]
+        if not unfinished:
+            return ""
+        names = ", ".join(sorted(str(r.get("name")) for r in unfinished)[:3])
+        return f"{len(unfinished)} workflow runs not completed: {names}"
 
 
 class CiSource(ParsedSource):

@@ -13,6 +13,7 @@ SHA = "1f0e7c4a9b2d5e6f8a0c1b3d4e5f6071a2b3c4d5"
 NOW = 1_800_000_000.0
 RUNS = f"api repos/o/r/commits/{SHA}/check-runs?per_page=100"
 SUITES = f"api repos/o/r/commits/{SHA}/check-suites?per_page=100"
+ACTIONS = f"api repos/o/r/actions/runs?head_sha={SHA}&per_page=100"
 
 
 def gh(responses: dict[str, object], calls: list | None = None):
@@ -50,6 +51,7 @@ def suites(*triples):
 
 def ci(responses, **kwargs):
     responses.setdefault(SUITES, suites())
+    responses.setdefault(ACTIONS, {"workflow_runs": []})
     wait = github.CiWait(
         "o/r", kwargs.get("ref", SHA), kwargs.get("pr"), gh(responses), now=lambda: NOW
     )
@@ -105,6 +107,20 @@ def test_a_suite_younger_than_the_settle_time_holds_a_pass():
     )
 
 
+def test_a_workflow_run_queued_with_no_check_runs_holds_a_pass():
+    """Issue #851: CI queued behind a cancelled run past the settle time, its suite still empty."""
+    data = runs(("GitGuardian Security Checks", "completed", "success"))
+    old_empty = suites(("completed", 1, 600), ("queued", 0, 600))
+    queued = {"workflow_runs": [{"name": "CI", "status": "pending"}]}
+    reading = ci({RUNS: data, SUITES: old_empty, ACTIONS: queued})
+    assert (reading.state, reading.detail) == (
+        "running",
+        f"{SHA[:8]}: 1 check runs complete; 1 workflow runs not completed: CI",
+    )
+    finished = {"workflow_runs": [{"name": "CI", "status": "completed"}]}
+    assert ci({RUNS: data, SUITES: old_empty, ACTIONS: finished}).state == "passed"
+
+
 def test_pr_mode_reads_the_head_commit_each_time():
     """A push to the pull request between two reads moves the wait to the new head."""
     pushed = "2" * 40
@@ -115,6 +131,7 @@ def test_pr_mode_reads_the_head_commit_each_time():
             ("p", "completed", "success")
         ),
         f"api repos/o/r/commits/{pushed}/check-suites?per_page=100": suites(),
+        f"api repos/o/r/actions/runs?head_sha={pushed}&per_page=100": {"workflow_runs": []},
     }
     wait = github.CiWait("o/r", None, "7", gh(responses), now=lambda: NOW)
     assert wait.read().state == "failed"
