@@ -20,6 +20,10 @@ What makes a blanket `Bash(dockq:*)` allow rule defensible is construction:
   - `logs` is bounded: `--tail` is required to be 1..5000, never `all`.
   - A container, service or image name must not start with `-` and sits after
     `--`, so no caller text can become a docker flag.
+  - docker is found in fixed system directories, never through the caller's
+    $PATH, and its environment drops every DOCKER_, COMPOSE_, BUILDKIT_,
+    BUILDX_, DYLD_ and LD_ variable, with HOME pinned to the account's home. So
+    a `PATH=` or `DOCKER_HOST=` prefix cannot choose the binary or the daemon.
 
   dockq ps --all
   dockq logs claude-otel-loki-1 --tail 200 --since 30m
@@ -34,12 +38,23 @@ exits 2.
 from __future__ import annotations
 
 import argparse
+import os
+import pwd
 import re
-import shutil
 import subprocess
 import sys
 
 PROG = "dockq"
+
+# Where docker is looked up. Not $PATH: a caller-supplied PATH would let a repo
+# file named `docker` run unsandboxed under this rule.
+DOCKER_DIRS = (
+    "/usr/local/bin",
+    "/opt/homebrew/bin",
+    "/Applications/Docker.app/Contents/Resources/bin",
+    "/usr/bin",
+)
+_DROP_ENV = ("DOCKER_", "COMPOSE_", "BUILDKIT_", "BUILDX_", "DYLD_", "LD_")
 
 # A container, service or project name, or an image reference with a tag or
 # digest. The first character class is what keeps a value from reading as a flag.
@@ -204,18 +219,31 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def find_docker() -> str:
+    for d in DOCKER_DIRS:
+        path = os.path.join(d, "docker")
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    raise DockqError(f"docker is not in {', '.join(DOCKER_DIRS)}")
+
+
+def docker_env() -> dict:
+    env = {k: v for k, v in os.environ.items() if not k.startswith(_DROP_ENV)}
+    env["HOME"] = pwd.getpwuid(os.getuid()).pw_dir
+    env["PATH"] = ":".join(DOCKER_DIRS + ("/bin", "/usr/sbin", "/sbin"))
+    return env
+
+
 def main(argv: list[str] | None = None) -> int:
     ns = _parser().parse_args(argv)
     try:
         docker_args = build(ns)
-        docker = shutil.which("docker")
-        if docker is None:
-            raise DockqError("docker is not on PATH")
+        docker = find_docker()
     except DockqError as exc:
         print(f"{PROG}: {exc}", file=sys.stderr)
         return 2
     return subprocess.run(
-        [docker, *docker_args], stdin=subprocess.DEVNULL, check=False
+        [docker, *docker_args], stdin=subprocess.DEVNULL, env=docker_env(), check=False
     ).returncode
 
 
