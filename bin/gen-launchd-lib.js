@@ -8,9 +8,9 @@
 // commit the template but never a rendered plist. A library would also escape the `"` in a
 // `hasKey . "name"` action. Only & < > are escaped here, and only in element text.
 //
-// work-laptop-config renders its own jobs from a launchd.json with the same core schema,
-// using jq and plutil (its gen-launchd.sh). This repo cannot share that code: CI runs on
-// Linux, which has no plutil. The schema is what the two share.
+// work-laptop-config's gen-launchd.sh renders its own jobs through normalise and value. Its
+// plists are plain files, not templates, so it passes suffix '.plist' and writes its own
+// header and key order around them.
 //
 // Job keys. The first group is the schema both repos accept; the second is this repo's:
 //   label       required; must equal the plist file name without .plist.tmpl
@@ -81,14 +81,15 @@ function calendar(label, c) {
 }
 
 // Validate one manifest job and return { plist, why, notes, entries }, where entries is the
-// ordered list of [plist key, value] pairs the plist carries.
-function normalise(job) {
+// ordered list of [plist key, value] pairs the plist carries. `suffix` is the file name
+// ending the plist path must have after the label.
+function normalise(job, { suffix = '.plist.tmpl' } = {}) {
   const label = job.label;
   if (typeof label !== 'string' || !label) throw new Error('gen-launchd: a job has no label');
   const extra = Object.keys(job).filter((k) => !JOB_KEYS.has(k));
   if (extra.length) throw new Error(`gen-launchd: ${label}: unknown key(s) ${extra.join(', ')}`);
-  if (typeof job.plist !== 'string' || !job.plist.endsWith(`/${label}.plist.tmpl`)) {
-    throw new Error(`gen-launchd: ${label}: plist must end in /${label}.plist.tmpl`);
+  if (typeof job.plist !== 'string' || !job.plist.endsWith(`/${label}${suffix}`)) {
+    throw new Error(`gen-launchd: ${label}: plist must end in /${label}${suffix}`);
   }
   if (('command' in job) === ('program' in job)) {
     throw new Error(`gen-launchd: ${label}: set exactly one of command and program`);
@@ -122,6 +123,7 @@ function normalise(job) {
   return { plist: job.plist, why, notes, entries };
 }
 
+// The XML lines for one plist value at the given tab depth.
 function value(v, indent) {
   const pad = '\t'.repeat(indent);
   if (typeof v === 'string') return [`${pad}<string>${escape(v)}</string>`];
@@ -186,4 +188,4 @@ function renderManifest(manifest) {
   });
 }
 
-module.exports = { renderJob, renderManifest, GENERATED_MARK };
+module.exports = { renderJob, renderManifest, GENERATED_MARK, normalise, value };

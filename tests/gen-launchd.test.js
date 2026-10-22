@@ -71,6 +71,14 @@ test('renderJob rejects a manifest that would drop or corrupt a field', () => {
   for (const [bad, err] of cases) assert.throws(() => lib.renderJob(bad), err);
 });
 
+// work-laptop-config renders plain .plist files through these two exports.
+test('normalise takes another plist suffix, and value renders the entries it returns', () => {
+  const { entries } = lib.normalise({ label: 'com.daniel.x', plist: 'L/com.daniel.x.plist', command: 'exec x' },
+    { suffix: '.plist' });
+  assert.match(lib.value(Object.fromEntries(entries), 0).join('\n'), /^<dict>\n\t<key>Label<\/key>\n\t<string>com\.daniel\.x<\/string>/);
+  assert.throws(() => lib.normalise(job(), { suffix: '.plist' }), /must end in \/com\.daniel\.x\.plist$/);
+});
+
 // --- End-to-end: the real tree, then two ways for it to drift -------------------------------
 
 test('gen-launchd --check passes against the committed tree right now', () => {
