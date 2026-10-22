@@ -4,7 +4,14 @@ The shared corpus lives in tests/test_vectors.py (Task 5). `visible()` is the vi
 every consumer takes: stripped, empties dropped.
 """
 
-from claude_guard.segment import Parsed, Segment, mask_substitutions, parse, visible
+from claude_guard.segment import (
+    Parsed,
+    Segment,
+    mask_substitutions,
+    parse,
+    substitution_spans,
+    visible,
+)
 
 
 def seps(p: Parsed) -> list[str]:
@@ -198,6 +205,24 @@ def test_masking_replaces_each_outermost_substitution_and_leaves_quoted_text_alo
     cmd = """git log "$(a $(b))"..x `c` <(d) $((1 + (2))) ${v:-$(e)} '$(f)'"""
     assert mask_substitutions(cmd, "$S") == """git log "$S"..x $S $S $S ${v:-$S} '$(f)'"""
     assert mask_substitutions("echo $(ls", "$S") is None
+
+
+def test_masking_spans_a_substitution_that_holds_a_separator_whole():
+    # The span once started at the last separator inside the substitution, leaving
+    # `$(echo x;` in the masked text and the substitution's tail unseen.
+    assert mask_substitutions("git push $(echo x; echo --force) origin", "$S") == (
+        "git push $S origin"
+    )
+    assert mask_substitutions("diff <(a | b) `c && d`", "$S") == "diff $S $S"
+
+
+def test_substitution_spans_locate_each_body_and_say_which_sit_in_a_brace():
+    cmd = 'echo "$(a | b)" ${v:-$(c)}'
+    spans = substitution_spans(cmd)
+    assert [(s.kind, cmd[s.body : s.end - 1], s.in_brace) for s in spans] == [
+        ("paren", "a | b", False),
+        ("paren", "c", True),
+    ]
 
 
 # --- heredocs --------------------------------------------------------------------------
