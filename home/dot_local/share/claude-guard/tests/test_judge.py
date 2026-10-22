@@ -16,6 +16,7 @@ from test_git_reset import _make_repo
 
 from claude_guard import judge as judge_mod
 from claude_guard.judge import Decision, _first_word, _under_session_cwd, judge, unwrap_wrapper
+from claude_guard.nudges import nudge
 from claude_guard.rules import Rules, load_rules, parse_rule
 from claude_guard.tables import scratch_roots
 
@@ -500,6 +501,15 @@ def test_the_real_template_refuses_each_execution_form(real, command):
 )
 def test_the_real_template_allows_an_argument_that_only_contains_a_flags_text(real, command):
     assert allowed(command, real)
+
+
+def test_the_real_template_admits_the_pipe_the_show_substitution_nudge_recommends(real):
+    loop = "for f in $(git ls-tree --name-only origin/main w); do git show origin/main:$f; done"
+    assert judge(loop, real, ROOTS, CWD).rule.endswith("substitution:consumer")
+    rule, text = nudge(loop)
+    assert rule == "show-substitution"
+    pipe = re.search(r"`(git ls-tree [^`]*)`", text).group(1)
+    assert allowed(pipe.replace("<rev>", "origin/main").replace("<dir>", "w"), real)
 
 
 @pytest.mark.parametrize(

@@ -1,4 +1,4 @@
-"""Bash commands that work but flood the context: a one-line nudge, never a decision.
+"""Bash commands that work but cost context or a prompt: a one-line nudge, never a decision.
 
 Four context-discipline rules are questions about command text. CLAUDE.md stated them
 until the 2026-09-26 scaffolding pass cut the prose and left this module as their only
@@ -15,6 +15,15 @@ rather than on a process of their own (reprime-nudge.sh, the per-event shape dot
   4. python-json: `python3 -c` whose code mentions json, where `jsonq` does the job
      without the permission prompt `python3 -c` costs.
 
+A fifth rule is about a prompt, not context:
+
+  5. show-substitution: `git show <rev>:$f` where the command holds a `$( )`, the shape
+     of a loop over `git ls-tree` output. The judge refuses a substitution's output as
+     a git argument (`substitution:consumer`), so each such loop costs a prompt.
+     `git cat-file --batch` reads the same files with the names on stdin, which the
+     judge admits. The rule fires on text alone, so `f=README.md` beside an unrelated
+     `$( )` also trips it, which costs one line of advice once.
+
 `nudge()` returns (rule, text) or None. The hook adds the text as additionalContext
 beside whatever the deny rules decided, and only once per session per rule: the text
 carries the tag `[claude-guard:nudge:<rule>]`, the harness records additionalContext in
@@ -29,6 +38,9 @@ from claude_guard.segment import parse
 
 _COUNT_FLAG = re.compile(r"^-(?:\d+|n\d*|-max-count(?:=.*)?|-since=.*|-after=.*)$")
 _PYTHON = re.compile(r"^python(?:3(?:\.\d+)?)?$")
+# A `<rev>:<path>` word whose path part expands something: `origin/main:$f`.
+_REV_PATH_EXPANSION = re.compile(r"^[^-$:][^:]*:.*\$")
+_CONTROL_WORDS = frozenset({"do", "then", "else", "{", "!"})
 
 
 def _stages(command: str) -> list[tuple[list[str], str]] | None:
@@ -115,11 +127,34 @@ def _python_json(stages, i) -> str | None:
     )
 
 
+def _show_substitution(stages, i) -> str | None:
+    stage = stages[i][0]
+    # A loop body or branch arrives as its own segment with the keyword still on it.
+    while stage and stage[0] in _CONTROL_WORDS:
+        stage = stage[1:]
+    if stage[:1] != ["git"] or "show" not in stage[1:]:
+        return None
+    rest = stage[stage.index("show") + 1 :]
+    if not any(_REV_PATH_EXPANSION.match(w) for w in rest):
+        return None
+    if not any("$(" in w for words, _ in stages for w in words):
+        return None
+    return (
+        "`git show <rev>:$f` over a name from a `$( )` costs a permission prompt: "
+        "claude-guard never lets a substitution's output into a git argument. Send the "
+        "names on stdin instead, which needs no prompt: `git ls-tree -r --name-only <rev> "
+        "<dir> | sed 's|.*|<rev>:& &|' | git cat-file --batch='== %(rest)'` prints each "
+        "file under an `== <path>` line. A path holding a space breaks that label; use "
+        "plain `--batch` then."
+    )
+
+
 _RULES = (
     ("unbounded-log", _unbounded_log),
     ("recursive-ls", _recursive_ls),
     ("transcript-grep", _transcript_grep),
     ("python-json", _python_json),
+    ("show-substitution", _show_substitution),
 )
 
 

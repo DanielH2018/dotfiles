@@ -1,4 +1,4 @@
-"""The four context-discipline nudges (dotfiles #586).
+"""The context-discipline nudges (dotfiles #586) and the show-substitution nudge.
 
 Each rule has a command it must nudge and a bounded variant it must leave alone. The
 hook-level tests pin that a nudge rides beside a verdict, never on a deny, and only once
@@ -28,6 +28,11 @@ def rule(command: str) -> str | None:
         ("grep -r retry ~/.claude/projects/", "transcript-grep"),
         ("rg foo session.jsonl | head -20", "transcript-grep"),
         ("python3 -c 'import json,sys; print(json.load(sys.stdin)[\"a\"])'", "python-json"),
+        (
+            "for f in $(git ls-tree --name-only origin/main w); do git show origin/main:$f; done",
+            "show-substitution",
+        ),
+        ('git show "origin/main:$(git ls-files x | head -1)"', "show-substitution"),
     ],
 )
 def test_an_unbounded_command_is_nudged(command, expected):
@@ -48,6 +53,8 @@ def test_an_unbounded_command_is_nudged(command, expected):
         "grep -r retry src/",
         "python3 -c 'print(1 + 1)'",
         "python3 script.py data.json",
+        "git show origin/main:README.md",
+        "f=README.md; git show origin/main:$f",
     ],
 )
 def test_a_bounded_command_is_left_alone(command):
