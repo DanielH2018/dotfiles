@@ -1,5 +1,6 @@
 import type { Client, QueryResult } from './github.ts';
 import type { Cache } from './cache.ts';
+import type { Baseline, BaselineEntry } from './vuln-baseline.ts';
 import { FORCE_MIN_INTERVAL_MS } from './main-lib.ts';
 
 // The open Dependabot alerts on a fixed list of repositories, for the vulnerabilities page.
@@ -261,6 +262,14 @@ export type VulnResponse = VulnLoadResult & { stale: boolean; error?: string };
 export type VulnLoaderOpts = {
   /** Injectable for the force throttle, as in `withFallback`. Defaults to `Date.now`. */
   now?: () => number;
+  /** The guard's baseline as last persisted, so a restart keeps it; see vuln-baseline.ts. */
+  initialBaseline?: Baseline;
+  /**
+   * Called with the whole baseline after any fetch that changed it, for persisting. Must not
+   * throw or return a Promise the caller is expected to await, as with `onSuccess` in
+   * `withFallback`.
+   */
+  onBaselineChange?: (baseline: Baseline) => void;
 };
 
 export type LoadVulns = (opts?: { force?: boolean }) => Promise<VulnResponse>;
@@ -276,8 +285,8 @@ export type LoadVulns = (opts?: { force?: boolean }) => Promise<VulnResponse>;
  *
  * A repository that had alerts and is suddenly listed with none keeps its previous alerts,
  * named in `staleRepos` and `partialErrors`, until the empty answer has held for
- * {@link ZERO_CONFIRM_MS}. That memory lives in this process only, so a restart during an
- * outage has nothing to retain.
+ * {@link ZERO_CONFIRM_MS}. That memory starts from `opts.initialBaseline` and is handed to
+ * `opts.onBaselineChange` whenever it changes, so it can survive a restart.
  *
  * With no repositories configured there is nothing to query, so it answers an empty result
  * and a machine that never set the list never resolves a token on this route's account.
@@ -294,13 +303,18 @@ export function createVulnLoader(
   let lastGood: VulnLoadResult | undefined;
   let lastForcedAt: number | undefined;
   // Per repository: the last non-empty alert list GitHub returned and when, and since when it
-  // has been answering with none. Only a fulfilled answer touches either map.
-  const lastNonEmpty = new Map<string, { alerts: VulnAlert[]; fetchedAt: string }>();
-  const emptySince = new Map<string, number>();
+  // has been answering with none. Only a fulfilled answer touches it.
+  const baseline = new Map<string, BaselineEntry>(
+    labels.flatMap((label) => {
+      const entry = opts.initialBaseline?.[label];
+      return entry === undefined ? [] : [[label, entry] as const];
+    }),
+  );
 
   async function fetchAll(): Promise<VulnLoadResult> {
     const settled = await Promise.allSettled(repos.map((r) => fetchRepoAlerts(client, r)));
     const at = now();
+    const before = JSON.stringify([...baseline]);
     const alerts: VulnAlert[] = [];
     const partialErrors: string[] = [];
     const staleRepos: string[] = [];
@@ -309,11 +323,11 @@ export function createVulnLoader(
       const label = labels[i] ?? '';
       if (outcome.status === 'fulfilled') {
         const fetched = outcome.value.alerts;
-        const previous = lastNonEmpty.get(label);
+        const previous = baseline.get(label);
         if (fetched.length === 0 && previous !== undefined) {
-          const since = emptySince.get(label) ?? at;
-          emptySince.set(label, since);
+          const since = previous.emptySince ?? at;
           if (at - since < ZERO_CONFIRM_MS) {
+            baseline.set(label, { ...previous, emptySince: since });
             alerts.push(...previous.alerts);
             staleRepos.push(label);
             partialErrors.push(
@@ -321,12 +335,10 @@ export function createVulnLoader(
                 `showing the alerts fetched ${previous.fetchedAt} until that holds for an hour`,
             );
           } else {
-            lastNonEmpty.delete(label);
-            emptySince.delete(label);
+            baseline.delete(label);
           }
         } else {
-          emptySince.delete(label);
-          if (fetched.length > 0) lastNonEmpty.set(label, { alerts: fetched, fetchedAt: new Date(at).toISOString() });
+          if (fetched.length > 0) baseline.set(label, { alerts: fetched, fetchedAt: new Date(at).toISOString() });
           alerts.push(...fetched);
         }
         partialErrors.push(...outcome.value.errors.map((e) => `${label}: ${e}`));
@@ -340,6 +352,9 @@ export function createVulnLoader(
       // Every repository failing is almost always one cause — the token, the network, a rate
       // limit — so the distinct reasons are what the banner needs, not one line per repo.
       throw new Error([...new Set(partialErrors.map((e) => e.slice(e.indexOf(': ') + 2)))].join('; '));
+    }
+    if (opts.onBaselineChange !== undefined && JSON.stringify([...baseline]) !== before) {
+      opts.onBaselineChange(Object.fromEntries(baseline));
     }
     return { alerts, repos: labels, fetchedAt: new Date(at).toISOString(), partialErrors, staleRepos };
   }

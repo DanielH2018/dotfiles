@@ -20,6 +20,7 @@ import {
 } from './main-lib.ts';
 import { createPayloadStore, DEFAULT_STATE_DIR } from './payload-store.ts';
 import { createVulnLoader, parseVulnRepos, type VulnLoadResult } from './vulns.ts';
+import { createBaselineStore } from './vuln-baseline.ts';
 
 const parsedPort = parsePort(process.env['PR_DASH_PORT']);
 if (!parsedPort.ok) {
@@ -63,6 +64,15 @@ const loadPrs = createLoadPrs(client, cache, {
     void store.write(result);
   },
 });
+// The zero-drop guard's memory, read before the server starts for the same reason: the first
+// fetch after a restart is exactly the one an outage's empty answer can slip through.
+const baselineStore = createBaselineStore(DEFAULT_STATE_DIR);
+const loadVulns = createVulnLoader(client, parsedVulnRepos.repos, createCache<VulnLoadResult>(300_000), {
+  initialBaseline: await baselineStore.read(parsedVulnRepos.repos.map((r) => `${r.owner}/${r.name}`)),
+  onBaselineChange: (baseline) => {
+    void baselineStore.write(baseline);
+  },
+});
 
 // Opt-in, via PR_DASH_PRELOAD — see preloadEnabled. `bin/pr-dash` sets it because that path
 // is about to open a browser, and starting the fetch before listen() overlaps the launcher's
@@ -100,8 +110,8 @@ const server = createServer({
   // Spawns jobstat per request for the same reason: most machines never ask for /api/jobs.
   loadJobs: createLoadJobs(),
   // Shares the PR loader's lazy client, so both routes resolve the token once. Alerts change
-  // far more slowly than PR state, hence the longer TTL than the PR cache's 60 seconds.
-  loadVulns: createVulnLoader(client, parsedVulnRepos.repos, createCache<VulnLoadResult>(300_000)),
+  // far more slowly than PR state, hence the longer TTL (above) than the PR cache's 60 seconds.
+  loadVulns,
   onRequest: () => idleExit.touch(),
 });
 // Attached before listen(): without a handler, an occupied port reaches Node's default

@@ -38,7 +38,8 @@ export type PayloadStore = {
   write(result: LoadResult): Promise<void>;
 };
 
-const realFs: FsSeam = {
+/** The real filesystem behind {@link FsSeam}; every store defaults to it. */
+export const realFs: FsSeam = {
   mkdir: (path, opts) => mkdir(path, opts),
   chmod: (path, mode) => chmod(path, mode),
   writeFile: (path, data, opts) => writeFile(path, data, opts),
@@ -138,36 +139,52 @@ export function createPayloadStore(dir: string, fs: FsSeam = realFs): PayloadSto
     },
 
     async write(result: LoadResult): Promise<void> {
-      // A unique temp name per write: writeFile's mode applies only when it creates the
-      // file, so reusing one name would silently keep a crashed run's mode.
-      const temp = `${target}.${randomUUID()}.tmp`;
-      try {
-        await fs.mkdir(dir, { recursive: true, mode: DIR_MODE });
-        // mkdir applies its mode only to a directory it creates, so an existing directory
-        // keeps whatever it had — 0770 for one made by hand under this host's umask 0007,
-        // which leaves the 0600 payload sitting in a group-readable directory.
-        await fs.chmod(dir, DIR_MODE);
-        await fs.writeFile(temp, JSON.stringify(result), { mode: FILE_MODE });
-        try {
-          // Rename rather than writing the target in place, so a kill mid-write cannot
-          // leave truncated JSON for the next launch to reject.
-          await fs.rename(temp, target);
-        } catch (err) {
-          // The temp file survived the write but failed to land (EXDEV, a full directory
-          // entry table, ...). Remove it so a directory that keeps failing to rename does
-          // not accumulate an unbounded number of full payload copies. A hard kill right
-          // here still orphans one temp file, which is an acceptable one-time leak.
-          try {
-            await fs.unlink(temp);
-          } catch {
-            // Best effort — the outer catch below already treats this write as failed.
-          }
-          throw err;
-        }
-      } catch {
-        // A full disk or an unwritable directory must not turn a successful fetch into a
-        // failed request. The next launch simply starts cold.
-      }
+      await writeFileAtomically(fs, dir, FILE_NAME, JSON.stringify(result));
     },
   };
+}
+
+/**
+ * Writes `data` to `dir/fileName` with owner-only modes, replacing the file in one rename.
+ *
+ * Never rejects. A full disk or an unwritable directory must not turn a successful fetch
+ * into a failed request, so a failed write is dropped and the next launch simply starts
+ * cold. Shared with the vulnerabilities baseline so both state files get the same handling.
+ */
+export async function writeFileAtomically(
+  fs: FsSeam,
+  dir: string,
+  fileName: string,
+  data: string,
+): Promise<void> {
+  const target = join(dir, fileName);
+  // A unique temp name per write: writeFile's mode applies only when it creates the
+  // file, so reusing one name would silently keep a crashed run's mode.
+  const temp = `${target}.${randomUUID()}.tmp`;
+  try {
+    await fs.mkdir(dir, { recursive: true, mode: DIR_MODE });
+    // mkdir applies its mode only to a directory it creates, so an existing directory
+    // keeps whatever it had — 0770 for one made by hand under this host's umask 0007,
+    // which leaves the 0600 payload sitting in a group-readable directory.
+    await fs.chmod(dir, DIR_MODE);
+    await fs.writeFile(temp, data, { mode: FILE_MODE });
+    try {
+      // Rename rather than writing the target in place, so a kill mid-write cannot
+      // leave truncated JSON for the next launch to reject.
+      await fs.rename(temp, target);
+    } catch (err) {
+      // The temp file survived the write but failed to land (EXDEV, a full directory
+      // entry table, ...). Remove it so a directory that keeps failing to rename does
+      // not accumulate an unbounded number of full payload copies. A hard kill right
+      // here still orphans one temp file, which is an acceptable one-time leak.
+      try {
+        await fs.unlink(temp);
+      } catch {
+        // Best effort — the outer catch below already treats this write as failed.
+      }
+      throw err;
+    }
+  } catch {
+    // Dropped on purpose; see the doc comment.
+  }
 }

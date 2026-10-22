@@ -4,6 +4,7 @@ import { createServer as createNetServer } from 'node:net';
 import type { Client, QueryResult } from '../src/github.ts';
 import { createCache } from '../src/cache.ts';
 import { createServer } from '../src/server.ts';
+import type { Baseline } from '../src/vuln-baseline.ts';
 import {
   createVulnLoader,
   fetchRepoAlerts,
@@ -207,6 +208,41 @@ test('a repository suddenly listed with no alerts keeps its previous alerts unti
   clock += 1;
   const accepted = await load();
   assert.deepStrictEqual([accepted.alerts, accepted.staleRepos, accepted.partialErrors], [[], [], []]);
+});
+
+test('the zero-drop guard keeps its alerts and its clock across a restart', async () => {
+  // The 2026-10-22 gap: a restart mid-outage, then an empty first answer, showed 45 alerts as 0.
+  let clock = Date.parse('2026-10-22T16:00:00Z');
+  const now = () => clock;
+  let persisted: Baseline | undefined;
+  const save = (b: Baseline) => {
+    persisted = b;
+  };
+
+  // Before the restart: one good answer, then GitHub starts listing the repository as empty.
+  const before = fakeClient({ 'acme/api': [{ nodes: [rawAlert(1), rawAlert(2)] }, { nodes: [] }] });
+  const first = createVulnLoader(before.client, [API], createCache<VulnLoadResult>(-1), { now, onBaselineChange: save });
+  await first();
+  clock += 5 * 60 * 1000;
+  await first();
+
+  // After the restart, a fresh loader seeded from what was saved: still retained.
+  clock += 5 * 60 * 1000;
+  const after = fakeClient({ 'acme/api': [{ nodes: [] }, { nodes: [] }] });
+  const second = createVulnLoader(after.client, [API], createCache<VulnLoadResult>(-1), {
+    now,
+    initialBaseline: persisted,
+    onBaselineChange: save,
+  });
+  const retained = await second();
+  assert.deepStrictEqual(retained.alerts.map((a) => a.number), [1, 2]);
+  assert.deepStrictEqual(retained.staleRepos, ['acme/api']);
+
+  // The hour counts from the first empty answer before the restart (16:05), not from 16:10.
+  clock = Date.parse('2026-10-22T17:05:00Z');
+  const accepted = await second();
+  assert.deepStrictEqual([accepted.alerts, accepted.staleRepos], [[], []]);
+  assert.deepStrictEqual(persisted, {});
 });
 
 test('a load inside the cache TTL does not query GitHub again, and a forced one does', async () => {
