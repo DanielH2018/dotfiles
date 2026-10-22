@@ -2,7 +2,7 @@
 #!/bin/sh
 # Managed by chezmoi (run_onchange). Clears stale copies of files that home/.chezmoiignore now
 # excludes on this host but did not exclude before — desktop-only utilities, the Docker sandbox
-# tool, and the Linux Warp config on a server, the darwin-only helpers on Linux, and the
+# tool, and the Linux Warp config on a server, the darwin-only mac-askpass on Linux, and the
 # hooks/test_*.py suites everywhere. `.chezmoiremove` cannot do this: a target BOTH ignored and
 # listed there is a silent no-op, verified against a scratch --destination before this script
 # was written (see home/.chezmoiremove's note on the same change). This is that removal, done
@@ -112,10 +112,9 @@ rm_file .local/bin/claude-sandbox
 rm_dir .claude/sandbox
 {{ end -}}
 
-# The darwin-only helpers (home/.chezmoiignore's `ne .chezmoi.os "darwin"` block). Always
+# The darwin-only mac-askpass (home/.chezmoiignore's `ne .chezmoi.os "darwin"` block). Always
 # true here, since this script only runs on Linux.
 rm_file .local/bin/mac-askpass
-rm_file .local/bin/logi-dev-mgr-kick
 
 # The hooks/test_*.py suites (home/.chezmoiignore, unconditional): each finds its subject by
 # the source tree's executable_-prefixed name, which chezmoi strips before deploying, so none

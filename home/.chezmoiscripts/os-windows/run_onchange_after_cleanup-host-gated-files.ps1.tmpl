@@ -1,9 +1,9 @@
 {{- if eq .chezmoi.os "windows" -}}
 # Managed by chezmoi (run_onchange). Clears stale copies of files that home/.chezmoiignore now
-# excludes on Windows but did not exclude before: the darwin-only helpers (mac-askpass,
-# logi-dev-mgr-kick) and the hooks/test_*.py suites, which deploy to ~/.claude/hooks where
-# none of them can run — each finds its subject by the source tree's executable_-prefixed
-# name, which chezmoi strips before deploying. `.chezmoiremove` cannot do this: a target BOTH
+# excludes on Windows but did not exclude before: the darwin-only mac-askpass and the
+# hooks/test_*.py suites, which deploy to ~/.claude/hooks where none of them can run — each
+# finds its subject by the source tree's executable_-prefixed name, which chezmoi strips
+# before deploying. `.chezmoiremove` cannot do this: a target BOTH
 # ignored and listed there is a silent no-op, verified against a scratch --destination before
 # this script was written. See the matching os-linux and os-darwin scripts for the other two
 # platforms' share of the same cleanup.
@@ -11,7 +11,6 @@
 # Idempotent: every removal is skip-if-absent, and prints only what it actually took.
 $targets = @(
     '.local\bin\mac-askpass'
-    '.local\bin\logi-dev-mgr-kick'
 )
 foreach ($rel in $targets) {
     $path = Join-Path $HOME $rel
