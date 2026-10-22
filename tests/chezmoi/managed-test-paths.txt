@@ -47,6 +47,7 @@
 .local/share/claude-guard/tests/test_deny_normalization.py
 .local/share/claude-guard/tests/test_footguns.py
 .local/share/claude-guard/tests/test_git_conventions.py
+.local/share/claude-guard/tests/test_gitread.py
 .local/share/claude-guard/tests/test_git_reset.py
 .local/share/claude-guard/tests/test_hook.py
 .local/share/claude-guard/tests/test_nudges.py
@@ -58,6 +59,7 @@
 .local/share/claude-guard/tests/test_scratch.py
 .local/share/claude-guard/tests/test_segment.py
 .local/share/claude-guard/tests/test_secret_table.py
+.local/share/claude-guard/tests/test_substitution.py
 .local/share/claude-guard/tests/test_tables_remote.py
 .local/share/claude-guard/tests/test_vectors.py
 .local/share/claude-guard/tests/test_waits.py
