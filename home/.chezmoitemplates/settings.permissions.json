@@ -141,6 +141,10 @@
            tests/ghread.test.js and tests/dockq.test.js pin the exact argv against a fake gh/docker, the refusals (each proven by the fake never starting), --out confinement, and inspect output against a fake container whose environment carries a canary. If a passthrough or a caller-supplied template ever lands, the matching rule comes out in the same commit. */}}
       "Bash(ghread:*)",
       "Bash(dockq:*)",
+      {{/* dockrun is the write tier beside dockq, and earns its grant the same way. Every flag is on an argparse allowlist with abbreviation off, so --privileged, --cap-add, --security-opt, --device, --pid/--ipc/--uts/--userns/--cgroupns, --volumes-from, --env-file and --label do not exist to be passed; `--network host` and `container:` are refused by value. `run` always adds --rm and a `dev.dockrun.managed` label, and rm/exec/logs act only on a container carrying that label, by the ID the label check returned. A bind source is realpath-resolved and must sit under the cwd's repository (forced read-only, since a writable bind would let a container write .git/hooks or .claude/settings.local.json past the sandbox's denyWrite) or under /private/tmp/claude-<uid>. The Docker socket is refused, and so is a tree holding a file this file's Read() denies. compose runs only on files under the repository or scratch, is checked against `compose config --format json` with the same refusals, and refuses a project whose existing containers came from another repository's files. docker is found in fixed system directories, not $PATH, with every DOCKER_, COMPOSE_, BUILDKIT_, DYLD_ and LD_ variable dropped from its environment.
+           What stays allowed, said plainly: a container still has the network; compose ports publish on every interface as the file says (`dockrun run -p` binds 127.0.0.1 only); and a service's env_file, typically the repo's .env, reaches the container, where `compose exec svc env` can print it.
+           tests/dockrun.test.js pins the argv, each refused flag in both spellings, each refused compose key, the socket, symlink escapes, the read-only rule and project ownership, against a fake docker. If a passthrough lands, this rule comes out in the same commit. */}}
+      "Bash(dockrun:*)",
       "Bash(yq:*)",
       {{/* xargs is NOT allow-listed, for the same reason env isn't: it takes a command as
            an argument, so no prefix of it is safe. It used to be allowed with `xargs *sh*`
@@ -226,35 +230,19 @@
            no such loss. */}}
       "Bash(git switch:*)",
       "Bash(git checkout -b:*)",
-      "Bash(gh pr view:*)",
-      "Bash(gh pr list:*)",
-      "Bash(gh pr diff:*)",
-      "Bash(gh pr checks:*)",
-      "Bash(gh issue view:*)",
-      "Bash(gh issue list:*)",
       "Bash(gh repo view:*)",
-      "Bash(gh run list:*)",
-      "Bash(gh run view:*)",
       "Bash(gh run watch:*)",
       "Bash(gh pr status:*)",
-      {{/* `gh pr comments` was listed here and granted nothing — there is no such subcommand
-           (`gh pr comments --help` prints generic `gh pr` help). Reading a PR's comments is
-           `gh pr view --comments`, already covered by `Bash(gh pr view:*)` above, or the REST
-           endpoints noted below. */}}
+      {{/* gh's read verbs that ghread covers left this list on 2026-10-22: pr view/list/diff/
+           checks, issue view/list, run list/view, search, api and stack view. A prefix rule
+           on raw gh approves every flag after the verb, so `Bash(gh api:*)` granted any call
+           and left the ask rules below to catch -X/-f, which miss spellings such as
+           `--method=POST`. ghread builds each call from constants instead (see its entry
+           above). The gh verbs still listed here are ones ghread does not wrap. */}}
       "Bash(gh workflow list:*)",
       "Bash(gh workflow view:*)",
       "Bash(gh release list:*)",
       "Bash(gh release view:*)",
-      {{/* `gh api:*` is the read workhorse: every GET goes through it, including the two that
-           matter most for reading review feedback —
-           `gh api repos/{owner}/{repo}/pulls/{n}/comments` (review comments) and
-           `.../issues/{n}/comments`. Both are GETs, so they land here rather than in the ask
-           list, and reading PR discussion needs no graphql.
-
-           graphql deliberately stays in the ask list. It carries reads and mutations over the
-           same POST, so no pattern separates them, and an ask rule outranks an allow — a
-           read-only graphql carve-out is not expressible even in principle. */}}
-      "Bash(gh api:*)",
       {{/* Read verbs added 2026-08-24. The justification first written here was wrong and is
            corrected: it claimed these became load-bearing because gh had moved out of the
            sandbox via sandbox.excludedCommands. That exclusion is inert on this host (the note
@@ -268,10 +256,9 @@
            / api user. An unlisted verb instead reaches the auto-mode classifier, which does
            refuse ordinary read-only calls — three were refused while this was worked out.
 
-           `gh search` was the largest gap: searching PRs, issues and code was absent entirely.
-           `gh secret list` is deliberately NOT here — it returns only metadata, but it is a
+           `gh search` was the largest gap and was added here; it moved to `ghread search` on
+           2026-10-22. `gh secret list` is deliberately NOT here — it returns only metadata, but it is a
            credential surface and belongs behind a prompt. */}}
-      "Bash(gh search:*)",
       "Bash(gh repo list:*)",
       "Bash(gh gist view:*)",
       "Bash(gh gist list:*)",
@@ -284,9 +271,6 @@
       "Bash(gh ruleset list:*)",
       "Bash(gh variable list:*)",
       "Bash(gh org list:*)",
-      {{/* gh-stack's one read verb. `link` and `submit` push branches and open PRs, so
-           only `view` is here. */}}
-      "Bash(gh stack view:*)",
       {{/* Read-only kubectl against the homelab k3s cluster. autoMode.allow states these
            verbs are routine because the default credential is a read-only ServiceAccount —
            the same reasoning, restated as prefixes so claude_guard.judge can act on it.
@@ -787,7 +771,6 @@
            have no glob that leaves `awk '/a|b/'` alone, so claude_guard.checks.awk judges
            them on both hook paths instead (dotfiles #702). */}}
       "Bash(find *-exec*)",
-      "Bash(find *-execdir*)",
       "Bash(find -ok *)",
       "Bash(find * -ok *)",
       "Bash(find * -okdir *)",
@@ -837,8 +820,7 @@
       "Bash(terragrunt run-all destroy:*)"
     ],
     "ask": [
-      {{/* -t is the short form of --show-token; either one prints the GitHub token into the transcript */}}
-      "Bash(gh auth status *--show-token*)",
+      {{/* -t is the short form of --show-token; either one prints the GitHub token into the transcript. `*-t*` matches both, because `--show-token` contains `-t`. */}}
       "Bash(gh auth status *-t*)",
       "Bash(node -e:*)",
       "Bash(python3 -c:*)",
@@ -911,10 +893,117 @@
       "Bash(gh api *--input *)",
       "Bash(gh api graphql*)",
       "Bash(gh api */graphql*)",
-      {{/* The package-manager and docker install/run rules are gone: they fired ZERO times in a
-           measured week. This is an Ansible/kubectl/git homelab, neither cluster node has had
-           Docker since 2026-08-14, and dependency installs go through uv/prek. They cost nothing
-           to keep, but a rule that never fires still reads as coverage that isn't there. */}}
+      {{/* Docker writes prompt. The package-manager and docker install/run rules that sat here
+           were removed for firing zero times in a homelab week, and dependency installs still
+           go through uv/prek. Docker came back with the work laptop: 30 days of transcripts on
+           2026-10-22 held compose up/down/exec, run, rm and pull, and with docker unsandboxed
+           (excludedCommands) the auto-mode classifier was the only thing in front of them.
+           An ask rule still forces a prompt in auto mode (code.claude.com permission-modes:
+           "explicit ask rules still force a prompt"), so this list is what moves them off the
+           classifier. The prompt-free path is dockrun, allowed above, which applies a policy
+           a prefix rule cannot.
+
+           Rules match per segment of a compound command, and `*` spans spaces. Three shapes:
+           the bare verb; any global flag before the verb (`docker -H x run`, `docker --context
+           y ...`), which also makes `docker --version` prompt; and compose with flags before
+           its verb, which is how most real compose calls are spelled (`docker compose -p x -f
+           a.yml up -d`). The flag-first compose globs can also catch a read whose argument
+           contains a verb word, such as `logs upstream`; dockq covers compose ps/logs without
+           a prompt. Reads behind a write noun (`docker image ls`, `docker network ls`) prompt
+           too. */}}
+      "Bash(docker run:*)",
+      "Bash(docker exec:*)",
+      "Bash(docker rm:*)",
+      "Bash(docker rmi:*)",
+      "Bash(docker pull:*)",
+      "Bash(docker push:*)",
+      "Bash(docker build:*)",
+      "Bash(docker buildx:*)",
+      "Bash(docker builder:*)",
+      "Bash(docker create:*)",
+      "Bash(docker start:*)",
+      "Bash(docker stop:*)",
+      "Bash(docker restart:*)",
+      "Bash(docker kill:*)",
+      "Bash(docker pause:*)",
+      "Bash(docker unpause:*)",
+      "Bash(docker attach:*)",
+      "Bash(docker cp:*)",
+      "Bash(docker commit:*)",
+      "Bash(docker update:*)",
+      "Bash(docker rename:*)",
+      "Bash(docker tag:*)",
+      "Bash(docker load:*)",
+      "Bash(docker import:*)",
+      "Bash(docker save:*)",
+      "Bash(docker login:*)",
+      "Bash(docker logout:*)",
+      "Bash(docker context:*)",
+      "Bash(docker container:*)",
+      "Bash(docker image:*)",
+      "Bash(docker volume:*)",
+      "Bash(docker network:*)",
+      "Bash(docker system:*)",
+      "Bash(docker plugin:*)",
+      "Bash(docker swarm:*)",
+      "Bash(docker service:*)",
+      "Bash(docker stack:*)",
+      "Bash(docker secret:*)",
+      "Bash(docker node:*)",
+      "Bash(docker trust:*)",
+      "Bash(docker checkpoint:*)",
+      "Bash(docker init:*)",
+      "Bash(docker debug:*)",
+      "Bash(docker manifest create:*)",
+      "Bash(docker manifest push:*)",
+      "Bash(docker manifest annotate:*)",
+      "Bash(docker manifest rm:*)",
+      "Bash(docker -*)",
+      "Bash(docker compose up:*)",
+      "Bash(docker compose down:*)",
+      "Bash(docker compose run:*)",
+      "Bash(docker compose exec:*)",
+      "Bash(docker compose rm:*)",
+      "Bash(docker compose pull:*)",
+      "Bash(docker compose push:*)",
+      "Bash(docker compose build:*)",
+      "Bash(docker compose create:*)",
+      "Bash(docker compose start:*)",
+      "Bash(docker compose stop:*)",
+      "Bash(docker compose restart:*)",
+      "Bash(docker compose kill:*)",
+      "Bash(docker compose pause:*)",
+      "Bash(docker compose unpause:*)",
+      "Bash(docker compose attach:*)",
+      "Bash(docker compose cp:*)",
+      "Bash(docker compose scale:*)",
+      "Bash(docker compose watch:*)",
+      "Bash(docker compose publish:*)",
+      "Bash(docker compose commit:*)",
+      "Bash(docker compose export:*)",
+      "Bash(docker compose -* up*)",
+      "Bash(docker compose -* down*)",
+      "Bash(docker compose -* run*)",
+      "Bash(docker compose -* exec*)",
+      "Bash(docker compose -* rm*)",
+      "Bash(docker compose -* pull*)",
+      "Bash(docker compose -* push*)",
+      "Bash(docker compose -* build*)",
+      "Bash(docker compose -* create*)",
+      "Bash(docker compose -* start*)",
+      "Bash(docker compose -* stop*)",
+      "Bash(docker compose -* restart*)",
+      "Bash(docker compose -* kill*)",
+      "Bash(docker compose -* pause*)",
+      "Bash(docker compose -* unpause*)",
+      "Bash(docker compose -* attach*)",
+      "Bash(docker compose -* cp*)",
+      "Bash(docker compose -* scale*)",
+      "Bash(docker compose -* watch*)",
+      "Bash(docker compose -* publish*)",
+      "Bash(docker compose -* commit*)",
+      "Bash(docker compose -* export*)",
+      "Bash(docker-compose:*)",
       {{/* curl/ssh/scp/sftp/rsync/wget were the single biggest source of prompts (~80 a week,
            all approved) and they are gone from this tier on purpose. A prefix rule could never
            narrow them — `Bash(curl http://10.0.0.161/:*)` constrains nothing after the URL, so

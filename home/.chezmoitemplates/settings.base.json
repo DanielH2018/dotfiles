@@ -1287,10 +1287,11 @@
            shell-escape body, and `gh extension install`, can execute arbitrary code. Neither is
            allowlisted, so both face the classifier rather than running silently. */}}
       "gh",
-      {{/* ghread and dockq wrap gh and docker, inherit their reason to be here, and are
-           equally inert today. Unlike gh, neither has an alias or extension surface. */}}
+      {{/* ghread, dockq and dockrun wrap gh and docker, inherit their reason to be here, and
+           are equally inert where the list is. None has an alias or extension surface. */}}
       "ghread",
-      "dockq"
+      "dockq",
+      "dockrun"
     ]
   }{{ else }}{ "enabled": false }{{ end }},
   "alwaysThinkingEnabled": true,

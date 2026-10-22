@@ -40,7 +40,7 @@ const NOT_A_SPAWNER = ['fnm env', 'gh run watch'];
 // unbalanced paren, which the rule parser drops outright — leaving `Bash(awk:*)`
 // allow-listed with nothing guarding it.
 const GUARDED = {
-  find: ['find *-exec*', 'find *-execdir*', 'find -ok *', 'find * -ok *', 'find * -okdir *',
+  find: ['find *-exec*', 'find -ok *', 'find * -ok *', 'find * -okdir *',
     'find -delete', 'find -delete *', 'find * -delete', 'find * -delete *', 'find *-fprintf*'],
   awk: ['awk *system(*)*', 'awk *system (*)*'],
 };
