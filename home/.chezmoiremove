@@ -208,3 +208,6 @@ Scripts/wslhost-interop-reaper/wslhost-interop-reaper-hidden.vbs
 # tq_wrap.py), run by guard-pre-tool-use.sh and bash-write-fanout.sh.
 .claude/hooks/chezmoi-apply-guard.sh
 .claude/hooks/tq-wrap-tests.py
+
+# skill-usage-log.sh became skill-usage-log.py on 2026-10-22, its registration moving with it.
+.claude/hooks/skill-usage-log.sh

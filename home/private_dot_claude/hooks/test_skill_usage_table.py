@@ -3,7 +3,7 @@
 
 Run: python3 test_skill_usage_table.py
 
-skill-usage-log.sh (tested in test_skill_usage_log.py) writes the fire log; this is
+skill-usage-log.py (tested in test_skill_usage_log.py) writes the fire log; this is
 the read side, and the one property that matters for the scaffolding-delete-pass this
 was built for is the one this test pins: an installed skill/agent/plugin with NO
 matching log entry must still appear in the table, at count 0, with "never" as its

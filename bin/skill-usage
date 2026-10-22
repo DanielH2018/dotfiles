@@ -3,7 +3,7 @@
 
 Nothing recorded which of the 23 skills and 5 agents under
 home/private_dot_claude/{skills,agents} ever actually fire, so a scaffolding-delete-
-pass had no evidence to weigh a removal against. executable_skill-usage-log.sh (a
+pass had no evidence to weigh a removal against. executable_skill-usage-log.py (a
 PostToolUse hook on Skill|Agent|Task) writes one JSONL line per invocation to
 ~/.claude/logs/skill-usage.jsonl; this reads that log back into a table.
 
