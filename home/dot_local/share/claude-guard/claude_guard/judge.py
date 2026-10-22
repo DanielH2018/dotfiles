@@ -37,7 +37,11 @@ from claude_guard.checks.git_reset import clean_reset_safe
 from claude_guard.checks.remote import readonly_remote_safe, trusted_host_safe
 from claude_guard.checks.remote_guards import git_readonly
 from claude_guard.checks.scratch import rm_confined, tokenize, write_confined
-from claude_guard.checks.worktree_scratch import worktree_restore_safe, worktree_rm_safe
+from claude_guard.checks.worktree_scratch import (
+    worktree_clean_safe,
+    worktree_restore_safe,
+    worktree_rm_safe,
+)
 from claude_guard.gitread import git_read
 from claude_guard.rules import Rules
 from claude_guard.segment import parse
@@ -296,8 +300,10 @@ def _changes_cwd(part: str) -> bool:
     this one in the chain. No attempt at tracking WHERE it moves to: the brief's own
     instruction is not to, since resolving a `cd` target means resolving variables,
     `cd -`, and a directory-stack, and every gap in that resolution is its own fail-open.
-    This is a pure detector, consulted by `judge()` to gate the heredoc-write carve-out
-    (see the `cwd_changed` DECIDED marker in `judge_segment`).
+    `judge()` exempts one target that needs none of that resolving, a bare `cd` to the
+    session's own cwd (`_cd_stays`, dotfiles #864). This is a pure detector, consulted by
+    `judge()` to gate the heredoc-write carve-out (see the `cwd_changed` DECIDED marker in
+    `judge_segment`).
 
     The wrapper re-check (found via review after the brief's own text, not named in it):
     `timeout 5 cd /tmp && cat > note.txt <<'EOF'` measured ALLOW end to end through the
@@ -319,6 +325,24 @@ def _changes_cwd(part: str) -> bool:
         return True
     target = unwrap_wrapper(part)
     return target is not None and target != part and _basename(_first_word(target)) in _CD_LIKE
+
+
+def _cd_stays(part: str, cwd: str) -> bool:
+    """True when `part` is a bare `cd` to one literal absolute path that resolves to `cwd`.
+
+    `_changes_cwd` does not ask where a `cd` goes, and that stays its rule. This is the one
+    target that needs no resolving of variables, `cd -` or the directory stack: a session
+    that runs `cd <its own worktree> && rm <relative>` has not moved, and 6 of the 35
+    cleanup denials sampled in dotfiles #864 were that shape. A wrapper, `pushd`, an option
+    or any second word keeps the flag.
+    """
+    words = tokenize(part)
+    if not words or len(words) != 2 or words[0] != "cd":
+        return False
+    target = words[1]
+    if not target.startswith("/") or not cwd.startswith("/"):
+        return False
+    return os.path.realpath(target) == os.path.realpath(cwd)
 
 
 def _mask_quotes(s: str) -> str:
@@ -978,12 +1002,15 @@ def judge_segment(
     if word == "rm" and rm_confined(part, roots):
         return True, "rm-check"
 
-    # dotfiles #861. The same ask rules (`rm:*`, `git restore:*`) resolved for cleanup
-    # inside the session's own worktree, which a headless session otherwise cannot run.
+    # dotfiles #861 and #864. The same ask rules (`rm:*`, `git restore:*`, `git clean:*`)
+    # resolved for cleanup inside the session's own worktree, which a headless session
+    # otherwise cannot run.
     if word == "rm" and worktree_rm_safe(part, cwd, cwd_changed, project_dir):
         return True, "worktree-rm-check"
     if word == "git" and worktree_restore_safe(part, cwd, cwd_changed, project_dir):
         return True, "worktree-restore-check"
+    if word == "git" and worktree_clean_safe(part, cwd, cwd_changed, project_dir):
+        return True, "worktree-clean-check"
 
     # server #1898. The per-segment twin of judge()'s two whole-command remote arms, so an
     # ssh/hl stage can sit in a LOCAL pipeline — `ssh host docker ps | head -3` — with every
@@ -1267,6 +1294,6 @@ def judge(
         reasons.append(reason)
         if not ok:
             return Decision(False, f"segment:{i}:{reason}", tuple(reasons))
-        if _changes_cwd(part):
+        if _changes_cwd(part) and not _cd_stays(part, cwd):
             cwd_changed = True
     return Decision(True, "allow", tuple(reasons))

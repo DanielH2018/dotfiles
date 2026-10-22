@@ -199,3 +199,63 @@ def test_a_glob_or_a_directory_is_not_a_tracked_file_to_restore(repo):
         (sub, "git restore '*'"),
     ]:
         assert not worktree_restore_safe(command, cwd, False, project_dir=wt), (cwd, command)
+
+
+def _ask_rules(tmp_path):
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "settings.json").write_text(
+        '{"permissions": {"allow": ["Bash(cd:*)"], "ask": ["Bash(rm:*)", "Bash(git clean:*)"]}}'
+    )
+    return load_rules(home=str(home), project_dir=None), scratch_roots(str(home))
+
+
+def test_git_clean_of_untracked_scratch_in_a_session_worktree_is_allowed(repo, tmp_path):
+    _, wt = repo
+    rules, roots = _ask_rules(tmp_path)
+    for command in [
+        "git clean -f -- .git-pr-body.md",
+        "git clean -fdq -- scratch",
+        "git clean -f .git-pr-body.md scratch/probe.py",
+        f"git clean --force -- {wt}/scratch",
+    ]:
+        assert judge(command, rules, roots, wt, wt).allow, command
+
+
+def test_git_clean_of_the_whole_tree_tracked_or_ignored_paths_is_refused(repo, tmp_path):
+    main, wt = repo
+    rules, roots = _ask_rules(tmp_path)
+    with open(os.path.join(wt, ".env"), "w") as f:
+        f.write("A=1\n")
+    for command in [
+        "git clean -f",
+        "git clean -fd",
+        "git clean -fx -- scratch",
+        "git clean -fX -- scratch",
+        "git clean -ff -- scratch",
+        "git clean -f -e x -- scratch",
+        "git clean -fi -- scratch",
+        "git clean -f -- src/app.py",
+        "git clean -f -- .env",
+        "git clean -f -- 'scratch/*'",
+        "git clean -f -- ':(glob)scratch/*'",
+        f"git clean -f -- {main}/src",
+    ]:
+        assert not judge(command, rules, roots, wt, wt).allow, command
+    assert not judge("git clean -f -- .git-pr-body.md", rules, roots, main, main).allow
+
+
+def test_a_cd_to_the_sessions_own_cwd_leaves_relative_cleanup_allowed(repo, tmp_path):
+    main, wt = repo
+    rules, roots = _ask_rules(tmp_path)
+    assert judge(f"cd {wt} && rm .git-pr-body.md", rules, roots, wt, wt).allow
+    assert judge(f"cd {wt}/ && git clean -f -- scratch", rules, roots, wt, wt).allow
+    for command in [
+        f"cd {main} && rm .git-pr-body.md",
+        f"cd {wt}/scratch && rm probe.py",
+        "cd - && rm .git-pr-body.md",
+        f"cd -P {wt} && rm .git-pr-body.md",
+        f"timeout 5 cd {wt} && rm .git-pr-body.md",
+        f"pushd {wt} && rm .git-pr-body.md",
+    ]:
+        assert not judge(command, rules, roots, wt, wt).allow, command

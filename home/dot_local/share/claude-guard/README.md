@@ -52,7 +52,8 @@ four whole-command checks below) and the spec's "a single segment is judged like
 decision: a bare command reaches the same checks a chained one does rather than returning
 `not-compound`. It allows a chain when every segment is allow-listed or passes a check
 (`checks/scratch.py` for a confined `rm`, `checks/worktree_scratch.py` for an `rm` of
-untracked files or a `git restore` to `HEAD` inside a `.claude/worktrees/<name>` checkout,
+untracked files, a `git clean -f -- <paths>` of untracked files, or a `git restore` to
+`HEAD` inside a `.claude/worktrees/<name>` checkout,
 `checks/curl.py` for a plain GET/HEAD against an allowlisted host, the
 `git merge --ff-only <ref>` exception), and no segment matches deny or
 ask, or when the whole command passes one of `checks/remote.py`'s `readonly_remote_safe()` /

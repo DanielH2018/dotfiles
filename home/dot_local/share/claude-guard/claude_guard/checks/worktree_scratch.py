@@ -1,8 +1,9 @@
-"""Scratch cleanup inside a session's own worktree: `rm` of untracked files, `git restore`.
+"""Scratch cleanup inside a session's own worktree: `rm` and `git clean` of untracked
+files, `git restore`.
 
-Both commands sit in the ask tier, because each destroys work no reflog brings back. A
-headless session has no prompt to answer, so every cleanup it ran was refused: 41 denials
-across the fan-out batches of 2026-10-15..17 (dotfiles #861). These two checks resolve
+All three commands sit in the ask tier, because each destroys work no reflog brings back.
+A headless session has no prompt to answer, so every cleanup it ran was refused: 41
+denials across the fan-out batches of 2026-10-15..17 (dotfiles #861). These checks resolve
 that ask for the one place a session owns outright, a worktree under `.claude/worktrees/`.
 
 What bounds them:
@@ -197,3 +198,51 @@ def worktree_restore_safe(part: str, cwd: str, cwd_changed: bool, project_dir: s
                 return False
             paths += 1
     return paths > 0
+
+
+_CLEAN_SHORT = frozenset("fdqn")
+_CLEAN_LONG = frozenset({"--force", "--quiet", "--dry-run"})
+
+
+def worktree_clean_safe(part: str, cwd: str, cwd_changed: bool, project_dir: str) -> bool:
+    """True when `part` is `git clean -f [-d] [-q] [--] paths` with every path untracked
+    scratch below the session worktree that holds both `cwd` and `project_dir`, held to the
+    same tests as `worktree_rm_safe` (dotfiles #864).
+
+    A clean with no path cleans the whole tree, so at least one is required. `-x`, `-X`,
+    `-e` and `-i` are refused: the first three reach ignored files, which is where state
+    lives, and `-i` waits on a prompt. `-f` may appear once, because `-ff` also deletes a
+    nested repository.
+    """
+    tokens = tokenize(part)
+    if not tokens or tokens[:2] != ["git", "clean"]:
+        return False
+    root = _session_root(cwd, project_dir)
+    if root is None:
+        return False
+    operands: list[str] = []
+    forces = 0
+    endopts = False
+    for tok in tokens[2:]:
+        if not endopts and tok == "--":
+            endopts = True
+        elif not endopts and tok.startswith("--"):
+            if tok not in _CLEAN_LONG:
+                return False
+            forces += tok == "--force"
+        elif not endopts and tok.startswith("-") and len(tok) > 1:
+            if any(ch not in _CLEAN_SHORT for ch in tok[1:]):
+                return False
+            forces += tok.count("f")
+        elif tok.startswith(":"):
+            return False
+        else:
+            real = _confined(tok, root, cwd, cwd_changed)
+            if real is None:
+                return False
+            operands.append(real)
+    if not operands or forces > 1:
+        return False
+    if _git(root, "ls-files", "--", *operands) != "":
+        return False
+    return all(_is_scratch(op, root) for op in operands)

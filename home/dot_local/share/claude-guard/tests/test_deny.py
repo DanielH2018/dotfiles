@@ -620,6 +620,10 @@ NAMES_THE_ENVIRONMENT_ONLY = [
 # The same words must still be refused when something actually names a secret. A bare
 # accessor cancels nothing else in the text, and a heredoc body gets no exemption: what a
 # body writes is as likely to run next (`cat > x.py <<EOF ... EOF; python x.py`) as to sit.
+#
+# DECIDED (dotfiles #864): a Python heredoc that names a SOPS or dotenv path only in a string
+# literal is still refused. The guard reads text, and a string literal in code that runs is
+# how that code opens the file, so telling a mention from a read means running the code.
 NAMES_A_SECRET = [
     # The write-then-run shapes the review held #865 for.
     "cat > x.py <<'EOF'\nprint(open('vars/cluster-vars.sops.env').read())\nEOF\npython x.py",
