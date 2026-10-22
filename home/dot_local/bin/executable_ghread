@@ -310,7 +310,8 @@ def build_search(ns) -> list[str]:
         ["search", ns.kind]
         + _repo_flag(ns)
         + _value_flags(
-            ns, ("owner", "state", "limit", "author", "label", "language", "sort", "order")
+            ns,
+            ("owner", "state", "limit", "author", "label", "language", "sort", "order"),
         )
         + _json_flags(ns)
         + ["--", *terms]
