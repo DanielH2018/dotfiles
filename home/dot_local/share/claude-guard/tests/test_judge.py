@@ -1454,7 +1454,15 @@ def test_the_real_template_allows_each_replayed_read(real, command):
 
 @pytest.mark.parametrize(
     "command",
-    ["gh stack submit", "gh stack link", "cc-wait my-repo-probe", "git merge-tree a b c"],
+    [
+        "gh stack submit",
+        "gh stack link",
+        "cc-wait my-repo-probe",
+        "git merge-tree a b c",
+        # `git log --output` writes a file. A `Bash(git log:*)` prefix rule grants it, so
+        # this fails if one is added back to settings.permissions.json.
+        "git log --output=/tmp/x",
+    ],
 )
 def test_the_real_template_keeps_writers_and_repo_code_beside_those_reads_a_prompt(real, command):
     assert not allowed(command, real)
