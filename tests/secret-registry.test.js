@@ -23,9 +23,14 @@ const { entries, cases } = JSON.parse(fs.readFileSync(TABLE, 'utf8'));
 const skipHook = skipUnless('bash', 'jq');
 const skipRender = chezmoiAvailable ? false : 'chezmoi unavailable';
 
+let rendered = null;
+function settingsPermissions() {
+  rendered ??= JSON.parse(renderFile(BASE)).permissions;
+  return rendered;
+}
 let renderedDeny = null;
 function settingsDeny() {
-  renderedDeny ??= new Set(JSON.parse(renderFile(BASE)).permissions.deny);
+  renderedDeny ??= new Set(settingsPermissions().deny);
   return renderedDeny;
 }
 
@@ -62,6 +67,16 @@ test('the OAuth token store is refused by all three dialects', { skip: skipHook 
   assert.ok(settingsDeny().has('Read(~/.claude/.credentials.json)'));
   assert.ok(settingsDeny().has('Edit(~/.claude/.credentials.json)'));
   assert.strictEqual(hookDecision('/home/u/.claude/.credentials.json'), 'deny');
+});
+
+test('an edit to the deployed table and Bash deny rules asks first', { skip: skipRender }, () => {
+  // claude_guard.deny reads the table from ~/.local/share/claude-guard at run time, so a
+  // prompt-free Edit or Write there could drop a Bash-side secret deny. The hook's own arms
+  // sit under ~/.claude/hooks/**, which is ask-listed the same way.
+  const { ask, allow } = settingsPermissions();
+  assert.ok(ask.includes('Edit(~/.local/share/claude-guard/**)'), 'the package is ask-listed for Edit');
+  assert.ok(!allow.some((r) => /^(Edit|Write)\(~\/\.local\/share\/(claude-guard|\*)/.test(r)),
+    'no allow rule reaches the package');
 });
 
 test('protect-secrets denies every conformance case', { skip: skipHook }, () => {

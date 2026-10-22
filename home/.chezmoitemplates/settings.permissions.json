@@ -1024,6 +1024,12 @@
            deleted them and moved the same decision into guard-permission-request.sh). */}}
       {{/* the hooks are this config's own enforcement layer — never editable without a prompt (Edit rules also cover Write) */}}
       "Edit(~/.claude/hooks/**)",
+      {{/* The deployed claude-guard package is the other half of that layer: deny.py holds the
+           Bash deny rules and secret_paths.json the secret table they are built from. Without
+           this, a plain Edit or Write there removed a Bash-side secret deny with no prompt,
+           while the hook beside it asked. Sessions edit the chezmoi source, not this copy, and
+           chezmoi apply does not go through the file tools, so neither prompts. */}}
+      "Edit(~/.local/share/claude-guard/**)",
       "Edit(~/.claude/settings.json)",
       "Edit(~/.claude/settings.local.json)"
     ],
