@@ -121,6 +121,23 @@ def test_a_workflow_run_queued_with_no_check_runs_holds_a_pass():
     assert ci({RUNS: data, SUITES: old_empty, ACTIONS: finished}).state == "passed"
 
 
+def test_a_short_sha_is_resolved_before_the_workflow_runs_are_read():
+    """`actions/runs?head_sha=` returns nothing for an abbreviated SHA, so a queued CI run hid."""
+    data = runs(("GitGuardian Security Checks", "completed", "success"))
+    queued = {"workflow_runs": [{"name": "CI", "status": "queued"}]}
+    responses = {
+        f"api repos/o/r/commits/{SHA[:8]}": {"sha": SHA},
+        RUNS: data,
+        ACTIONS: queued,
+        f"api repos/o/r/actions/runs?head_sha={SHA[:8]}&per_page=100": {"workflow_runs": []},
+    }
+    reading = ci(responses, ref=SHA[:8])
+    assert (reading.state, reading.detail) == (
+        "running",
+        f"{SHA[:8]}: 1 check runs complete; 1 workflow runs not completed: CI",
+    )
+
+
 def test_pr_mode_reads_the_head_commit_each_time():
     """A push to the pull request between two reads moves the wait to the new head."""
     pushed = "2" * 40

@@ -135,8 +135,18 @@ class CiWait:
         )
 
     def _sha(self) -> str:
-        if self.ref:
+        if self.ref and len(self.ref) == 40:
             return self.ref
+        if self.ref:
+            # `actions/runs?head_sha=` matches only a full SHA, so an abbreviated one finds no
+            # workflow runs there and would let the wait pass while CI is queued.
+            data = gh_json(
+                ["api", f"repos/{self.repo}/commits/{self.ref}", "--jq", "{sha: .sha}"], self.run
+            )
+            sha = data.get("sha") if isinstance(data, dict) else None
+            if not isinstance(sha, str) or len(sha) != 40:
+                raise ReadError(f"{self.repo} has no commit {self.ref}")
+            return sha
         # Read every time, so a push to the pull request moves the wait to its new head.
         data = gh_json(
             ["pr", "view", str(self.pr), "--repo", self.repo, "--json", "headRefOid"], self.run
