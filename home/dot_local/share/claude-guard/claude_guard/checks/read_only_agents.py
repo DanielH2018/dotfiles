@@ -12,8 +12,8 @@ one of them:
     -delete`, …) aimed anywhere but a scratch root, and a shell or `eval` whose text this
     module would have to judge a second time;
   - any git or gh verb outside a read-only set;
-  - a `kubectl`, `docker`, `ssh` or `hl` command that is not a read (dotfiles #958). These
-    change another machine, so they get an allowlist, as git and gh do.
+  - a `kubectl` or `docker` command outside a read allowlist, as git and gh have, and an
+    `ssh` or `hl` remote command that this module's own rules deny (dotfiles #958).
 
 DECIDED (dotfiles #958): `kubectl`, `docker`, `ssh` and `hl` are judged only as the
 segment's own command, with no wrapper and no assignment in front. Found anywhere else, as
@@ -22,8 +22,10 @@ attempts that followed them into a runner's argv, into a container's command and
 `docker run`'s flags each failed open under review: a value flag the table did not list, a
 container path read as a host scratch path, `--entrypoint=rm`, `--mount readonly=false`.
 So `kubectl` keeps a verb allowlist, `docker` takes `readonly.py`'s allowlist, which runs
-no image and judges only a `docker exec` of a read, and `ssh`/`hl` judge the remote text
-with no scratch roots, refusing any redirect, separator, `$`, backtick or glob in it.
+no image and judges only a `docker exec` of a read. `ssh` and `hl` get this module's
+denylist on the remote text, with no scratch roots, after refusing any redirect, separator,
+`$`, backtick or glob in it. That keeps `ssh host journalctl -u x | grep y`, which an
+allowlist of read verbs would deny.
 
 
 A `$( )` body is judged as a command of its own. So is the command after a reserved word
@@ -63,11 +65,16 @@ residuals, left for the default-deny arm that replaces this denylist:
     table does not list (`gzip`, a project script that runs `cp`);
   - a kubeconfig or docker config that the agent wrote into a scratch root, whose exec
     plugin or credential helper runs a command (`kubectl --kubeconfig /tmp/k get pods`).
-    That is the scratch-script residual: running `/tmp/x` reaches the same command.
+    That is the scratch-script residual: running `/tmp/x` reaches the same command;
+  - a remote command the denylist does not name (`ssh host systemctl stop web`, `kill`,
+    `crontab -r`), as the same command run locally is;
+  - a glob command word that a runner holds as a later word (`uv run /bin/r? -rf src`).
+    Only the segment's own command word is checked for a glob.
 
 A false positive that remains is the shape a must-refuse row shares: `uv run pytest -k
 'git push'` reads exactly as `flock /tmp/l -c 'git push'`, and `-k patch` as a runner
-handing `patch` its argv. `uv run pytest -k ssh` and `make hl` are denied the same way.
+handing `patch` its argv. `uv run pytest -k ssh`, `make hl` and a runner given a
+directory named `docker` (`uv run ruff check docker`) are denied the same way.
 So are a read the allowlists do not name (`docker compose ps`, `kubectl --insecure-skip-
 tls-verify get pods`), `kubectl exec`, and an ssh command whose local output is
 redirected (`ssh host uptime > /tmp/u`).
@@ -802,6 +809,12 @@ _DATA_READERS = frozenset(
         "test",
         "[",
         "[[",
+        # A directory operand named like a judged command (`cd docker`) is data too.
+        "cd",
+        "pushd",
+        "popd",
+        "du",
+        "tree",
     }
 )
 # Every name the arm judges as a command. A runner the wrapper table does not know
@@ -857,7 +870,8 @@ def _command_problem(
     name = os.path.basename(argv[0])
     if "$" in argv[0] or "`" in argv[0]:
         return f"runs a command named by `{argv[0]}`, which this hook cannot resolve"
-    if any(c in argv[0] for c in "*?["):
+    # `[` and `[[` are the test builtins: a bracket glob needs its closing `]` in the word.
+    if argv[0] not in ("[", "[[") and any(c in argv[0] for c in "*?["):
         return f"runs a command named by the glob `{argv[0]}`, which this hook cannot resolve"
     if name in _SHELLS or name == "script":
         return f"runs `{name}`, whose command text this hook does not judge"

@@ -227,6 +227,11 @@ READS = [
     "ssh -o BatchMode=yes host 'journalctl -u x | grep y'",
     "hl kubectl get pods",
     "watch 'kubectl get pods'",
+    # The test builtins are not glob command words, and a directory named `docker` is data.
+    "[ -f src/app.py ] && echo y",
+    "if [[ -n x ]]; then echo y; fi",
+    "cd docker && ls",
+    "du -sh docker",
 ]
 
 
