@@ -286,7 +286,9 @@ def test_git_after_a_cd_is_judged_where_it_runs(home):
 
 
 def test_git_pointed_elsewhere_by_an_option_is_refused(home):
-    assert ro(f"git -C {home}/server/docs log", home)
+    # as_posix: bash strips the backslashes of an unquoted Windows path; the forward-slash
+    # drive form is the one it reads. Identity on POSIX.
+    assert ro(f"git -C {home.as_posix()}/server/docs log", home)
     assert ro("git -C /srv log --oneline", home) is None
     assert ro("git --git-dir=/tmp/x/.git log", home) is None
     assert ro("git --work-tree /tmp/x status", home) is None

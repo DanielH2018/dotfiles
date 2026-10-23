@@ -3,6 +3,7 @@
 
 import os
 import subprocess
+import sys
 
 import pytest
 
@@ -10,6 +11,16 @@ from claude_guard.checks.worktree_scratch import worktree_restore_safe, worktree
 from claude_guard.judge import judge
 from claude_guard.rules import load_rules
 from claude_guard.tables import scratch_roots
+
+# worktree_scratch matches the `/.claude/worktrees/<name>` toplevel with a `/`-separated regex
+# over os.path.realpath output, which is backslash-separated on Windows. No Windows form of the
+# session-worktree test is defined, and `rm`/`git clean` are destructive, so on Windows the
+# check gives no opinion and an ALLOW assertion cannot hold. Refusal assertions run everywhere;
+# only the allow assertions sit behind this flag.
+ALLOW_OK = sys.platform != "win32"
+only_posix_allow = pytest.mark.skipif(
+    not ALLOW_OK, reason="worktree_scratch recognises session worktrees by a POSIX path shape only"
+)
 
 
 def _sh(cwd, *args: str) -> None:
@@ -40,6 +51,7 @@ def repo(tmp_path):
     return str(main), str(wt)
 
 
+@only_posix_allow
 def test_rm_of_untracked_files_in_a_session_worktree_is_allowed(repo):
     _, wt = repo
     for command in [
@@ -79,10 +91,12 @@ def test_cleanup_outside_a_session_worktree_gets_no_opinion(repo, tmp_path):
 def test_a_relative_operand_after_a_cd_is_refused_and_an_absolute_one_is_not(repo):
     _, wt = repo
     assert not worktree_rm_safe("rm .git-pr-body.md", wt, cwd_changed=True, project_dir=wt)
-    assert worktree_rm_safe(f"rm {wt}/.git-pr-body.md", wt, cwd_changed=True, project_dir=wt)
+    if ALLOW_OK:
+        assert worktree_rm_safe(f"rm {wt}/.git-pr-body.md", wt, cwd_changed=True, project_dir=wt)
     assert not worktree_restore_safe("git restore src/app.py", wt, cwd_changed=True, project_dir=wt)
 
 
+@only_posix_allow
 def test_git_restore_of_tracked_files_to_head_is_allowed(repo):
     _, wt = repo
     for command in [
@@ -120,7 +134,8 @@ def test_the_judge_resolves_both_ask_rules_inside_a_session_worktree(repo, tmp_p
     rules = load_rules(home=str(home), project_dir=None)
     roots = scratch_roots(str(home))
     command = "rm .git-pr-body.md && git restore src/app.py && git status --short"
-    assert judge(command, rules, roots, wt, wt).allow
+    if ALLOW_OK:
+        assert judge(command, rules, roots, wt, wt).allow
     assert not judge(command, rules, roots, main, main).allow
     assert not judge(command, rules, roots, wt, "").allow
 
@@ -133,7 +148,8 @@ def test_cleanup_in_another_sessions_worktree_is_refused(repo):
         f.write("x\n")
     assert not worktree_rm_safe("rm .git-pr-body.md", wt, False, project_dir=other)
     assert not worktree_restore_safe("git restore src/app.py", wt, False, project_dir=other)
-    assert worktree_rm_safe("rm mine.txt", wt, False, project_dir=os.path.join(wt, "src"))
+    if ALLOW_OK:
+        assert worktree_rm_safe("rm mine.txt", wt, False, project_dir=os.path.join(wt, "src"))
 
 
 def test_rm_of_an_ignored_path_or_a_directory_holding_one_is_refused(repo):
@@ -162,7 +178,8 @@ def test_rm_of_an_ignored_path_or_a_directory_holding_one_is_refused(repo):
         "rm -r plain/notes.txt",
         "rm -r .fanout/batch/out.txt",
     ]:
-        assert worktree_rm_safe(command, wt, cwd_changed=False, project_dir=wt), command
+        if ALLOW_OK:
+            assert worktree_rm_safe(command, wt, cwd_changed=False, project_dir=wt), command
     for command in [
         "rm local.cfg",
         "rm src/cache.tmp",
@@ -184,7 +201,8 @@ def test_a_glob_or_a_directory_is_not_a_tracked_file_to_restore(repo):
     with open(os.path.join(wt, "src", "extra.py"), "w") as f:
         f.write("y = 1\n")
     sub = os.path.join(wt, "src")
-    assert worktree_restore_safe("git restore app.py", sub, False, project_dir=wt)
+    if ALLOW_OK:
+        assert worktree_restore_safe("git restore app.py", sub, False, project_dir=wt)
     for cwd, command in [
         (wt, "git restore '*'"),
         (wt, "git restore 'src/*.py'"),
@@ -210,6 +228,7 @@ def _ask_rules(tmp_path):
     return load_rules(home=str(home), project_dir=None), scratch_roots(str(home))
 
 
+@only_posix_allow
 def test_git_clean_of_untracked_scratch_in_a_session_worktree_is_allowed(repo, tmp_path):
     _, wt = repo
     rules, roots = _ask_rules(tmp_path)
@@ -248,8 +267,9 @@ def test_git_clean_of_the_whole_tree_tracked_or_ignored_paths_is_refused(repo, t
 def test_a_cd_to_the_sessions_own_cwd_leaves_relative_cleanup_allowed(repo, tmp_path):
     main, wt = repo
     rules, roots = _ask_rules(tmp_path)
-    assert judge(f"cd {wt} && rm .git-pr-body.md", rules, roots, wt, wt).allow
-    assert judge(f"cd {wt}/ && git clean -f -- scratch", rules, roots, wt, wt).allow
+    if ALLOW_OK:
+        assert judge(f"cd {wt} && rm .git-pr-body.md", rules, roots, wt, wt).allow
+        assert judge(f"cd {wt}/ && git clean -f -- scratch", rules, roots, wt, wt).allow
     for command in [
         f"cd {main} && rm .git-pr-body.md",
         f"cd {wt}/scratch && rm probe.py",

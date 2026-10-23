@@ -20,8 +20,10 @@ as every other fall-through here, just reached through a subprocess instead of a
 import os
 import re
 import subprocess
+import sys
 
 from claude_guard.segment import parse
+from claude_guard.winpath import is_drive_abs
 
 # Bounds the two git probes below; a hang on a wedged filesystem must not hold the
 # PermissionRequest hook open indefinitely. Not cited to the bash: the shell hook has no
@@ -48,12 +50,37 @@ _TAIL_RE = re.compile(r"^tail[ \t]+(-n[ \t]*[0-9]+|-[0-9]+)$")
 _MARKERS = ("rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD")
 
 
+def _is_abs(path: str) -> bool:
+    """`path.startswith("/")`, plus the drive-letter forms on Windows only. POSIX is
+    byte-identical: the second arm is unreachable off win32."""
+    return path.startswith("/") or (sys.platform == "win32" and is_drive_abs(path))
+
+
+def _git_exe() -> str | None:
+    """The git to run. POSIX keeps the bare name, which execvp resolves against PATH.
+
+    On Windows CreateProcess searches the current directory before PATH, so a `git.exe`
+    planted in the session's cwd would run in place of git. Search only the absolute PATH
+    entries instead; None (no opinion) when none holds a git.exe."""
+    if sys.platform != "win32":
+        return "git"
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        if entry and os.path.isabs(entry):
+            candidate = os.path.join(entry, "git.exe")
+            if os.path.isfile(candidate):
+                return candidate
+    return None
+
+
 def _git(cwd: str, *args: str) -> str | None:
     """Run `git -C cwd <args>`. None on any failure: non-zero exit, a timeout, or a failure
     to launch git at all (missing binary, unreadable cwd) — never a raised exception."""
+    exe = _git_exe()
+    if exe is None:
+        return None
     try:
         proc = subprocess.run(
-            ["git", "-C", cwd, *args],
+            [exe, "-C", cwd, *args],
             capture_output=True,
             text=True,
             timeout=_GIT_TIMEOUT,
@@ -85,7 +112,7 @@ def clean_reset_safe(command: str, cwd: str) -> bool:
     fail-closed is the right posture for a security gate's fall-through, even diverging
     from the bash it ports.
     """
-    if not cwd or not cwd.startswith("/"):
+    if not cwd or not _is_abs(cwd):
         return False
     if not command:
         return False
@@ -132,8 +159,15 @@ def clean_reset_safe(command: str, cwd: str) -> bool:
     gitdir = gitdir.strip()
     if not gitdir:
         return False
-    if not gitdir.startswith("/"):
+    if sys.platform == "win32" and gitdir.startswith("/"):
+        return False
+    if not _is_abs(gitdir):
         gitdir = f"{cwd.rstrip('/')}/{gitdir}"
+    # A git dir that cannot be found cannot be checked for rebase/merge markers, so it is not
+    # proof of a clean state. git printed it for a repo whose status it can then read, so on
+    # POSIX it exists and this refuses nothing that was allowed before.
+    if not os.path.isdir(gitdir):
+        return False
 
     for marker in _MARKERS:
         if os.path.exists(os.path.join(gitdir, marker)):

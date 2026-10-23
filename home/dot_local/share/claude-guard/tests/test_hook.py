@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -118,6 +119,24 @@ BASH = shutil.which("bash") or "/bin/bash"
 skip_no_uv = pytest.mark.skipif(not shutil.which("uv"), reason="uv unavailable")
 
 
+def _has_managed_python() -> bool:
+    r = subprocess.run(
+        ["uv", "python", "find", "--no-project", "--managed-python", "--system", "3.14"],
+        capture_output=True,
+        check=False,
+    )
+    return r.returncode == 0
+
+
+# The shims resolve only a uv-managed 3.14 and stay silent without one. A Windows host that has
+# a system 3.14 but never ran `uv python install 3.14` is that case; POSIX never takes this
+# skip, so a runner missing the interpreter still fails there.
+skip_no_managed_python_on_windows = pytest.mark.skipif(
+    sys.platform == "win32" and shutil.which("uv") is not None and not _has_managed_python(),
+    reason="no uv-managed Python 3.14 on this Windows host; run `uv python install 3.14`",
+)
+
+
 def run_shim(
     stdin_text: str, env: dict[str, str], cwd: Path | None = None
 ) -> subprocess.CompletedProcess:
@@ -174,6 +193,7 @@ def shim_env(home: Path, **extra: str) -> dict[str, str]:
 
 
 @skip_no_uv
+@skip_no_managed_python_on_windows
 def test_shim_prints_the_allow_line_live(tmp_path):
     # The shim is live-only -- slice 6 retired CLAUDE_GUARD_SHADOW and the switch it fed, so
     # there is no variable left to set here (module docstring, claude_guard.hook).
@@ -218,6 +238,7 @@ def shim_lookup_argv(shim_path: Path) -> list[str]:
 
 
 @skip_no_uv
+@skip_no_managed_python_on_windows
 def test_the_shims_lookup_ignores_a_real_cwd_venv_only_because_of_system(tmp_path):
     # A *dangling* or wrong-version cwd venv is not the risk `--system` guards against: uv
     # already probes a discovered venv's interpreter and falls back to the managed toolchain
@@ -460,6 +481,7 @@ def decision(stdout: str) -> str | None:
 
 
 @skip_no_uv
+@skip_no_managed_python_on_windows
 def test_deny_shim_prints_the_deny_line(tmp_path):
     home = home_with(tmp_path)
     r = run_deny_shim(payload("rm -rf /"), shim_env(home))
@@ -468,6 +490,7 @@ def test_deny_shim_prints_the_deny_line(tmp_path):
 
 
 @skip_no_uv
+@skip_no_managed_python_on_windows
 def test_deny_shim_prints_nothing_for_a_benign_command(tmp_path):
     home = home_with(tmp_path)
     r = run_deny_shim(payload("ls -la"), shim_env(home))

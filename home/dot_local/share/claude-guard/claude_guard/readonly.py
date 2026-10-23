@@ -33,6 +33,7 @@ Where this differs from the server copy, deliberately (the #628 plan's three dec
 import os
 import re
 import shlex
+import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
@@ -40,6 +41,7 @@ from claude_guard.checks.remote_guards import GUARDS
 from claude_guard.deny import Verdict
 from claude_guard.segment import parse
 from claude_guard.tables import READONLY_BASE, SECRET_PATH_RE, TRUSTED_SSH_HOSTS
+from claude_guard.winpath import is_drive_abs, opaque_component
 
 # Repos under $HOME whose own git config is ours. Their worktrees sit inside them
 # (`.claude/worktrees/`), so a prefix match covers those too. `$HOME` itself is trusted only
@@ -124,7 +126,7 @@ def _trusted(path: str, home: str) -> bool:
         return True
     for repo in TRUSTED_REPOS:
         root = os.path.realpath(os.path.join(home, repo))
-        if real == root or real.startswith(root + "/"):
+        if real == root or real.startswith(root + os.sep):
             return True
     return False
 
@@ -132,7 +134,31 @@ def _trusted(path: str, home: str) -> bool:
 _UNRESOLVABLE = re.compile(r"[$*?\[\]{}]")
 
 
-def _resolve(target: str, base: str | None, home: str) -> str | None:
+def _win_resolvable(target: str) -> bool:
+    """win32 only. Whether `target` means the same path to bash as to `ntpath`.
+
+    The two disagree on `C:x` (ntpath joins it onto the base, bash resolves it from the
+    drive's root: `cd C:Users` lands in /c/Users), on a rooted `/x` or `\\x` (the MSYS
+    root, not the base's drive), and on a backslash, which shlex has already stripped from
+    an unquoted word. Only a drive-letter absolute path or a plain relative one without `:`
+    or a leading separator passes.
+
+    A `..` after a named component is refused too: realpath collapses `junc/..` as text,
+    while `cd -P` (and git) follow a junction first and climb out of its target. A leading
+    `..` is fine, since the base it climbs from is already physical."""
+    named = False
+    for part in re.split(r"[\\/]", target):
+        if part == "..":
+            if named:
+                return False
+        elif part not in ("", "."):
+            named = True
+    if is_drive_abs(target):
+        return ":" not in target[2:]
+    return ":" not in target and target[:1] not in ("/", "\\")
+
+
+def _resolve_path(target: str, base: str | None, home: str) -> str | None:
     """The absolute path `target` names from `base`, or None when this cannot know it.
 
     A variable, a glob, `~user` and `cd -` all depend on state the hook does not see."""
@@ -142,11 +168,24 @@ def _resolve(target: str, base: str | None, home: str) -> str | None:
         return os.path.realpath(home + target[1:])
     if target.startswith("~"):
         return None
+    if sys.platform == "win32" and not _win_resolvable(target):
+        return None
     if os.path.isabs(target):
         return os.path.realpath(target)
     if base is None:
         return None
     return os.path.realpath(os.path.join(base, target))
+
+
+def _resolve(target: str, base: str | None, home: str) -> str | None:
+    """`_resolve_path`, except that on win32 a target Python's resolution cannot be trusted
+    for is None: one outside `home`, or one through a component bash follows and Python does
+    not (a Cygwin `.lnk` symlink, a SYSTEM file, an unfollowed reparse point)."""
+    real = _resolve_path(target, base, home)
+    if real is not None and sys.platform == "win32" and real != home:
+        if opaque_component(home, real):
+            return None
+    return real
 
 
 def _cd(argv: list[str], scope: _Scope) -> str:

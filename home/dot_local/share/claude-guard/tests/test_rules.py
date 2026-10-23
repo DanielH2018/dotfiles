@@ -5,6 +5,7 @@ writes them, so the file-reading path is what is tested, not a dict handed in.
 """
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,11 @@ def test_scratch_roots_expand_home_and_keep_the_fixed_roots():
     )
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="scratch_roots resolves /tmp with realpath, which is C:\\tmp on Windows, so the "
+    "POSIX /tmp/x TMPDIR never lands under it; the root is dropped, which fails closed",
+)
 def test_tmpdir_under_tmp_is_added_with_one_trailing_slash_stripped():
     assert scratch_roots("/h", "/tmp/x/")[-1] == "/tmp/x"
 

@@ -9,6 +9,7 @@ in node.
 import json
 import os
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -764,7 +765,10 @@ def test_a_cat_path_heredoc_write_with_a_quoted_delimiter_is_allowed_under_the_s
     # real scratch root, which is why the empty roots tuple is the control).
     cwd = str(tmp_path)
     assert judge("cat > notes.md <<'EOF'\nhi\nEOF\n", main, (), cwd).allow
-    assert judge(f"cat > {cwd}/notes.md <<'EOF'\nhi\nEOF\n", main, (), cwd).allow
+    # as_posix: on Windows a backslash path is mangled by the shell (and refused as a special
+    # character); the forward-slash drive form is the one Git Bash accepts. Identity on POSIX.
+    posix_cwd = tmp_path.as_posix()
+    assert judge(f"cat > {posix_cwd}/notes.md <<'EOF'\nhi\nEOF\n", main, (), cwd).allow
 
 
 def test_a_cat_path_heredoc_write_through_a_symlinked_cwd_escape_is_refused(main, tmp_path):
@@ -978,19 +982,23 @@ def test_an_absolute_scratch_heredoc_write_after_a_cd_is_clean(rm, tmp_path):
     assert d.reasons[1] == "heredoc-write:absolute-after-cd"
 
 
-def test_an_absolute_heredoc_write_after_a_cd_is_flagged_outside_the_scratch_arm(rm):
+def test_an_absolute_heredoc_write_after_a_cd_is_flagged_outside_the_scratch_arm(rm, tmp_path):
+    # On Windows the fabricated POSIX CWD has no real form (it resolves to C:/home/testuser),
+    # so a real directory in the drive-letter spelling bash accepts stands in. No scratch root
+    # covers it there either, because the roots are POSIX paths.
+    cwd = tmp_path.as_posix() if sys.platform == "win32" else CWD
     # The exemption is the SCRATCH arm only. `CWD` (/home/testuser) is under none of
     # `ROOTS` — `tmp_path` would be, since /tmp is a scratch root, and the scratch arm
     # would confine it legitimately. An absolute target under the session cwd clears
     # `_under_session_cwd` with no `cd` in the chain, and must not clear it after one —
     # the session cwd is exactly the value a `cd` makes stale.
-    assert judge(f"cat > {CWD}/note.txt <<'EOF'\nhi\nEOF\n", rm, ROOTS, CWD).allow
-    d = judge(f"cd /tmp && cat > {CWD}/note.txt <<'EOF'\nhi\nEOF\n", rm, ROOTS, CWD)
+    assert judge(f"cat > {cwd}/note.txt <<'EOF'\nhi\nEOF\n", rm, ROOTS, cwd).allow
+    d = judge(f"cd /tmp && cat > {cwd}/note.txt <<'EOF'\nhi\nEOF\n", rm, ROOTS, cwd)
     assert not d.allow
     assert d.rule == "segment:1:heredoc-write:cwd-changed"
     # An absolute target outside every scratch root stays refused after a `cd`, on the
     # same label — the exemption is confinement-gated, not "any absolute path".
-    d2 = judge("cd /tmp && cat > /etc/note.txt <<'EOF'\nhi\nEOF\n", rm, ROOTS, CWD)
+    d2 = judge("cd /tmp && cat > /etc/note.txt <<'EOF'\nhi\nEOF\n", rm, ROOTS, cwd)
     assert not d2.allow
     assert d2.rule == "segment:1:heredoc-write:cwd-changed"
 

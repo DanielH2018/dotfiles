@@ -6,6 +6,8 @@ per session.
 """
 
 import json
+import os
+import sys
 
 import pytest
 
@@ -114,7 +116,11 @@ def test_a_subagent_reads_its_own_transcript_for_the_once_rule(tmp_path):
     parent.write_text(json.dumps({"content": [f"{tag('unbounded-log')} x"]}) + "\n")
     payload = {"transcript_path": str(parent), "agent_id": "a1"}
     own = tmp_path / "sess" / "subagents" / "agent-a1.jsonl"
-    assert context_transcript(payload) == str(own)
+    got = context_transcript(payload)
+    if sys.platform == "win32":
+        # The harness splices a "/" into the path, which Windows spells with a backslash.
+        got = os.path.normpath(got)
+    assert got == str(own)
     # The parent saw the nudge, the subagent has not: the subagent still gets it.
     stdin = json.dumps({"tool_input": {"command": "git log"}, **payload})
     assert nudge_for("git log", stdin)

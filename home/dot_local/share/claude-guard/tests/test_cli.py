@@ -5,6 +5,7 @@ names (`cli.pre_tool_use`, `cli.deny`)."""
 import contextlib
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -16,6 +17,10 @@ from claude_guard import cli
 from claude_guard.hook import ASK_JSON
 
 PKG_DIR = Path(__file__).resolve().parents[1]
+
+# POSIX keeps the minimal system PATH. On Windows that string names no directory, so git and
+# every other tool the child spawns would vanish; the host PATH stands in there only.
+TEST_PATH = os.environ.get("PATH", "") if sys.platform == "win32" else "/usr/bin:/bin"
 
 
 def run_cli(argv: list[str], stdin: str = "") -> tuple[int, str]:
@@ -52,7 +57,7 @@ def run(*args: str, stdin: str = "") -> subprocess.CompletedProcess:
             cwd=PKG_DIR,
             env={
                 "PYTHONPATH": str(PKG_DIR),
-                "PATH": "/usr/bin:/bin",
+                "PATH": TEST_PATH,
                 "CLAUDE_GUARD_SETTINGS_HOME": settings_home,
             },
         )
@@ -115,7 +120,7 @@ def test_permission_request_prints_the_allow_line_in_live_mode(tmp_path):
         cwd=PKG_DIR,
         env={
             "PYTHONPATH": str(PKG_DIR),
-            "PATH": "/usr/bin:/bin",
+            "PATH": TEST_PATH,
             "HOME": str(home),
         },
     )
@@ -132,7 +137,7 @@ def test_permission_request_prints_nothing_and_exits_zero_on_garbage(tmp_path):
         cwd=PKG_DIR,
         env={
             "PYTHONPATH": str(PKG_DIR),
-            "PATH": "/usr/bin:/bin",
+            "PATH": TEST_PATH,
             "HOME": str(tmp_path),
         },
     )
@@ -157,7 +162,7 @@ def run_home(home: Path, *args: str) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
         cwd=PKG_DIR,
-        env={"PYTHONPATH": str(PKG_DIR), "PATH": "/usr/bin:/bin", "HOME": str(home)},
+        env={"PYTHONPATH": str(PKG_DIR), "PATH": TEST_PATH, "HOME": str(home)},
     )
 
 

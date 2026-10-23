@@ -27,6 +27,7 @@ allow-compound-bash.sh's own loop, so they stay a `judge_segment` arm alongside 
 import os
 import re
 import shlex
+import sys
 from dataclasses import dataclass
 
 from claude_guard.assignments import prefix_ok, split_assignments, standalone_name_ok
@@ -47,6 +48,7 @@ from claude_guard.rules import Rules
 from claude_guard.segment import parse
 from claude_guard.substitution import INERT_COMMANDS, PLACEHOLDER, mask
 from claude_guard.tables import POSIX_SPACE, WS
+from claude_guard.winpath import DRIVE_ROOT, is_drive_abs, opaque_component
 
 # :191. Wrapper commands take another command as an ARGUMENT and exec it.
 WRAPPERS = frozenset({"timeout", "env", "nice", "nohup", "setsid", "stdbuf", "xargs"})
@@ -214,6 +216,38 @@ def heredoc_write_target(text: str) -> str | None:
     return m.group("path") if m else None
 
 
+def _under_session_cwd_win(path: str, cwd: str) -> bool:
+    """`_under_session_cwd` for Windows path forms; reached only on win32.
+
+    The POSIX body compares `/`-joined strings against `os.path.realpath`, which on Windows
+    returns `\\` paths, so it can never match there. This arm refuses every spelling it
+    cannot judge. It considers a relative path, or a drive-letter absolute path with `/`
+    separators (`C:/x`), and nothing else. These refuse: any backslash (bash reads an
+    unquoted `\\` as an escape, so `C:\\x` is not the path it looks like), a rooted `/x`
+    (the MSYS root, or the current drive's root), an MSYS `/c/x`, a UNC path, a drive-relative
+    `C:x`, an alternate data stream `f:s`, `..`, and a leading `~` or `$`. A cwd that is a
+    drive root, or resolves to one, refuses as POSIX refuses cwd `/`, because every path on
+    the drive would sit under it. A path that resolves outside the cwd refuses, and so does
+    one that passes through a component `winpath.opaque_component` cannot judge.
+    """
+    if not cwd or not is_drive_abs(cwd) or ".." in path or path.startswith(("~", "$")):
+        return False
+    if "\\" in path or path[:1] == "/":
+        return False
+    absolute = is_drive_abs(path)
+    if ":" in path[2:] or (":" in path[:2] and not absolute) or path[:2] == "//":
+        return False
+    base = cwd.replace("\\", "/").rstrip("/")
+    real = os.path.realpath(path if absolute else f"{base}/{path}").replace("\\", "/")
+    phys = os.path.realpath(base).replace("\\", "/").rstrip("/")
+    if DRIVE_ROOT.match(base) or DRIVE_ROOT.match(phys) or phys.startswith("//"):
+        return False
+    for prefix in (base, phys):
+        if real.startswith(prefix + "/"):
+            return not opaque_component(prefix, real)
+    return False
+
+
 def _under_session_cwd(path: str, cwd: str) -> bool:
     """PR #477's heredoc_write_ok, the cwd arm (:169-194, cwd branch :183-191): the path a
     quoted-delimiter heredoc write targets is ALSO safe when it resolves under the
@@ -257,6 +291,8 @@ def _under_session_cwd(path: str, cwd: str) -> bool:
     `cwd` explicitly, the same contract `git_reset.py:88` states for its own cwd consumer,
     so the two cwd consumers in this package agree on what a valid cwd is.
     """
+    if sys.platform == "win32":
+        return _under_session_cwd_win(path, cwd)
     if (
         not cwd
         or not cwd.startswith("/")

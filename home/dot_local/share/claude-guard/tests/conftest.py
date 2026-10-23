@@ -1,5 +1,6 @@
 import os
 import shutil
+import sys
 import tempfile
 
 import pytest
@@ -11,7 +12,12 @@ def scratch_dir():
 
     pytest's tmp_path sits outside /tmp on macOS. The system temp dir is used when it
     resolves under /tmp (a sandboxed session's $TMPDIR, Linux's default), since a sandbox
-    may refuse a write to /tmp itself."""
+    may refuse a write to /tmp itself.
+
+    Windows has no /tmp that Python can create a directory in (`/tmp` resolves to `C:\\tmp`),
+    so every test that needs a scratch root is skipped there."""
+    if sys.platform == "win32":
+        pytest.skip("no /tmp scratch root on Windows")
     base = tempfile.gettempdir()
     real_tmp = os.path.realpath("/tmp")
     real_base = os.path.realpath(base)

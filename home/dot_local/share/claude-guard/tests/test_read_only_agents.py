@@ -5,6 +5,7 @@ read-only agent and one that writes, as the harness sends a subagent's payload.
 """
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -273,6 +274,11 @@ def test_a_change_to_a_cluster_container_or_remote_host_is_denied(env, agent, co
 
 @pytest.mark.parametrize("command", READS)
 def test_a_read_and_a_scratch_write_are_not_denied(env, command):
+    if sys.platform == "win32" and "/tmp" in command:
+        pytest.skip(
+            "Git Bash's /tmp is %TEMP%, which Python's realpath cannot see; "
+            "the scratch arm fails closed on Windows"
+        )
     assert decision(command, env, "root-cause") != "deny"
 
 
