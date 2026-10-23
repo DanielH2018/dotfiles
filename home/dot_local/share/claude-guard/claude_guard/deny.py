@@ -955,6 +955,28 @@ def secret_readers(sc: Scan, target: str) -> Verdict | None:
 
 
 _PYTHON_COMMAND = re.compile(r"python[0-9.]*")
+# Words that may stand before the interpreter and still leave it the command a segment runs.
+# Anything else ahead of it, such as `bash -s python3 -`, makes the python word an argument.
+_PYTHON_LEADERS = frozenset({"env", "sudo", "command", "exec", "nohup", "time"})
+# A redirection word as shlex leaves it: `<<EOF`, `2>&1`, `>out`, or a bare `>` whose
+# target is the next word.
+_REDIRECTION = re.compile(r"\d*(<<-?|<<<|<>|>>|>\||[<>]&|&>>?|<|>)(.*)")
+
+
+def _python_args(words: list[str]) -> list[str] | None:
+    """The words after the interpreter when `words` runs Python as its command, else None."""
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if _ASSIGNMENT.match(w) or (i and w.startswith("-")) or w in _PYTHON_LEADERS:
+            i += 1
+        elif w == "uv" and words[i + 1 : i + 2] == ["run"]:
+            i += 2
+        else:
+            break
+    if i < len(words) and _PYTHON_COMMAND.fullmatch(words[i].rsplit("/", 1)[-1]):
+        return words[i + 1 :]
+    return None
 
 
 def _python_sources(seg: Segment) -> list[str]:
@@ -965,15 +987,20 @@ def _python_sources(seg: Segment) -> list[str]:
         words = shlex.split(seg.text)
     except ValueError:
         return []
-    at = next(
-        (i for i, w in enumerate(words) if _PYTHON_COMMAND.fullmatch(w.rsplit("/", 1)[-1])), None
-    )
-    if at is None:
+    args = _python_args(words)
+    if args is None:
         return []
-    args = words[at + 1 :]
     sources = [args[j + 1] for j, a in enumerate(args[:-1]) if a == "-c"]
-    script = next((a for a in args if a == "-" or not a.startswith("-")), "-")
-    if script == "-":
+    operands: list[str] = []
+    skip = False
+    for a in args:
+        if skip:
+            skip = False
+        elif m := _REDIRECTION.fullmatch(a):
+            skip = not m.group(2)
+        elif a == "-" or not a.startswith("-"):
+            operands.append(a)
+    if operands[:1] in ([], ["-"]):
         sources += seg.heredocs
     return sources
 
@@ -990,13 +1017,17 @@ def _without_attribute_names(program: str) -> str | None:
         tree = ast.parse(program)
     except SyntaxError, ValueError, RecursionError, MemoryError:
         return None
-    lines = [line.encode() for line in program.splitlines(keepends=True)]
+    # Split the bytes: str.splitlines also breaks at a form feed or U+2028, which the parser
+    # does not count as a line end, and the rows would then drift from end_lineno.
+    lines = program.encode().splitlines(keepends=True)
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and node.end_lineno is not None:
             # end_col_offset counts UTF-8 bytes, and the attribute name ends the node.
             row, end = node.end_lineno - 1, node.end_col_offset or 0
-            width = len(node.attr.encode())
-            lines[row] = lines[row][: end - width] + b" " * width + lines[row][end:]
+            name = node.attr.encode()
+            if row >= len(lines) or lines[row][end - len(name) : end] != name:
+                return None
+            lines[row] = lines[row][: end - len(name)] + b" " * len(name) + lines[row][end:]
     return b"".join(lines).decode(errors="replace")
 
 

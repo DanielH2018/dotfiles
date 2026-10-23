@@ -598,12 +598,21 @@ PYTHON_ATTRIBUTE_ACCESS = [
     "python3 - <<'EOF'\nprint(self.env.filters)\nEOF",
     "python3 - <<'EOF'\nfor v in pins:\n    print(v.key)\nEOF",
     "uv run python - <<'EOF'\nx = f(pin.key, 1)\nEOF",
+    "python3 <<'EOF'\nprint(v.key)\nEOF",
+    "python3 -u 2>&1 <<'EOF'\nprint(v.key)\nEOF",
+    "PYTHONPATH=. python3 > out.txt <<'EOF'\nprint(v.key)\nEOF",
+    "python3 - <<'EOF'\ns = 'a b'\nprint(v.key)\nEOF",
     'python3 -c "print(v.key)"',
     'python3 -c "print(self.env.filters)"',
 ]
 # The same words where they may name a file: a string literal or comment, a shell line, a
-# script's argument or stdin, and a body that does not parse as Python.
+# script's argument or stdin, a body that does not parse as Python, a body another
+# interpreter runs with python3 only as its argument, and a line break the parser does not
+# count ahead of an attribute.
 NAMES_A_KEY_FILE = [
+    "bash -s python3 - <<'EOF'\nxargs<server.key\nEOF",
+    "sh -s python3 <<'EOF'\nsort<server.key\nEOF",
+    "python3 - <<'EOF'\n#\x0c\nprint(open('/a/pin.key').read())\nxxxxxxxxxxxxxxxx().key\nEOF",
     "python3 -c \"print(open('server.key').read())\"",
     "python3 - <<'EOF'\nprint(v.key)  # see server.key\nEOF",
     "python3 - <<'EOF'\nprint(open(f'{d}/pin.key').read())\nEOF",
