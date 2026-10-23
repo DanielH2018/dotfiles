@@ -27,29 +27,58 @@ LONG_OK = frozenset(
 
 # :88-89. Any shell-special character OUTSIDE quotes is a refusal: chaining, pipes,
 # redirection, substitution, grouping, and the glob characters — the shell expands a glob
-# AFTER the decision is made, so a pattern could reach rm as paths never validated.
+# AFTER the decision is made, so a pattern could reach rm as paths never validated. The
+# exceptions are rm_confined's, which can bound a last-component glob (`glob_confined`) and
+# knows the one variable $CLAUDE_JOB_DIR.
 _SPECIAL = frozenset(";&|<>(){}$`\\*?[]\n\r")
 
 
-def tokenize(s: str) -> list[str] | None:
-    """:69-110. Split into words, honouring quotes. None is a refusal, never an empty list."""
-    tokens: list[str] = []
+# The one variable an rm operand may name (#956). Claude Code sets it in a background
+# job's environment, and the hook inherits that environment, so its value is known here.
+JOB_DIR_VAR = "CLAUDE_JOB_DIR"
+_GLOB = frozenset("*?[]")
+
+
+def _words(s: str, job_dir: str = "", globs: bool = False) -> list[tuple[str, bool]] | None:
+    """Split into (word, globbed) pairs, honouring quotes. None is a refusal.
+
+    `job_dir` is the value `$CLAUDE_JOB_DIR` and `${CLAUDE_JOB_DIR}` expand to outside
+    single quotes; empty refuses them like any other `$`. `globs` admits `*`, `?` and `[`
+    outside quotes, and `globbed` marks a word that carries one.
+    """
+    words: list[tuple[str, bool]] = []
     state = ""
     cur = ""
     started = False
-    for c in s:
+    globbed = False
+    i = 0
+    while i < len(s):
+        c = s[i]
+        if c == "$" and state != "single":
+            name_len = _job_dir_ref(s, i)
+            if not job_dir or not name_len:
+                return None
+            cur += job_dir
+            started = True
+            i += name_len
+            continue
         if state == "":
             if c in " \t":
                 if started:
-                    tokens.append(cur)
+                    words.append((cur, globbed))
                     cur = ""
                     started = False
+                    globbed = False
             elif c == "'":
                 state = "single"
                 started = True
             elif c == '"':
                 state = "double"
                 started = True
+            elif globs and c in _GLOB:
+                cur += c
+                started = True
+                globbed = True
             elif c in _SPECIAL or c == "~":
                 return None
             else:
@@ -63,15 +92,34 @@ def tokenize(s: str) -> list[str] | None:
         else:  # double: :98-104, $ ` and \ are refused, everything else literal
             if c == '"':
                 state = ""
-            elif c in "$`\\":
+            elif c in "`\\":
                 return None
             else:
                 cur += c
+        i += 1
     if state:
         return None  # unterminated quote
     if started:
-        tokens.append(cur)
-    return tokens
+        words.append((cur, globbed))
+    return words
+
+
+def _job_dir_ref(s: str, i: int) -> int:
+    """The length of a `$CLAUDE_JOB_DIR` or `${CLAUDE_JOB_DIR}` reference at `s[i]`, else 0."""
+    braced = "${" + JOB_DIR_VAR + "}"
+    if s.startswith(braced, i):
+        return len(braced)
+    bare = "$" + JOB_DIR_VAR
+    end = i + len(bare)
+    if s.startswith(bare, i) and not (end < len(s) and (s[end].isalnum() or s[end] == "_")):
+        return len(bare)
+    return 0
+
+
+def tokenize(s: str) -> list[str] | None:
+    """:69-110. Split into words, honouring quotes. None is a refusal, never an empty list."""
+    words = _words(s)
+    return None if words is None else [w for w, _ in words]
 
 
 def under_scratch(path: str, roots: tuple[str, ...]) -> bool:
@@ -120,19 +168,58 @@ def write_confined(target: str, roots: tuple[str, ...]) -> bool:
     return stat.S_ISREG(st.st_mode) and st.st_nlink == 1
 
 
-def rm_confined(command: str, roots: tuple[str, ...]) -> bool:
-    """:137-174. True only when a confined operand was seen and nothing else was refused."""
+def glob_confined(pattern: str, roots: tuple[str, ...]) -> bool:
+    """True when every path the glob `pattern` can expand to sits strictly below a root.
+
+    The pattern may glob in its last component only, so it expands to entries of one parent
+    directory. That parent must exist and resolve strictly below a resolved root, so a
+    symlinked parent cannot carry the expansion out. A last component that starts with `.`
+    refuses, because `.*` can match `..`.
+    """
+    parent, _, name = pattern.rpartition("/")
+    if not name or name.startswith(".") or any(c in _GLOB for c in parent):
+        return False
+    if not under_scratch(parent, roots):
+        return False
+    real_parent = os.path.realpath(parent)
+    if not os.path.isdir(real_parent):
+        return False
+    return any(real_parent.startswith(os.path.realpath(r) + "/") for r in roots)
+
+
+def rm_confined(
+    command: str, roots: tuple[str, ...], job_dir: str = "", globs: bool = False
+) -> bool:
+    """:137-174. True only when a confined operand was seen and nothing else was refused.
+
+    Args:
+      command: the rm segment.
+      roots: the scratch roots.
+      job_dir: the value of $CLAUDE_JOB_DIR, which an operand may name (#956). Empty
+        refuses the reference. The caller must refuse a value the command itself could set.
+      globs: admit an operand that globs in its last component (`glob_confined`). The caller
+        passes False when the chain could plant a symlink at the parent first.
+    """
     if not command:
         return False
-    tokens = tokenize(command)
-    if not tokens:
+    if job_dir and tokenize(job_dir) != [job_dir]:
+        return False  # a value holding whitespace or a special character
+    words = _words(command, job_dir, globs)
+    if not words:
         return False
+    tokens = [w for w, _ in words]
+    globbed = {i for i, (_, g) in enumerate(words) if g}
     # :142. The command word with any path prefix stripped; nothing may precede it.
     if tokens[0].rsplit("/", 1)[-1] != "rm":
         return False
     saw_path = False
     endopts = False
-    for tok in tokens[1:]:
+    for i, tok in enumerate(tokens[1:], start=1):
+        if i in globbed:
+            if not glob_confined(tok, roots):
+                return False
+            saw_path = True
+            continue
         if not endopts:
             if tok == "--":
                 endopts = True

@@ -56,7 +56,8 @@ def cmd_explain(args: argparse.Namespace) -> int:
     rules = load_rules()
     roots = scratch_roots(os.environ.get("HOME", ""), os.environ.get("TMPDIR"))
     cwd = args.cwd if args.cwd is not None else os.getcwd()
-    d = judge(args.command, rules, roots, cwd, os.environ.get("CLAUDE_PROJECT_DIR", ""))
+    project_dir = os.environ.get("CLAUDE_PROJECT_DIR", "")
+    d = judge(args.command, rules, roots, cwd, project_dir, os.environ.get("CLAUDE_JOB_DIR", ""))
     reasons = iter(d.reasons)
     for i, seg in enumerate(p.segments):
         text = seg.text.strip()

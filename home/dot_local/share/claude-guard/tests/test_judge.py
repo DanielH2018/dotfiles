@@ -566,6 +566,34 @@ def test_the_real_template_leaves_an_rm_below_root_or_home_to_the_rm_rules(real)
     assert not allowed("rm -rf ~", real)
 
 
+JOB_DIR = "/home/testuser/.claude/jobs/abc123"
+
+
+def test_the_real_template_allows_an_rm_of_the_job_dir_from_the_hooks_environment(real):
+    command = 'rm -rf "$CLAUDE_JOB_DIR/tmp/pr.md"'
+    assert judge(command, real, ROOTS, CWD, "", JOB_DIR).allow
+    assert not judge(command, real, ROOTS, CWD).allow
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'CLAUDE_JOB_DIR=/home/testuser/.claude/jobs/x; rm -rf "$CLAUDE_JOB_DIR"/tmp',
+        "for CLAUDE_JOB_DIR in /tmp/a; do rm -rf $CLAUDE_JOB_DIR/tmp; done",
+        "export CLAUDE_JOB_DIR=/tmp/a && rm -rf $CLAUDE_JOB_DIR/tmp",
+    ],
+)
+def test_an_rm_of_a_job_dir_the_chain_could_set_is_refused(real, command):
+    assert not judge(command, real, ROOTS, CWD, "", JOB_DIR).allow
+
+
+def test_the_real_template_allows_an_rm_that_globs_inside_a_scratch_dir(real, scratch_dir):
+    assert allowed(f"rm -f {scratch_dir}/fail*.txt", real)
+    # A link maker earlier in the chain could swap the parent for a symlink first.
+    os.mkdir(f"{scratch_dir}/sub")
+    assert not allowed(f"ln -sfn /tmp {scratch_dir}/l && rm -rf {scratch_dir}/sub/*", real)
+
+
 def test_a_wrapper_is_judged_on_the_command_it_will_actually_run(esc):
     assert allowed("echo hi | xargs wc -l", esc)
     assert allowed("echo hi | xargs -0 -n 1 wc -l", esc)
@@ -1446,6 +1474,13 @@ def test_a_git_read_the_allow_list_cannot_express_passes_the_read_only_guard(mai
         "cc-wait --list",
         "cc-wait gh-ci --pr 3 --budget 1740",
         "while true; do ls; done",
+        "sha256sum /tmp/a /tmp/b",
+        "md5sum -c /tmp/sums",
+        # #965: a background session hit a hard deny on this exact command.
+        "git config --global --get-all rerere.autoupdate; "
+        "grep -c 'fanout.py place status' /home/testuser/.claude/settings.json",
+        "git config --get user.signingkey",
+        "git -C /home/testuser/r config --global --list",
     ],
 )
 def test_the_real_template_allows_each_replayed_read(real, command):
@@ -1462,6 +1497,11 @@ def test_the_real_template_allows_each_replayed_read(real, command):
         # `git log --output` writes a file. A `Bash(git log:*)` prefix rule grants it, so
         # this fails if one is added back to settings.permissions.json.
         "git log --output=/tmp/x",
+        # #965: the global config and user.* stay a prompt for a write.
+        "git config --global user.name x",
+        "git config --global --unset user.name",
+        "git config --global --edit",
+        "git config user.email x@example.com",
     ],
 )
 def test_the_real_template_keeps_writers_and_repo_code_beside_those_reads_a_prompt(real, command):

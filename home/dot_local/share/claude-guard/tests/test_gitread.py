@@ -14,6 +14,14 @@ from claude_guard.gitread import git_read
         "git ls-remote --exit-code origin 'refs/pull/1/*'",
         "git range-diff a..b c..d",
         "git merge-base --is-ancestor a b",
+        # #965: config reads, by action flag, by verb, and as a lone name.
+        "git config --global --get-all rerere.autoupdate",
+        "git config --get user.signingkey",
+        "git config --global --type=bool --default false --get pull.rebase",
+        "git config -l --show-origin",
+        "git config get --all --global user.name",
+        "git config list --local",
+        "git config user.name",
     ],
 )
 def test_a_read_form_is_admitted(command):
@@ -39,6 +47,19 @@ def test_a_read_form_is_admitted(command):
         "git -c core.pager=/tmp/x range-diff a..b c..d",
         "git --exec-path=/tmp merge-base a b",
         "git status",
+        # #965: a config write, an editor, or a read of a file nothing vetted.
+        "git config --global user.name x",
+        "git config user.name x",
+        "git config set user.name x",
+        "git config --global --unset user.name",
+        "git config unset user.name",
+        "git config --global --edit",
+        "git config --ed",
+        "git config edit",
+        "git config --add core.x y",
+        "git config --file /tmp/f --list",
+        "git config --blob HEAD:x --list",
+        "git config --global",
     ],
 )
 def test_a_write_or_exec_form_is_refused(command):

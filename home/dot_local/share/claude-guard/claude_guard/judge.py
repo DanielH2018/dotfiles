@@ -36,12 +36,13 @@ from claude_guard.checks.curl import curl_safe
 from claude_guard.checks.git_reset import clean_reset_safe
 from claude_guard.checks.remote import readonly_remote_safe, trusted_host_safe
 from claude_guard.checks.remote_guards import git_readonly
-from claude_guard.checks.scratch import rm_confined, tokenize, write_confined
+from claude_guard.checks.scratch import JOB_DIR_VAR, rm_confined, tokenize, write_confined
 from claude_guard.checks.worktree_scratch import (
     worktree_clean_safe,
     worktree_restore_safe,
     worktree_rm_safe,
 )
+from claude_guard.gitargv import invocation
 from claude_guard.gitread import git_read
 from claude_guard.rules import Rules
 from claude_guard.segment import parse
@@ -565,6 +566,19 @@ def _git_reads(part: str) -> bool:
     return git_readonly(argv) or git_read(argv)
 
 
+_JOB_DIR_REF = re.compile(r"\$(?:\{CLAUDE_JOB_DIR\}|CLAUDE_JOB_DIR(?![A-Za-z0-9_]))")
+
+
+def _git_config_read(part: str) -> bool:
+    """True when `part` is a `git config` read by `gitread.git_read`."""
+    try:
+        argv = shlex.split(part)
+    except ValueError:
+        return False
+    inv = invocation(argv)
+    return inv is not None and inv.sub == "config" and git_read(argv)
+
+
 @dataclass(frozen=True, slots=True)
 class Decision:
     allow: bool
@@ -785,11 +799,14 @@ def judge_segment(
     cwd_changed: bool,
     project_dir: str = "",
     scratch_ok: bool = False,
+    job_dir: str = "",
 ) -> tuple[bool, str]:
     """:286-395, one iteration of the loop. (ok, reason).
 
-    `scratch_ok` admits a `>`/`>>` redirect into a scratch root (`_redirects_ok`). `judge()`
-    sets it only when no segment of the chain is a `LINK_MAKERS` command.
+    `scratch_ok` admits a `>`/`>>` redirect into a scratch root (`_redirects_ok`), and an rm
+    operand that globs in its last component. `judge()` sets it only when no segment of the
+    chain is a `LINK_MAKERS` command. `job_dir` is what `$CLAUDE_JOB_DIR` names in an rm
+    operand, empty when `judge()` found the chain could set it.
 
     `cwd_changed` is H1's gate (task-8-fix-2-brief.md): True when an EARLIER segment in
     the same chain was `cd`/`pushd`/`popd` (`judge()`'s own loop sets it, via
@@ -988,19 +1005,29 @@ def judge_segment(
             # checks get no cwd and refuse.
             if not (_QUOTED_PATH.fullmatch(path) and _git_reads(_strip_harmless(rest))):
                 return False, "git-C-unreadable"
-            return judge_segment(rest, rules, roots, "", cwd_changed, project_dir, scratch_ok)
+            return judge_segment(
+                rest, rules, roots, "", cwd_changed, project_dir, scratch_ok, job_dir
+            )
         if path.startswith("/"):
             git_cwd = path
         elif cwd and not cwd_changed:
             git_cwd = os.path.join(cwd, path)
         else:
             git_cwd = ""
-        return judge_segment(rest, rules, roots, git_cwd, cwd_changed, project_dir, scratch_ok)
+        return judge_segment(
+            rest, rules, roots, git_cwd, cwd_changed, project_dir, scratch_ok, job_dir
+        )
 
     if word == "curl" and curl_safe(part):
         return True, "curl-check"
-    if word == "rm" and rm_confined(part, roots):
+    if word == "rm" and rm_confined(part, roots, job_dir, globs=scratch_ok):
         return True, "rm-check"
+
+    # dotfiles #965. `Bash(git config --global:*)` is an ask rule so that a global write
+    # still prompts. A read under the same prefix is judged here, before that rule, because
+    # a background session cannot answer the prompt the rule would raise.
+    if word == "git" and _git_config_read(redir):
+        return True, "git-config-read-check"
 
     # dotfiles #861 and #864. The same ask rules (`rm:*`, `git restore:*`, `git clean:*`)
     # resolved for cleanup inside the session's own worktree, which a headless session
@@ -1075,7 +1102,12 @@ def judge_segment(
 
 
 def judge(
-    command: str, rules: Rules, roots: tuple[str, ...], cwd: str, project_dir: str = ""
+    command: str,
+    rules: Rules,
+    roots: tuple[str, ...],
+    cwd: str,
+    project_dir: str = "",
+    job_dir: str = "",
 ) -> Decision:
     # DECIDED: D2 (docs/specs/2026-09-06-claude-guard-design.md, Decisions — "a single
     # segment is judged like a chain"). This used to be a literal-substring eligibility
@@ -1159,6 +1191,13 @@ def judge(
     # deployed chain either. Placing them after whole_glob_defer would be stricter than
     # the bash, not a faithful port.
 
+    # dotfiles #956. An rm operand may name $CLAUDE_JOB_DIR, read from the hook's
+    # environment. Any other mention of the name (`CLAUDE_JOB_DIR=/`, `export`, `read`,
+    # `for … in`, `${CLAUDE_JOB_DIR:=…}`) means the chain could change it before the rm
+    # runs, so the reference is refused instead.
+    if JOB_DIR_VAR in _JOB_DIR_REF.sub("", command):
+        job_dir = ""
+
     # :277-281.
     if rules.whole_glob_defer(command):
         return Decision(False, "whole-glob", ())
@@ -1189,7 +1228,7 @@ def judge(
         if masked is None:
             return Decision(False, "unjudgeable:substitution", ())
         for k, inner in enumerate(masked.inner):
-            d = judge(inner, rules, roots, "", project_dir)
+            d = judge(inner, rules, roots, "", project_dir, job_dir)
             if not d.allow:
                 return Decision(False, f"substitution:{k}:{d.rule}", d.reasons)
         parsed = parse(masked.command)
@@ -1290,7 +1329,9 @@ def judge(
             if rules.denies(part) or rules.asks(part):
                 return refuse(i, "assignment:deny-or-ask")
             part = words.rest
-        ok, reason = judge_segment(part, rules, roots, cwd, cwd_changed, project_dir, scratch_ok)
+        ok, reason = judge_segment(
+            part, rules, roots, cwd, cwd_changed, project_dir, scratch_ok, job_dir
+        )
         reasons.append(reason)
         if not ok:
             return Decision(False, f"segment:{i}:{reason}", tuple(reasons))

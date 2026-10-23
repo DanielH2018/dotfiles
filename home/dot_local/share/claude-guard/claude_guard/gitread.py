@@ -57,12 +57,74 @@ def _ls_remote(args: Sequence[str]) -> bool:
     return True
 
 
+# `git config`'s read actions, as an option and as a verb (git 2.46 and later).
+_CONFIG_READ_FLAGS = frozenset(
+    {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "-l", "--list"}
+)
+_CONFIG_READ_VERBS = frozenset({"get", "list"})
+_CONFIG_WRITE_VERBS = frozenset({"set", "unset", "edit", "rename-section", "remove-section"})
+# Options that pick a scope or shape the output. The table is an allowlist, because git
+# accepts any unambiguous abbreviation of a long option and `--ed` is `--edit`, which runs
+# an editor. `--file` and `--blob` are absent: they read a file this check has not vetted.
+_CONFIG_SHAPE_FLAGS = frozenset(
+    {
+        "--global",
+        "--system",
+        "--local",
+        "--worktree",
+        "--show-origin",
+        "--show-scope",
+        "--name-only",
+        "--show-names",
+        "--no-show-names",
+        "-z",
+        "--null",
+        "--includes",
+        "--no-includes",
+        "--bool",
+        "--int",
+        "--bool-or-int",
+        "--path",
+        "--expiry-date",
+        "--fixed-value",
+        "--all",
+        "--regexp",
+    }
+)
+_CONFIG_WITH_VALUE = frozenset({"--type", "--default", "--value", "--url"})
+
+
+def _config(args: Sequence[str]) -> bool:
+    # A read names its action, as a flag or as the first word. Without one, git reads a
+    # lone name and sets a name followed by a value.
+    read_flag = False
+    words: list[str] = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in _CONFIG_READ_FLAGS:
+            read_flag = True
+        elif a.split("=", 1)[0] in _CONFIG_WITH_VALUE:
+            if "=" not in a:
+                i += 1
+        elif a.startswith("-"):
+            if a not in _CONFIG_SHAPE_FLAGS:
+                return False
+        else:
+            words.append(a)
+        i += 1
+    if words and words[0] in _CONFIG_WRITE_VERBS:
+        return False
+    return read_flag or (bool(words) and words[0] in _CONFIG_READ_VERBS) or len(words) == 1
+
+
 # merge-base has no option that writes or runs a program.
 READ_SUBCOMMANDS: dict[str, Callable[[Sequence[str]], bool]] = {
     "range-diff": _no_output,
     "symbolic-ref": _symbolic_ref,
     "ls-remote": _ls_remote,
     "merge-base": lambda _args: True,
+    "config": _config,
 }
 
 

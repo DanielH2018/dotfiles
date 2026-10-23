@@ -175,3 +175,64 @@ def test_allow_needs_a_confined_operand_not_just_clean_options():
     # The single allow site sits behind "we saw a confined operand" (allow-safe-rm.sh:174).
     assert rm_confined("rm -rf", ROOTS) is False
     assert rm_confined("rm -rf --", ROOTS) is False
+
+
+# --- #956: a last-component glob and $CLAUDE_JOB_DIR -----------------------------------------
+
+JOB_DIR = "/home/testuser/.claude/jobs/abc123"
+
+
+def test_a_glob_in_the_last_component_below_a_scratch_dir_is_confined(scratch_dir):
+    command = f"rm -f {scratch_dir}/fail*.txt {scratch_dir}/x?.log {scratch_dir}/[ab]"
+    assert rm_confined(command, ROOTS, globs=True) is True
+    # The caller withholds globs when the chain could plant a link at the parent first.
+    assert rm_confined(command, ROOTS, globs=False) is False
+
+
+@pytest.mark.parametrize(
+    "operand",
+    [
+        "/tmp/*",  # expands to every entry of the root itself
+        "{d}/*/x",  # a glob above the last component
+        "{d}/.*",  # can match `..`
+        "{d}/link/*",  # a parent that resolves outside the roots
+        "{d}/absent/*",  # a parent that does not exist
+        "{d}/../*",
+        "/etc/*",
+    ],
+)
+def test_a_glob_that_could_reach_outside_a_scratch_root_is_refused(scratch_dir, operand):
+    os.symlink("/etc", f"{scratch_dir}/link")
+    assert rm_confined(f"rm -rf {operand.format(d=scratch_dir)}", ROOTS, globs=True) is False
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'rm -rf "$CLAUDE_JOB_DIR/tmp"',
+        "rm -rf $CLAUDE_JOB_DIR/tmp/x",
+        "rm -f ${CLAUDE_JOB_DIR}/tmp/pr.md",
+        'rm -rf "$CLAUDE_JOB_DIR"',
+    ],
+)
+def test_a_job_dir_reference_is_expanded_from_the_value_given(command):
+    assert rm_confined(command, ROOTS, job_dir=JOB_DIR) is True
+    assert rm_confined(command, ROOTS) is False
+
+
+@pytest.mark.parametrize(
+    ("command", "job_dir"),
+    [
+        # Single quotes keep the reference literal, a relative path the shell resolves.
+        ("rm -rf '$CLAUDE_JOB_DIR/tmp'", JOB_DIR),
+        ("rm -rf $CLAUDE_JOB_DIRX/tmp", JOB_DIR),
+        ("rm -rf $HOME/x", JOB_DIR),
+        ("rm -rf ${CLAUDE_JOB_DIR:-/}/tmp", JOB_DIR),
+        # The value must itself be confined and a plain word.
+        ("rm -rf $CLAUDE_JOB_DIR/x", "/home/testuser"),
+        ("rm -rf $CLAUDE_JOB_DIR/x", "/tmp/a b"),
+        ("rm -rf $CLAUDE_JOB_DIR/x", "/tmp/*"),
+    ],
+)
+def test_a_job_dir_reference_that_could_name_something_else_is_refused(command, job_dir):
+    assert rm_confined(command, ROOTS, job_dir=job_dir) is False

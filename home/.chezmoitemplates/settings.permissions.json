@@ -66,6 +66,14 @@
       "Bash(xxd:*)",
       "Bash(shasum:*)",
       "Bash(md5:*)",
+      {{/* The GNU coreutils checksum tools, which macOS's shasum and md5 above stand in for.
+           None has an option that writes a file or runs a program. dotfiles #956. */}}
+      "Bash(sha1sum:*)",
+      "Bash(sha256sum:*)",
+      "Bash(sha512sum:*)",
+      "Bash(md5sum:*)",
+      "Bash(b2sum:*)",
+      "Bash(cksum:*)",
       "Bash(df:*)",
       {{/* lsof lists open files and sockets and has no option that writes or runs a
            command (it is in claude_guard.tables.READONLY_BASE for the same reason).
@@ -680,8 +688,6 @@
       "Bash(rm -rf ~/)",
       "Bash(rm -rf ~ *)",
       "Bash(rm -rf ~/ *)",
-      "Bash(git config --global:*)",
-      "Bash(git config user.*)",
       {{/* Force-push. `--force` and `-f` are denied in any position, on any branch.
            `--force-with-lease` is allowed on a feature branch and denied for main/master.
            The flag rules spell out the bare command and ` *` rather than `:*`, so that no
@@ -817,6 +823,15 @@
       "Bash(terragrunt run-all destroy:*)"
     ],
     "ask": [
+      {{/* dotfiles #965. A write to the global config or to user.* prompts. These were deny
+           rules, and a native deny fires before claude_guard runs, so a read such as
+           `git config --global --get-all rerere.autoupdate` was a hard stop for a background
+           session. As ask rules they reach claude_guard's judge, which approves the read forms
+           (claude_guard.gitread, `git-config-read-check`) and leaves every write at the prompt.
+           A write that makes a later push force or skip the hook stays a hard deny in
+           claude_guard's push-config-write rule. */}}
+      "Bash(git config --global:*)",
+      "Bash(git config user.*)",
       {{/* -t is the short form of --show-token; either one prints the GitHub token into the transcript. `*-t*` matches both, because `--show-token` contains `-t`. */}}
       "Bash(gh auth status *-t*)",
       "Bash(node -e:*)",
