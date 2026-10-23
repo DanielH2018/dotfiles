@@ -954,9 +954,14 @@ def secret_readers(sc: Scan, target: str) -> Verdict | None:
 
 
 def secret_interpreter(sc: Scan, target: str) -> Verdict | None:
-    """:945-949. The denial names the words that matched SECRET_PATHS (#802)."""
+    """:945-949. The denial names the words that matched SECRET_PATHS (#802). A Python
+    attribute name or comment that only looks like a secret path is masked out first
+    (#957)."""
     sc = _without_stored_heredocs(sc)
-    if bdb_re(sc.scan, rf"{_INTERPRETER_WORD}.*{SECRET_PATHS}"):
+    pattern = rf"{_INTERPRETER_WORD}.*{SECRET_PATHS}"
+    if bdb_re(sc.scan, pattern) and (masked := _without_python_names(sc.command)) != sc.command:
+        sc = build_scan(masked)
+    if bdb_re(sc.scan, pattern):
         return Verdict(
             "deny",
             "secret-read-interpreter",
@@ -971,6 +976,63 @@ def secret_interpreter(sc: Scan, target: str) -> Verdict | None:
 # no interpreter. A trailing `\b` would not do: `python[0-9.]*` backtracks to `python3.`,
 # which ends at a word boundary before the `11`.
 _INTERPRETER_WORD = r"\b(python[0-9.]*|node|deno|bun|perl|ruby|php|Rscript|osascript)(?![\w./])"
+# A Python attribute access is lexically a secret path: `self.env.filters` matches the
+# dotenv arm and `v.key)` the key-file arm, though neither names a file (#957). Python's
+# lexer tells them apart from `open('server.key')`, whose path is a string token. Only a
+# program a `python` segment runs is lexed, because the lexer accepts JS and shell too: a
+# Node template literal `${d}/server.key` lexes as the bare name `server.key`. A heredoc
+# body the shell expands first, and a `-c` argument whose quoting changed it, stay as
+# written. DECIDED (#864): a path in a string literal is still refused.
+_PYTHON_WORD = re.compile(r"\bpython[0-9.]*(?![\w./])")
+
+
+def _masked_python(program: str) -> str:
+    """`program` with each `.name` attribute and each comment blanked, or unchanged when it
+    does not lex as Python."""
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(program).readline))
+    except tokenize.TokenError, SyntaxError:
+        return program
+    lines = program.splitlines(keepends=True)
+    blank = [
+        (a.start, b.end)
+        for a, b in itertools.pairwise(tokens)
+        if a.type == tokenize.OP and a.string == "." and b.type == tokenize.NAME
+    ]
+    blank += [(t.start, t.end) for t in tokens if t.type == tokenize.COMMENT]
+    for (row, col), (end_row, end_col) in sorted(blank, reverse=True):
+        if row != end_row:
+            continue
+        line = lines[row - 1]
+        lines[row - 1] = line[:col] + " " * (end_col - col) + line[end_col:]
+    return "".join(lines)
+
+
+def _without_python_names(command: str) -> str:
+    """`command` with each Python program a `python` segment runs masked by `_masked_python`:
+    its quoted or unexpanded heredoc bodies, and each `-c` argument the shell left verbatim."""
+    p = parse(command)
+    if not p.ok:
+        return command
+    for seg in p.segments:
+        if not _PYTHON_WORD.search(seg.text):
+            continue
+        programs = [
+            body
+            for body, quoted in zip(seg.heredocs, seg.heredoc_quoted, strict=True)
+            if quoted or not any(m in body for m in ("$", "`"))
+        ]
+        try:
+            words = shlex.split(seg.text)
+        except ValueError:
+            words = []
+        programs += [words[i + 1] for i, w in enumerate(words[:-1]) if w == "-c"]
+        for program in programs:
+            if program in command:
+                command = command.replace(program, _masked_python(program), 1)
+    return command
+
+
 # The words of an environment variable name that mark it a credential. A name is split on
 # `_` and on camelCase, then compared word by word, so `GITHUB_TOKEN` and `apiKey` match
 # while `TOKENIZERS_PARALLELISM`, `HOME` and `TMPDIR` do not.

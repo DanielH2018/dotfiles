@@ -663,6 +663,15 @@ NAMES_A_SECRET = [
     "cat ansible/vars/cluster-vars.sops.env",
     "python3 -c \"print(open('x.sops.env').read())\"",
     "echo hi; os.environ; cat .envrc",
+    # A path in a Python string literal, beside the attribute names #957 lets through.
+    "python3 -c \"print(open('server.key').read())\"",
+    "python3 - <<'EOF'\nprint(v.key)\nopen('server.key').read()\nEOF",
+    "python3 - <<'EOF'\nprint(open(f'{d}/server.key').read())\nEOF",
+    "python3 - <<'EOF'\nopen('/var/run/secrets/kubernetes.io/serviceaccount/token')\nEOF",
+    "python3 x.py server.key",
+    # Text that Python would lex as an attribute but that no Python program holds.
+    "node -e 'fs.readFileSync(`${d}/server.key`)'",
+    "python3 - <<EOF\nopen($D.key)\nEOF",
 ]
 
 
@@ -704,6 +713,21 @@ def test_naming_the_environment_alone_is_not_a_secret_read():
 
 def test_naming_a_secret_is_still_refused_wherever_the_text_sits():
     assert kinds(NAMES_A_SECRET) == ["deny"] * len(NAMES_A_SECRET)
+
+
+# dotfiles #957. The #864 sample's attribute accesses that the dotenv, key-file and secrets
+# arms matched although no file is named, and a comment that names a path.
+NAMES_A_PYTHON_ATTRIBUTE_ONLY = [
+    "python3 - <<'EOF'\nclass R:\n    def f(self):\n        return self.env.filters['x']\nEOF",
+    "python3 - <<'EOF'\nprint(sorted(rows, key=lambda v: v.key))\nEOF",
+    "python3 - <<'EOF'\nprint(pin.key, pin.value)\nEOF",
+    'uv run python -c "print([pin.key, v.pem])"',
+    "python3 - <<'EOF'\n# mounted at /var/run/secrets/kubernetes.io/serviceaccount\nprint(1)\nEOF",
+]
+
+
+def test_a_python_attribute_that_looks_like_a_secret_path_is_not_a_read():
+    assert kinds(NAMES_A_PYTHON_ATTRIBUTE_ONLY) == ["none"] * len(NAMES_A_PYTHON_ATTRIBUTE_ONLY)
 
 
 # A heredoc that is only stored, by a command that runs nothing, reads no secret: the
