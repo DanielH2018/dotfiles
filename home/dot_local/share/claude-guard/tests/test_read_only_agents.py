@@ -132,19 +132,22 @@ UNKNOWN_RUNNERS = [
     "GIT_EXTERNAL_DIFF=/tmp/x.sh uv run git diff",
     "env GIT_EXTERNAL_DIFF=/tmp/x.sh uv run git diff",
 ]
-# Each writes to a cluster, a container or another host (dotfiles #958).
+# Each writes to a cluster, a container or another host (dotfiles #958). `docker rm` and
+# `ssh ... rm` were denied before, for the `rm` read as a later word; the other rows name
+# no command the arm judged.
 CLUSTER_CONTAINER_AND_REMOTE_WRITES = [
     "kubectl apply -f x.yaml",
     "kubectl -n prod delete pod p",
     "kubectl config use-context prod",
-    "kubectl exec p -- rm a",
+    "kubectl exec p -- python3 x.py",
     "timeout 5 kubectl delete pod p",
     "docker rm c",
-    "docker exec c rm a",
-    "uv run docker rm c",
+    "docker compose down",
+    "docker exec c python3 x.py",
+    "uv run docker stop c",
     "dockrun run img",
     "ssh daniel-server rm -rf x",
-    "ssh host 'echo x > a'",
+    "ssh host 'systemctl restart x'",
     "ssh -o ProxyCommand=x host ls",
     "ssh host",
 ]
