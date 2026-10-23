@@ -271,6 +271,12 @@ def gh_stub(tmp_path, monkeypatch):
         "print(json.dumps([{'headRefOid': h} for b, h in rows if b == branch]))\n"
     )
     stub.chmod(0o755)
+    if sys.platform == "win32":
+        # No shebangs on Windows: CreateProcess runs a .cmd, so route it to the script.
+        script = stub.with_suffix(".py")
+        stub.rename(script)
+        stub = tmp_path / "gh.cmd"
+        stub.write_text(f'@"{sys.executable}" "{script}" %*\r\n')
     monkeypatch.setenv("GH_BIN", str(stub))
     monkeypatch.setattr(claude_worktree, "_FORGE_MEMO", {})
 

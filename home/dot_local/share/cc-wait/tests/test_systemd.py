@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+import sys
 
 import pytest
 
@@ -111,12 +112,14 @@ def test_a_missing_unit_is_not_read_as_a_clean_run():
         read(props)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="systemd is Linux-only")
 def test_user_asks_the_user_manager():
     calls: list = []
     systemd.UnitWait("x.service", True, show({**SIMPLE, "ActiveState": "active"}, calls)).read()
     assert calls[0][:3] == ["systemctl", "--user", "show"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="systemd is Linux-only")
 def test_a_user_wait_finds_the_bus_when_the_session_has_no_runtime_dir(monkeypatch):
     """Measured: a bridge session has no XDG_RUNTIME_DIR, and systemctl --user then fails."""
     runtime = f"/run/user/{os.getuid()}"

@@ -270,7 +270,8 @@ def process_holds(
     Returns:
         One entry per held path; `how` is "cwd", "CLAUDE_PROJECT_DIR" or FOREIGN_UID.
     """
-    uid = os.getuid() if uid is None else uid
+    if uid is None:
+        uid = os.getuid() if hasattr(os, "getuid") else -1  # no uid on Windows
     me = os.getpid()
     out = []
     try:

@@ -9,15 +9,20 @@ A failed read is never cached: the next waiter tries for itself, and the loop's 
 count is what gives up.
 """
 
-import fcntl
 import hashlib
 import json
 import os
+import sys
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from cc_wait.source import Reading
+
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import fcntl
 
 
 def cache_dir(env: Mapping[str, str]) -> Path:
@@ -31,6 +36,20 @@ def _load(path: Path) -> Reading | None:
         return Reading(str(data["state"]), str(data.get("detail", "")))
     except OSError, ValueError, KeyError, TypeError:
         return None
+
+
+def _lock_exclusive(lock) -> None:
+    """Block until this process holds the lock file exclusively (closing it releases)."""
+    if sys.platform == "win32":
+        # msvcrt locks a byte range, and the file is empty: seek then lock byte 0, which
+        # Windows allows past EOF. LK_LOCK retries for ~10s then raises, so loop.
+        while True:
+            try:
+                msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+                return
+            except OSError:
+                continue
+    fcntl.flock(lock, fcntl.LOCK_EX)
 
 
 def cached_read(
@@ -55,7 +74,7 @@ def cached_read(
     if hit:
         return hit
     with open(path.with_suffix(".lock"), "w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        _lock_exclusive(lock)
         hit = fresh()
         if hit:
             return hit

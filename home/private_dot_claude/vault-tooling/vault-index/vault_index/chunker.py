@@ -132,7 +132,7 @@ def _iter_files(config: Config) -> Iterator[Path]:
 
 def chunk_file(path: Path, config: Config) -> Iterator[Chunk]:
     raw = path.read_text(encoding="utf-8")
-    rel = str(path.relative_to(config.root))
+    rel = path.relative_to(config.root).as_posix()
     mtime = path.stat().st_mtime
     fields, body = _parse_frontmatter(raw)
     title = fields.get("title") or path.stem.replace("_", " ")

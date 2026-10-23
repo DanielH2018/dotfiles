@@ -8,6 +8,7 @@ writer that already died.
 
 import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,8 +16,31 @@ from cc_wait import github, k8s, systemd
 from cc_wait.source import ArgParser, Description, ParsedSource, ReadError, Reading, SourceError
 
 
+def _pid_alive_windows(pid: int) -> bool:
+    """Windows has no signal 0: os.kill(pid, 0) there terminates the process, so ask the
+    kernel for its exit status instead. STILL_ACTIVE (259) means it has not exited."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        # Access denied means it exists under another user; anything else means it is gone.
+        return ctypes.get_last_error() == 5
+    try:
+        code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return True
+        return code.value == 259
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def pid_alive(pid: int) -> bool:
     """Whether a process with `pid` exists. Signal 0 checks without delivering anything."""
+    if sys.platform == "win32":
+        return _pid_alive_windows(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
