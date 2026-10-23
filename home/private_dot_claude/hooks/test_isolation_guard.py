@@ -124,9 +124,16 @@ def main():
         os.makedirs(other)
         subprocess.run(["git", "init", "-q", other], check=True, capture_output=True)
         cross = reason(shared_file, other)
+        # The hook prints git's own toplevel (forward slashes on Windows).
+        top = subprocess.run(
+            ["git", "-C", repo, "rev-parse", "--show-toplevel"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
         check(
             "cross-repo denial names `worktree add` in the file's repo",
-            f"git -C {repo} worktree add" in cross
+            f"git -C {top} worktree add" in cross
             and "Retry EnterWorktree" not in cross,
         )
         # A session in this repo's own worktree dir keeps the EnterWorktree instruction.

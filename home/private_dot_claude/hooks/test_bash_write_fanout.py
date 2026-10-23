@@ -72,6 +72,14 @@ def _have_parser():
 HAVE_PARSER = _have_parser()
 
 
+def bash_path(path):
+    """`path` as a Git Bash command spells it: /c/... for a drive path on Windows."""
+    text = Path(path).as_posix()
+    if len(text) > 2 and text[1] == ":":
+        return f"/{text[0].lower()}{text[2:]}"
+    return text
+
+
 def extracted(command, cwd, env_extra=None):
     """The paths the hook would fan out for `command`, as basenames, sorted."""
     env = {
@@ -84,7 +92,7 @@ def extracted(command, cwd, env_extra=None):
         **(env_extra or {}),
     }
     result = subprocess.run(
-        ["bash", str(HOOK)],
+        ["bash", HOOK.as_posix()],
         cwd=cwd,
         input=json.dumps(
             {"session_id": "test", "cwd": str(cwd), "tool_input": {"command": command}}
@@ -128,7 +136,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("relative subdirectory", extracted("echo x > sub/c.txt", root) == ["c.txt"])
     check(
         "absolute path",
-        extracted(f"echo x > {root / 'a.txt'}", root) == ["a.txt"],
+        extracted(f"echo x > {bash_path(root / 'a.txt')}", root) == ["a.txt"],
     )
     check(
         "a later segment's write is found",
@@ -292,7 +300,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
     def fanned(tmpdir, env_extra=None):
         result = subprocess.run(
-            ["bash", str(hookdir / "bash-write-fanout.sh")],
+            ["bash", (hookdir / "bash-write-fanout.sh").as_posix()],
             cwd=root,
             input=json.dumps(
                 {

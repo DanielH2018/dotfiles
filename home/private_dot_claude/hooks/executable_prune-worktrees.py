@@ -166,11 +166,12 @@ Opt out entirely by setting CLAUDE_WORKTREE_AUTOPRUNE=0 in the environment.
 from __future__ import annotations
 
 import argparse
-import fcntl
+import contextlib
 import os
 import select
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -178,6 +179,11 @@ from pathlib import Path
 # The shared modules live in lib/ beside this hook, deployed or in the source tree.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "lib"))
 import hook_input  # noqa: E402
+
+try:
+    import fcntl
+except ImportError:  # Windows has no fcntl; the sweep lock is skipped there.
+    fcntl = None
 
 # The readers this hook shares with the server repo's pruner — the porcelain parser,
 # the lock-liveness check, the cherry and merge-tree verdicts, the default-ref lookup,
@@ -486,6 +492,25 @@ def tree_created(tree_path: str) -> float | None:
         return None
 
 
+def _read_stdin(wait: float) -> str | None:
+    """Return stdin's text, or None when it is not ready within `wait` seconds."""
+    if sys.platform != "win32":
+        if select.select([sys.stdin], [], [], wait)[0]:
+            return sys.stdin.read()
+        return None
+    # select() only takes sockets on Windows, so read on a thread and bound the wait.
+    box: list[str] = []
+
+    def reader() -> None:
+        with contextlib.suppress(OSError, ValueError):
+            box.append(sys.stdin.read())
+
+    thread = threading.Thread(target=reader, daemon=True)
+    thread.start()
+    thread.join(wait)
+    return box[0] if box else None
+
+
 def session_dirs(stdin_wait: float = 0.5) -> list[Path]:
     """Return the directories the session running this hook works in, resolved.
 
@@ -504,8 +529,10 @@ def session_dirs(stdin_wait: float = 0.5) -> list[Path]:
     dirs = [Path.cwd()]
     payload = None
     try:
-        if not sys.stdin.isatty() and select.select([sys.stdin], [], [], stdin_wait)[0]:
-            payload = hook_input.parse_event(sys.stdin.read())
+        if not sys.stdin.isatty():
+            text = _read_stdin(stdin_wait)
+            if text is not None:
+                payload = hook_input.parse_event(text)
     except (OSError, ValueError):
         payload = None
     input_cwd = payload.get("cwd") if payload is not None else None
@@ -566,6 +593,8 @@ def take_prune_lock(common_dir: Path) -> bool:
     A lock file that cannot be opened returns True: the race only costs log noise, and a
     sweep that stood aside for an unreadable file would never prune at all.
     """
+    if fcntl is None:
+        return True
     try:
         fd = os.open(common_dir / PRUNE_LOCK, os.O_RDWR | os.O_CREAT, 0o644)
     except OSError:

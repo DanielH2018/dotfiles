@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,7 +38,7 @@ BIN = HERE.parent.parent.parent / "bin" / "skill-usage"
 def run(env_extra):
     env = {**os.environ, **env_extra}
     result = subprocess.run(
-        [str(BIN)],
+        [sys.executable, str(BIN)],
         capture_output=True,
         text=True,
         env=env,

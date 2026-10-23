@@ -683,7 +683,9 @@ def _lacks_down(path: str) -> bool:
 
 def migration(turn: Turn) -> str | None:
     session = turn.session()
-    touched = sorted({p for p in session.edited if MIGRATION_PATH.search(p)})
+    touched = sorted(
+        {p for p in session.edited if MIGRATION_PATH.search(p.replace("\\", "/"))}
+    )
     touched = [p for p in touched if Path(p).exists()]
     if not touched:
         return None

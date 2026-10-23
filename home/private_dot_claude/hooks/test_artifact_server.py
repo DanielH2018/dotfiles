@@ -76,7 +76,7 @@ def main():
     os.symlink(tree, os.path.join(root, HOST))
     with open(os.path.join(tree, "plan.html"), "w") as f:
         f.write("<html><head><title>A plan</title></head><body>plan</body></html>")
-    with open(os.path.join(tree, "sub", "notes.md"), "w") as f:
+    with open(os.path.join(tree, "sub", "notes.md"), "w", newline="\n") as f:
         f.write("# Notes\n")
     with open(os.path.join(tmp, "secret.txt"), "w") as f:
         f.write("outside the tree")

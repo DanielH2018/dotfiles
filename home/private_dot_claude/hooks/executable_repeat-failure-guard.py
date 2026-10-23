@@ -29,7 +29,6 @@ directory does not grow.
 Fails open: unreadable input or an unwritable state directory prints nothing.
 """
 
-import fcntl
 import hashlib
 import json
 import os
@@ -41,6 +40,11 @@ from pathlib import Path
 # The shared modules live in lib/ beside this hook, deployed or in the source tree.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "lib"))
 import hook_input  # noqa: E402
+
+try:
+    import fcntl
+except ImportError:  # Windows has no fcntl; the lock is skipped there.
+    fcntl = None
 
 THRESHOLD = 2
 STALE_SECONDS = 2 * 24 * 3600
@@ -68,7 +72,8 @@ def record(path: Path, prompt_id: str, key: str) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a+", encoding="utf-8") as fh:
         # Parallel tool calls in one turn can fail at the same moment.
-        fcntl.flock(fh, fcntl.LOCK_EX)
+        if fcntl:
+            fcntl.flock(fh, fcntl.LOCK_EX)
         fh.seek(0)
         try:
             state = json.loads(fh.read() or "{}")

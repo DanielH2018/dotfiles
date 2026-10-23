@@ -13,7 +13,6 @@ a worktree is locked, and Claude Code locks every session worktree, so a version
 never unlocks passes every unit test and removes nothing at all.
 """
 
-import fcntl
 import importlib.util
 import json
 import os
@@ -24,6 +23,11 @@ import time
 from pathlib import Path
 
 from _testkit import check, finish, git
+
+try:
+    import fcntl
+except ImportError:  # Windows: no flock, so the hook skips its sweep lock
+    fcntl = None
 
 # Importing the hook below would otherwise write a __pycache__ into the chezmoi source
 # tree, which `git status --porcelain` would then see as an untracked file.
@@ -372,20 +376,23 @@ with tempfile.TemporaryDirectory() as tmp:
     own.unlink()
 
     # Another sweep holding the lock: this one stands aside, silently.
-    lock_fd = os.open(repo / ".git" / mod.PRUNE_LOCK, os.O_RDWR | os.O_CREAT)
-    fcntl.flock(lock_fd, fcntl.LOCK_EX)
-    contended = subprocess.run(
-        [sys.executable, str(SCRIPT), "--prune"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    os.close(lock_fd)
-    check(
-        "a sweep that finds the lock held removes nothing and says nothing",
-        (trees / "merged").exists() and contended.stdout == "",
-    )
+    if fcntl:
+        lock_fd = os.open(repo / ".git" / mod.PRUNE_LOCK, os.O_RDWR | os.O_CREAT)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        contended = subprocess.run(
+            [sys.executable, str(SCRIPT), "--prune"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        os.close(lock_fd)
+        check(
+            "a sweep that finds the lock held removes nothing and says nothing",
+            (trees / "merged").exists() and contended.stdout == "",
+        )
+    else:
+        print("SKIP 1 lock-contention check: no fcntl, so the sweep takes no lock")
 
     pruned = subprocess.run(
         [sys.executable, str(SCRIPT), "--prune"],
@@ -551,6 +558,8 @@ with tempfile.TemporaryDirectory() as tmp:
             session.wait()
         ok, _ = mod.remove(str(repo), tree)
         check("remove() removes it once the process exits", ok)
+    else:
+        print("SKIP 6 live-process checks: no /proc to read a process's cwd from")
 
     # Outside a git repo: silent, successful, no-op.
     outside = subprocess.run(
@@ -690,6 +699,12 @@ with tempfile.TemporaryDirectory() as tmp:
         "print(json.dumps([{'headRefOid': h} for b, h in rows if b == branch]))\n"
     )
     gh_stub.chmod(0o755)
+    if sys.platform == "win32":
+        # Windows ignores the shebang, so a .cmd shim runs the stub through python.
+        gh_stub.rename(root / "gh.py")
+        gh_stub = root / "gh.cmd"
+        shim = f'@"{sys.executable}" "{root / "gh.py"}" %*'
+        gh_stub.write_text(shim + "\r\n")
     env = {
         **os.environ,
         "CLAUDE_CONFIG_DIR": str(root / "cfg"),
@@ -777,7 +792,7 @@ with tempfile.TemporaryDirectory() as tmp:
     # reported, and both are still there afterwards.
     check(
         "report names the collapsed tree for review",
-        f"[{mod.REVIEW:9}] {trees / 'collapsed'}" in report.stdout,
+        f"[{mod.REVIEW:9}] {(trees / 'collapsed').as_posix()}" in report.stdout,
     )
     check("the collapsed worktree survives", (trees / "collapsed").exists())
     check("the collapsed branch survives", "worktree-collapsed" in branches)
@@ -850,7 +865,7 @@ with tempfile.TemporaryDirectory() as tmp:
     )
     check(
         "report calls the forge-confirmed tree removable",
-        f"[{mod.REMOVABLE:9}] {trees / 'squashed'}" in forge_report.stdout
+        f"[{mod.REMOVABLE:9}] {(trees / 'squashed').as_posix()}" in forge_report.stdout
         and "exactly this tip" in forge_report.stdout,
     )
     subprocess.run(
@@ -889,7 +904,7 @@ with tempfile.TemporaryDirectory() as tmp:
     )
     check(
         "a failing gh leaves the collapsed tree at review",
-        f"[{mod.REVIEW:9}] {trees / 'collapsed'}" in failed_report.stdout,
+        f"[{mod.REVIEW:9}] {(trees / 'collapsed').as_posix()}" in failed_report.stdout,
     )
 
 finish()

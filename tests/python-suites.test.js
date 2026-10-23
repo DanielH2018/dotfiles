@@ -64,6 +64,22 @@ test('the derived standalone suite list is not empty and holds a known member', 
   assert.ok(!SUITES.some((rel) => rel.includes('claude-guard/') || rel.includes('claude-worktree/')), 'a pytest project\'s tests are not standalone suites');
 });
 
+// A suite names what it cannot run on this platform with `SKIP <n> <reason>` (n checks)
+// or `SKIP <reason>` (one test); the count is credited against its declared total.
+function countSkips(stdout) {
+  return stdout
+    .split(/\r?\n/)
+    .map((line) => /^SKIP (?:(\d+) )?\S/.exec(line))
+    .filter(Boolean)
+    .reduce((sum, m) => sum + (m[1] ? Number(m[1]) : 1), 0);
+}
+
+test('a SKIP line credits its stated count, or one test when it states none', () => {
+  assert.strictEqual(countSkips('ok  a\nSKIP 6 live-process checks: no /proc\nOK 1\n'), 6);
+  assert.strictEqual(countSkips('SKIP test_x: needs POSIX paths\r\nSKIP test_y: same\r\n'), 2);
+  assert.strictEqual(countSkips('ok  SKIP is not a skip mid-line\n  SKIP 3 indented\nOK 1\n'), 0);
+});
+
 test('the opt-out marker excludes a file, and its absence includes one', () => {
   assert.match('#!/usr/bin/env python3\n# python-suites: skip -- reports all passed, no count line\n', OPT_OUT);
   assert.doesNotMatch('#!/usr/bin/env python3\n"""python-suites: skip is only a marker as a comment."""\n', OPT_OUT);
@@ -163,6 +179,13 @@ for (const rel of SUITES) {
       `${name} exited 0 without reporting a test count — a suite wired in here needs a ` +
         '__main__ runner ending in `print(f"OK {ran}")`, or it passes without running anything',
     );
+    // Linux may not skip: CI runs there, so it is where every declared test is proven to
+    // run. macOS has no /proc and Windows no fcntl.
+    const skipped = countSkips(stdout);
+    assert.ok(
+      skipped === 0 || process.platform !== 'linux',
+      `${name} printed SKIP lines on Linux — every check must run where CI proves it`,
+    );
     if (checkStyle) {
       const okLines = stdout.split('\n').filter((line) => line.startsWith('ok  ')).length;
       assert.strictEqual(
@@ -172,15 +195,15 @@ for (const rel of SUITES) {
           'and the check() helper have come apart',
       );
       assert.ok(
-        Number(reported[1]) >= declared.checks,
-        `${name} ran ${reported[1]} checks against ${declared.checks} check() call sites — ` +
+        Number(reported[1]) + skipped >= declared.checks,
+        `${name} ran ${reported[1]} checks (${skipped} skipped) against ${declared.checks} check() call sites — ` +
           'a block of checks was never reached',
       );
     } else {
       assert.strictEqual(
-        Number(reported[1]),
+        Number(reported[1]) + skipped,
         declared.sync.length,
-        `${name} ran ${reported[1]} of its ${declared.sync.length} declared tests ` +
+        `${name} ran ${reported[1]} (${skipped} skipped) of its ${declared.sync.length} declared tests ` +
           `(${declared.sync.join(', ')}) — a test below the __main__ block is not in globals() ` +
           'when the scan runs, and a hand-listed runner skips whatever the list omits',
       );

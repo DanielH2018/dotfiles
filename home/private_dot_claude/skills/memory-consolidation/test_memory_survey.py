@@ -80,9 +80,9 @@ def _main(argv: list[str]) -> tuple[int, str]:
 def _mem(tmp_path: Path, index: str, files: dict[str, str]) -> Path:
     d = tmp_path / "memory"
     d.mkdir(parents=True)
-    (d / "MEMORY.md").write_text(index, encoding="utf-8")
+    (d / "MEMORY.md").write_text(index, encoding="utf-8", newline="\n")
     for name, body in files.items():
-        (d / name).write_text(body, encoding="utf-8")
+        (d / name).write_text(body, encoding="utf-8", newline="\n")
     return d
 
 
@@ -154,7 +154,7 @@ def test_index_itself_is_never_reported_as_an_orphan():
 def test_an_absolute_link_to_an_existing_repo_doc_is_clean():
     with _tmp() as tmp_path:
         doc = tmp_path / "owner.md"
-        doc.write_text("the claim", encoding="utf-8")
+        doc.write_text("the claim", encoding="utf-8", newline="\n")
         assert _survey(_mem(tmp_path, f"- [Owned]({doc})\n", {}))["dead_links"] == []
 
 
@@ -239,7 +239,9 @@ def _tool_result(text: str) -> str:
 def _transcripts(tmp_path: Path, lines: list[str]) -> Path:
     t = tmp_path / "transcripts"
     t.mkdir(parents=True)
-    (t / "session.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (t / "session.jsonl").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8", newline="\n"
+    )
     return t
 
 
@@ -375,6 +377,8 @@ def test_a_transcript_outside_the_window_does_not_count_as_a_reference():
 def test_an_unreadable_transcript_leaves_the_slug_unreferenced():
     # Failing closed matters: a transcript we cannot read is missing evidence, and the
     # safe direction is to surface the entry for review rather than call it referenced.
+    if sys.platform == "win32":
+        return  # SKIP: chmod 0o000 does not make a file unreadable on Windows
     with _tmp() as tmp_path:
         d = _mem(tmp_path, "- [A](some-entry.md)\n", {"some-entry.md": "x"})
         t = _transcripts(tmp_path, [_assistant("some-entry was cited")])
@@ -458,7 +462,7 @@ def _memfile(tmp_path: Path, name: str, body: str) -> Path:
     d = tmp_path / "mem"
     d.mkdir(exist_ok=True)
     p = d / name
-    p.write_text(body)
+    p.write_text(body, encoding="utf-8", newline="\n")
     return p
 
 

@@ -40,7 +40,13 @@ for _var in [k for k in os.environ if k.startswith("GIT_")]:
 
 
 def run_hook(payload, home_dir, cwd, extra_env=None):
-    env = {**os.environ, "HOME": str(home_dir), **(extra_env or {})}
+    # Path.home() reads USERPROFILE on Windows, HOME elsewhere.
+    env = {
+        **os.environ,
+        "HOME": str(home_dir),
+        "USERPROFILE": str(home_dir),
+        **(extra_env or {}),
+    }
     return subprocess.run(
         [sys.executable, str(HOOK)],
         cwd=str(cwd),
