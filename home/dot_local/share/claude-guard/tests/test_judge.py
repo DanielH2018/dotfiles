@@ -589,9 +589,11 @@ def test_an_rm_of_a_job_dir_the_chain_could_set_is_refused(real, command):
 
 def test_the_real_template_allows_an_rm_that_globs_inside_a_scratch_dir(real, scratch_dir):
     assert allowed(f"rm -f {scratch_dir}/fail*.txt", real)
-    # A link maker earlier in the chain could swap the parent for a symlink first.
+    # A link maker earlier in the chain could swap the parent for a symlink first. The ln
+    # itself is allowed, so the refusal is the rm's.
     os.mkdir(f"{scratch_dir}/sub")
-    assert not allowed(f"ln -sfn /tmp {scratch_dir}/l && rm -rf {scratch_dir}/sub/*", real)
+    chain = f"ln -sfn /tmp {scratch_dir}/l && rm -rf {scratch_dir}/sub/*"
+    assert judge(chain, real, ROOTS, CWD).rule == "segment:1:ask"
 
 
 def test_a_wrapper_is_judged_on_the_command_it_will_actually_run(esc):

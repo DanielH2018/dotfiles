@@ -1194,8 +1194,11 @@ def judge(
     # dotfiles #956. An rm operand may name $CLAUDE_JOB_DIR, read from the hook's
     # environment. Any other mention of the name (`CLAUDE_JOB_DIR=/`, `export`, `read`,
     # `for … in`, `${CLAUDE_JOB_DIR:=…}`) means the chain could change it before the rm
-    # runs, so the reference is refused instead.
-    if JOB_DIR_VAR in _JOB_DIR_REF.sub("", command):
+    # runs, so the reference is refused instead. Quotes and backslashes are dropped first,
+    # because bash removes them before it reads a name (`CLAUDE_JOB""_DIR`). A name built
+    # from another variable (`printf -v "${n}_DIR"`) never spells it; every command that
+    # assigns by name (`printf -v`, `read`, `declare`, `unset`, `eval`) is unlisted.
+    if JOB_DIR_VAR in _JOB_DIR_REF.sub("", re.sub(r"[\"'\\]", "", command)):
         job_dir = ""
 
     # :277-281.

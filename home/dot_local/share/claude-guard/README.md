@@ -51,7 +51,9 @@ ported line for line, plus the standalone PermissionRequest hooks it never deleg
 four whole-command checks below) and the spec's "a single segment is judged like a chain"
 decision: a bare command reaches the same checks a chained one does rather than returning
 `not-compound`. It allows a chain when every segment is allow-listed or passes a check
-(`checks/scratch.py` for a confined `rm`, `checks/worktree_scratch.py` for an `rm` of
+(`checks/scratch.py` for a confined `rm`, which may glob in its last component below a
+scratch directory and name `$CLAUDE_JOB_DIR` from the hook's environment,
+`checks/worktree_scratch.py` for an `rm` of
 untracked files, a `git clean -f -- <paths>` of untracked files, or a `git restore` to
 `HEAD` inside a `.claude/worktrees/<name>` checkout,
 `checks/curl.py` for a plain GET/HEAD against an allowlisted host, the
@@ -65,7 +67,8 @@ past a loop keyword (`for … in`, `while`, `until`, `do`, `done`) and a literal
 `$NAME` references (`git -C "$d" status`) is admitted only for a read. A git read the allow
 list cannot express safely goes through `gitread.py`, a table of subcommands that read with
 some arguments and write with others (`symbolic-ref`, `ls-remote`, `range-diff`,
-`merge-base`). A `$( )`, `<( )` or `>( )` is judged as a command of its own, with no cwd,
+`merge-base`, `config`). A `git config` read is judged before the ask rules, because
+`git config --global:*` is an ask rule a background session cannot answer. A `$( )`, `<( )` or `>( )` is judged as a command of its own, with no cwd,
 and `substitution.py` replaces it in the outer command with a placeholder. The placeholder,
 and any variable assigned from it, may stand only in a standalone assignment, a `for` word
 list, an argument to a command whose arguments cannot write or exec (`echo`, `cat`, `grep`,
