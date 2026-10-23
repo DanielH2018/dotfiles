@@ -132,6 +132,49 @@ UNKNOWN_RUNNERS = [
     "GIT_EXTERNAL_DIFF=/tmp/x.sh uv run git diff",
     "env GIT_EXTERNAL_DIFF=/tmp/x.sh uv run git diff",
 ]
+# dotfiles #958: a change to a cluster, a container or another machine. The later rows are
+# the shapes two earlier attempts let through: a container path that looks like scratch, a
+# fused `--entrypoint=`, a value flag the table did not list, a quoted `'>'` the remote
+# shell reads as a redirect, and a runner whose own argument is named `pytest`.
+WRITES_ELSEWHERE = [
+    "kubectl apply -f deploy.yaml",
+    "kubectl delete pod web-1",
+    "kubectl rollout restart deploy/web",
+    "kubectl config use-context prod",
+    "kubectl cp web:/x /tmp/x",
+    "kubectl exec web -- rm /tmp/x",
+    "kubectl --foo apply get pods",
+    "kubectl cluster-info dump --output-directory /tmp/d",
+    "docker rm web",
+    "docker pull nginx",
+    "docker run -d --name x nginx",
+    "docker run --expose 80 -d nginx",
+    "docker run -v /repo:/tmp/w alpine rm -rf /tmp/w/src",
+    "docker run --mount type=bind,src=/repo,dst=/w,readonly=false img",
+    "docker run --entrypoint=rm -v /repo:/w alpine -rf /w/src",
+    "docker compose run --entrypoint=rm web /app/x",
+    "docker exec c touch /tmp/x",
+    "docker container exec c rm /tmp/x",
+    "docker --config /tmp/c ps",
+    "ssh host rm -rf /srv/x",
+    "ssh host",
+    "ssh host 'cat x' '>' /etc/y",
+    "ssh host 'ls; rm x'",
+    "ssh host '/bin/r? -rf x'",
+    "ssh host docker run -d nginx",
+    "ssh host 'kubectl delete pod x'",
+    "ssh -o ProxyCommand=sh host ls",
+    "ssh host <<'EOF'\nrm -rf x\nEOF",
+    "hl rm -rf /srv/x",
+    "hl 'cat x' '>' y",
+    "timeout 5 kubectl delete pod x",
+    "uv run kubectl apply -f x",
+    "KUBECONFIG=/tmp/k kubectl delete pod x",
+    "frobnicate pytest kubectl delete pod x",
+    "watch 'kubectl delete pod x'",
+    "env ssh host rm x",
+    "/bin/r? -rf src",
+]
 READS = [
     "git status --short && git diff HEAD~1 -- src",
     "git log --oneline -5 | head -3",
@@ -164,13 +207,26 @@ READS = [
     # a quoted argument is shell text only when it opens with a command this module knows.
     "PYTHONPATH=. uv run pytest -k git",
     "PYTHONPATH=. uv run git log -1",
-    "docker run -e FOO=1 img git log",
+    "frobnicate -e FOO=1 img git log",
     "pytest -k 'not ln' tests/",
     "uv run pytest -k 'not ln' tests/",
     "uv run pytest -k '(cp or mv) and not slow'",
     "ug -n 'echo x > y' src",
     "xmllint --xpath '//a[@b > 1]' f.xml",
     "pip index versions 'requests >= 2'",
+    # A read of a cluster, a container or another machine.
+    "kubectl get pods -n web",
+    "kubectl -n web logs deploy/x --tail 50",
+    "kubectl --context=prod describe pod x",
+    "kubectl config view",
+    "kubectl rollout status deploy/web",
+    "docker ps -a",
+    "docker logs --tail 50 web",
+    "docker exec web cat /etc/hostname",
+    "ssh daniel-server uptime",
+    "ssh -o BatchMode=yes host 'journalctl -u x | grep y'",
+    "hl kubectl get pods",
+    "watch 'kubectl get pods'",
 ]
 
 
@@ -201,6 +257,12 @@ def test_a_write_inside_a_compound_or_behind_a_runner_is_denied(env, agent, comm
 @pytest.mark.parametrize("agent", READ_ONLY_AGENTS)
 @pytest.mark.parametrize("command", UNKNOWN_RUNNERS)
 def test_a_write_behind_a_runner_no_table_names_is_denied(env, agent, command):
+    assert decision(command, env, agent) == "deny"
+
+
+@pytest.mark.parametrize("agent", READ_ONLY_AGENTS)
+@pytest.mark.parametrize("command", WRITES_ELSEWHERE)
+def test_a_change_to_a_cluster_container_or_remote_host_is_denied(env, agent, command):
     assert decision(command, env, agent) == "deny"
 
 

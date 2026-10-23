@@ -3,7 +3,7 @@
 `deep-review`, `root-cause` and `migration-reviewer` describe themselves as read-only and
 still list Bash, which can write a file, commit and push. Each carries `read_only: true` in
 its frontmatter under `~/.claude/agents/`. A subagent's PreToolUse payload names it in
-`agent_type`, its frontmatter `name:`, and `verdict()` denies three kinds of command from
+`agent_type`, its frontmatter `name:`, and `verdict()` denies four kinds of command from
 one of them:
 
   - a write redirect whose target is not `/dev/null`, an fd, or a path under a scratch root
@@ -11,7 +11,20 @@ one of them:
   - a command that changes files (`rm`, `mv`, `cp`, `touch`, `sed -i`, `tee`, `find
     -delete`, …) aimed anywhere but a scratch root, and a shell or `eval` whose text this
     module would have to judge a second time;
-  - any git or gh verb outside a read-only set.
+  - any git or gh verb outside a read-only set;
+  - a `kubectl`, `docker`, `ssh` or `hl` command that is not a read (dotfiles #958). These
+    change another machine, so they get an allowlist, as git and gh do.
+
+DECIDED (dotfiles #958): `kubectl`, `docker`, `ssh` and `hl` are judged only as the
+segment's own command, with no wrapper and no assignment in front. Found anywhere else, as
+a later word of a runner or behind `timeout`, they are denied without judging. Two
+attempts that followed them into a runner's argv, into a container's command and into
+`docker run`'s flags each failed open under review: a value flag the table did not list, a
+container path read as a host scratch path, `--entrypoint=rm`, `--mount readonly=false`.
+So `kubectl` keeps a verb allowlist, `docker` takes `readonly.py`'s allowlist, which runs
+no image and judges only a `docker exec` of a read, and `ssh`/`hl` judge the remote text
+with no scratch roots, refusing any redirect, separator, `$`, backtick or glob in it.
+
 
 A `$( )` body is judged as a command of its own. So is the command after a reserved word
 (`then`, `do`). A command this module does not know may be a runner, so the arm judges what
@@ -45,11 +58,19 @@ residuals, left for the default-deny arm that replaces this denylist:
     `flock /tmp/l --command='git push'`), or opening with a word the module does not
     know (`watch '(rm a)'`, `frobnicate 'mytool > src/a'`);
   - a command string with no space in it (`flock /tmp/l -c 'git${IFS}push'`);
-  - an assignment a runner carries to git under a name outside `_GIT_ENV`.
+  - an assignment a runner carries to git under a name outside `_GIT_ENV`;
+  - an interpreter's own write (`python3 -c "open('x', 'w')"`, `node -e`) and a writer the
+    table does not list (`gzip`, a project script that runs `cp`);
+  - a kubeconfig or docker config that the agent wrote into a scratch root, whose exec
+    plugin or credential helper runs a command (`kubectl --kubeconfig /tmp/k get pods`).
+    That is the scratch-script residual: running `/tmp/x` reaches the same command.
 
 A false positive that remains is the shape a must-refuse row shares: `uv run pytest -k
 'git push'` reads exactly as `flock /tmp/l -c 'git push'`, and `-k patch` as a runner
-handing `patch` its argv.
+handing `patch` its argv. `uv run pytest -k ssh` and `make hl` are denied the same way.
+So are a read the allowlists do not name (`docker compose ps`, `kubectl --insecure-skip-
+tls-verify get pods`), `kubectl exec`, and an ssh command whose local output is
+redirected (`ssh host uptime > /tmp/u`).
 
 The server repo has the same arm for its own agents (server #4617), reading only that
 checkout's `.claude/agents/`. This one runs from the user-level PreToolUse hook, so it
@@ -74,6 +95,7 @@ import shlex
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
+from claude_guard import readonly
 from claude_guard.assignments import PREFIX_NAMES
 from claude_guard.checks.remote_guards import (
     GIT_READONLY,
@@ -430,6 +452,123 @@ def _gh_problem(argv: list[str]) -> str | None:
     return f"runs `{' '.join(['gh', *positional])}`, which is not in the read-only set"
 
 
+# --- commands that act on another machine ------------------------------------------------------
+
+ELSEWHERE = frozenset({"kubectl", "docker", "ssh", "hl"})
+# Global flags allowed ahead of kubectl's verb. Any other flag there is refused, because a
+# value flag this table does not know would make its value read as the verb.
+_KUBECTL_VALUE_FLAGS = frozenset(
+    {
+        "-n",
+        "--namespace",
+        "--context",
+        "--cluster",
+        "--user",
+        "-s",
+        "--server",
+        "--kubeconfig",
+        "--request-timeout",
+        "-v",
+        "--v",
+    }
+)
+_KUBECTL_READS = frozenset(
+    {
+        "get",
+        "describe",
+        "logs",
+        "top",
+        "explain",
+        "api-resources",
+        "api-versions",
+        "version",
+        "events",
+        "cluster-info",
+    }
+)
+# The group verbs whose subcommand, as the next word, only reads.
+_KUBECTL_GROUP_READS = {
+    "config": frozenset({"view", "get-contexts", "current-context", "get-clusters", "get-users"}),
+    "auth": frozenset({"can-i", "whoami"}),
+    "rollout": frozenset({"status", "history"}),
+}
+
+
+def _kubectl_problem(args: list[str]) -> str | None:
+    i = 0
+    while i < len(args) and args[i].startswith("-"):
+        if args[i].split("=", 1)[0] not in _KUBECTL_VALUE_FLAGS:
+            return f"passes `{args[i]}` ahead of kubectl's verb, which this hook does not read"
+        i += 1 if "=" in args[i] else 2
+    rest = args[i:]
+    verb = _first(rest)
+    if verb == "cluster-info" and "dump" in rest:
+        return "runs `kubectl cluster-info dump`, which can write files"
+    if verb in _KUBECTL_READS:
+        return None
+    if len(rest) > 1 and rest[1] in _KUBECTL_GROUP_READS.get(verb, ()):
+        return None
+    return f"runs `{' '.join(['kubectl', *rest[:2]])}`, which is not in the read-only set"
+
+
+def _docker_problem(argv: list[str]) -> str | None:
+    if readonly._docker(argv, readonly._Scope("", None)):
+        return None
+    return f"runs `{' '.join(argv[:3])}`, which is not in the read-only set"
+
+
+def _remote_problem(words: list[str], depth: int) -> str | None:
+    """Why the remote command `words` writes. ssh joins its words with spaces and the far
+    shell parses the result, so that joined text is what gets judged, with no scratch root:
+    a remote path is never this machine's /tmp."""
+    if not words:
+        return "opens a remote shell, whose commands this hook does not see"
+    text = " ".join(words)
+    if any(c in text for c in "<>;&$`*?[\n"):
+        return "passes shell syntax or a glob to the remote shell, which this hook does not judge"
+    found = problem(text, (), depth + 1)
+    return f"runs a remote command that {found}" if found else None
+
+
+def _ssh_problem(raw: list[str], depth: int) -> str | None:
+    i = 1
+    while i < len(raw):
+        a = raw[i]
+        if a in readonly._SSH_FLAGS:
+            i += 1
+        elif a in readonly._SSH_VALUE_FLAGS:
+            value = raw[i + 1] if i + 1 < len(raw) else ""
+            key = re.split(r"[=\s]", value.strip(), maxsplit=1)[0].lower()
+            if a == "-o" and key not in readonly._SSH_OPTIONS:
+                return f"passes the ssh option `{value}`, which this hook does not read"
+            i += 2
+        elif a.startswith("-"):
+            return f"passes `{a}` to ssh, which this hook does not read"
+        else:
+            break
+    return _remote_problem(raw[i + 1 :], depth)
+
+
+def _elsewhere_problem(argv: list[str], text: str, depth: int) -> str | None:
+    """Why the segment's own `kubectl`, `docker`, `ssh` or `hl` command `argv` writes. ssh
+    and hl re-read the segment `text` without dropping redirects, since a quoted `'>'` that
+    the local shell passes along is a redirect on the far side."""
+    name = os.path.basename(argv[0])
+    if name == "kubectl":
+        return _kubectl_problem(argv[1:])
+    if name == "docker":
+        return _docker_problem(argv)
+    try:
+        raw = shlex.split(text)
+    except ValueError:
+        return f"runs `{name}` with text this hook cannot split"
+    while raw and raw[0] in _LEADING_WORDS | {"(", "{", "!"}:
+        raw = raw[1:]
+    if not raw or raw[0] != argv[0]:
+        return f"runs `{name}` in a shape this hook does not read"
+    return _ssh_problem(raw, depth) if name == "ssh" else _remote_problem(raw[1:], depth)
+
+
 # --- commands that change files ----------------------------------------------------------------
 
 
@@ -667,7 +806,7 @@ _DATA_READERS = frozenset(
 )
 # Every name the arm judges as a command. A runner the wrapper table does not know
 # (`uv run`, `ionice`, `flock`, `busybox`, `parallel`) leaves one of these as a later word.
-_JUDGED = _SHELLS | frozenset({"git", "gh", "script"}) | frozenset(WRITERS)
+_JUDGED = _SHELLS | frozenset({"git", "gh", "script"}) | frozenset(WRITERS) | ELSEWHERE
 # The names judged as a LATER word. `.` is left out: there it is a directory operand
 # (`uv run ruff check .`), and a runner that execs its argv cannot reach the builtin. A
 # runner that hands its words to `sh -c` (`watch . /tmp/x`) reaches a scratch script, which
@@ -709,14 +848,26 @@ def _command_problem(
     via_xargs: bool,
     roots: tuple[str, ...],
     later: bool = False,
+    text: str = "",
+    depth: int = 0,
 ) -> str | None:
     """Why the command `argv` writes, or None when it is not one this module judges.
-    `later` marks an `argv` found as a later word of an unknown command."""
+    `later` marks an `argv` found as a later word of an unknown command, and `text` is the
+    segment `words` came from."""
     name = os.path.basename(argv[0])
     if "$" in argv[0] or "`" in argv[0]:
         return f"runs a command named by `{argv[0]}`, which this hook cannot resolve"
+    if any(c in argv[0] for c in "*?["):
+        return f"runs a command named by the glob `{argv[0]}`, which this hook cannot resolve"
     if name in _SHELLS or name == "script":
         return f"runs `{name}`, whose command text this hook does not judge"
+    if name in ELSEWHERE:
+        if later or len(argv) != len(words):
+            return (
+                f"runs `{name}` behind another command or an assignment, which this hook "
+                "does not judge"
+            )
+        return _elsewhere_problem(argv, text, depth)
     if name in ("git", "gh"):
         # `GIT_PAGER`, `GIT_EXTERNAL_DIFF`, `GIT_SSH_COMMAND` and their kin make a git read
         # run a command, so a prefix must be on the judge's allowlist of inert names.
@@ -763,7 +914,7 @@ def _segment_problem(
     argv, via_xargs = _unwrapped(words)
     if not argv:
         return None
-    found = _command_problem(argv, words, via_xargs, roots)
+    found = _command_problem(argv, words, via_xargs, roots, text=text, depth=depth)
     name = os.path.basename(argv[0])
     if found or name in _JUDGED | _DATA_READERS:
         return found
