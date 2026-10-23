@@ -37,8 +37,9 @@ def write_corpus(tmp_path, commands: list[str]) -> str:
 
 
 def run(*args: str, stdin: str = "") -> subprocess.CompletedProcess:
-    # -B: PKG_DIR is inside home/, which parallel gate tests walk with chezmoi; a .pyc
-    # written there mid-walk fails them at random (the env below drops PYTHONDONTWRITEBYTECODE).
+    # -B: PKG_DIR is inside home/, which parallel gate tests walk with chezmoi.
+    # A .pyc written there mid-walk fails them at random, and the env below
+    # drops PYTHONDONTWRITEBYTECODE.
     # CLAUDE_GUARD_SETTINGS_HOME beats HOME (rules.py:14), so pointing it at a fresh,
     # empty temp dir keeps the real ~/.claude/settings.json out of every test's rules
     # deliberately -- not as a side effect of HOME being absent from this dict.

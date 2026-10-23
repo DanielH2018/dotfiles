@@ -98,7 +98,7 @@ def main():
                 wt_file.replace("/", "\\"),
                 True,
                 None,
-                "job editing a worktree path written with Windows backslashes -- isolated",
+                "job editing a backslashed (Windows) worktree path -- isolated",
             ),
             (
                 shared_file,
