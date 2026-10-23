@@ -50,12 +50,13 @@ residuals, left for the default-deny arm that replaces this denylist:
     `flock /tmp/l --command='git push'`), or opening with a word the module does not
     know (`watch '(rm a)'`, `frobnicate 'mytool > src/a'`);
   - a command string with no space in it (`flock /tmp/l -c 'git${IFS}push'`);
-  - an assignment a runner carries to git under a name outside `_GIT_ENV`;
+  - an assignment a runner carries to git under a name outside `_COMMAND_ENV`;
   - a write by code a runner executes: an interpreter's inline code
     (`python3 -c "open('x', 'w')"`), a test, or a project script that calls a writer.
 
-A false positive that remains is the shape a must-refuse row shares: `uv run pytest -k
-'git push'` reads exactly as `flock /tmp/l -c 'git push'`, and `-k patch` as a runner
+The value of a pytest `-k` or `-m` is a selector, not a command, once `pytest` is a word
+ahead of it: `uv run pytest -k 'docker or ssh' tests/` is not judged. A false positive that
+remains is the shape a must-refuse row shares: `frobnicate -k patch` reads as a runner
 handing `patch` its argv.
 
 The server repo has the same arm for its own agents (server #4617), reading only that
@@ -150,7 +151,12 @@ def _mask_quotes(s: str) -> str:
     i = 0
     while i < len(s):
         c = s[i]
-        if quote:
+        if quote == '"' and c == "\\" and i + 1 < len(s):
+            # Inside double quotes a backslash escapes the next character, so `\"` does
+            # not close the span.
+            out.append("__")
+            i += 1
+        elif quote:
             out.append(c if c == quote else "_")
             if c == quote:
                 quote = ""
@@ -680,10 +686,21 @@ def _kubectl_words(args: list[str], want: int) -> list[str] | None:
     return found[:want]
 
 
+# A kubeconfig names programs kubectl runs (`users[].user.exec`), and the cache and log
+# options name where it writes.
+_KUBECTL_PATH_OPTIONS = frozenset({"--kubeconfig", "--cache-dir", "--log-file", "--log-dir"})
+
+
 def _kubectl(args: list[str], roots: tuple[str, ...]) -> str | None:
     """None for a kubectl verb that only reads the cluster or the kubeconfig. `diff` is not
     one: it runs the program `KUBECTL_EXTERNAL_DIFF` names. `cluster-info dump` can write a
-    directory, so `cluster-info` passes only bare."""
+    directory, so `cluster-info` passes only bare. A kubeconfig other than the default is
+    refused, since this hook cannot read what it runs."""
+    for a in args:
+        if a == "--":
+            break
+        if a.split("=", 1)[0] in _KUBECTL_PATH_OPTIONS:
+            return f"passes `{a.split('=', 1)[0]}` to kubectl"
     # A verb that reads under any argument needs only itself read; a group needs its
     # subcommand too.
     found = _kubectl_words(args, 1)
@@ -704,8 +721,7 @@ def _kubectl(args: list[str], roots: tuple[str, ...]) -> str | None:
 
 def _remote(reads: Callable[[list[str]], bool], name: str):
     """A check that the command, run in a container or on another host, is a read by
-    `claude_guard.readonly`'s tables. Bare `name` passes, so a test selector such as
-    `pytest -k docker` is not read as a command."""
+    `claude_guard.readonly`'s tables. Bare `name` passes: it runs nothing."""
 
     def check(args: list[str], roots: tuple[str, ...]) -> str | None:
         if not args or reads([name, *args]):
@@ -831,13 +847,16 @@ _SHELL_OPENERS = (
     | frozenset({"cd", "pushd", "popd", "true", "false", ":", "export", "unset", "set"})
     | frozenset({"for", "select", "case", "{", "exit", "return", "read", "wait"})
 )
-# Variables git or gh read that change what it runs or where its config comes from. A
-# git found as a later word checks only these among the segment's assignments, since an
+# Variables git, gh or kubectl read that change what it runs or where its config comes
+# from. A git found as a later word checks only these among the segment's assignments, since an
 # unknown runner's own assignments (`PYTHONPATH=. uv run`, `frobnicate -e FOO=1 git`) do
 # not show they reach git.
-_GIT_ENV = re.compile(
+_COMMAND_ENV = re.compile(
     r"(GIT|GH|SSH|GPG)_\w*|GNUPGHOME|LESS\w*|PAGER|EDITOR|VISUAL|BROWSER|HOME|XDG_\w+|PATH"
+    r"|KUBECONFIG|KUBECTL_\w+"
 )
+# Builtins that put a variable into the environment of every later command in the line.
+_EXPORTERS = frozenset({"export", "declare", "typeset"})
 
 
 def _command_problem(
@@ -854,16 +873,20 @@ def _command_problem(
         return f"runs a command named by `{argv[0]}`, which this hook cannot resolve"
     if name in _SHELLS or name == "script":
         return f"runs `{name}`, whose command text this hook does not judge"
-    if name in ("git", "gh"):
+    if name in ("git", "gh", "kubectl"):
         # `GIT_PAGER`, `GIT_EXTERNAL_DIFF`, `GIT_SSH_COMMAND` and their kin make a git read
-        # run a command, so a prefix must be on the judge's allowlist of inert names.
+        # run a command, and `KUBECONFIG` does the same for kubectl, so a prefix must be on
+        # the judge's allowlist of inert names.
         for word in words[: len(words) - len(argv)]:
             key = word.split("=", 1)[0]
             if not _ASSIGNMENT.match(word):
                 continue
-            if _GIT_ENV.fullmatch(key) if later else key not in PREFIX_NAMES:
+            if _COMMAND_ENV.fullmatch(key) if later else key not in PREFIX_NAMES:
                 return f"sets `{key}`, which can make {name} run a command"
-        return _git_problem(argv) if name == "git" else _gh_problem(argv)
+        if name == "git":
+            return _git_problem(argv)
+        if name == "gh":
+            return _gh_problem(argv)
     check = WRITERS.get(name)
     if check is None:
         return None
@@ -887,6 +910,13 @@ def _segment_problem(
         words = words[1:]
     if not words or words[0] in _CLOSING_WORDS:
         return None
+    # `HOME` and `PATH` are exported already, so a bare assignment reaches later commands
+    # as an `export` does.
+    if words[0] in _EXPORTERS or all(_ASSIGNMENT.match(w) for w in words):
+        for word in words:
+            key = word.split("=", 1)[0]
+            if _COMMAND_ENV.fullmatch(key):
+                return f"sets `{key}` for later commands, which can make them run a command"
     if words[0] == "case":
         return "runs a case statement, whose branches this hook does not judge"
     if words[0] in ("for", "select"):
@@ -911,6 +941,8 @@ def _segment_problem(
     for j in range(1, len(argv)):
         later = os.path.basename(argv[j])
         code = code or bool(_CODE_RUNNER.fullmatch(later))
+        if _pytest_selector(argv, j):
+            continue
         if later in _LATER_JUDGED:
             # `words`, not `argv`: an assignment ahead of the runner can reach git too.
             found = _command_problem(argv[j:], words, via_xargs, roots, later=True)
@@ -919,6 +951,13 @@ def _segment_problem(
         if found:
             return found
     return None
+
+
+def _pytest_selector(argv: list[str], j: int) -> bool:
+    """True when `argv[j]` is the value of `-k` or `-m` after a word naming pytest."""
+    return argv[j - 1] in ("-k", "-m") and any(
+        os.path.basename(w) in ("pytest", "py.test") for w in argv[: j - 1]
+    )
 
 
 def _string_problem(text: str, roots: tuple[str, ...], depth: int, redirects: bool) -> str | None:

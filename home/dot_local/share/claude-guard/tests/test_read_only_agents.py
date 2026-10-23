@@ -73,6 +73,8 @@ MUTATING_GIT_AND_GH = [
     "git log --outp=src/app.py",
     "git branch --set-up=origin/x",
     "GIT_EXTERNAL_DIFF=/tmp/x.sh git diff",
+    "export GIT_PAGER=/tmp/x.sh; git log",
+    "HOME=/tmp/h; git log",
     "gh pr comment 5 --body hi",
     "gh pr merge 5",
     "gh api -X POST repos/o/r/issues",
@@ -131,6 +133,8 @@ UNKNOWN_RUNNERS = [
     "flock /tmp/psql -c 'true; rm src/a'",
     "GIT_EXTERNAL_DIFF=/tmp/x.sh uv run git diff",
     "env GIT_EXTERNAL_DIFF=/tmp/x.sh uv run git diff",
+    # A `-k` value is a selector only after a word naming pytest.
+    "frobnicate -k docker rm c",
 ]
 # Each writes to a cluster, a container or another host (dotfiles #958). `docker rm` and
 # `ssh ... rm` were denied before, for the `rm` read as a later word; the other rows name
@@ -144,6 +148,9 @@ CLUSTER_CONTAINER_AND_REMOTE_WRITES = [
     # An option kubectl takes a value for, which no table names, swallows the read word.
     "kubectl --cache-dir get delete pod p",
     "kubectl config --log-file view use-context prod",
+    "kubectl --kubeconfig /tmp/kc get pods",
+    "KUBECONFIG=/tmp/kc kubectl get pods",
+    "export KUBECONFIG=/tmp/kc; kubectl get pods",
     "docker rm c",
     "docker compose down",
     "docker exec c python3 x.py",
@@ -200,7 +207,12 @@ READS = [
     "kubectl get -A pods",
     "docker ps",
     "docker exec c ls /",
-    "uv run pytest -k docker",
+    # A pytest selector is not a command, whatever word it holds.
+    "uv run pytest -k docker tests/",
+    "uv run pytest -k 'ssh or docker' tests",
+    "pytest -k 'kubectl and not slow' tests",
+    # A backslash inside double quotes does not close the quoted span.
+    'grep -n "\\"name\\": \\"x\\"" f.json',
 ]
 
 
