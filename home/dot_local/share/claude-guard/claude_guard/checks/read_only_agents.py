@@ -13,7 +13,8 @@ one of them:
     module would have to judge a second time;
   - any git or gh verb outside a read-only set;
   - a kubectl or docker verb outside a read-only set (dotfiles #958), and an ssh or `hl`
-    command whose remote text `readonly.remote_read_only` does not show to be a read. ssh
+    command with a remote stage that `readonly.remote_read_only` does not show to be a read,
+    or, for a kubectl or docker stage, this module's own tables. ssh
     takes `readonly._ssh`'s options, which keep out `-o ProxyCommand=`, on any host; with
     no remote command it reads commands from stdin and is denied. `docker run`, `docker
     exec` and `kubectl exec` are runners, judged by the words they run.
@@ -731,9 +732,26 @@ def _remote_problem(host: str, command: list[str]) -> str | None:
         return f"opens a shell on {host}, which runs whatever reaches its stdin"
     # ssh joins its words with spaces, and the far shell reads the result.
     text = " ".join(command)
-    if remote_read_only(text):
+    parsed = parse(text)
+    if (
+        parsed.ok
+        and not parsed.substitutions
+        and all(_remote_read(s.text) for s in parsed.segments)
+    ):
         return None
     return f"runs `{text}` on {host}, which the read-only classifier does not show to be a read"
+
+
+def _remote_read(stage: str) -> bool:
+    """True when one stage of a remote command is a read: by `readonly`'s tables, or, for
+    kubectl and docker, which those tables do not judge, by this module's. No path counts
+    as scratch over there."""
+    if remote_read_only(stage):
+        return True
+    words = _argv(stage)
+    if not words or os.path.basename(words[0]) not in ("kubectl", "docker"):
+        return False
+    return problem(stage, ()) is None
 
 
 def _ssh(args: list[str]) -> str | None:

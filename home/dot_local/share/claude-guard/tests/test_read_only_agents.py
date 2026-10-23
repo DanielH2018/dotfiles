@@ -148,6 +148,8 @@ WRITES_ELSEWHERE = [
     "ssh -o ProxyCommand='touch a' host ls",
     "echo 'rm x' | ssh host",
     "hl systemctl restart x",
+    "hl kubectl delete pod p",
+    "ssh host 'docker ps; docker rm c1'",
 ]
 READS = [
     "git status --short && git diff HEAD~1 -- src",
@@ -197,6 +199,8 @@ READS = [
     "docker compose ps",
     "ssh -o BatchMode=yes host uptime",
     "hl docker ps",
+    "hl kubectl get pods -n x",
+    "ssh daniel-server 'docker compose logs web | grep -i error'",
 ]
 
 
