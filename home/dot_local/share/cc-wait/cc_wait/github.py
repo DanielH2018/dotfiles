@@ -19,6 +19,11 @@ That exemption cannot tell such an app from GitHub Actions running late: a `CI` 
 the cancellation of the previous head's run keeps its suite empty for longer than `SETTLE_S`. So
 a pass also needs every GitHub Actions workflow run on the commit to have completed, read from
 `actions/runs`, which lists a run as soon as it is queued and before it has any check runs.
+
+The same list fails the wait on a workflow run that completed with a failed conclusion. A run
+that fails before it creates a job, such as one for an invalid workflow file, ends
+`startup_failure` and registers no check run, so the check runs alone would read as passed, or
+as pending forever on a commit with no other checks (issue #953).
 """
 
 import json
@@ -164,16 +169,25 @@ class CiWait:
         runs = data.get("check_runs") if isinstance(data, dict) else None
         if not isinstance(runs, list):
             raise ReadError(f"no check_runs list for {sha[:8]}")
-        if not runs:
-            return Reading("pending", f"{sha[:8]}: no check runs registered yet")
         failed = [r for r in runs if r.get("conclusion") in FAILED_CONCLUSIONS]
         if failed:
             names = ", ".join(sorted(str(r.get("name")) for r in failed)[:3])
             return Reading("failed", f"{sha[:8]}: {len(failed)} failed: {names}")
+        workflow_runs = self._workflow_runs(sha)
+        failed = [
+            r
+            for r in workflow_runs
+            if r.get("status") == "completed" and r.get("conclusion") in FAILED_CONCLUSIONS
+        ]
+        if failed:
+            names = ", ".join(sorted(str(r.get("name")) for r in failed)[:3])
+            return Reading("failed", f"{sha[:8]}: {len(failed)} workflow runs failed: {names}")
+        if not runs:
+            return Reading("pending", f"{sha[:8]}: no check runs registered yet")
         done = [r for r in runs if r.get("status") == "completed"]
         if len(done) < len(runs):
             return Reading("running", f"{sha[:8]}: {len(done)}/{len(runs)} check runs complete")
-        unsettled = self._unsettled_suites(sha) or self._unfinished_workflows(sha)
+        unsettled = self._unsettled_suites(sha) or _unfinished_workflows(workflow_runs)
         if unsettled:
             return Reading("running", f"{sha[:8]}: {len(runs)} check runs complete; {unsettled}")
         cancelled = [r for r in runs if r.get("conclusion") == "cancelled"]
@@ -205,21 +219,26 @@ class CiWait:
         parts += [f"{busy} check suites still running"] if busy else []
         return ", ".join(parts)
 
-    def _unfinished_workflows(self, sha: str) -> str:
-        """Which GitHub Actions workflow runs on `sha` have not completed, or "" when none."""
+    def _workflow_runs(self, sha: str) -> list:
+        """The GitHub Actions workflow runs on `sha`."""
         data = gh_json(
             ["api", f"repos/{self.repo}/actions/runs?head_sha={sha}&per_page=100"], self.run
         )
         workflow_runs = data.get("workflow_runs") if isinstance(data, dict) else None
         if not isinstance(workflow_runs, list):
             raise ReadError(f"no workflow_runs list for {sha[:8]}")
-        # Every status but `completed` holds the pass: queued, pending, waiting, in_progress and
-        # requested alike.
-        unfinished = [r for r in workflow_runs if r.get("status") != "completed"]
-        if not unfinished:
-            return ""
-        names = ", ".join(sorted(str(r.get("name")) for r in unfinished)[:3])
-        return f"{len(unfinished)} workflow runs not completed: {names}"
+        return workflow_runs
+
+
+def _unfinished_workflows(workflow_runs: list) -> str:
+    """Which of `workflow_runs` have not completed, or "" when none."""
+    # Every status but `completed` holds the pass: queued, pending, waiting, in_progress and
+    # requested alike.
+    unfinished = [r for r in workflow_runs if r.get("status") != "completed"]
+    if not unfinished:
+        return ""
+    names = ", ".join(sorted(str(r.get("name")) for r in unfinished)[:3])
+    return f"{len(unfinished)} workflow runs not completed: {names}"
 
 
 class CiSource(ParsedSource):

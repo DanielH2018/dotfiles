@@ -121,6 +121,17 @@ def test_a_workflow_run_queued_with_no_check_runs_holds_a_pass():
     assert ci({RUNS: data, SUITES: old_empty, ACTIONS: finished}).state == "passed"
 
 
+def test_a_workflow_run_that_failed_before_any_check_run_fails_the_wait():
+    """Issue #953: an invalid workflow file ends `startup_failure` and registers no check run."""
+    broken = {
+        "workflow_runs": [{"name": "CI", "status": "completed", "conclusion": "startup_failure"}]
+    }
+    data = runs(("GitGuardian Security Checks", "completed", "success"))
+    reading = ci({RUNS: data, ACTIONS: broken})
+    assert (reading.state, reading.detail) == ("failed", f"{SHA[:8]}: 1 workflow runs failed: CI")
+    assert ci({RUNS: runs(), ACTIONS: broken}).state == "failed"
+
+
 def test_a_short_sha_is_resolved_before_the_workflow_runs_are_read():
     """`actions/runs?head_sha=` returns nothing for an abbreviated SHA, so a queued CI run hid."""
     data = runs(("GitGuardian Security Checks", "completed", "success"))
