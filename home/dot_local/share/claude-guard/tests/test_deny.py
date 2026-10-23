@@ -671,6 +671,8 @@ NAMES_A_SECRET = [
     "python3 x.py server.key",
     # Text that Python would lex as an attribute but that no Python program holds.
     "node -e 'fs.readFileSync(`${d}/server.key`)'",
+    "node - python3 <<'EOF'\nfs.readFileSync(`${d}/server.key`)\nEOF",
+    'bash -c "python3 r.py server.key"',
     "python3 - <<EOF\nopen($D.key)\nEOF",
 ]
 
@@ -721,6 +723,8 @@ NAMES_A_PYTHON_ATTRIBUTE_ONLY = [
     "python3 - <<'EOF'\nclass R:\n    def f(self):\n        return self.env.filters['x']\nEOF",
     "python3 - <<'EOF'\nprint(sorted(rows, key=lambda v: v.key))\nEOF",
     "python3 - <<'EOF'\nprint(pin.key, pin.value)\nEOF",
+    "python3 <<'EOF'\nprint(pin.key, pin.value)\nEOF",
+    "PYTHONPATH=. .venv/bin/python3 - <<'EOF'\nprint(v.key)\nEOF",
     'uv run python -c "print([pin.key, v.pem])"',
     "python3 - <<'EOF'\n# mounted at /var/run/secrets/kubernetes.io/serviceaccount\nprint(1)\nEOF",
 ]
