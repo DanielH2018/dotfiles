@@ -366,13 +366,12 @@ _SSH_OPTIONS = frozenset(
 _SSH_GLOB = re.compile(r"[*?\[\]\\]")
 
 
-def _ssh(argv: list[str], scope: _Scope) -> str | None:
-    """`ssh [opts] [user@]host CMD...` where CMD is itself read-only.
+def _ssh_target(argv: list[str]) -> tuple[str, str] | None:
+    """(host, remote command) for `ssh [opts] [user@]host CMD...`, or None when an option
+    is outside the connection-only set or no command follows the host.
 
     ssh joins its remaining arguments with spaces and hands the result to the remote shell,
-    so re-classifying that string is what the far side runs."""
-    if scope.remote:
-        return None  # a second hop is worth confirming, not recursing into
+    so the joined string is what the far side runs."""
     i, n = 1, len(argv)
     while i < n:
         a = argv[i]
@@ -392,12 +391,22 @@ def _ssh(argv: list[str], scope: _Scope) -> str | None:
             break
     if i >= n:
         return None
-    host = argv[i].split("@", 1)[-1]
-    if host not in TRUSTED_SSH_HOSTS:
-        return None
     remote = " ".join(argv[i + 1 :])
     if not remote.strip():
         return None  # no command means an interactive shell
+    return argv[i].split("@", 1)[-1], remote
+
+
+def _ssh(argv: list[str], scope: _Scope) -> str | None:
+    """`ssh [opts] [user@]host CMD...` where the host is trusted and CMD is itself read-only."""
+    if scope.remote:
+        return None  # a second hop is worth confirming, not recursing into
+    target = _ssh_target(argv)
+    if target is None:
+        return None
+    host, remote = target
+    if host not in TRUSTED_SSH_HOSTS:
+        return None
     if SECRET_PATH_RE.search(remote) or _SSH_GLOB.search(remote):
         return None
     return f"ssh {host}" if _classify(remote, _Scope(scope.home, None, remote=True)) else None
@@ -485,6 +494,23 @@ def stages_read_only(command: str, home: str) -> bool:
     if not home:
         return False
     return _classify(command, _Scope(os.path.realpath(home), None, remote=True)) is not None
+
+
+def ssh_reads(argv: list[str]) -> bool:
+    """True when the ssh command `argv` connects with connection-only options and runs a
+    command that is a read by this module's tables on the far side, whichever host it names.
+
+    The host, secret-path and glob checks `classify` makes are off: they decide whether to
+    approve the command, while `claude_guard.checks.read_only_agents` asks only whether it
+    writes."""
+    target = _ssh_target(argv)
+    return target is not None and _classify(target[1], _Scope("/", None, remote=True)) is not None
+
+
+def docker_reads(argv: list[str]) -> bool:
+    """True when the docker command `argv` is a read by this module's verb table, an `exec`
+    included only when the command it runs in the container is one."""
+    return _docker(argv, _Scope("/", None, remote=True)) is not None
 
 
 def readonly(command: str, cwd: str, env: Mapping[str, str]) -> Verdict | None:

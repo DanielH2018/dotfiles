@@ -132,6 +132,22 @@ UNKNOWN_RUNNERS = [
     "GIT_EXTERNAL_DIFF=/tmp/x.sh uv run git diff",
     "env GIT_EXTERNAL_DIFF=/tmp/x.sh uv run git diff",
 ]
+# Each writes to a cluster, a container or another host (dotfiles #958).
+CLUSTER_CONTAINER_AND_REMOTE_WRITES = [
+    "kubectl apply -f x.yaml",
+    "kubectl -n prod delete pod p",
+    "kubectl config use-context prod",
+    "kubectl exec p -- rm a",
+    "timeout 5 kubectl delete pod p",
+    "docker rm c",
+    "docker exec c rm a",
+    "uv run docker rm c",
+    "dockrun run img",
+    "ssh daniel-server rm -rf x",
+    "ssh host 'echo x > a'",
+    "ssh -o ProxyCommand=x host ls",
+    "ssh host",
+]
 READS = [
     "git status --short && git diff HEAD~1 -- src",
     "git log --oneline -5 | head -3",
@@ -164,13 +180,18 @@ READS = [
     # a quoted argument is shell text only when it opens with a command this module knows.
     "PYTHONPATH=. uv run pytest -k git",
     "PYTHONPATH=. uv run git log -1",
-    "docker run -e FOO=1 img git log",
+    "frobnicate -e FOO=1 img git log",
     "pytest -k 'not ln' tests/",
     "uv run pytest -k 'not ln' tests/",
     "uv run pytest -k '(cp or mv) and not slow'",
     "ug -n 'echo x > y' src",
     "xmllint --xpath '//a[@b > 1]' f.xml",
     "pip index versions 'requests >= 2'",
+    "kubectl -n x get pods -o wide",
+    "kubectl config view",
+    "docker ps",
+    "docker exec c ls /",
+    "uv run pytest -k docker",
 ]
 
 
@@ -201,6 +222,12 @@ def test_a_write_inside_a_compound_or_behind_a_runner_is_denied(env, agent, comm
 @pytest.mark.parametrize("agent", READ_ONLY_AGENTS)
 @pytest.mark.parametrize("command", UNKNOWN_RUNNERS)
 def test_a_write_behind_a_runner_no_table_names_is_denied(env, agent, command):
+    assert decision(command, env, agent) == "deny"
+
+
+@pytest.mark.parametrize("agent", READ_ONLY_AGENTS)
+@pytest.mark.parametrize("command", CLUSTER_CONTAINER_AND_REMOTE_WRITES)
+def test_a_kubectl_docker_or_ssh_write_is_denied(env, agent, command):
     assert decision(command, env, agent) == "deny"
 
 

@@ -3,7 +3,7 @@
 `deep-review`, `root-cause` and `migration-reviewer` describe themselves as read-only and
 still list Bash, which can write a file, commit and push. Each carries `read_only: true` in
 its frontmatter under `~/.claude/agents/`. A subagent's PreToolUse payload names it in
-`agent_type`, its frontmatter `name:`, and `verdict()` denies three kinds of command from
+`agent_type`, its frontmatter `name:`, and `verdict()` denies four kinds of command from
 one of them:
 
   - a write redirect whose target is not `/dev/null`, an fd, or a path under a scratch root
@@ -11,7 +11,12 @@ one of them:
   - a command that changes files (`rm`, `mv`, `cp`, `touch`, `sed -i`, `tee`, `find
     -delete`, …) aimed anywhere but a scratch root, and a shell or `eval` whose text this
     module would have to judge a second time;
-  - any git or gh verb outside a read-only set.
+  - any git or gh verb outside a read-only set;
+  - a `kubectl` verb outside a read-only set, and a `docker` or `ssh` command that
+    `claude_guard.readonly` does not judge a read (dotfiles #958). For ssh that means
+    connection-only options and a remote command its tables judge a read, on any host.
+    `docker exec` is judged by the command it runs in the container. `dockrun`, the
+    docker write tier, is denied outright.
 
 A `$( )` body is judged as a command of its own. So is the command after a reserved word
 (`then`, `do`). A command this module does not know may be a runner, so the arm judges what
@@ -45,7 +50,9 @@ residuals, left for the default-deny arm that replaces this denylist:
     `flock /tmp/l --command='git push'`), or opening with a word the module does not
     know (`watch '(rm a)'`, `frobnicate 'mytool > src/a'`);
   - a command string with no space in it (`flock /tmp/l -c 'git${IFS}push'`);
-  - an assignment a runner carries to git under a name outside `_GIT_ENV`.
+  - an assignment a runner carries to git under a name outside `_GIT_ENV`;
+  - a write by code a runner executes: an interpreter's inline code
+    (`python3 -c "open('x', 'w')"`), a test, or a project script that calls a writer.
 
 A false positive that remains is the shape a must-refuse row shares: `uv run pytest -k
 'git push'` reads exactly as `flock /tmp/l -c 'git push'`, and `-k patch` as a runner
@@ -61,7 +68,9 @@ to check a hypothesis; both bodies say so. A test runner executes the repo's own
 no allowlist entry can judge, so an allowlist would either deny the work these agents exist
 to do or admit `pytest` and with it every write a test can make. The denylist stops the
 direct writes an agent or an injected instruction would reach for first, and git and gh,
-whose writes leave the machine, keep an allowlist.
+whose writes leave the machine, keep an allowlist. kubectl, docker and ssh keep one for the
+same reason: each writes to a cluster, a container or another host, and none of the work
+these agents do needs a write there.
 
 DECIDED: deny, not ask. The agent has declared that it writes nothing, so a false positive
 costs it one rephrased read, and a subagent's ask has no operator watching in a headless
@@ -86,6 +95,7 @@ from claude_guard.checks.remote_guards import (
 )
 from claude_guard.checks.scratch import under_scratch
 from claude_guard.gitargv import invocation
+from claude_guard.readonly import docker_reads, ssh_reads
 from claude_guard.segment import parse
 from claude_guard.tables import scratch_roots
 
@@ -582,6 +592,81 @@ def _chezmoi(args: list[str], roots: tuple[str, ...]) -> str | None:
     return None if verb in _CHEZMOI_READS else f"runs `chezmoi {verb}`"
 
 
+# Options kubectl takes ahead of or after its verb that consume the next word.
+_KUBECTL_VALUE_FLAGS = frozenset(
+    {
+        "-n",
+        "--namespace",
+        "--context",
+        "--cluster",
+        "--user",
+        "--kubeconfig",
+        "-s",
+        "--server",
+        "--as",
+        "--as-group",
+        "--token",
+        "--request-timeout",
+        "-l",
+        "--selector",
+        "-o",
+        "--output",
+        "-c",
+        "--container",
+        "-f",
+        "--filename",
+    }
+)
+_KUBECTL_READS = frozenset(
+    {
+        "get",
+        "describe",
+        "logs",
+        "top",
+        "explain",
+        "events",
+        "api-resources",
+        "api-versions",
+        "version",
+        "help",
+    }
+)
+_KUBECTL_GROUP_READS = {
+    "config": frozenset({"view", "get-contexts", "current-context", "get-clusters", "get-users"}),
+    "auth": frozenset({"can-i", "whoami"}),
+    "rollout": frozenset({"status", "history"}),
+    "plugin": frozenset({"list"}),
+}
+
+
+def _kubectl(args: list[str], roots: tuple[str, ...]) -> str | None:
+    """None for a kubectl verb that only reads the cluster or the kubeconfig. `diff` is not
+    one: it runs the program `KUBECTL_EXTERNAL_DIFF` names. `cluster-info dump` can write a
+    directory, so `cluster-info` passes only bare."""
+    found = _positionals(args, _KUBECTL_VALUE_FLAGS)
+    verb = _first(found)
+    if not verb or verb in _KUBECTL_READS:
+        return None
+    if verb == "cluster-info" and len(found) == 1:
+        return None
+    if len(found) > 1 and found[1] in _KUBECTL_GROUP_READS.get(verb, ()):
+        return None
+    return f"runs `{' '.join(['kubectl', *found[:2]])}`, which is not in the read-only set"
+
+
+def _remote(reads: Callable[[list[str]], bool], name: str):
+    """A check that the command, run in a container or on another host, is a read by
+    `claude_guard.readonly`'s tables. Bare `name` passes, so a test selector such as
+    `pytest -k docker` is not read as a command."""
+
+    def check(args: list[str], roots: tuple[str, ...]) -> str | None:
+        if not args or reads([name, *args]):
+            return None
+        return f"runs `{name}` with a verb or a command that is not in the read-only set"
+
+    return check
+
+
 Check = Callable[[list[str], tuple[str, ...]], str | None]
 
 WRITERS: dict[str, Check] = {
@@ -617,6 +702,10 @@ WRITERS: dict[str, Check] = {
     "patch": lambda a, r: "patches files",
     "ln": lambda a, r: "creates a link, which can carry a later scratch write into the tree",
     "wget": lambda a, r: "downloads to a file",
+    "ssh": _remote(ssh_reads, "ssh"),
+    "docker": _remote(docker_reads, "docker"),
+    "kubectl": _kubectl,
+    "dockrun": lambda a, r: "runs dockrun, which only runs docker commands that change state",
 }
 
 
@@ -696,7 +785,7 @@ _SHELL_OPENERS = (
 )
 # Variables git or gh read that change what it runs or where its config comes from. A
 # git found as a later word checks only these among the segment's assignments, since an
-# unknown runner's own assignments (`PYTHONPATH=. uv run`, `docker run -e FOO=1 img`) do
+# unknown runner's own assignments (`PYTHONPATH=. uv run`, `frobnicate -e FOO=1 git`) do
 # not show they reach git.
 _GIT_ENV = re.compile(
     r"(GIT|GH|SSH|GPG)_\w*|GNUPGHOME|LESS\w*|PAGER|EDITOR|VISUAL|BROWSER|HOME|XDG_\w+|PATH"
