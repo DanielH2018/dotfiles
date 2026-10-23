@@ -86,7 +86,8 @@ def _under_workspace(path):
         return False
     root = _norm(WORKSPACE)
     target = _norm(path)
-    return target == root or target.startswith(root.rstrip("/") + "/")
+    # os.sep, not "/": realpath returns backslashes on Windows. Same on POSIX.
+    return target == root or target.startswith(root.rstrip(os.sep) + os.sep)
 
 
 def _refuse_symlinked(source, what):

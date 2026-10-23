@@ -388,9 +388,21 @@ def test_labels_and_env_keys_are_left_alone():
     assert denied("/v1.43/containers/create", body) is None
 
 
+# The filter only ever runs in a Linux container. These build bind specs from a real
+# temp dir, and a Windows path ("C:\...") breaks the "src:target" split and the
+# leading-"/" test, so they exercise Windows path syntax, not the rule under test.
+NEEDS_POSIX_PATHS = {
+    "test_a_symlink_out_of_the_workspace_is_resolved_not_trusted",
+    "test_a_symlink_resolving_INSIDE_the_workspace_is_still_refused",
+    "test_the_symlink_component_rule_covers_structured_mounts_too",
+}
+
 if __name__ == "__main__":
     ran = 0
     for name, fn in sorted(globals().items()):
+        if name in NEEDS_POSIX_PATHS and os.name == "nt":
+            print(f"SKIP {name}: needs POSIX paths")
+            continue
         if name.startswith("test_") and callable(fn):
             fn()
             ran += 1
