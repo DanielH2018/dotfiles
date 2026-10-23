@@ -956,7 +956,7 @@ def secret_readers(sc: Scan, target: str) -> Verdict | None:
 
 def secret_interpreter(sc: Scan, target: str) -> Verdict | None:
     """:945-949. The denial names the words that matched SECRET_PATHS (#802)."""
-    sc = _without_stored_heredocs(sc)
+    sc = _without_python_attributes(_without_stored_heredocs(sc))
     if bdb_re(sc.scan, rf"{_INTERPRETER_WORD}.*{SECRET_PATHS}"):
         return Verdict(
             "deny",
@@ -965,6 +965,115 @@ def secret_interpreter(sc: Scan, target: str) -> Verdict | None:
             f"specific value needed.{_naming(_secret_words(sc.scan.split()))}",
         )
     return None
+
+
+# DECIDED (dotfiles #957): a Python attribute access such as `self.env.filters`, `v.key)` or
+# `pin.key,` is not a path, so `secret_interpreter` reads it with its dots turned to `_`. It
+# does that only where the text is certainly Python source. Two narrowings that inferred
+# which text was the program from the shell around it each failed open under review: a
+# `python3` word that was a flag's value or another program's argument, a `-c` meant for a
+# script, a heredoc fed to a script as data, a heredoc on fd 3. So the gate is a closed list
+# of invocation shapes, `_python_source`, and every other shape keeps the plain scan, which
+# refuses. A string literal is never masked: `open('server.key')` is how code opens a file
+# (#864's DECIDED marker in tests/test_deny.py). A comment is not masked either.
+#
+# Residual: a `python3` or `.venv` interpreter planted earlier as a shell script runs the
+# "Python" heredoc as shell. That is the scratch-script residual every text rule has; the
+# guard never reads a file it did not see written.
+_PY_FLAG = re.compile(r"-[IuBEsSqOP]+")
+_PY_FLAG_THEN_C = re.compile(r"-[IuBEsSqOP]*c")
+# Commands that may run before the masked Python segment. A segment that could change what
+# the word `python3` runs, such as a function definition, an alias or a PATH assignment, is
+# not one of these, so masking stops there.
+_BEFORE_PYTHON = frozenset({"cd", "pwd", "true", "echo", "set"})
+# Characters that `str.splitlines` or the tokenizer may treat as a line break while
+# `io.StringIO` does not. A program holding one is not masked, so token columns are always
+# read against the lines they were counted in.
+_ODD_BREAKS = frozenset("\r\x0b\x0c\x1c\x1d\x1e\x85  ")
+
+
+def _python_source(words: list[str], heredocs: tuple[str, ...]) -> str | None:
+    """The Python source of a segment whose words are one of the closed shapes, or None.
+
+    The shapes are `python…` or `uv run python…`, then only value-free flags, then either
+    `-c PROGRAM` or a program read from stdin (`-` or nothing) that is the segment's one
+    heredoc on fd 0. Any leader, assignment, path-spelled interpreter, other flag, script,
+    module, `<` redirect or fd-numbered heredoc returns None."""
+    if words[:2] == ["uv", "run"]:
+        words = words[2:]
+    if not words or not re.fullmatch(r"python[0-9.]*", words[0]):
+        return None
+    i = 1
+    while i < len(words) and _PY_FLAG.fullmatch(words[i]):
+        i += 1
+    rest = words[i:]
+    if rest and _PY_FLAG_THEN_C.fullmatch(rest[0]):
+        return rest[1] if len(rest) > 1 else None
+    if rest and rest[0] == "-":
+        rest = rest[1:]
+    if not rest or rest[0] not in ("<<", "<<-") or len(heredocs) != 1:
+        return None
+    if sum("<" in w for w in words) != 1:
+        return None
+    return heredocs[0]
+
+
+def _masked_attributes(program: str) -> str | None:
+    """`program` with each attribute access's dot turned to `_` (`v.key` reads `v_key`), or
+    None when the program is not safe to mask. A dot is masked only when it sits between a
+    name, `)` or `]` and the attribute's name with no space on either side. Strings and
+    comments are left as written. A program holding `$` or a backtick may be rewritten by
+    the shell before Python sees it, so it is never masked."""
+    if "$" in program or "`" in program or _ODD_BREAKS & set(program):
+        return None
+    lines = io.StringIO(program).readlines()
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(program).readline))
+    except tokenize.TokenError, SyntaxError:
+        return None
+    starts = [0]
+    for line in lines:
+        starts.append(starts[-1] + len(line))
+    chars = list(program)
+    for prev, dot, name in zip(tokens, tokens[1:], tokens[2:], strict=False):
+        if (
+            dot.type == tokenize.OP
+            and dot.string == "."
+            and name.type == tokenize.NAME
+            and (prev.type == tokenize.NAME or prev.string in (")", "]"))
+            and prev.end == dot.start
+            and dot.end == name.start
+        ):
+            at = starts[dot.start[0] - 1] + dot.start[1]
+            if chars[at] != ".":
+                return None
+            chars[at] = "_"
+    return "".join(chars)
+
+
+def _without_python_attributes(sc: Scan) -> Scan:
+    """`sc` rebuilt with the attribute accesses of certain Python source masked
+    (`_masked_attributes`). Segments are read in order: a `_BEFORE_PYTHON` command is
+    passed over, a closed-shape Python segment (`_python_source`) is masked, and anything
+    else stops the masking for the rest of the command. A command with a substitution is
+    left as it is, and so is a program whose text the command holds other than once."""
+    p = parse(sc.command)
+    if not p.ok or p.substitutions:
+        return sc
+    command = sc.command
+    for seg in p.segments:
+        words = _words(seg.text)
+        if not words:
+            break
+        source = _python_source(words, seg.heredocs)
+        if source is None:
+            if words[0] in _BEFORE_PYTHON:
+                continue
+            break
+        masked = _masked_attributes(source)
+        if masked is not None and command.count(source) == 1:
+            command = command.replace(source, masked)
+    return sc if command == sc.command else build_scan(command)
 
 
 # An interpreter word ends where a command word does. A word followed by `/` or `.` is

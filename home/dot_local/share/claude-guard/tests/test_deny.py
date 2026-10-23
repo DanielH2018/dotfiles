@@ -706,6 +706,53 @@ def test_naming_a_secret_is_still_refused_wherever_the_text_sits():
     assert kinds(NAMES_A_SECRET) == ["deny"] * len(NAMES_A_SECRET)
 
 
+# dotfiles #957. An attribute access in certain Python source names no file, so it reads as
+# `v_key` (the DECIDED marker above `_python_source` in deny.py).
+PYTHON_ATTRIBUTE_ACCESS = [
+    "python3 - <<'EOF'\nprint(self.env.filters)\nEOF",
+    "python3 <<'EOF'\nfor v in rows:\n    print(v.key)\nEOF",
+    "uv run python - <<'EOF'\nrows.sort(key=lambda pin: (pin.key, pin.ver))\nEOF",
+    "cd scripts && python3 -c 'print(v.key)'",
+    "python3 -Ic 'print(row.key)'",
+    "python3 -u - <<'EOF' 2>&1\nprint(load().env.get('x'), rows[0].env)\nEOF",
+    "python3 -c 'print(v.key)' | head -5",
+]
+# Each row was refused before #957 and must stay refused: the text is a string literal, the
+# program is not certainly Python source, the shell can rewrite it, or a word outside the
+# program names the file. The middle rows are the shapes earlier narrowings let through.
+STILL_READS_A_SECRET = [
+    "python3 - <<'EOF'\nprint(open('server.key').read())\nEOF",
+    "python3 -c \"open('app.env')\"",
+    "python3 - <<'EOF'\ntok = '/var/run/secrets/kubernetes.io/serviceaccount/token'\nEOF",
+    "python3 - <<'EOF'\n# reads server.key\nEOF",
+    "bash -s python3 - <<'EOF'\nxargs<server.key\nEOF",
+    "env -u python3 -S'bash -s' <<'EOF'\nsort<server.key\nEOF",
+    "./python3 - <<'EOF'\nsort<server.key\nEOF",
+    "python3 r.py -c server.key",
+    "python3 -m tool -c id.key",
+    "python3 -m pytest -c app.env",
+    "python3 r.py <<'EOF'\nserver.key\nEOF",
+    "python3 -mtool <<'EOF'\nserver.key\nEOF",
+    "python3 - 3<<'EOF'\nserver.key\nEOF",
+    "python3 -c 'print(v.key)' server.key",
+    "python3 - <<EOF\nx = $(sort<server.key)\nEOF",
+    'X="open(\'a/server"; python3 -c "print($X.key)"',
+    "python3() { bash; }; python3 - <<'EOF'\nsort<server.key\nEOF",
+    "PATH=/tmp/x:$PATH python3 - <<'EOF'\nsort<server.key\nEOF",
+    "export PATH=/tmp/x; python3 - <<'EOF'\nsort<server.key\nEOF",
+    "alias python3=bash; python3 - <<'EOF'\nsort<server.key\nEOF",
+    "python3 - <<'EOF'\n#\x0c\nprint(open('/a/pin.key').read())\nxxxxxxxxxxxxxxxx().key\nEOF",
+]
+
+
+def test_a_python_attribute_access_is_not_a_secret_path():
+    assert kinds(PYTHON_ATTRIBUTE_ACCESS) == ["none"] * len(PYTHON_ATTRIBUTE_ACCESS)
+
+
+def test_a_secret_named_outside_certain_python_attributes_is_still_refused():
+    assert kinds(STILL_READS_A_SECRET) == ["deny"] * len(STILL_READS_A_SECRET)
+
+
 # A heredoc that is only stored, by a command that runs nothing, reads no secret: the
 # sampled denials were a script written for a later run, a commit message and README text
 # that named `docker/.env`.
