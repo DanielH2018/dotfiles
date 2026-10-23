@@ -150,6 +150,18 @@ WRITES_ELSEWHERE = [
     "hl systemctl restart x",
     "hl kubectl delete pod p",
     "ssh host 'docker ps; docker rm c1'",
+    # A quoted `>` reaches the far shell as a redirect.
+    "ssh host 'cat x' '>' /etc/y",
+    "hl 'cat x' '>' y",
+    # A container's `/tmp` is not this host's scratch root.
+    "docker run -v /repo:/tmp/w alpine rm -rf /tmp/w/src",
+    "docker exec c touch /tmp/x",
+    "kubectl exec p -- rm /tmp/x",
+    "docker run --entrypoint=rm alpine -rf /w/src",
+    "docker run -d --name x nginx",
+    "docker run -v /repo:/src some/formatter",
+    "docker run --mount type=bind,source=/repo,target=/w img",
+    "ssh host docker run -d nginx",
 ]
 READS = [
     "git status --short && git diff HEAD~1 -- src",
@@ -200,6 +212,8 @@ READS = [
     "ssh -o BatchMode=yes host uptime",
     "hl docker ps",
     "hl kubectl get pods -n x",
+    "grep -c '>' notes.md",
+    "docker run --rm -v /repo:/src:ro -v cache:/root/.cache img ls /src",
     "ssh daniel-server 'docker compose logs web | grep -i error'",
 ]
 

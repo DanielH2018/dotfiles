@@ -17,7 +17,9 @@ one of them:
     or, for a kubectl or docker stage, this module's own tables. ssh
     takes `readonly._ssh`'s options, which keep out `-o ProxyCommand=`, on any host; with
     no remote command it reads commands from stdin and is denied. `docker run`, `docker
-    exec` and `kubectl exec` are runners, judged by the words they run.
+    exec` and `kubectl exec` are runners, judged by the words they run with no path
+    counted as scratch, since a container's `/tmp` is not this host's. `docker run` is
+    also denied for `-d` and for a writable bind of a path outside the scratch roots.
 
 A `$( )` body is judged as a command of its own. So is the command after a reserved word
 (`then`, `do`). A command this module does not know may be a runner, so the arm judges what
@@ -54,12 +56,16 @@ residuals, left for the default-deny arm that replaces this denylist:
   - an assignment a runner carries to git under a name outside `_GIT_ENV`;
   - a write by an interpreter (`python3 -c "open('x','w')"`), a writer `WRITERS` does not
     list (`gzip`), a project script or test, or a scratch script the agent wrote and runs
-    (dotfiles #969).
+    (dotfiles #969);
+  - a container's own command, from its image or a project's compose file, and a compose
+    service's own volumes (`docker compose run web`).
 
 A false positive that remains is the shape a must-refuse row shares: `uv run pytest -k
 'git push'` reads exactly as `flock /tmp/l -c 'git push'`, and `-k patch` as a runner
 handing `patch` its argv. `-k ssh tests/` reads as an ssh to host `tests/` with no remote
-command, and `-k docker` as `docker` with an operand for its verb.
+command, `-k docker` as `docker` with an operand for its verb, and `make hl` as `hl`
+opening a remote shell. A container write into a scratch bind (`docker run -v
+/tmp/rc:/w img touch /w/x`) is denied, since the path inside cannot be traced to it.
 
 The server repo has the same arm for its own agents (server #4617), reading only that
 checkout's `.claude/agents/`. This one runs from the user-level PreToolUse hook, so it
@@ -240,27 +246,38 @@ _SHELLS = frozenset(
 )
 
 
-def _argv(text: str) -> list[str] | None:
-    """The segment's words with redirects and their targets dropped, or None when it does
-    not split."""
+def _tokens(text: str) -> list[str] | None:
     try:
         lex = shlex.shlex(text, posix=True, punctuation_chars=True)
         lex.whitespace_split = True
-        tokens = list(lex)
+        return list(lex)
     except ValueError:
+        return None
+
+
+def _argv(text: str) -> list[str] | None:
+    """The segment's words with redirects and their targets dropped, or None when it does
+    not split.
+
+    A quoted `'>'` is a word, not a redirect: ssh hands it to the far shell as one."""
+    tokens = _tokens(text)
+    # The mask turns a quoted `>` into `_` and keeps the token boundaries, so its tokens
+    # line up with `tokens` and show which operators the shell itself reads.
+    shapes = _tokens(_mask_quotes(text))
+    if tokens is None or shapes is None or len(tokens) != len(shapes):
         return None
     words: list[str] = []
     skip = False
-    for tok in tokens:
+    for tok, shape in zip(tokens, shapes, strict=True):
         if skip:
             skip = False
             continue
-        if tok and all(c in "<>&|" for c in tok) and ("<" in tok or ">" in tok):
+        if shape and all(c in "<>&|" for c in shape) and ("<" in shape or ">" in shape):
             if words and words[-1].isdigit():
                 words.pop()
             skip = True
             continue
-        if tok in ("(", ")", "{", "}", "!"):
+        if shape in ("(", ")", "{", "}", "!"):
             continue
         words.append(tok)
     return words
@@ -697,15 +714,70 @@ def _kubectl(args: list[str]) -> str | None:
     return f"runs `{' '.join(['kubectl', *named])}`, which is not in the read-only set"
 
 
-def _docker(args: list[str]) -> str | None:
+# `docker run`'s options that take a value, so the image is the first word after them.
+_DOCKER_RUN_VALUE_FLAGS = frozenset(
+    {"-e", "--env", "--env-file", "-v", "--volume", "--mount", "-p", "--publish", "-w"}
+    | {"--workdir", "-u", "--user", "--name", "--network", "--net", "-l", "--label"}
+    | {"--label-file", "--entrypoint", "-h", "--hostname", "--platform", "--cpus", "-m"}
+    | {"--memory", "--restart", "--add-host", "--device", "--cap-add", "--cap-drop"}
+    | {"--security-opt", "--ulimit", "--log-driver", "--log-opt", "--dns", "--tmpfs"}
+    | {"--pull", "--gpus", "--shm-size", "--ipc", "--pid", "--cidfile", "--runtime"}
+    | {"--stop-signal", "--network-alias", "--uts", "--userns", "--cgroupns"}
+)
+
+
+def _bind_problem(mount: str, roots: tuple[str, ...]) -> str | None:
+    """Why a `-v SRC:DST[:OPTS]` or `--mount k=v,...` value lets a container write the host:
+    a writable bind whose source is not scratch. A named or anonymous volume is not a bind."""
+    if "=" in mount.split(",", 1)[0]:
+        fields = dict(f.partition("=")[::2] for f in mount.split(","))
+        if fields.get("type", "volume") != "bind" or {"readonly", "ro"} & set(fields):
+            return None
+        source = fields.get("source") or fields.get("src", "")
+    else:
+        parts = mount.split(":")
+        source = parts[0]
+        if len(parts) < 2 or not source.startswith(("/", ".", "~", "$")):
+            return None
+        if len(parts) > 2 and "ro" in parts[2].split(","):
+            return None
+    return None if _scratch(source, roots) else f"mounts `{source}` writable in a container"
+
+
+def _docker_run(args: list[str], roots: tuple[str, ...]) -> str | None:
+    """Why `docker run ARGS` (or `compose run`) changes more than the command it runs, which
+    the caller judges as later words: a detached container outlives the call, and a writable
+    bind of a path outside the scratch roots carries a container write into the tree."""
+    i = 0
+    while i < len(args) and args[i].startswith("-"):
+        a = args[i]
+        key, eq, value = a.partition("=")
+        if key in ("-d", "--detach") or (
+            not a.startswith("--") and "d" in a[1:] and key not in _DOCKER_RUN_VALUE_FLAGS
+        ):
+            return "starts a detached container"
+        if key in _DOCKER_RUN_VALUE_FLAGS and not eq:
+            value = args[i + 1] if i + 1 < len(args) else ""
+            i += 1
+        if key in ("-v", "--volume", "--mount"):
+            found = _bind_problem(value, roots)
+            if found:
+                return found
+        i += 1
+    return None
+
+
+def _docker(args: list[str], roots: tuple[str, ...]) -> str | None:
     verbs = _positionals(args, _DOCKER_FLAGS)[:2]
     verb = _first(verbs)
     sub = verbs[1] if len(verbs) > 1 else ""
-    if verb in ("", "run", "exec", "inspect") or verb in _DOCKER_READ:
+    if "run" in (verb, sub) and (verb == "run" or verb in ("container", "compose")):
+        return _docker_run(args[args.index("run") + 1 :], roots)
+    if verb in ("", "exec", "inspect") or verb in _DOCKER_READ:
         return None
     if verb in _DOCKER_GROUPS and sub in _DOCKER_GROUP_READ | {"inspect"}:
         return None
-    if verb in ("container", "compose") and sub in ("run", "exec"):
+    if verb in ("container", "compose") and sub == "exec":
         return None
     if verb == "compose" and sub in _COMPOSE_READ:
         return None
@@ -775,12 +847,13 @@ def _ssh(args: list[str]) -> str | None:
     return _remote_problem(args[i].split("@", 1)[-1], args[i + 1 :])
 
 
-# Each takes the words after the command name. `hl` runs its words on the homelab server.
-ELSEWHERE: dict[str, Callable[[list[str]], str | None]] = {
-    "kubectl": _kubectl,
+# Each takes the words after the command name and the scratch roots. `hl` runs its words
+# on the homelab server.
+ELSEWHERE: dict[str, Check] = {
+    "kubectl": lambda a, r: _kubectl(a),
     "docker": _docker,
-    "ssh": _ssh,
-    "hl": lambda a: _remote_problem("the homelab server", a),
+    "ssh": lambda a, r: _ssh(a),
+    "hl": lambda a, r: _remote_problem("the homelab server", a),
 }
 
 
@@ -896,7 +969,7 @@ def _command_problem(
     if via_xargs:
         return f"runs `{name}` on arguments xargs supplies, which this hook cannot see"
     if name in ELSEWHERE:
-        return ELSEWHERE[name](argv[1:])
+        return ELSEWHERE[name](argv[1:], roots)
     return WRITERS[name](argv[1:], roots)
 
 
@@ -935,16 +1008,25 @@ def _segment_problem(
     # An unknown command may be a runner, and `docker run` and `kubectl exec` are. Which
     # runner it is does not matter: judge each later word that names a command this module
     # judges, and each argument that could be a command string, without its redirects once
-    # a code runner has been named.
+    # a code runner has been named. A container's `/tmp` is not this host's, so after
+    # `docker run` or `kubectl exec` no path is scratch. `--entrypoint=rm` names a command
+    # inside an option word.
     code = not redirects or bool(_CODE_RUNNER.fullmatch(name))
+    inside = () if _runs_argv(argv) else roots
     for j in range(1, len(argv)):
-        later = os.path.basename(argv[j])
+        word = argv[j]
+        if word.startswith("--") and "=" in word:
+            word = word.split("=", 1)[1]
+        later = os.path.basename(word)
         code = code or bool(_CODE_RUNNER.fullmatch(later))
         if later in _LATER_JUDGED:
             # `words`, not `argv`: an assignment ahead of the runner can reach git too.
-            found = _command_problem(argv[j:], words, via_xargs, roots, later=True)
-        elif any(c.isspace() for c in argv[j]):
-            found = _string_problem(argv[j], roots, depth, redirects=not code)
+            rest = [word, *argv[j + 1 :]]
+            found = _command_problem(rest, words, via_xargs, inside, later=True)
+            if _runs_argv(rest):
+                inside = ()
+        elif any(c.isspace() for c in word):
+            found = _string_problem(word, inside, depth, redirects=not code)
         if found:
             return found
     return None
