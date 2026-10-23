@@ -47,6 +47,7 @@ denials name the words that matched, with the exclude arguments for a recursive 
 (dotfiles #802).
 """
 
+import ast
 import fnmatch
 import io
 import itertools
@@ -953,9 +954,71 @@ def secret_readers(sc: Scan, target: str) -> Verdict | None:
     return None
 
 
+_PYTHON_COMMAND = re.compile(r"python[0-9.]*")
+
+
+def _python_sources(seg: Segment) -> list[str]:
+    """The program texts `seg` hands a Python interpreter: each `-c` argument, and its heredoc
+    bodies when the interpreter reads its program from stdin (`python3 -`, or no script
+    word). A heredoc fed to `python3 x.py` is data for x.py, which may open it as a path."""
+    try:
+        words = shlex.split(seg.text)
+    except ValueError:
+        return []
+    at = next(
+        (i for i, w in enumerate(words) if _PYTHON_COMMAND.fullmatch(w.rsplit("/", 1)[-1])), None
+    )
+    if at is None:
+        return []
+    args = words[at + 1 :]
+    sources = [args[j + 1] for j, a in enumerate(args[:-1]) if a == "-c"]
+    script = next((a for a in args if a == "-" or not a.startswith("-")), "-")
+    if script == "-":
+        sources += seg.heredocs
+    return sources
+
+
+def _without_attribute_names(program: str) -> str | None:
+    """`program` with the name of each attribute access blanked, or None when it does not
+    parse as Python.
+
+    `self.env.filters`, `v.key)` and `pin.key,` match SECRET_PATHS as text, yet name no
+    file (#957). Only the attribute names go: a path in a string literal, `open('app.env')`,
+    stays in the text, as does a comment. The parse is the gate, because a shell line such
+    as `cat server.key` tokenizes as Python but does not parse."""
+    try:
+        tree = ast.parse(program)
+    except SyntaxError, ValueError, RecursionError, MemoryError:
+        return None
+    lines = [line.encode() for line in program.splitlines(keepends=True)]
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.end_lineno is not None:
+            # end_col_offset counts UTF-8 bytes, and the attribute name ends the node.
+            row, end = node.end_lineno - 1, node.end_col_offset or 0
+            width = len(node.attr.encode())
+            lines[row] = lines[row][: end - width] + b" " * width + lines[row][end:]
+    return b"".join(lines).decode(errors="replace")
+
+
+def _python_code_scan(sc: Scan) -> Scan:
+    """`sc` rebuilt with attribute names blanked in each program it runs under Python."""
+    p = parse(sc.command)
+    if not p.ok:
+        return sc
+    command = sc.command
+    for program in (src for seg in p.segments for src in _python_sources(seg)):
+        blanked = _without_attribute_names(program)
+        if blanked is not None and blanked != program:
+            # A `-c` argument with escapes is not in the command verbatim, so nothing is
+            # replaced and the program is scanned unchanged.
+            command = command.replace(program, blanked, 1)
+    return sc if command == sc.command else build_scan(command)
+
+
 def secret_interpreter(sc: Scan, target: str) -> Verdict | None:
-    """:945-949. The denial names the words that matched SECRET_PATHS (#802)."""
-    sc = _without_stored_heredocs(sc)
+    """:945-949. The denial names the words that matched SECRET_PATHS (#802). An attribute
+    access in a program Python runs is not a path (#957), so its name is blanked first."""
+    sc = _python_code_scan(_without_stored_heredocs(sc))
     if bdb_re(sc.scan, rf"{_INTERPRETER_WORD}.*{SECRET_PATHS}"):
         return Verdict(
             "deny",

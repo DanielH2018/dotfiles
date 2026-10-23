@@ -592,6 +592,37 @@ def test_reading_an_ordinary_path_is_allowed():
     assert "deny" not in kinds(SECRET_ALLOW)
 
 
+# dotfiles #957. An attribute access in a program Python runs names no file, although
+# `.env` and `.key` match SECRET_PATHS as text.
+PYTHON_ATTRIBUTE_ACCESS = [
+    "python3 - <<'EOF'\nprint(self.env.filters)\nEOF",
+    "python3 - <<'EOF'\nfor v in pins:\n    print(v.key)\nEOF",
+    "uv run python - <<'EOF'\nx = f(pin.key, 1)\nEOF",
+    'python3 -c "print(v.key)"',
+    'python3 -c "print(self.env.filters)"',
+]
+# The same words where they may name a file: a string literal or comment, a shell line, a
+# script's argument or stdin, and a body that does not parse as Python.
+NAMES_A_KEY_FILE = [
+    "python3 -c \"print(open('server.key').read())\"",
+    "python3 - <<'EOF'\nprint(v.key)  # see server.key\nEOF",
+    "python3 - <<'EOF'\nprint(open(f'{d}/pin.key').read())\nEOF",
+    "python3 x.py pin.key",
+    "python3 x.py <<'EOF'\npin.key\nEOF",
+    "bash <<'EOF'\npython3 x.py pin.key\nEOF",
+    "python3 - <<'EOF'\nprint(v.key\nEOF",
+    'node -e "console.log(v.key)"',
+]
+
+
+def test_a_python_attribute_access_is_not_a_secret_path():
+    assert kinds(PYTHON_ATTRIBUTE_ACCESS) == ["none"] * len(PYTHON_ATTRIBUTE_ACCESS)
+
+
+def test_a_key_file_named_outside_an_attribute_is_still_denied():
+    assert kinds(NAMES_A_KEY_FILE) == ["deny"] * len(NAMES_A_KEY_FILE)
+
+
 # dotfiles #861. The sampled shapes the secret-read rules refused although the text only named
 # the process environment: python/uv heredocs, `cat >` heredocs that write a test, grep over
 # source, and `python -c`. The accessor words `environ`, `environment` and `environb` are
