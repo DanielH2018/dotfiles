@@ -1484,6 +1484,16 @@ def test_the_real_template_allows_global_config_reads_and_checksums(real, comman
     assert allowed(command, real)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="dotfiles #984: the deny floor `Bash(* | sh*)` also matches `| sha256sum`",
+)
+@pytest.mark.parametrize("command", ["kubectl get pods -o yaml | sha256sum", "cat f | shasum"])
+def test_the_real_template_allows_a_checksum_after_a_pipe(real, command):
+    # Strict, so the run fails once #984 narrows the floor and this marker must go.
+    assert allowed(command, real)
+
+
 @pytest.mark.parametrize(
     "command",
     ["git config --global user.name x", "git config --global --unset a.b"],
@@ -1511,11 +1521,12 @@ def test_a_glob_rm_after_a_link_maker_in_the_same_chain_is_not_approved(real):
     "command",
     [
         "echo CLAUDE_JOB_DIR; rm -rf $CLAUDE_JOB_DIR/tmp",
-        "CLAUDE_JOB_DIR=/home/testuser; rm -rf $CLAUDE_JOB_DIR/.ssh",
-        "export CLAUDE_JOB_DIR=/home/testuser; rm -rf $CLAUDE_JOB_DIR/x",
-        "for CLAUDE_JOB_DIR in /home/testuser; do rm -rf $CLAUDE_JOB_DIR/x; done",
+        "grep -c CLAUDE_JOB_DIR /tmp/f; rm -rf ${CLAUDE_JOB_DIR}/tmp",
     ],
 )
 def test_a_command_that_names_the_job_dir_bare_gets_no_expansion(real, command):
-    # Anything that can set the shell's value makes the hook's value stand for nothing.
-    assert not judge(command, real, ROOTS, CWD, "", "/home/testuser/.claude/jobs/abc").allow
+    # Anything that can set the shell's value makes the hook's value stand for nothing. An
+    # assignment, `export` or `for` already refuses in its own segment, so these use a first
+    # segment the allow list passes and assert the refusal is the rm's own ask.
+    d = judge(command, real, ROOTS, CWD, "", "/home/testuser/.claude/jobs/abc")
+    assert d.rule == "segment:1:ask"
