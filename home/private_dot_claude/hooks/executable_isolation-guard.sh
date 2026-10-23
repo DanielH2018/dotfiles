@@ -45,8 +45,9 @@ FILE=$(hook_field '.tool_input.file_path // empty')
 [ -n "$FILE" ] || exit 0
 
 # Already isolated: a session inside .claude/worktrees/ is already isolated (CLAUDE.md),
-# regardless of what triggered it.
-case "$FILE" in
+# regardless of what triggered it. Claude Code on Windows passes C:\Users\... with
+# backslashes, which the slash patterns below would never match.
+case "${FILE//\\//}" in
   */.claude/worktrees/*|*/.claude/worktrees) exit 0 ;;
 esac
 

@@ -95,6 +95,12 @@ def main():
                 "job editing a path already under .claude/worktrees/ -- isolated",
             ),
             (
+                wt_file.replace("/", "\\"),
+                True,
+                None,
+                "job editing a worktree path written with Windows backslashes -- isolated",
+            ),
+            (
                 shared_file,
                 False,
                 None,
