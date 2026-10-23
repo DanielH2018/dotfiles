@@ -66,6 +66,12 @@
       "Bash(xxd:*)",
       "Bash(shasum:*)",
       "Bash(md5:*)",
+      "Bash(md5sum:*)",
+      "Bash(sha1sum:*)",
+      "Bash(sha256sum:*)",
+      "Bash(sha512sum:*)",
+      "Bash(b2sum:*)",
+      "Bash(cksum:*)",
       "Bash(df:*)",
       {{/* lsof lists open files and sockets and has no option that writes or runs a
            command (it is in claude_guard.tables.READONLY_BASE for the same reason).
@@ -680,7 +686,10 @@
       "Bash(rm -rf ~/)",
       "Bash(rm -rf ~ *)",
       "Bash(rm -rf ~/ *)",
-      "Bash(git config --global:*)",
+      {{/* No `git config --global:*` here: Claude Code applies a deny before any hook, so it
+           also refused `git config --global --get …`, and a background session cannot answer
+           the prompt for it (dotfiles #965). claude_guard's machine-config-write (deny.py)
+           denies every --global or --system form that is not a read. */}}
       "Bash(git config user.*)",
       {{/* Force-push. `--force` and `-f` are denied in any position, on any branch.
            `--force-with-lease` is allowed on a feature branch and denied for main/master.

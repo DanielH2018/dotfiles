@@ -57,12 +57,65 @@ def _ls_remote(args: Sequence[str]) -> bool:
     return True
 
 
+# `git config` reads only in one of these modes. Without one, `<key> <value>` writes.
+_CONFIG_READ_MODES = frozenset(
+    {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "-l", "--list"}
+)
+# Options that only pick a scope or shape the output. Matched exactly, because git accepts
+# any unique abbreviation of a long option and `--ed` is `--edit`, which runs an editor.
+# `-f`/`--file` and `--blob` are absent: they read any file, a secret among them.
+_CONFIG_READ_FLAGS = frozenset(
+    {
+        "--global",
+        "--system",
+        "--local",
+        "--worktree",
+        "--show-origin",
+        "--show-scope",
+        "--name-only",
+        "--show-names",
+        "-z",
+        "--null",
+        "--includes",
+        "--no-includes",
+        "--bool",
+        "--int",
+        "--bool-or-int",
+        "--path",
+        "--expiry-date",
+        "--no-type",
+        "--all",
+        "--regexp",
+        "--fixed-value",
+    }
+)
+_CONFIG_READ_VALUED = ("--type=", "--default=", "--value=", "--url=")
+
+
+def config_read(args: Sequence[str]) -> bool:
+    """True when `git config <args>` only reads.
+
+    A read is the `get` or `list` subcommand, or the legacy form with a `--get…` or
+    `--list` mode. Every option must be one this module names, so `--unset`, `--edit`,
+    `--file` and an abbreviation of any of them refuse.
+    """
+    words = [a for a in args if not a.startswith("-")]
+    modes = [a for a in args if a in _CONFIG_READ_MODES]
+    opts = [a for a in args if a.startswith("-") and a not in _CONFIG_READ_MODES]
+    if not all(a in _CONFIG_READ_FLAGS or a.startswith(_CONFIG_READ_VALUED) for a in opts):
+        return False
+    if words and words[0] in ("get", "list"):
+        return not modes
+    return bool(modes)
+
+
 # merge-base has no option that writes or runs a program.
 READ_SUBCOMMANDS: dict[str, Callable[[Sequence[str]], bool]] = {
     "range-diff": _no_output,
     "symbolic-ref": _symbolic_ref,
     "ls-remote": _ls_remote,
     "merge-base": lambda _args: True,
+    "config": config_read,
 }
 
 

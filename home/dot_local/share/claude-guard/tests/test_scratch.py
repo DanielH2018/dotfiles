@@ -175,3 +175,96 @@ def test_allow_needs_a_confined_operand_not_just_clean_options():
     # The single allow site sits behind "we saw a confined operand" (allow-safe-rm.sh:174).
     assert rm_confined("rm -rf", ROOTS) is False
     assert rm_confined("rm -rf --", ROOTS) is False
+
+
+# --- a glob in the final component (dotfiles #956) -----------------------------------------
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rm -f /tmp/x/fail*.txt",
+        "rm -f /tmp/x/a?b /tmp/x/f[ab]",
+        "rm -rf '/tmp/x y'/*",
+    ],
+)
+def test_a_glob_in_the_last_component_below_a_root_is_confined(command):
+    assert rm_confined(command, ROOTS) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # The parent is the root itself, or outside every root.
+        "rm -rf /tmp/*.txt",
+        "rm -rf /etc/x/*",
+        "rm -rf /tmp/../etc/*",
+        # A glob before the last slash expands into directories never named.
+        "rm -rf /tmp/*/x",
+        "rm -rf /tmp/x/*/",
+        # A pattern that could match `.` or `..`.
+        "rm -rf /tmp/x/.*",
+        "rm -rf /tmp/x/[.]*",
+        # Brace expansion and extglob are still refused.
+        "rm -rf /tmp/x/{a,b}",
+        "rm -rf /tmp/x/!(a)",
+        # The command word itself may not be a pattern.
+        "r? -rf /tmp/x/a",
+    ],
+)
+def test_a_glob_that_can_reach_outside_its_directory_is_refused(command):
+    assert rm_confined(command, ROOTS) is False
+
+
+def test_a_glob_under_a_symlinked_parent_is_judged_where_the_link_points(scratch_dir):
+    os.symlink("/etc", f"{scratch_dir}/out")
+    os.mkdir(f"{scratch_dir}/in")
+    assert rm_confined(f"rm -f {scratch_dir}/out/*", ROOTS) is False
+    assert rm_confined(f"rm -f {scratch_dir}/in/*", ROOTS) is True
+
+
+# --- $CLAUDE_JOB_DIR (dotfiles #956) --------------------------------------------------------
+
+JOB = "/home/testuser/.claude/jobs/abc123"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'rm -rf "$CLAUDE_JOB_DIR/tmp/x"',
+        "rm -rf $CLAUDE_JOB_DIR/tmp/x",
+        "rm -rf ${CLAUDE_JOB_DIR}/tmp",
+        'rm -f "${CLAUDE_JOB_DIR}"/tmp/fail*.txt',
+    ],
+)
+def test_the_job_dir_variable_expands_to_the_hooks_value(command):
+    assert rm_confined(command, ROOTS, JOB) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Single quotes keep it literal: a relative path in the shell's cwd.
+        "rm -rf '$CLAUDE_JOB_DIR'/tmp",
+        # Another name, or a modifier that can change the value.
+        "rm -rf $CLAUDE_JOB_DIRX/tmp",
+        "rm -rf ${CLAUDE_JOB_DIR:-/}tmp",
+        "rm -rf ${CLAUDE_JOB_DIR%/*}/x",
+        "rm -rf $HOME/x",
+    ],
+)
+def test_only_the_bare_job_dir_reference_expands(command):
+    assert rm_confined(command, ROOTS, JOB) is False
+
+
+@pytest.mark.parametrize(
+    "job_dir",
+    [
+        "",  # unset: the shell expands it to nothing
+        "/home/testuser/src",  # set, but outside every root
+        "/tmp/a b",  # unquoted, it splits into two words
+        "relative/dir",
+    ],
+)
+def test_a_job_dir_the_check_cannot_vouch_for_is_refused(job_dir):
+    assert rm_confined("rm -rf $CLAUDE_JOB_DIR/tmp", ROOTS, job_dir) is False

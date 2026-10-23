@@ -78,7 +78,14 @@ def read_cwd(stdin_text: str) -> str:
 def decide(command: str, cwd: str, env: Mapping[str, str]) -> Decision:
     rules = load_rules(env=env)
     roots = scratch_roots(env.get("HOME", ""), env.get("TMPDIR"))
-    return judge(command, rules, roots, cwd, env.get("CLAUDE_PROJECT_DIR", ""))
+    return judge(
+        command,
+        rules,
+        roots,
+        cwd,
+        env.get("CLAUDE_PROJECT_DIR", ""),
+        env.get("CLAUDE_JOB_DIR", ""),
+    )
 
 
 def permission_request(stdin_text: str, env: Mapping[str, str]) -> str | None:

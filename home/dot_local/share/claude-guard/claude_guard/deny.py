@@ -69,6 +69,7 @@ from claude_guard.gitargv import (
     remote_add_mirrors_push,
     subcommand_at,
 )
+from claude_guard.gitread import config_read
 from claude_guard.segment import Segment, mask_substitutions, parse
 
 
@@ -1579,6 +1580,30 @@ def config_write(sc: Scan, target: str) -> Verdict | None:
     return None
 
 
+_MACHINE_SCOPES = frozenset({"--global", "--system"})
+
+
+def machine_config_write(sc: Scan, target: str) -> Verdict | None:
+    """A `git config --global` or `--system` invocation that is not a read (dotfiles #965).
+
+    This replaces the settings deny `Bash(git config --global:*)`, which Claude Code applies
+    before any hook runs and so also refused `git config --global --get …`. Reads go on to
+    the judge, which approves them through `gitread.config_read`, the same test used here.
+    """
+    if any(
+        inv.sub == "config" and _MACHINE_SCOPES & set(inv.args) and not config_read(inv.args)
+        for inv in sc.gits
+    ):
+        return Verdict(
+            "deny",
+            "machine-config-write",
+            "Blocked: this changes git config for every repository on the machine "
+            "(`--global` or `--system`). Reading it with `--get`, `--get-all` or `--list` "
+            "is allowed; ask the user to make the change.",
+        )
+    return None
+
+
 # --- sudo at any command position (dotfiles #863) -----------------------------------------------
 
 # On daniel-box the settings deny `Bash(sudo:*)` is lifted so the auto-mode classifier can
@@ -2150,6 +2175,7 @@ RULES: tuple[Rule, ...] = (
     push_config,
     push_no_verify,
     config_write,
+    machine_config_write,
     sudo_boundary,
 )
 

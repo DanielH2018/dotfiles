@@ -1466,3 +1466,36 @@ def test_the_real_template_allows_each_replayed_read(real, command):
 )
 def test_the_real_template_keeps_writers_and_repo_code_beside_those_reads_a_prompt(real, command):
     assert not allowed(command, real)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # dotfiles #965: the settings deny `git config --global:*` refused these reads.
+        "git config --global --get-all rerere.autoupdate; grep -c 'x' /home/testuser/s.json",
+        "git config --global --list",
+        "git config get --global user.name",
+        # dotfiles #956: a checksum stage in a chain.
+        "ls /tmp/x && sha256sum /tmp/x/a",
+        "md5sum /tmp/a; b2sum /tmp/a",
+    ],
+)
+def test_the_real_template_allows_global_config_reads_and_checksums(real, command):
+    assert allowed(command, real)
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["git config --global user.name x", "git config --global --unset a.b"],
+)
+def test_the_real_template_does_not_approve_a_global_config_write(real, command):
+    assert not allowed(command, real)
+
+
+def test_the_real_template_approves_scratch_cleanup_a_background_job_writes(real):
+    # dotfiles #956: the job dir is read off the hook's environment, and a glob may sit in
+    # the last component. Without the job dir the variable is unreadable and refuses.
+    job = "/home/testuser/.claude/jobs/abc123"
+    cleanup = 'rm -rf "$CLAUDE_JOB_DIR/tmp/body.md" && rm -f /tmp/x/fail*.txt'
+    assert judge(cleanup, real, ROOTS, CWD, "", job).allow
+    assert not judge(cleanup, real, ROOTS, CWD).allow

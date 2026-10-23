@@ -103,6 +103,14 @@ def test_permission_request_threads_the_sessions_cwd_into_the_decision(tmp_path)
     assert permission_request(stdin, env_for(home)) == ALLOW_JSON
 
 
+def test_permission_request_reads_the_job_dir_from_its_environment(tmp_path):
+    home = home_with(tmp_path, {"allow": [], "deny": [], "ask": ["Bash(rm:*)"]})
+    job = str(home / ".claude" / "jobs" / "abc123")
+    stdin = payload('rm -rf "$CLAUDE_JOB_DIR/tmp/body.md"')
+    assert permission_request(stdin, env_for(home, CLAUDE_JOB_DIR=job)) == ALLOW_JSON
+    assert permission_request(stdin, env_for(home)) is None
+
+
 # --- the shim, driven as the harness drives it ---------------------------------------------
 
 SHIM = HOOKS / "executable_guard-permission-request.sh"

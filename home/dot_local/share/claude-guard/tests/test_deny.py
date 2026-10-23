@@ -1316,6 +1316,34 @@ def test_an_ordinary_config_write_is_no_decision(command):
     assert d.deny(command, "", ENV) == d.NONE
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git config --global user.name x",
+        "git config set --global a.b c",
+        "git config --system core.editor vi",
+        "git config --global --unset rerere.autoupdate",
+        "git config --global --edit",
+        "cd /tmp && git config --global --add safe.directory '*'",
+    ],
+)
+def test_a_machine_wide_config_write_is_denied(command):
+    v = d.deny(command, "", ENV)
+    assert (v.kind, v.rule) == ("deny", "machine-config-write")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git config --global --get-all rerere.autoupdate",
+        "git config --global --list --show-origin",
+        "git config get --system core.editor",
+    ],
+)
+def test_a_machine_wide_config_read_is_no_decision(command):
+    assert d.deny(command, "", ENV) == d.NONE
+
+
 # --- shell writes to the files git reads config and hooks from (dotfiles #711) -----------------
 
 # Each plants what `push-config-write` denies through `git config`: a forcing refspec, a

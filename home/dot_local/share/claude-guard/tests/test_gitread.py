@@ -43,3 +43,42 @@ def test_a_read_form_is_admitted(command):
 )
 def test_a_write_or_exec_form_is_refused(command):
     assert not git_read(shlex.split(command))
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git config --global --get-all rerere.autoupdate",
+        "git config --get user.signingkey",
+        "git config --global --list --show-origin",
+        "git config --get-regexp '^remote\\.' --name-only",
+        "git config --type=bool --default=false --get core.bare",
+        "git config get --global user.name",
+        "git config list --local",
+        "git -C /x config --get remote.origin.url",
+    ],
+)
+def test_a_config_read_is_admitted(command):
+    assert git_read(shlex.split(command))
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git config --global user.name x",
+        "git config set --global a.b c",
+        # No mode: with one word git reads, but the same shape with two writes.
+        "git config user.name",
+        "git config --global --unset rerere.autoupdate",
+        "git config --global --edit",
+        "git config get --edit x",
+        # An abbreviation of a write option, and the options that read any file.
+        "git config --global --ed",
+        "git config --file /tmp/c --list",
+        "git config -f /tmp/c --list",
+        "git config --blob HEAD:x --list",
+        "git -c include.path=/tmp/x config --list",
+    ],
+)
+def test_a_config_write_or_file_read_is_refused(command):
+    assert not git_read(shlex.split(command))
