@@ -981,24 +981,65 @@ _INTERPRETER_WORD = r"\b(python[0-9.]*|node|deno|bun|perl|ruby|php|Rscript|osasc
 # lexer tells them apart from `open('server.key')`, whose path is a string token. Only a
 # program a `python` segment runs is lexed, because the lexer accepts JS and shell too: a
 # Node template literal `${d}/server.key` lexes as the bare name `server.key`. Python must
-# be the command word, so `node x.js python3 <<EOF` and `bash -c "python3 r.py server.key"`
-# are not lexed. A heredoc body the shell expands first, and a `-c` argument whose quoting
-# changed it, stay as written. DECIDED (#864): a path in a string literal is still refused.
+# be the command word and must read its program from `-c` or stdin, not from a script, so
+# `node x.js python3 <<EOF`, `bash -c "python3 r.py k"` and the heredoc or `-c` argument a
+# script receives are not lexed. A heredoc body the shell expands first, and a `-c`
+# argument whose quoting changed it, stay as written. DECIDED (#864): a path in a string
+# literal is still refused.
 _PYTHON_RUNNERS = frozenset({"env", "command", "exec", "nohup", "time", "uv", "uvx", "run"})
+# Python's own options that take the next word as their value. `-c` and `-m` end the
+# options: what follows is the program text or the module's argv.
+_PYTHON_VALUE_OPTS = frozenset({"-W", "-X", "--check-hash-based-pycs"})
+# A short-option cluster such as `-u`, `-IS` or `-uc`; the last letter decides.
+_PYTHON_FLAGS = re.compile(r"-[bBdEhiIOPqRsSuvVx]*([cm]?)")
+_REDIRECT = re.compile(r"\d*(<<?-?|>>?|<>|>&|<&|&>)")
 
 
-def _runs_python(text: str) -> bool:
-    """Whether the segment `text` runs Python: its command word, after variable assignments
-    and the runners above with their options, is a `python` binary."""
+def _python_argv(text: str) -> tuple[str, list[str]] | None:
+    """Where the segment `text` takes its Python program from, or None when its command word,
+    after variable assignments and the runners above with their options, is not a `python`
+    binary.
+
+    Returns:
+        `("c", [program])` for a `-c` among Python's own options, `("stdin", [])` when no
+        script, `-m` or `-c` comes before the end of those options (`python3 -` or a bare
+        `python3`), and `("script", [])` otherwise. A word after the script or module is
+        that program's argument, never Python's: `python3 r.py -c x` passes `-c` to r.py.
+    """
     try:
         words = shlex.split(text)
     except ValueError:
-        return False
-    for w in words:
-        if w.startswith("-") or w in _PYTHON_RUNNERS or re.match(r"[A-Za-z_]\w*=", w):
-            continue
-        return re.fullmatch(r"python[0-9.]*", w.rsplit("/", 1)[-1]) is not None
-    return False
+        return None
+    i = 0
+    while i < len(words) and (
+        words[i].startswith("-")
+        or words[i] in _PYTHON_RUNNERS
+        or re.match(r"[A-Za-z_]\w*=", words[i])
+    ):
+        i += 1
+    if i == len(words) or not re.fullmatch(r"python[0-9.]*", words[i].rsplit("/", 1)[-1]):
+        return None
+    rest = words[i + 1 :]
+    j = 0
+    while j < len(rest):
+        w = rest[j]
+        if (m := _REDIRECT.match(w)) is not None:
+            j += 1 if m.end() < len(w) else 2
+        elif w == "-":
+            return ("stdin", [])
+        elif w in _PYTHON_VALUE_OPTS:
+            j += 2
+        elif (f := _PYTHON_FLAGS.fullmatch(w)) is not None:
+            if f.group(1) == "c":
+                return ("c", rest[j + 1 : j + 2])
+            if f.group(1) == "m":
+                return ("script", [])
+            j += 1
+        elif w.startswith("-"):
+            j += 1
+        else:
+            return ("script", [])
+    return ("stdin", [])
 
 
 def _masked_python(program: str) -> str:
@@ -1025,20 +1066,20 @@ def _masked_python(program: str) -> str:
 
 def _without_python_names(command: str) -> str:
     """`command` with each Python program a `python` segment runs masked by `_masked_python`:
-    its quoted or unexpanded heredoc bodies, and each `-c` argument the shell left verbatim."""
+    the heredoc it reads as its program when quoted or unexpanded, or its own `-c` argument
+    when the shell left it verbatim. A heredoc fed to a script is data and stays as written."""
     p = parse(command)
     if not p.ok:
         return command
     for seg in p.segments:
-        if not _runs_python(seg.text):
+        if (argv := _python_argv(seg.text)) is None:
             continue
-        programs = [
-            body
-            for body, quoted in zip(seg.heredocs, seg.heredoc_quoted, strict=True)
-            if quoted or not any(m in body for m in ("$", "`"))
-        ]
-        words = shlex.split(seg.text)
-        programs += [words[i + 1] for i, w in enumerate(words[:-1]) if w == "-c"]
+        source, programs = argv
+        if source == "stdin" and seg.heredocs:
+            # Python reads its program from the first heredoc; a later one is data.
+            body, quoted = seg.heredocs[0], seg.heredoc_quoted[0]
+            if quoted or not any(m in body for m in ("$", "`")):
+                programs = [body]
         for program in programs:
             if program in command:
                 command = command.replace(program, _masked_python(program), 1)

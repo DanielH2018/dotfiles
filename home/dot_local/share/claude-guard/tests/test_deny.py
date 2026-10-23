@@ -673,6 +673,11 @@ NAMES_A_SECRET = [
     "node -e 'fs.readFileSync(`${d}/server.key`)'",
     "node - python3 <<'EOF'\nfs.readFileSync(`${d}/server.key`)\nEOF",
     'bash -c "python3 r.py server.key"',
+    # A `-c` or heredoc that belongs to the script or module, not to Python.
+    "python3 r.py -c server.key",
+    "python3 -m pytest -c app.env",
+    "python3 r.py <<'EOF'\nserver.key\nEOF",
+    "python3 - <<'EOF' <<'DATA'\nprint(1)\nEOF\nconfig/app.env\nDATA",
     "python3 - <<EOF\nopen($D.key)\nEOF",
 ]
 
@@ -725,6 +730,7 @@ NAMES_A_PYTHON_ATTRIBUTE_ONLY = [
     "python3 - <<'EOF'\nprint(pin.key, pin.value)\nEOF",
     "python3 <<'EOF'\nprint(pin.key, pin.value)\nEOF",
     "PYTHONPATH=. .venv/bin/python3 - <<'EOF'\nprint(v.key)\nEOF",
+    "python3 -u -W ignore -c 'print(v.key)'",
     'uv run python -c "print([pin.key, v.pem])"',
     "python3 - <<'EOF'\n# mounted at /var/run/secrets/kubernetes.io/serviceaccount\nprint(1)\nEOF",
 ]
