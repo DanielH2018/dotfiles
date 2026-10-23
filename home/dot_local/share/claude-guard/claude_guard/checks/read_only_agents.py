@@ -639,19 +639,50 @@ _KUBECTL_GROUP_READS = {
 }
 
 
+def _kubectl_words(args: list[str], want: int) -> list[str] | None:
+    """kubectl's first `want` positional words, or None when an option ahead of them is
+    neither `--name=value` nor on `_KUBECTL_VALUE_FLAGS`. kubectl has global options that
+    take a value (`--cache-dir`, `--log-file`), so an option this table does not name may
+    have swallowed the next word: `kubectl --cache-dir get delete pod p` runs `delete`."""
+    found: list[str] = []
+    i = 0
+    while i < len(args) and len(found) < want:
+        arg = args[i]
+        if arg == "--":
+            found += args[i + 1 :]
+            break
+        if arg in _KUBECTL_VALUE_FLAGS:
+            i += 2
+            continue
+        if arg.startswith("-") and arg != "-":
+            if "=" not in arg:
+                return None
+        else:
+            found.append(arg)
+        i += 1
+    return found[:want]
+
+
 def _kubectl(args: list[str], roots: tuple[str, ...]) -> str | None:
     """None for a kubectl verb that only reads the cluster or the kubeconfig. `diff` is not
     one: it runs the program `KUBECTL_EXTERNAL_DIFF` names. `cluster-info dump` can write a
     directory, so `cluster-info` passes only bare."""
-    found = _positionals(args, _KUBECTL_VALUE_FLAGS)
+    # A verb that reads under any argument needs only itself read; a group needs its
+    # subcommand too.
+    found = _kubectl_words(args, 1)
+    if found is not None and _first(found) in _KUBECTL_READS:
+        return None
+    found = _kubectl_words(args, 2)
+    if found is None:
+        return "passes kubectl an option this hook cannot read ahead of its verb"
     verb = _first(found)
-    if not verb or verb in _KUBECTL_READS:
+    if not verb:
         return None
     if verb == "cluster-info" and len(found) == 1:
         return None
     if len(found) > 1 and found[1] in _KUBECTL_GROUP_READS.get(verb, ()):
         return None
-    return f"runs `{' '.join(['kubectl', *found[:2]])}`, which is not in the read-only set"
+    return f"runs `{' '.join(['kubectl', *found])}`, which is not in the read-only set"
 
 
 def _remote(reads: Callable[[list[str]], bool], name: str):

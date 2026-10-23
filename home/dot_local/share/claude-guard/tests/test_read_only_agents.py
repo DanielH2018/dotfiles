@@ -141,6 +141,9 @@ CLUSTER_CONTAINER_AND_REMOTE_WRITES = [
     "kubectl config use-context prod",
     "kubectl exec p -- python3 x.py",
     "timeout 5 kubectl delete pod p",
+    # An option kubectl takes a value for, which no table names, swallows the read word.
+    "kubectl --cache-dir get delete pod p",
+    "kubectl config --log-file view use-context prod",
     "docker rm c",
     "docker compose down",
     "docker exec c python3 x.py",
@@ -192,6 +195,7 @@ READS = [
     "pip index versions 'requests >= 2'",
     "kubectl -n x get pods -o wide",
     "kubectl config view",
+    "kubectl get -A pods",
     "docker ps",
     "docker exec c ls /",
     "uv run pytest -k docker",
