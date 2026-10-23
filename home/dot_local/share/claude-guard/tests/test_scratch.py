@@ -225,6 +225,31 @@ def test_a_glob_under_a_symlinked_parent_is_judged_where_the_link_points(scratch
     assert rm_confined(f"rm -f {scratch_dir}/in/*", ROOTS, globs=True) is True
 
 
+def test_an_operand_under_a_symlinked_parent_is_judged_where_the_link_points(scratch_dir):
+    # dotfiles #973/#988: rm follows a link in any component but the last.
+    os.symlink("/etc", f"{scratch_dir}/out")
+    os.mkdir(f"{scratch_dir}/in")
+    assert rm_confined(f"rm -rf {scratch_dir}/out/x", ROOTS) is False
+    assert rm_confined(f"rm -rf {scratch_dir}/out/sub/x", ROOTS) is False
+    assert rm_confined(f"rm -rf {scratch_dir}/in/x", ROOTS) is True
+    assert rm_confined(f"rm -f {scratch_dir}/out", ROOTS) is True
+
+
+def test_a_root_that_is_itself_a_link_confines_nothing(scratch_dir):
+    os.symlink("/etc", f"{scratch_dir}/root")
+    os.mkdir(f"{scratch_dir}/real")
+    linked, real = (f"{scratch_dir}/root",), (f"{scratch_dir}/real",)
+    assert rm_confined(f"rm -rf {scratch_dir}/root/x", linked) is False
+    assert scratch.write_confined(f"{scratch_dir}/root/x", linked) is False
+    assert rm_confined(f"rm -rf {scratch_dir}/real/x", real) is True
+    assert scratch.write_confined(f"{scratch_dir}/real/x", real) is True
+
+
+def test_an_rm_that_a_link_maker_precedes_is_refused():
+    assert rm_confined("rm -rf /tmp/a", ROOTS) is True
+    assert rm_confined("rm -rf /tmp/a", ROOTS, links=True) is False
+
+
 # --- $CLAUDE_JOB_DIR (dotfiles #956) --------------------------------------------------------
 
 JOB = "/home/testuser/.claude/jobs/abc123"

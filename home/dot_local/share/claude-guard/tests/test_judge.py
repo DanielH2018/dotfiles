@@ -1517,6 +1517,12 @@ def test_a_glob_rm_after_a_link_maker_in_the_same_chain_is_not_approved(real):
     assert allowed("ls /tmp/q && rm -f /tmp/q/*", real)
 
 
+def test_a_plain_rm_after_a_link_maker_in_the_same_chain_is_not_approved(real):
+    # dotfiles #988: the same race as the glob arm's, for an operand with no glob.
+    assert not allowed("ln -s /etc /tmp/q && rm -rf /tmp/q/x", real)
+    assert allowed("ls /tmp/q && rm -rf /tmp/q/x", real)
+
+
 @pytest.mark.parametrize(
     "command",
     [

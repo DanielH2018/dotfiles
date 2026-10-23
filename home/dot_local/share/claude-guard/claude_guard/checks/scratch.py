@@ -1,10 +1,15 @@
 """An rm whose every operand is provably confined to a scratch root. allow-safe-rm.sh ported.
 
 The option table is an ALLOWLIST: an option this module does not name is not a decision.
-Absent by intent is --no-preserve-root. What the check cannot see, and why it is still
-sound: a symlink under a scratch root pointing outside it — deleting the link deletes the
-link, POSIX never traverses a symlink while deleting, and a trailing slash on a symlink
-operand makes rm refuse rather than follow (allow-safe-rm.sh:20-29).
+Absent by intent is --no-preserve-root. A symlink as an operand's FINAL component is safe:
+deleting the link deletes the link, POSIX never traverses a symlink while deleting, and a
+trailing slash on a symlink operand makes rm refuse rather than follow
+(allow-safe-rm.sh:20-29). A symlink in an earlier component is followed, so `/tmp/q/x` with
+`/tmp/q` a link to `/etc` deletes in `/etc` (dotfiles #973). Every operand's parent is
+therefore resolved and must sit inside a resolved root (`_parent_confined`), and a root that
+is itself a link counts only as the macOS `/private` alias (`_real_roots`). A link made
+earlier in the same chain does not exist yet when this runs, so the caller refuses that case
+(`rm_confined`'s `links`).
 """
 
 import os
@@ -142,6 +147,27 @@ def under_scratch(path: str, roots: tuple[str, ...]) -> bool:
     return any(p.startswith(root + "/") and len(p) > len(root) + 1 for root in roots)
 
 
+def _real_roots(roots: tuple[str, ...]) -> list[str]:
+    """The resolved path of each root that is not a link elsewhere. A root that resolves to
+    another spelling is dropped, except for macOS's `/tmp` -> `/private/tmp` alias: a
+    user-owned root such as `~/.cache/claude` replaced by a link to the home directory would
+    otherwise carry every confined write and delete into home."""
+    real: list[str] = []
+    for root in roots:
+        resolved = os.path.realpath(root)
+        if resolved in (root, "/private" + root):
+            real.append(resolved)
+    return real
+
+
+def _parent_confined(path: str, roots: tuple[str, ...]) -> bool:
+    """True when the directory holding `path` resolves to a root or below one, so no link in
+    an earlier component carries the operand out."""
+    parent = os.path.dirname(path.removesuffix("/"))
+    real_parent = os.path.realpath(parent)
+    return any(real_parent == r or real_parent.startswith(r + "/") for r in _real_roots(roots))
+
+
 def write_confined(target: str, roots: tuple[str, ...]) -> bool:
     """True when a `>`/`>>` redirect to `target` writes a plain file inside a scratch root.
 
@@ -161,7 +187,7 @@ def write_confined(target: str, roots: tuple[str, ...]) -> bool:
     real_parent = os.path.realpath(parent)
     if not os.path.isdir(real_parent):
         return False
-    real_roots = [os.path.realpath(r) for r in roots]
+    real_roots = _real_roots(roots)
     if not any(real_parent == r or real_parent.startswith(r + "/") for r in real_roots):
         return False
     try:
@@ -189,20 +215,25 @@ def _glob_confined(word: str, glob_at: int, roots: tuple[str, ...]) -> bool:
     if name.startswith((".", "[")) or not under_scratch(parent, roots):
         return False
     real_parent = os.path.realpath(parent)
-    return any(real_parent.startswith(os.path.realpath(r) + "/") for r in roots)
+    return any(real_parent.startswith(r + "/") for r in _real_roots(roots))
 
 
 def rm_confined(
-    command: str, roots: tuple[str, ...], job_dir: str = "", globs: bool = False
+    command: str,
+    roots: tuple[str, ...],
+    job_dir: str = "",
+    globs: bool = False,
+    links: bool = False,
 ) -> bool:
     """:137-174. True only when a confined operand was seen and nothing else was refused.
 
     `job_dir` is the hook's $CLAUDE_JOB_DIR, which an operand may name (`_words`). With
     `globs`, an operand may also carry a glob in its final component (`_glob_confined`).
-    That check resolves the parent as the filesystem is now, so the caller passes `globs`
-    only when nothing earlier in the chain can make a link first (`judge.LINK_MAKERS`).
+    Both checks resolve parents as the filesystem is now. `links` says an earlier part of
+    the chain can make a link first (`judge.LINK_MAKERS`), which the resolution cannot see,
+    so it refuses the whole rm.
     """
-    if not command:
+    if not command or links:
         return False
     words = _words(command, job_dir, globs)
     if not words:
@@ -233,7 +264,7 @@ def rm_confined(
                 continue
             if tok == "-":
                 return False
-        if not under_scratch(tok, roots):
+        if not under_scratch(tok, roots) or not _parent_confined(tok, roots):
             return False
         saw_path = True
     return saw_path

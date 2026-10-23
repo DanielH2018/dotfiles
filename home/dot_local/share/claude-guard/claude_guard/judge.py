@@ -1008,7 +1008,7 @@ def judge_segment(
 
     if word == "curl" and curl_safe(part):
         return True, "curl-check"
-    if word == "rm" and rm_confined(part, roots, job_dir, globs=scratch_ok):
+    if word == "rm" and rm_confined(part, roots, job_dir, globs=scratch_ok, links=not scratch_ok):
         return True, "rm-check"
 
     # dotfiles #861 and #864. The same ask rules (`rm:*`, `git restore:*`, `git clean:*`)
