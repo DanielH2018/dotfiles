@@ -46,8 +46,10 @@ const DIR = scratch(os.tmpdir(), 'otel-sweep-watch-');
 // suite run put about 20 fixture findings there, indistinguishable from real ones.
 function notifyStub() {
   const bin = scratch(DIR, 'bin-');
+  // Forward slashes and quotes: bash strips the backslashes from an unquoted Windows
+  // path, and the redirect then wrote a stray C:Users... file into the repo root.
   const record = (name, log) => {
-    fs.writeFileSync(path.join(bin, name), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >>${log}\n`);
+    fs.writeFileSync(path.join(bin, name), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >>'${log.replace(/\\/g, '/')}'\n`);
     fs.chmodSync(path.join(bin, name), 0o755);
     return () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : []);
   };
