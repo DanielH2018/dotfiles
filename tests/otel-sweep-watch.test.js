@@ -53,6 +53,12 @@ function notifyStub() {
     fs.chmodSync(path.join(bin, name), 0o755);
     return () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : []);
   };
+  if (process.platform === 'win32') {
+    // CreateProcess runs neither an extensionless bash script nor a bare name that only
+    // matches a .cmd, so a script stub is never reached. These marker files make
+    // shutil.which (via PATHEXT) find the stub dir; WIN_STUB_PRELUDE does the recording.
+    for (const name of ['notify-send', 'logger']) fs.writeFileSync(path.join(bin, `${name}.cmd`), '@exit /b 0\r\n');
+  }
   return {
     bin,
     calls: record('notify-send', path.join(bin, 'calls')),
@@ -63,8 +69,27 @@ function notifyStub() {
 // Shadows notify-send and logger for every run that does not bring its own stub.
 const SILENT = notifyStub();
 
+// Windows only: subprocess cannot launch the bash stubs above, so the driver intercepts
+// the two stubbed programs and appends `$*` to the log beside the stub it resolved,
+// which is what the bash stub does. Nothing else about the script under test changes.
+const WIN_STUB_PRELUDE = [
+  'import os, shutil, subprocess',
+  '_LOGS = {"notify-send": "calls", "logger": "logged"}',
+  '_real_run = subprocess.run',
+  'def _run(argv, *a, **k):',
+  '    log = _LOGS.get(argv[0]) if isinstance(argv, list) and argv else None',
+  '    exe = shutil.which(argv[0]) if log else None',
+  '    if not exe:',
+  '        return _real_run(argv, *a, **k)',
+  '    with open(os.path.join(os.path.dirname(exe), log), "a", newline="\\n") as f:',
+  '        f.write(" ".join(argv[1:]) + "\\n")',
+  '    return subprocess.CompletedProcess(argv, 0)',
+  'subprocess.run = _run',
+];
+
 // The file has no .py extension, so a plain import cannot find it; SourceFileLoader can.
 const DRIVER = [
+  ...(process.platform === 'win32' ? WIN_STUB_PRELUDE : []),
   'import importlib.machinery, importlib.util, sys',
   'loader = importlib.machinery.SourceFileLoader("otel_sweep", sys.argv[1])',
   'spec = importlib.util.spec_from_loader("otel_sweep", loader)',
@@ -80,7 +105,7 @@ function run(payload, extra = {}) {
       input: payload,
       env: {
         ...process.env,
-        PATH: `${SILENT.bin}:${process.env.PATH}`,
+        PATH: `${SILENT.bin}${path.delimiter}${process.env.PATH}`,
         // Each run gets its own state dir by default, so the dedup memory neither
         // reaches the real ~/.local/state nor leaks between tests.
         XDG_STATE_HOME: scratch(DIR, 'state-'),
@@ -107,7 +132,7 @@ test('the command line cannot supply the sweep: `watch --stdin` is refused', { s
     execFileSync('python3', [SWEEP, 'watch', '--stdin'], {
       input: JSON.stringify({ local: { error: 'fabricated' } }),
       stdio: 'pipe',
-      env: { ...process.env, PATH: `${stub.bin}:${process.env.PATH}`, XDG_STATE_HOME: state },
+      env: { ...process.env, PATH: `${stub.bin}${path.delimiter}${process.env.PATH}`, XDG_STATE_HOME: state },
     });
   } catch (err) {
     code = err.status;
@@ -259,7 +284,7 @@ const LOKI_DOWN = JSON.stringify({
 
 test('an unchanged finding set notifies once, not on every run', { skip }, () => {
   const spy = notifyStub();
-  const env = { XDG_STATE_HOME: scratch(DIR, 'dedup-'), PATH: `${spy.bin}:${process.env.PATH}` };
+  const env = { XDG_STATE_HOME: scratch(DIR, 'dedup-'), PATH: `${spy.bin}${path.delimiter}${process.env.PATH}` };
 
   assert.strictEqual(run(LOKI_DOWN, env).code, 1);
   assert.strictEqual(spy.calls().length, 1, 'the first finding must reach the desktop');
@@ -272,7 +297,7 @@ test('something still broken resurfaces once the window lapses', { skip }, () =>
   const spy = notifyStub();
   const env = {
     XDG_STATE_HOME: scratch(DIR, 'window-'),
-    PATH: `${spy.bin}:${process.env.PATH}`,
+    PATH: `${spy.bin}${path.delimiter}${process.env.PATH}`,
     OTEL_SWEEP_WATCH_REPEAT_AFTER: '0',
   };
   run(LOKI_DOWN, env);
@@ -282,7 +307,7 @@ test('something still broken resurfaces once the window lapses', { skip }, () =>
 
 test('a different finding still notifies inside the window', { skip }, () => {
   const spy = notifyStub();
-  const env = { XDG_STATE_HOME: scratch(DIR, 'changed-'), PATH: `${spy.bin}:${process.env.PATH}` };
+  const env = { XDG_STATE_HOME: scratch(DIR, 'changed-'), PATH: `${spy.bin}${path.delimiter}${process.env.PATH}` };
   run(LOKI_DOWN, env);
   run(JSON.stringify({ server: { error: 'ssh: connect to host daniel-server port 22: No route to host' } }), env);
   assert.strictEqual(spy.calls().length, 2, 'a new problem must not be masked by an unrelated older one');
@@ -492,8 +517,9 @@ test('last-notified holds the POSIX cksum of the findings and an epoch', { skip 
   const findings = '  box: Loki unreachable - nothing is being recorded';
   // The shell version fingerprinted with `cksum`; a state file it wrote must still match.
   const [crc] = execFileSync('cksum', { input: findings, encoding: 'utf8' }).split(' ');
-  assert.match(fs.readFileSync(path.join(dir, 'last-notified'), 'utf8'), new RegExp(`^${crc} \\d+\\n$`));
-  assert.strictEqual(fs.readFileSync(path.join(dir, 'findings-pending'), 'utf8'), `${findings}\n`);
+  // Python's text-mode write turns \n into \r\n on Windows; the format under test is the same.
+  assert.match(fs.readFileSync(path.join(dir, 'last-notified'), 'utf8').replace(/\r\n/g, '\n'), new RegExp(`^${crc} \\d+\\n$`));
+  assert.strictEqual(fs.readFileSync(path.join(dir, 'findings-pending'), 'utf8').replace(/\r\n/g, '\n'), `${findings}\n`);
 });
 
 // --- the shim the systemd unit runs ----------------------------------------------
@@ -504,7 +530,7 @@ function shimDir(withSweep) {
   fs.copyFileSync(SHIM, path.join(dir, 'otel-sweep-watch'));
   fs.chmodSync(path.join(dir, 'otel-sweep-watch'), 0o755);
   if (withSweep) {
-    fs.writeFileSync(path.join(dir, 'otel-sweep'), `#!/bin/sh\nprintf '%s\\n' "$@" >"${dir}/argv"\nexit 1\n`);
+    fs.writeFileSync(path.join(dir, 'otel-sweep'), `#!/bin/sh\nprintf '%s\\n' "$@" >"${dir.replace(/\\/g, '/')}/argv"\nexit 1\n`);
     fs.chmodSync(path.join(dir, 'otel-sweep'), 0o755);
   }
   return dir;
@@ -512,7 +538,9 @@ function shimDir(withSweep) {
 
 function runShim(dir, env = {}) {
   try {
-    execFileSync(path.join(dir, 'otel-sweep-watch'), ['ignored'], { encoding: 'utf8', stdio: 'pipe', env: { ...process.env, ...env } });
+    // Through bash: Windows cannot exec an extensionless script directly. Forward slashes
+    // keep the path intact for Git Bash.
+    execFileSync('bash', [path.join(dir, 'otel-sweep-watch').replace(/\\/g, '/'), 'ignored'], { encoding: 'utf8', stdio: 'pipe', env: { ...process.env, ...env } });
     return { code: 0, stderr: '' };
   } catch (err) {
     return { code: err.status, stderr: String(err.stderr || '') };
