@@ -43,6 +43,11 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR \
       GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_QUARANTINE_PATH \
       GIT_CONFIG_PARAMETERS GIT_REFLOG_ACTION
 
+# Python children (pytest, the claude-guard shim) run out of home/ and write __pycache__
+# temp files there, while parallel test files make chezmoi walk the same tree. chezmoi
+# then lstat()s a .pyc.<pid> that was renamed away mid-walk and the test fails, at random.
+export PYTHONDONTWRITEBYTECODE=1
+
 # Colors only when stdout is a terminal.
 if [ -t 1 ]; then
   B=$'\033[1m'; G=$'\033[32m'; R=$'\033[31m'; Z=$'\033[0m'

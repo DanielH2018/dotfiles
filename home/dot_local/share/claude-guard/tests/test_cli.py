@@ -37,12 +37,14 @@ def write_corpus(tmp_path, commands: list[str]) -> str:
 
 
 def run(*args: str, stdin: str = "") -> subprocess.CompletedProcess:
+    # -B: PKG_DIR is inside home/, which parallel gate tests walk with chezmoi; a .pyc
+    # written there mid-walk fails them at random (the env below drops PYTHONDONTWRITEBYTECODE).
     # CLAUDE_GUARD_SETTINGS_HOME beats HOME (rules.py:14), so pointing it at a fresh,
     # empty temp dir keeps the real ~/.claude/settings.json out of every test's rules
     # deliberately -- not as a side effect of HOME being absent from this dict.
     with tempfile.TemporaryDirectory() as settings_home:
         return subprocess.run(
-            [sys.executable, "-S", "-m", "claude_guard.cli", *args],
+            [sys.executable, "-B", "-S", "-m", "claude_guard.cli", *args],
             input=stdin,
             capture_output=True,
             text=True,
@@ -105,7 +107,7 @@ def test_permission_request_prints_the_allow_line_in_live_mode(tmp_path):
         json.dumps({"permissions": {"allow": ["Bash(ls:*)", "Bash(pwd)"], "deny": [], "ask": []}})
     )
     r = subprocess.run(
-        [sys.executable, "-S", "-m", "claude_guard.cli", "permission-request"],
+        [sys.executable, "-B", "-S", "-m", "claude_guard.cli", "permission-request"],
         input=json.dumps({"tool_input": {"command": "ls; pwd"}}),
         capture_output=True,
         text=True,
@@ -122,7 +124,7 @@ def test_permission_request_prints_the_allow_line_in_live_mode(tmp_path):
 
 def test_permission_request_prints_nothing_and_exits_zero_on_garbage(tmp_path):
     r = subprocess.run(
-        [sys.executable, "-S", "-m", "claude_guard.cli", "permission-request"],
+        [sys.executable, "-B", "-S", "-m", "claude_guard.cli", "permission-request"],
         input="{ nope",
         capture_output=True,
         text=True,
@@ -150,7 +152,7 @@ def home_with_allow(tmp_path: Path, *rules: str) -> Path:
 
 def run_home(home: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, "-S", "-m", "claude_guard.cli", *args],
+        [sys.executable, "-B", "-S", "-m", "claude_guard.cli", *args],
         capture_output=True,
         text=True,
         cwd=PKG_DIR,
