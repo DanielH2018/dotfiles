@@ -92,6 +92,21 @@ write_to_pty = "always_ask"
 
 [agents.third_party]
 should_render_cli_agent_toolbar = true
+auto_open_composer_on_cli_agent_start = true
+auto_dismiss_composer_after_submit = true
+
+[agents.third_party.cli_agent_toolbar_chip_selection_setting]
+
+[agents.third_party.cli_agent_toolbar_chip_selection_setting.custom]
+left = ["file_attach", "voice_input", { context_chip = "git_diff_stats" }, "rich_input"]
+right = [
+  { context_chip = "ssh" },
+  { context_chip = "working_directory" },
+  { context_chip = "shell_git_branch" },
+  { context_chip = "git_branch_status" },
+  { context_chip = "github_pull_request" },
+  "settings",
+]
 
 [account]
 is_settings_sync_enabled = false
