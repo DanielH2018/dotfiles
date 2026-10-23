@@ -19,6 +19,7 @@
 // Assumes auto-hide is the desired state (it always forces it back on).
 
 using System;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Collections.Generic;
@@ -89,6 +90,24 @@ class TaskbarAutoHideFix
         SetState(ABS_AUTOHIDE); // auto-hide ON -> forces app-bar re-registration
     }
 
+    // One line per intervention, so issue #732 can count whether the workaround still
+    // fires. Mirrors logi-dev-mgr-kick's kicks.log on the Mac. Logging never throws.
+    static readonly string LogPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "TaskbarAutoHideFix", "fixes.log");
+    static string mode = "bounded";
+
+    static void LogFix(int popups, bool autoHideOff)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(LogPath));
+            File.AppendAllText(LogPath, string.Format("{0:yyyy-MM-ddTHH:mm:sszzz} mode={1} popups={2} autohide_off={3}{4}",
+                DateTime.Now, mode, popups, autoHideOff ? 1 : 0, Environment.NewLine));
+        }
+        catch { }
+    }
+
     // One check: re-find the taskbar (its handle changes when explorer restarts), close
     // any auto-hide popup, and re-assert auto-hide if a popup was present or it's off.
     // Returns true when nothing needed fixing.
@@ -97,7 +116,8 @@ class TaskbarAutoHideFix
         tray = FindWindow("Shell_TrayWnd", null);
         if (tray == IntPtr.Zero) return true; // shell not up yet; try again next tick
         int popups = ClosePopups();
-        if (popups > 0 || (GetState() & ABS_AUTOHIDE) == 0) { Reassert(); return false; }
+        bool autoHideOff = (GetState() & ABS_AUTOHIDE) == 0;
+        if (popups > 0 || autoHideOff) { LogFix(popups, autoHideOff); Reassert(); return false; }
         return true;
     }
 
@@ -108,7 +128,7 @@ class TaskbarAutoHideFix
     // default: a bounded ~60s watch, for manual runs.
     static void Main(string[] args)
     {
-        string mode = args.Length > 0 ? args[0].ToLowerInvariant() : "bounded";
+        mode = args.Length > 0 ? args[0].ToLowerInvariant() : "bounded";
         if (mode == "watch")
         {
             while (true) { try { Pass(); } catch { } Thread.Sleep(2500); }
