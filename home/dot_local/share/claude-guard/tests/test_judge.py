@@ -569,6 +569,28 @@ def test_the_real_template_leaves_an_rm_below_root_or_home_to_the_rm_rules(real)
 JOB_DIR = "/home/testuser/.claude/jobs/abc123"
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git config user.signingkey x",
+        "git config --global user.email x@example.com",
+        "git config --global core.sshCommand x",
+        "git config --global credential.helper x",
+        "git config --global include.path /tmp/c",
+        "git config --global url.x.insteadOf y",
+        "git config --global alias.p x",
+        "git config --global gpg.program x",
+    ],
+)
+def test_the_real_template_keeps_identity_and_program_keys_a_deny(real, command):
+    assert real.denies(command)
+
+
+def test_the_real_template_admits_a_read_of_a_denied_key_family(real):
+    assert allowed("git config --global --get core.sshCommand", real)
+    assert allowed("git config --get user.signingkey", real)
+
+
 def test_the_real_template_allows_an_rm_of_the_job_dir_from_the_hooks_environment(real):
     command = 'rm -rf "$CLAUDE_JOB_DIR/tmp/pr.md"'
     assert judge(command, real, ROOTS, CWD, "", JOB_DIR).allow
@@ -584,7 +606,39 @@ def test_the_real_template_allows_an_rm_of_the_job_dir_from_the_hooks_environmen
     ],
 )
 def test_an_rm_of_a_job_dir_the_chain_could_set_is_refused(real, command):
+    # An end-to-end guard: each chain is also refused before job_dir_for matters (an
+    # environment-name assignment, a loop over one, an unlisted export). The unit test
+    # below is the one that reaches job_dir_for itself.
     assert not judge(command, real, ROOTS, CWD, "", JOB_DIR).allow
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "CLAUDE_JOB_DIR=/etc; rm -rf $CLAUDE_JOB_DIR/x",
+        'CLAUDE_JOB""_DIR=/etc; rm -rf $CLAUDE_JOB_DIR/x',
+        "read CLAUDE_JOB\\_DIR; rm -rf $CLAUDE_JOB_DIR/x",
+        "rm -rf ${CLAUDE_JOB_DIR:-/}/x",
+        "unset CLAUDE_JOB_DIR; rm -rf $CLAUDE_JOB_DIR/x",
+    ],
+)
+def test_job_dir_for_drops_the_value_when_the_chain_names_the_variable(command):
+    assert judge_mod.job_dir_for(command, JOB_DIR) == ""
+
+
+def test_job_dir_for_keeps_the_value_for_a_plain_reference():
+    command = 'rm -rf "$CLAUDE_JOB_DIR/tmp" ${CLAUDE_JOB_DIR}/x'
+    assert judge_mod.job_dir_for(command, JOB_DIR) == JOB_DIR
+
+
+def test_an_rm_through_a_symlinked_parent_inside_a_scratch_dir_is_refused(real, scratch_dir):
+    os.symlink("/etc", f"{scratch_dir}/link")
+    assert not allowed(f"rm -rf {scratch_dir}/link/x", real)
+    # The chain could plant the link after the judge looked, so only a root's own entries
+    # stay allowed beside a link maker.
+    chain = f"ln -sfn /home/testuser {scratch_dir}/l && rm -rf {scratch_dir}/l/.ssh"
+    assert judge(chain, real, ROOTS, CWD).rule == "segment:1:ask"
+    assert allowed(f"ln -sfn /tmp/a {scratch_dir}/l && rm -rf /tmp/zz-guard-test", real)
 
 
 def test_the_real_template_allows_an_rm_that_globs_inside_a_scratch_dir(real, scratch_dir):

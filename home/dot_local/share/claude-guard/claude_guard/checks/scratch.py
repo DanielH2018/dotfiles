@@ -4,7 +4,8 @@ The option table is an ALLOWLIST: an option this module does not name is not a d
 Absent by intent is --no-preserve-root. What the check cannot see, and why it is still
 sound: a symlink under a scratch root pointing outside it — deleting the link deletes the
 link, POSIX never traverses a symlink while deleting, and a trailing slash on a symlink
-operand makes rm refuse rather than follow (allow-safe-rm.sh:20-29).
+operand makes rm refuse rather than follow (allow-safe-rm.sh:20-29). A symlink in a
+directory ABOVE the operand is followed, so `parent_confined` resolves the parent.
 """
 
 import os
@@ -187,8 +188,30 @@ def glob_confined(pattern: str, roots: tuple[str, ...]) -> bool:
     return any(real_parent.startswith(os.path.realpath(r) + "/") for r in roots)
 
 
+def parent_confined(path: str, roots: tuple[str, ...], links: bool = False) -> bool:
+    """True when the directory holding `path` cannot carry an rm outside the roots.
+
+    The kernel follows a symlink in every component but the last, so a lexical check alone
+    lets a link below a root point the delete anywhere. The parent's real path must sit at
+    or below a root's real path. When `links` is set, the chain could plant or re-point a
+    link at the parent before the rm runs, so the parent must be a root itself.
+    """
+    parent = os.path.dirname(path.removesuffix("/"))
+    if links:
+        return parent in roots
+    real_parent = os.path.realpath(parent)
+    return any(
+        real_parent == r or real_parent.startswith(r + "/")
+        for r in (os.path.realpath(root) for root in roots)
+    )
+
+
 def rm_confined(
-    command: str, roots: tuple[str, ...], job_dir: str = "", globs: bool = False
+    command: str,
+    roots: tuple[str, ...],
+    job_dir: str = "",
+    globs: bool = False,
+    links: bool = False,
 ) -> bool:
     """:137-174. True only when a confined operand was seen and nothing else was refused.
 
@@ -199,6 +222,7 @@ def rm_confined(
         refuses the reference. The caller must refuse a value the command itself could set.
       globs: admit an operand that globs in its last component (`glob_confined`). The caller
         passes False when the chain could plant a symlink at the parent first.
+      links: the chain could plant a symlink first (`parent_confined`).
     """
     if not command:
         return False
@@ -235,7 +259,7 @@ def rm_confined(
                 continue
             if tok == "-":
                 return False
-        if not under_scratch(tok, roots):
+        if not (under_scratch(tok, roots) and parent_confined(tok, roots, links)):
             return False
         saw_path = True
     return saw_path

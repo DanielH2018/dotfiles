@@ -569,6 +569,26 @@ def _git_reads(part: str) -> bool:
 _JOB_DIR_REF = re.compile(r"\$(?:\{CLAUDE_JOB_DIR\}|CLAUDE_JOB_DIR(?![A-Za-z0-9_]))")
 
 
+def job_dir_for(command: str, job_dir: str) -> str:
+    """The value an rm operand in `command` may expand `$CLAUDE_JOB_DIR` to (dotfiles #956).
+
+    `job_dir` comes from the hook's environment. Any mention of the name other than a plain
+    reference (`CLAUDE_JOB_DIR=/`, `export`, `read`, `for … in`, `${CLAUDE_JOB_DIR:=…}`)
+    means the chain could change it before the rm runs, and the result is "", which refuses
+    the reference. Quotes and backslashes are dropped first, because bash removes them before
+    it reads a name (`CLAUDE_JOB""_DIR`).
+
+    This is defence in depth: every chain measured that rebinds the name is also refused by
+    a later check, because the commands that assign by name (`printf -v`, `read`,
+    `declare`, `unset`, `eval`, `export`) are unlisted and a loop or assignment to an
+    environment name is refused. A name built from another variable (`printf -v "${n}_DIR"`)
+    never spells it at all, and rests on those commands staying unlisted.
+    """
+    if JOB_DIR_VAR in _JOB_DIR_REF.sub("", re.sub(r"[\"'\\]", "", command)):
+        return ""
+    return job_dir
+
+
 def _git_config_read(part: str) -> bool:
     """True when `part` is a `git config` read by `gitread.git_read`."""
     try:
@@ -803,8 +823,9 @@ def judge_segment(
 ) -> tuple[bool, str]:
     """:286-395, one iteration of the loop. (ok, reason).
 
-    `scratch_ok` admits a `>`/`>>` redirect into a scratch root (`_redirects_ok`), and an rm
-    operand that globs in its last component. `judge()` sets it only when no segment of the
+    `scratch_ok` admits a `>`/`>>` redirect into a scratch root (`_redirects_ok`), an rm
+    operand that globs in its last component, and a literal rm operand below a directory
+    inside a root (`scratch.parent_confined`). `judge()` sets it only when no segment of the
     chain is a `LINK_MAKERS` command. `job_dir` is what `$CLAUDE_JOB_DIR` names in an rm
     operand, empty when `judge()` found the chain could set it.
 
@@ -1020,7 +1041,7 @@ def judge_segment(
 
     if word == "curl" and curl_safe(part):
         return True, "curl-check"
-    if word == "rm" and rm_confined(part, roots, job_dir, globs=scratch_ok):
+    if word == "rm" and rm_confined(part, roots, job_dir, globs=scratch_ok, links=not scratch_ok):
         return True, "rm-check"
 
     # dotfiles #965. `Bash(git config --global:*)` is an ask rule so that a global write
@@ -1191,15 +1212,7 @@ def judge(
     # deployed chain either. Placing them after whole_glob_defer would be stricter than
     # the bash, not a faithful port.
 
-    # dotfiles #956. An rm operand may name $CLAUDE_JOB_DIR, read from the hook's
-    # environment. Any other mention of the name (`CLAUDE_JOB_DIR=/`, `export`, `read`,
-    # `for … in`, `${CLAUDE_JOB_DIR:=…}`) means the chain could change it before the rm
-    # runs, so the reference is refused instead. Quotes and backslashes are dropped first,
-    # because bash removes them before it reads a name (`CLAUDE_JOB""_DIR`). A name built
-    # from another variable (`printf -v "${n}_DIR"`) never spells it; every command that
-    # assigns by name (`printf -v`, `read`, `declare`, `unset`, `eval`) is unlisted.
-    if JOB_DIR_VAR in _JOB_DIR_REF.sub("", re.sub(r"[\"'\\]", "", command)):
-        job_dir = ""
+    job_dir = job_dir_for(command, job_dir)
 
     # :277-281.
     if rules.whole_glob_defer(command):

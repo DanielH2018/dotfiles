@@ -236,3 +236,15 @@ def test_a_job_dir_reference_is_expanded_from_the_value_given(command):
 )
 def test_a_job_dir_reference_that_could_name_something_else_is_refused(command, job_dir):
     assert rm_confined(command, ROOTS, job_dir=job_dir) is False
+
+
+def test_a_literal_operand_through_a_symlinked_parent_is_refused(scratch_dir):
+    os.symlink("/etc", f"{scratch_dir}/link")
+    assert rm_confined(f"rm -rf {scratch_dir}/link/x", ROOTS) is False
+    os.mkdir(f"{scratch_dir}/sub")
+    assert rm_confined(f"rm -rf {scratch_dir}/sub/x", ROOTS) is True
+
+
+def test_a_chain_that_can_make_links_confines_rm_to_a_roots_own_entries(scratch_dir):
+    assert rm_confined(f"rm -rf {scratch_dir}/x", ROOTS, links=True) is False
+    assert rm_confined("rm -rf /tmp/x", ROOTS, links=True) is True

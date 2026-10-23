@@ -688,6 +688,18 @@
       "Bash(rm -rf ~/)",
       "Bash(rm -rf ~ *)",
       "Bash(rm -rf ~/ *)",
+      {{/* Identity, and the global keys that name a program git runs or a file it reads
+           as config. Each rule is anchored on the key right after `--global`, so a read
+           with an action flag (`git config --global --get user.name`) matches none of
+           them and reaches claude_guard through the ask rule below (dotfiles #965). */}}
+      "Bash(git config user.*)",
+      "Bash(git config --global user.*)",
+      "Bash(git config --global core.*)",
+      "Bash(git config --global credential.*)",
+      "Bash(git config --global gpg.*)",
+      "Bash(git config --global include*)",
+      "Bash(git config --global url.*)",
+      "Bash(git config --global alias.*)",
       {{/* Force-push. `--force` and `-f` are denied in any position, on any branch.
            `--force-with-lease` is allowed on a feature branch and denied for main/master.
            The flag rules spell out the bare command and ` *` rather than `:*`, so that no
@@ -823,15 +835,13 @@
       "Bash(terragrunt run-all destroy:*)"
     ],
     "ask": [
-      {{/* dotfiles #965. A write to the global config or to user.* prompts. These were deny
-           rules, and a native deny fires before claude_guard runs, so a read such as
+      {{/* dotfiles #965. Any other global config write prompts. This was a deny rule, and a
+           native deny fires before claude_guard runs, so a read such as
            `git config --global --get-all rerere.autoupdate` was a hard stop for a background
-           session. As ask rules they reach claude_guard's judge, which approves the read forms
-           (claude_guard.gitread, `git-config-read-check`) and leaves every write at the prompt.
-           A write that makes a later push force or skip the hook stays a hard deny in
-           claude_guard's push-config-write rule. */}}
+           session. As an ask rule it reaches claude_guard's judge, which approves the read
+           forms (claude_guard.gitread, `git-config-read-check`) and leaves every write at the
+           prompt. The key families a write must never reach stay deny rules, above. */}}
       "Bash(git config --global:*)",
-      "Bash(git config user.*)",
       {{/* -t is the short form of --show-token; either one prints the GitHub token into the transcript. `*-t*` matches both, because `--show-token` contains `-t`. */}}
       "Bash(gh auth status *-t*)",
       "Bash(node -e:*)",
