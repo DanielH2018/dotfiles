@@ -152,6 +152,8 @@ CLUSTER_CONTAINER_AND_REMOTE_WRITES = [
     "ssh daniel-server rm -rf x",
     "ssh host 'systemctl restart x'",
     "ssh -o ProxyCommand=x host ls",
+    # ssh joins its words for a remote shell, which reads a quoted `>` as a redirect.
+    "ssh host ls '>' x",
     "ssh host",
 ]
 READS = [

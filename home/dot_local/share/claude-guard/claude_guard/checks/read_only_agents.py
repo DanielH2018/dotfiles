@@ -192,6 +192,12 @@ def _redirect_problem(text: str, roots: tuple[str, ...]) -> str | None:
 # --- argv --------------------------------------------------------------------------------------
 
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _is_operator(tok: str) -> bool:
+    return bool(tok) and all(c in "<>&|" for c in tok) and ("<" in tok or ">" in tok)
+
+
 _WRAPPERS = frozenset(
     {
         "command",
@@ -231,22 +237,33 @@ _SHELLS = frozenset(
 )
 
 
+def _tokens(text: str) -> list[str]:
+    lex = shlex.shlex(text, posix=True, punctuation_chars=True)
+    lex.whitespace_split = True
+    return list(lex)
+
+
 def _argv(text: str) -> list[str] | None:
     """The segment's words with redirects and their targets dropped, or None when it does
-    not split."""
+    not split.
+
+    A quoted `'>'` is a word, not a redirect, and ssh hands it to a remote shell that reads
+    it as one (`ssh host ls '>' x`). shlex returns the same token for both spellings, so a
+    token counts as an operator only where the quote-masked text tokenizes to one too."""
     try:
-        lex = shlex.shlex(text, posix=True, punctuation_chars=True)
-        lex.whitespace_split = True
-        tokens = list(lex)
+        tokens = _tokens(text)
+        masked = _tokens(_mask_quotes(text))
     except ValueError:
+        return None
+    if len(tokens) != len(masked):
         return None
     words: list[str] = []
     skip = False
-    for tok in tokens:
+    for tok, bare in zip(tokens, masked, strict=True):
         if skip:
             skip = False
             continue
-        if tok and all(c in "<>&|" for c in tok) and ("<" in tok or ">" in tok):
+        if _is_operator(tok) and _is_operator(bare):
             if words and words[-1].isdigit():
                 words.pop()
             skip = True
