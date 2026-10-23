@@ -487,6 +487,15 @@ def stages_read_only(command: str, home: str) -> bool:
     return _classify(command, _Scope(os.path.realpath(home), None, remote=True)) is not None
 
 
+def remote_read_only(command: str) -> bool:
+    """True when `command`, run by a shell on another machine, is a read by this module's
+    verb tables.
+
+    No directory is checked on the far side, so no `$HOME` is needed. A second ssh hop is
+    not a read. `claude_guard.checks.read_only_agents` judges an ssh command with this."""
+    return _classify(command, _Scope("", None, remote=True)) is not None
+
+
 def readonly(command: str, cwd: str, env: Mapping[str, str]) -> Verdict | None:
     """`classify` as an allow Verdict, or None. Never raises: a failure here is no decision,
     not the deny side's ask, because this side can only ever remove a prompt."""

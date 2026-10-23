@@ -132,6 +132,23 @@ UNKNOWN_RUNNERS = [
     "GIT_EXTERNAL_DIFF=/tmp/x.sh uv run git diff",
     "env GIT_EXTERNAL_DIFF=/tmp/x.sh uv run git diff",
 ]
+# A write that lands in a cluster, a container or on another machine. A runner verb
+# (`docker run`, `kubectl exec`) is judged by the words it runs.
+WRITES_ELSEWHERE = [
+    "kubectl apply -f x.yaml",
+    "kubectl -n x delete pod p",
+    "uv run kubectl apply -f x.yaml",
+    "kubectl config set-context x",
+    "docker stop web",
+    "docker system prune -af",
+    "docker compose down",
+    "docker run img rm -rf src",
+    "kubectl exec p -- rm /x",
+    "ssh host 'systemctl restart x'",
+    "ssh -o ProxyCommand='touch a' host ls",
+    "echo 'rm x' | ssh host",
+    "hl systemctl restart x",
+]
 READS = [
     "git status --short && git diff HEAD~1 -- src",
     "git log --oneline -5 | head -3",
@@ -171,6 +188,15 @@ READS = [
     "ug -n 'echo x > y' src",
     "xmllint --xpath '//a[@b > 1]' f.xml",
     "pip index versions 'requests >= 2'",
+    "kubectl -n x get pods -o wide",
+    "kubectl logs p --tail 5",
+    "kubectl rollout status deploy/x",
+    "kubectl exec p -- cat /x",
+    "docker ps -a",
+    "docker logs web",
+    "docker compose ps",
+    "ssh -o BatchMode=yes host uptime",
+    "hl docker ps",
 ]
 
 
@@ -202,6 +228,18 @@ def test_a_write_inside_a_compound_or_behind_a_runner_is_denied(env, agent, comm
 @pytest.mark.parametrize("command", UNKNOWN_RUNNERS)
 def test_a_write_behind_a_runner_no_table_names_is_denied(env, agent, command):
     assert decision(command, env, agent) == "deny"
+
+
+@pytest.mark.parametrize("agent", READ_ONLY_AGENTS)
+@pytest.mark.parametrize("command", WRITES_ELSEWHERE)
+def test_a_write_to_a_cluster_container_or_host_is_denied(env, agent, command):
+    assert decision(command, env, agent) == "deny"
+
+
+def test_docker_rm_and_an_ssh_rm_are_denied_as_what_they_are(env):
+    # Both were once denied only because a later `rm` read as a local one.
+    assert "`docker rm`" in reason("docker rm c1", env, "root-cause")
+    assert "`rm -rf /srv/x` on host" in reason("ssh host rm -rf /srv/x", env, "root-cause")
 
 
 @pytest.mark.parametrize("command", READS)

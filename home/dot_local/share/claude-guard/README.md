@@ -177,8 +177,10 @@ command, every stage is a `readonly.py` read, nothing needs the network, and no
 `checks/read_only_agents.py` (dotfiles #848) is a deny rule beside the worktree-escape
 check. When the payload's `agent_type` names an agent whose frontmatter under
 `~/.claude/agents/` sets `read_only: true`, it denies a write redirect outside the scratch
-roots, a command that changes files outside them, a shell or `eval`, and any git or gh verb
-outside a read-only set. Its module docstring says why the rest is a denylist.
+roots, a command that changes files outside them, a shell or `eval`, and any git, gh,
+kubectl or docker verb outside a read-only set. It also denies an ssh or `hl` command whose
+remote text `readonly.py` does not show to be a read (dotfiles #958). Its module docstring
+says why the rest is a denylist.
 
 When nothing above decides, `readonly.py` (dotfiles #628, ported from the server repo's
 `auto-approve-readonly.py`) allows a command whose every stage is provably read-only. It
