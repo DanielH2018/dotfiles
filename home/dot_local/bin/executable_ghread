@@ -494,8 +494,22 @@ def gh_env() -> dict:
     return env
 
 
+def parse(argv: list[str]) -> argparse.Namespace:
+    # A search query goes after `--`, and ghread hands it to argparse only after
+    # parsing the rest. Once an option follows a `nargs="*"` positional, argparse
+    # stops filling that positional, so it rejects the terms after `--` as
+    # unrecognized arguments. CPython before 3.12.7 does this even with no term
+    # before the option (`search prs --state open -- -label:bug`).
+    if argv[:1] == ["search"] and "--" in argv:
+        cut = argv.index("--")
+        ns = _parser().parse_args(argv[:cut])
+        ns.terms += argv[cut + 1 :]
+        return ns
+    return _parser().parse_args(argv)
+
+
 def main(argv: list[str] | None = None) -> int:
-    ns = _parser().parse_args(argv)
+    ns = parse(sys.argv[1:] if argv is None else argv)
     try:
         gh_args = BUILDERS[ns.cmd](ns)
         gh = find_gh()

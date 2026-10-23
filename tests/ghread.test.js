@@ -95,6 +95,10 @@ test('search puts the query after -- so a term cannot become a flag', { skip }, 
       '--', '-label:bug', 'flaky']),
     ['search', 'prs', '--repo=o/r', '--state=open', '--json=url', '--jq=.[].url',
       '--', '-label:bug', 'flaky']);
+  // A term before an option keeps its place ahead of the terms after --.
+  assert.deepStrictEqual(
+    argvOf(['search', 'issues', 'flaky', '--state', 'closed', '--', '-label:bug']),
+    ['search', 'issues', '--state=closed', '--', 'flaky', '-label:bug']);
 });
 
 test('pr comments reads review or issue comments through the REST path', { skip }, () => {
