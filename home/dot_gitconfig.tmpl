@@ -10,6 +10,8 @@
 	allowedSignersFile = {{ .chezmoi.homeDir }}/.config/git/allowed_signers
 [commit]
 	gpgsign = true
+[tag]
+	gpgsign = true
 [core]
 	excludesfile = ~/.gitignore_global
 	autocrlf = input
@@ -65,6 +67,8 @@
 [gpg "ssh"]
 	allowedSignersFile = {{ .chezmoi.homeDir }}/.config/git/allowed_signers
 [commit]
+	gpgsign = true
+[tag]
 	gpgsign = true
 {{- if stat (printf "%s/.ssh/id_ed25519" .chezmoi.homeDir) }}
 [user]
