@@ -615,15 +615,25 @@ class Scanner:
                 continue
             self.found += 1
             self.new_fps.append(fp)
-            # Rule id, line, source and fingerprint only. Enough to find it and to name
-            # what to rotate, and to accept it later; never enough to re-leak it. Two
-            # audiences, two formats. The JSONL record is what --accept-baseline and any
-            # later triage read, so it keeps every field; stdout gets a line a person
-            # can scan.
+            # Rule id, line, source, fingerprint and the redacted match. Enough to find
+            # it and to name what to rotate, and to accept it later; never enough to
+            # re-leak it. Two audiences, two formats. The JSONL record is what
+            # --accept-baseline and any later triage read, so it keeps every field;
+            # stdout gets a line a person can scan.
+            #
+            # The match is gitleaks' own `Match` under --redact, which replaces the
+            # secret with REDACTED and leaves the framing around it, for example
+            # `API_KEY=REDACTED`.
+            # The framing is the only record of WHAT fired: the hashed line is gone once
+            # the slice ages out, and #847 could not be triaged because a re-fetched
+            # slice's line no longer showed what matched. Capped, since a multi-line
+            # match such as a private key would otherwise copy its framing in full.
+            match = self._redacted_match(item)
             self._append(
                 self.log,
                 f'{{"ts":{_json_str(_now())},"transcript":{_json_str(src)},"rule":{_json_str(rule)},'
-                f'"line":{number},"fingerprint":{_json_str(fp)},"secret":"[redacted]"}}\n',
+                f'"line":{number},"fingerprint":{_json_str(fp)},"secret":"[redacted]",'
+                f'"match":{_json_str(match)}}}\n',
             )
             _out(f"  {_pad(rule, 18)} {_pad(tok_label, 34)} line {line}")
 
@@ -643,6 +653,18 @@ class Scanner:
         )
         parts = re.split(r"\t+", joined, maxsplit=1)
         return parts[0], parts[1] if len(parts) > 1 else ""
+
+    @staticmethod
+    def _redacted_match(item):
+        """Return gitleaks' redacted `Match` for a report entry, capped at 200 chars.
+
+        Returns "" when the entry has no string `Match`. The caller must have run
+        gitleaks with --redact; this does no redaction of its own.
+        """
+        match = item.get("Match") if isinstance(item, dict) else None
+        if not isinstance(match, str):
+            return ""
+        return match if len(match) <= 200 else match[:200] + "..."
 
     @staticmethod
     def _line_hash(lines, number):

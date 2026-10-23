@@ -495,6 +495,29 @@ test('the shipped Loki ruleset still flags an api_key on a URL', { skip }, () =>
     'the entropy rule must survive the allowlists');
 });
 
+test('a finding records the redacted framing gitleaks matched, never the value', { skip }, () => {
+  // #847 could not be triaged because the slice had aged out and the re-fetched line no
+  // longer showed what fired. The redacted match is that record, kept at scan time.
+  const sb = sandbox();
+  const env = stubOtelq(sb, lokiPayload({ tool_input: JSON.stringify({ command: `export ${ENTROPY_ONLY}` }) }));
+  const r = run(['--loki', '--since', '1'], sb, { ...env, CLAUDE_TRANSCRIPT_GITLEAKS_LOKI_CONFIG: SHIPPED_LOKI });
+  assert.strictEqual(r.status, 1, `expected a finding: ${r.stdout}${r.stderr}`);
+  const record = JSON.parse(fs.readFileSync(sb.log, 'utf8').trim());
+  assert.match(record.match, /^FIXTURE_KEY=REDACTED/, 'the record names the framing that fired');
+  assert.doesNotMatch(JSON.stringify(record), /0123456789abcdef/, 'the log must not repeat the value');
+});
+
+test('a triage command quoting a logged fingerprint and match reads clean', { skip }, () => {
+  // The loop #847 reported: triaging finding N puts its fingerprint, and now its redacted
+  // match, on a command line that reaches Loki. Neither may become finding N+1.
+  const sb = sandbox();
+  const command = "grep -F -e 'generic-api-key:loki:16a184252e91f358' "
+    + "-e '\"match\":\"FIXTURE_KEY=REDACTED\"' ~/.claude/logs/transcript-leaks.jsonl";
+  const env = stubOtelq(sb, lokiPayload({ tool_input: JSON.stringify({ command }) }));
+  const r = run(['--loki', '--since', '1'], sb, { ...env, CLAUDE_TRANSCRIPT_GITLEAKS_LOKI_CONFIG: SHIPPED_LOKI });
+  assert.strictEqual(r.status, 0, `a triage command must not read as a leak: ${r.stdout}${r.stderr}`);
+});
+
 test('the same shape in a TRANSCRIPT still goes unflagged, which is why the arm exists', { skip }, () => {
   // The rejecting half of the pair above. If this starts failing, generic-api-key was
   // re-enabled for the daily run, the two arms no longer differ, and the comment
