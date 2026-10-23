@@ -192,15 +192,19 @@ def _glob_confined(word: str, glob_at: int, roots: tuple[str, ...]) -> bool:
     return any(real_parent.startswith(os.path.realpath(r) + "/") for r in roots)
 
 
-def rm_confined(command: str, roots: tuple[str, ...], job_dir: str = "") -> bool:
+def rm_confined(
+    command: str, roots: tuple[str, ...], job_dir: str = "", globs: bool = False
+) -> bool:
     """:137-174. True only when a confined operand was seen and nothing else was refused.
 
-    `job_dir` is the hook's $CLAUDE_JOB_DIR, which an operand may name (`_words`). An
-    operand may also carry a glob in its final component (`_glob_confined`).
+    `job_dir` is the hook's $CLAUDE_JOB_DIR, which an operand may name (`_words`). With
+    `globs`, an operand may also carry a glob in its final component (`_glob_confined`).
+    That check resolves the parent as the filesystem is now, so the caller passes `globs`
+    only when nothing earlier in the chain can make a link first (`judge.LINK_MAKERS`).
     """
     if not command:
         return False
-    words = _words(command, job_dir, globs=True)
+    words = _words(command, job_dir, globs)
     if not words:
         return False
     # :142. The command word with any path prefix stripped; nothing may precede it.

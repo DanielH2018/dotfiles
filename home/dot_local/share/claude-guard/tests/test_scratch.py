@@ -189,7 +189,9 @@ def test_allow_needs_a_confined_operand_not_just_clean_options():
     ],
 )
 def test_a_glob_in_the_last_component_below_a_root_is_confined(command):
-    assert rm_confined(command, ROOTS) is True
+    assert rm_confined(command, ROOTS, globs=True) is True
+    # A caller that cannot rule out a link made earlier in the chain gets no globs.
+    assert rm_confined(command, ROOTS) is False
 
 
 @pytest.mark.parametrize(
@@ -213,14 +215,14 @@ def test_a_glob_in_the_last_component_below_a_root_is_confined(command):
     ],
 )
 def test_a_glob_that_can_reach_outside_its_directory_is_refused(command):
-    assert rm_confined(command, ROOTS) is False
+    assert rm_confined(command, ROOTS, globs=True) is False
 
 
 def test_a_glob_under_a_symlinked_parent_is_judged_where_the_link_points(scratch_dir):
     os.symlink("/etc", f"{scratch_dir}/out")
     os.mkdir(f"{scratch_dir}/in")
-    assert rm_confined(f"rm -f {scratch_dir}/out/*", ROOTS) is False
-    assert rm_confined(f"rm -f {scratch_dir}/in/*", ROOTS) is True
+    assert rm_confined(f"rm -f {scratch_dir}/out/*", ROOTS, globs=True) is False
+    assert rm_confined(f"rm -f {scratch_dir}/in/*", ROOTS, globs=True) is True
 
 
 # --- $CLAUDE_JOB_DIR (dotfiles #956) --------------------------------------------------------
@@ -238,7 +240,7 @@ JOB = "/home/testuser/.claude/jobs/abc123"
     ],
 )
 def test_the_job_dir_variable_expands_to_the_hooks_value(command):
-    assert rm_confined(command, ROOTS, JOB) is True
+    assert rm_confined(command, ROOTS, JOB, globs=True) is True
 
 
 @pytest.mark.parametrize(

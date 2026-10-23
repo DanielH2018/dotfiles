@@ -1499,3 +1499,23 @@ def test_the_real_template_approves_scratch_cleanup_a_background_job_writes(real
     cleanup = 'rm -rf "$CLAUDE_JOB_DIR/tmp/body.md" && rm -f /tmp/x/fail*.txt'
     assert judge(cleanup, real, ROOTS, CWD, "", job).allow
     assert not judge(cleanup, real, ROOTS, CWD).allow
+
+
+def test_a_glob_rm_after_a_link_maker_in_the_same_chain_is_not_approved(real):
+    # The glob's parent is resolved before `ln` runs, so the link it makes is unseen.
+    assert not allowed("ln -s /home/testuser /tmp/q && rm -f /tmp/q/*", real)
+    assert allowed("ls /tmp/q && rm -f /tmp/q/*", real)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo CLAUDE_JOB_DIR; rm -rf $CLAUDE_JOB_DIR/tmp",
+        "CLAUDE_JOB_DIR=/home/testuser; rm -rf $CLAUDE_JOB_DIR/.ssh",
+        "export CLAUDE_JOB_DIR=/home/testuser; rm -rf $CLAUDE_JOB_DIR/x",
+        "for CLAUDE_JOB_DIR in /home/testuser; do rm -rf $CLAUDE_JOB_DIR/x; done",
+    ],
+)
+def test_a_command_that_names_the_job_dir_bare_gets_no_expansion(real, command):
+    # Anything that can set the shell's value makes the hook's value stand for nothing.
+    assert not judge(command, real, ROOTS, CWD, "", "/home/testuser/.claude/jobs/abc").allow

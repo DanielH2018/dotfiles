@@ -398,6 +398,8 @@ _WRITE_REDIRECT = re.compile(rf"(?<![&<>])[0-9]*>>?(?![>&|(])[{WS}]*(?P<target>[
 # `git` counts only outside `remote_guards.git_readonly`, the read-only subcommands. A
 # command the allow list already lets run arbitrary code (`uv run`, `npx`) can write
 # anywhere without this race, so it is not listed.
+_JOB_DIR_NAMED_BARE = re.compile(r"(?<!\$)(?<!\$\{)\bCLAUDE_JOB_DIR\b")
+
 LINK_MAKERS = frozenset(
     {"ln", "cp", "mv", "install", "rsync", "ditto", "tar", "bsdtar", "unzip", "cpio", "pax"}
 )
@@ -789,8 +791,9 @@ def judge_segment(
 ) -> tuple[bool, str]:
     """:286-395, one iteration of the loop. (ok, reason).
 
-    `scratch_ok` admits a `>`/`>>` redirect into a scratch root (`_redirects_ok`). `judge()`
-    sets it only when no segment of the chain is a `LINK_MAKERS` command. `job_dir` is the
+    `scratch_ok` admits a `>`/`>>` redirect into a scratch root (`_redirects_ok`) and a
+    glob in a scratch rm operand. `judge()` sets it only when no segment of the chain is a
+    `LINK_MAKERS` command. `job_dir` is the
     session's $CLAUDE_JOB_DIR, which an rm operand may name (`scratch.rm_confined`).
 
     `cwd_changed` is H1's gate (task-8-fix-2-brief.md): True when an EARLIER segment in
@@ -1005,7 +1008,7 @@ def judge_segment(
 
     if word == "curl" and curl_safe(part):
         return True, "curl-check"
-    if word == "rm" and rm_confined(part, roots, job_dir):
+    if word == "rm" and rm_confined(part, roots, job_dir, globs=scratch_ok):
         return True, "rm-check"
 
     # dotfiles #861 and #864. The same ask rules (`rm:*`, `git restore:*`, `git clean:*`)
@@ -1229,6 +1232,11 @@ def judge(
             return Decision(False, "unjudgeable:heredoc", ())
         if i < last and seg.sep == "&":
             return Decision(False, "unjudgeable:separator", ())
+
+    # The hook's $CLAUDE_JOB_DIR stands for the shell's only while nothing in the command
+    # can set it: an assignment, `export`, `read`, `for` or `unset` all name it bare.
+    if _JOB_DIR_NAMED_BARE.search(command):
+        job_dir = ""
 
     reasons: list[str] = []
     # H1 (task-8-fix-2-brief.md). True once a `cd`/`pushd`/`popd` segment has been judged
