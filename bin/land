@@ -88,7 +88,7 @@ PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number' 2
 # One lander at a time, across every worktree of this repo: the common dir is
 # shared by all of them, a per-worktree lock would not be.
 COMMON=$(git rev-parse --git-common-dir)
-case "$COMMON" in /*) ;; *) COMMON=$ROOT/$COMMON ;; esac
+case "$COMMON" in /* | [A-Za-z]:/*) ;; *) COMMON=$ROOT/$COMMON ;; esac
 LOCK="$COMMON/land.lock"
 
 if [ "$DRY" -eq 1 ]; then

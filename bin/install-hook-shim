@@ -38,7 +38,7 @@ ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 # --git-common-dir, not --git-dir: from a linked worktree the latter is that
 # worktree's private dir, and the shim must be shared by all of them.
 COMMON=$(cd "$ROOT" && git rev-parse --git-common-dir 2>/dev/null) || exit 0
-case "$COMMON" in /*) ;; *) COMMON=$ROOT/$COMMON ;; esac
+case "$COMMON" in /* | [A-Za-z]:/*) ;; *) COMMON=$ROOT/$COMMON ;; esac
 COMMON=$(cd "$COMMON" 2>/dev/null && pwd -P) || exit 0
 
 HOOKS_DIR=$COMMON/hooks-safe
