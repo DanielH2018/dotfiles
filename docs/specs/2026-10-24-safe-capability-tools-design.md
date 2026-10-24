@@ -83,13 +83,30 @@ whole-string scan.
 | 2 | `takeover-check`: runs the allowed `sudo -n` takeover line with checked arguments and merged stderr, so its output can be piped | 10 | shipped with the `takeover-check` tool |
 | 3 | `secretq`: key names, presence, all-encrypted check and a SOPS-file hash, never a value | 13 | shipped with the `secretq` tool |
 | 4 | `unitq cat UNIT`: a unit and its drop-ins with `Environment=` values, `EnvironmentFile=` contents and `Exec*` arguments removed structurally | 14 | shipped with the `unitq` tool |
-| 5 | `claude-guard probe <check> <cases-file>`: a named internal check's verdict per case | part of 31 | deferred: slice 1's replay route shipped on 2026-10-24, so the week of refusals that decides whether this is needed has not happened yet |
+| 5 | `claude-guard probe <check> <cases-file>`: a named internal check's verdict per case | part of 31 | dropped 2026-10-25; see *Why slice 5 was dropped* |
 | 6 | `killown PATTERN`: kills only processes carrying this session's id, read from the shell Claude started | 7 of 8 (the eighth runs over ssh, outside any session) | shipped with the `killown` tool |
 | 7 | `envq NAME…`: a value only for a non-credential name with a plain-shaped value, otherwise `set` or `unset` | 3 | shipped with the `envq` tool |
 
 `secretq` never hashes a plaintext file, because a low-entropy value hashes to something a
 dictionary can reverse. `unitq` has no heuristic for what looks like a token; a redactor like
 that leaks whatever it fails to recognise.
+
+## Why slice 5 was dropped
+
+A guard probe asks one of two questions, and each already has a safe route.
+
+- "What does the guard decide for this command?" `claude-guard replay <file> --deny`
+  answers it with the verdict the hook gives, after rule order, the exemptions in `deny()`'s
+  loop and the hints appended to a message. A probe of one function can pass while that
+  assembled verdict differs.
+- "What does this one internal check return?" A row in `tests/test_deny.py` run with
+  `uv run pytest -k …` answers it, and the case stays as a regression test. The guard sees
+  only the pytest command.
+
+A `probe` subcommand would add an allow-ruled surface that calls internal functions by name,
+which needs its own whitelist, for a need those two routes already meet. If sessions keep
+writing inline probes, the fix is a sentence naming the pytest route in the deny message
+that fires on `claude_guard`, not a new tool.
 
 ## Kept on purpose
 
