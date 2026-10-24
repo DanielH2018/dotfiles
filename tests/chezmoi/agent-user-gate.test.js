@@ -133,7 +133,6 @@ test("the agent runs neither the source re-add hook nor the operator's artifact 
 test('the agent skips the scripts that need sudo, a tty or a toolchain Ansible supplies', { skip }, () => {
   for (const rel of [
     ['.chezmoiscripts', 'os-unix', 'run_once_after_set-default-shell.sh.tmpl'],
-    ['.chezmoiscripts', 'os-unix', 'run_onchange_after_install-python-tools.sh.tmpl'],
     ['.chezmoiscripts', 'os-linux', 'run_onchange_after_install-cli-tools.sh.tmpl'],
     ['.chezmoiscripts', 'os-linux', 'run_onchange_after_install-tmux.sh.tmpl'],
     ['.chezmoiscripts', 'post-install', 'run_onchange_after_install-js-lint.sh.tmpl'],
@@ -158,4 +157,56 @@ test("the agent's operator/CLAUDE.md is the user CLAUDE.md, rendered", { skip },
   const body = renderFile(srcPath('private_dot_claude', 'CLAUDE.md.tmpl'), { data: { agent: true, work: false, profile: 'server' } });
   assert.ok(body.length > 1000);
   assert.strictEqual(copy, body);
+});
+
+// H7.38: the agent installs uv, the pinned Python and prek itself, where the server repo's
+// Ansible used to copy them in. The pins are the server's, and the tools.toml header says so.
+const onHost = (file, agent, hostname, profile = 'server') => renderTemplate(
+  `{{ $_ := set .chezmoi "hostname" "${hostname}" }}{{ $_ := set .chezmoi "os" "linux" }}${fs.readFileSync(file, 'utf8')}`,
+  { data: { agent, profile, work: false } },
+);
+const PYTHON_TOOLS = srcPath('.chezmoiscripts', 'os-unix', 'run_onchange_after_install-python-tools.sh.tmpl');
+const pins = () => {
+  const table = fs.readFileSync(srcPath('.chezmoidata', 'tools.toml'), 'utf8')
+    .split(/^\[toolchain\]$/m)[1].split(/^\[/m)[0];
+  return Object.fromEntries([...table.matchAll(/^(\w+) = "([^"]+)"$/gm)].map((m) => [m[1], m[2]]));
+};
+
+test("the agent on a dev tooling host gets uv, the pinned Python and prek, and not the operator's extras", { skip }, () => {
+  const { uv, prek, python } = pins();
+  const agent = onHost(PYTHON_TOOLS, true, 'daniel-box');
+  assert.match(agent, new RegExp(`UV_WANT='${uv}'`));
+  assert.match(agent, new RegExp(`uv python install '${python}'`));
+  assert.match(agent, new RegExp(`uv tool install --force 'prek==${prek}'`));
+  assert.ok(!/uv python install 3\.12/.test(agent), 'the agent gets the vault-tooling interpreter');
+  assert.ok(!/uv tool install 'ruff/.test(agent), 'the agent gets ruff');
+  const operator = onHost(PYTHON_TOOLS, false, 'daniel-box');
+  assert.match(operator, /uv python install 3\.12/);
+  assert.match(operator, /uv tool install 'ruff==/);
+});
+
+test("the agent on a host outside the server's dev_tooling_hosts gets nothing from it", { skip }, () => {
+  assert.strictEqual(onHost(PYTHON_TOOLS, true, 'daniel-desktop', 'workstation').trim(), '');
+  assert.notStrictEqual(onHost(PYTHON_TOOLS, false, 'daniel-desktop', 'workstation').trim(), '');
+});
+
+test('the tools.toml pins are the values the server repo installs', { skip }, () => {
+  // Both installers write ~/.local/bin/uv and the prek tool, so a different value makes each
+  // apply of one undo the other. Values from the server repo as of 2026-10-24:
+  // initial_setup_uv_version, the `prek==` loop in initial_setup's host-basics.yml and
+  // host_python_version. Moving one here means moving the server's too (H7.38).
+  const { uv, prek, python } = pins();
+  assert.deepStrictEqual({ uv, prek, python }, { uv: '0.13.4', prek: '0.5.5', python: '3.14.6' });
+});
+
+test('claude_guard and claude_worktree deploy to the agent from this repo, with Claude Code', { skip }, () => {
+  const config = dataConfig({ agent: true, profile: 'server', work: false });
+  const managed = execFileSync('chezmoi', ['--config', config, '--source', SOURCE, '--destination', '/nonexistent-home',
+    'managed', '--include', 'files'], { encoding: 'utf8' }).split('\n');
+  for (const p of ['.local/bin/claude-guard', '.local/share/claude-guard/claude_guard/__init__.py',
+    '.local/share/claude-worktree/claude_worktree.py']) {
+    assert.ok(managed.includes(p), `${p} is not deployed to the agent`);
+  }
+  const claude = srcPath('.chezmoiscripts', 'os-unix', 'run_once_after_install-claude.sh.tmpl');
+  assert.notStrictEqual(onBox(claude, true).trim(), '', 'Claude Code is not installed for the agent');
 });

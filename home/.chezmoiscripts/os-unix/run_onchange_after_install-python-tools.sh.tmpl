@@ -1,4 +1,5 @@
-{{ if and (ne .chezmoi.os "windows") (ne .profile "minimal") (not (includeTemplate "is-agent" .)) -}}
+{{ $agent := includeTemplate "is-agent" . -}}
+{{ if and (ne .chezmoi.os "windows") (ne .profile "minimal") (or (not $agent) (has .chezmoi.hostname .agent_tooling.hosts)) -}}
 #!/bin/sh
 # Installs uv (Astral's Python package/project manager) plus the two Python CLIs that are
 # machine-global rather than per-project:
@@ -17,6 +18,15 @@
 # `uv run pytest` (auto-syncs from uv.lock) or `uvx pytest`, both of which work once uv is
 # here. A global pytest would run in an isolated venv that can see no project at all, and
 # would only serve to make a bare `pytest` fail confusingly instead of failing fast.
+#
+# A Claude agent user (see .chezmoitemplates/is-agent) runs this script too, on the hosts in
+# .chezmoidata/tools.toml's [agent_tooling] table, and gets uv, the pinned Python and prek: the
+# set the server repo's Ansible (setup/common/tasks/agent_user.yml) copies in until H7.39 removes
+# that task. Ruff and the 3.12 interpreter are the operator's (the vault-tooling projects and the
+# edit hooks), so the agent skips them. Either installer can run first on a given host, so every
+# step below leaves a tool alone when it is already at the pinned version, and the pins here are
+# the same values Ansible's are (see [toolchain] in tools.toml). prek in particular is a plain
+# file Ansible copied into ~/.local/bin, where `uv tool install` would refuse to overwrite it.
 #
 # Linux gets the uv binary from Astral's standalone installer — there is no apt package, which
 # is why uv has no [[tools]] entry in .chezmoidata/tools.toml (its VERSION is pinned there,
@@ -85,10 +95,15 @@ fi
 #    widest wheel coverage for vault-index's fastembed/duckdb deps — a distro python3 that has
 #    moved on to 3.13/3.14 has none of them. Idempotent: uv skips a version it already has.
 #    (~/dev/server pins >=3.14 and keeps resolving to the system interpreter.)
+{{ if not $agent -}}
 uv python install 3.12 || echo "install-python-tools: 'uv python install 3.12' failed" >&2
+{{ end -}}
 # claude-guard (~/.local/share/claude-guard) is 3.14-only; its shims resolve this interpreter
-# at call time with `uv python find --no-project --managed-python --system 3.14`.
-uv python install 3.14 || echo "install-python-tools: 'uv python install 3.14' failed" >&2
+# at call time with `uv python find --no-project --managed-python --system 3.14`. The exact
+# patch version, because the server repo's `host_python_version` runs its hooks under it; an
+# exact install still answers the shims' two-part request, as the CI step explains. uv installs
+# nothing and prints nothing for a version it already has.
+uv python install '{{ .toolchain.python }}' || echo "install-python-tools: 'uv python install {{ .toolchain.python }}' failed" >&2
 
 # 3. Global CLIs, at the versions .chezmoidata/tools.toml pins. A `pkg==X.Y.Z` argument
 #    replaces an install at a different version rather than erroring, so a bump reinstalls in
@@ -102,12 +117,24 @@ uv python install 3.14 || echo "install-python-tools: 'uv python install 3.14' f
 #    One line per tool rather than a loop over a list: the version has to be visible on the
 #    line that installs it, to a reader and to a grep asking whether anything here is still
 #    unpinned.
+{{ if not $agent -}}
 uv tool install 'ruff=={{ .toolchain.ruff }}' || echo "install-python-tools: installing ruff failed" >&2
-uv tool install 'prek=={{ .toolchain.prek }}' || echo "install-python-tools: installing prek failed" >&2
+{{ end -}}
+# `--force` takes over a ~/.local/bin/prek that is not uv's own shim, such as the copy Ansible
+# placed there. The version test keeps it from reinstalling a prek that is already right.
+PREK_WANT='{{ .toolchain.prek }}'
+prek_version() {
+  v="$(prek --version 2>/dev/null)"
+  v="${v#prek }"
+  printf '%s' "${v%% *}"
+}
+if [ "$(prek_version)" != "$PREK_WANT" ]; then
+  uv tool install --force 'prek=={{ .toolchain.prek }}' || echo "install-python-tools: installing prek failed" >&2
+fi
 
 # Fail loudly (and retry next apply) if anything is still missing.
 missing=""
-for c in uv ruff prek; do
+for c in uv {{ if not $agent }}ruff {{ end }}prek; do
   command -v "$c" >/dev/null 2>&1 || missing="$missing $c"
 done
 if [ -n "$missing" ]; then

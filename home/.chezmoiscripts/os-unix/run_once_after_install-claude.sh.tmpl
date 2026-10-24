@@ -6,6 +6,9 @@
 # run under sudo (everything lands in $HOME), so this runs as the normal user — no elevation, no
 # tty needed. Windows is handled separately by run_once_after_install-claude.ps1 (install.sh
 # refuses MINGW/MSYS). Bump the marker to force a reinstall.
+# A Claude agent user (see .chezmoitemplates/is-agent) installs it here too: the script is not gated on
+# is-agent, runs as that user with no elevation, and skips when ~/.local/bin/claude already exists,
+# which is how it behaves after the server repo's Ansible has installed it.
 # claude-bump: v1
 set -u
 

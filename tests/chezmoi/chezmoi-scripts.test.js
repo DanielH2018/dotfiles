@@ -229,9 +229,9 @@ test('install-docker-engine adds its apt repo via the shared helper', { skip }, 
     'exit 0',
   ].join('\n');
 
-  // `uv tool install <name>==<version>` materializes <name> in the stub dir (always on PATH) so
-  // the script's final command -v sweep sees the tools a real install would have produced. The
-  // `==` is stripped here because the script pins every version from tools.toml, and the binary
+  // `uv tool install [--force] <name>==<version>` materializes <name> in the stub dir (always on
+  // PATH) so the script's final command -v sweep sees the tools a real install would have
+  // produced. The last argument is the package, so a flag before it does not matter. The `==` is stripped here because the script pins every version from tools.toml, and the binary
   // a real `uv tool install ruff==X` leaves behind is still named `ruff`.
   //
   // `--version` answers TEST_UV_VERSION, because the script reinstalls uv when the version on
@@ -242,7 +242,8 @@ test('install-docker-engine adds its apt repo via the shared helper', { skip }, 
     'echo "uv $*" >> "$STUB_LOG"',
     'if [ "$1" = "--version" ]; then echo "uv ${TEST_UV_VERSION:-0.0.0}"; exit 0; fi',
     'if [ "$1" = "tool" ] && [ "$2" = "install" ]; then',
-    '  name="${3%%==*}"',
+    '  for last; do :; done',
+    '  name="${last%%==*}"',
     '  printf "#!/bin/sh\\n" > "$STUB_DIR/$name" && chmod 755 "$STUB_DIR/$name"',
     'fi',
     'exit "${UV_EXIT:-0}"',
@@ -252,7 +253,7 @@ test('install-docker-engine adds its apt repo via the shared helper', { skip }, 
   // disagree with the script about which version counts as current.
   const pinnedUv = () => /^UV_WANT='([^']+)'$/m.exec(renderFile(PT_SRC))[1];
 
-  function ptSandbox({ uvPresent = false, unameS = 'Linux', uvVersion = null } = {}) {
+  function ptSandbox({ uvPresent = false, unameS = 'Linux', uvVersion = null, prekVersion = null } = {}) {
     const dir = tmpdir('python-tools-');
     const logFile = path.join(dir, 'log.txt');
     fs.writeFileSync(logFile, '');
@@ -262,6 +263,8 @@ test('install-docker-engine adds its apt repo via the shared helper', { skip }, 
     // `command -v uv` misses it until the install "runs". uvPresent also drops it on PATH.
     fs.writeFileSync(path.join(dir, 'uv.payload'), UV_STUB, { mode: 0o755 });
     if (uvPresent) fs.writeFileSync(path.join(dir, 'uv'), UV_STUB, { mode: 0o755 });
+    // A prek already on PATH, answering `prek --version` the way the real one does.
+    if (prekVersion) fs.writeFileSync(path.join(dir, 'prek'), `#!/bin/sh\necho "prek ${prekVersion} (abc 2026-01-01)"\n`, { mode: 0o755 });
     for (const b of ['cat', 'chmod', 'cp', 'mkdir', 'mktemp', 'rm', 'sh']) {
       fs.symlinkSync(realBin(b), path.join(dir, b));
     }
@@ -315,7 +318,26 @@ test('install-docker-engine adds its apt repo via the shared helper', { skip }, 
     // Pinned, not bare: a bare `uv tool install prek` gave CI and a laptop different builds of
     // the hook runner whose verdict decides whether a push is clean.
     assert.match(log, /uv tool install ruff==\d+\.\d+\.\d+/, `ruff should be installed at its pin:\n${log}`);
-    assert.match(log, /uv tool install prek==\d+\.\d+\.\d+/, `prek should be installed at its pin:\n${log}`);
+    assert.match(log, /uv tool install --force prek==\d+\.\d+\.\d+/, `prek should be installed at its pin:\n${log}`);
+    // The exact patch version the server repo pins as host_python_version, not `3.14`.
+    assert.match(log, /uv python install 3\.\d+\.\d+\n/, `the pinned interpreter should be provisioned:\n${log}`);
+  });
+
+  // The half the server repo's Ansible makes necessary: it copies a plain prek file into
+  // ~/.local/bin, and `uv tool install` would refuse to overwrite that, so a prek already at
+  // the pin must be left alone and one at another version must be replaced with --force.
+  test('install-python-tools.sh.tmpl: prek already at the pin -> not reinstalled', { skip }, () => {
+    const pin = /^PREK_WANT='([^']+)'$/m.exec(renderFile(PT_SRC))[1];
+    const { scriptFile, env, logFile } = ptSandbox({ uvPresent: true, prekVersion: pin });
+    const { status } = runSh(scriptFile, env);
+    assert.strictEqual(status, 0);
+    assert.ok(!readLog(logFile).includes('tool install --force prek'), `a current prek was reinstalled:\n${readLog(logFile)}`);
+  });
+
+  test('install-python-tools.sh.tmpl: prek at another version -> replaced', { skip }, () => {
+    const { scriptFile, env, logFile } = ptSandbox({ uvPresent: true, prekVersion: '0.0.1' });
+    runSh(scriptFile, env);
+    assert.match(readLog(logFile), /uv tool install --force prek==/);
   });
 
   // pytest is intentionally left to each project's own env (`uv run pytest`); a global one

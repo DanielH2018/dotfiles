@@ -95,3 +95,26 @@ test('renders a ps1 interpreter that bypasses the execution policy', { skip }, (
   // treats it as a command to interpret, which the execution policy blocks all the same.
   assert.match(args[1], /"-ExecutionPolicy", "Bypass", "-File"$/);
 });
+
+// H7.38: the package unit that builds a Claude agent user runs `chezmoi init` with no tty and
+// no seeded config, so the three prompt answers come from these flags. The flag text IS the
+// prompt text, so a reworded prompt breaks that unit; this runs the real `init` to catch it.
+// The server repo's chezmoi_setup role seeded a config file instead (its chezmoi-seed.toml.j2).
+test('chezmoi init answers all three prompts from flags with no tty and no config', { skip }, () => {
+  const home = scratch(os.tmpdir(), 'chezmoi-init-');
+  const config = path.join(home, 'chezmoi.toml');
+  execFileSync('chezmoi', [
+    'init', '--source', path.dirname(TMPL), '--destination', path.join(home, 'dest'), '--config', config,
+    '--promptBool', `${WORK_PROMPT}=false`,
+    '--promptBool', `${AGENT_PROMPT}=true`,
+    '--promptString', `${PROFILE_PROMPT}=server`,
+  ], {
+    env: { PATH: process.env.PATH, HOME: home, XDG_CONFIG_HOME: home, XDG_DATA_HOME: home, XDG_STATE_HOME: home },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf8',
+  });
+  const written = fs.readFileSync(config, 'utf8');
+  assert.match(written, /^\s*work = false$/m);
+  assert.match(written, /^\s*profile = "server"$/m);
+  assert.match(written, /^\s*agent = true$/m);
+});
