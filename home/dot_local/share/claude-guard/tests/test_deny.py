@@ -747,6 +747,8 @@ PYTHON_ATTRIBUTE_ACCESS = [
     "python3 -Ic 'print(row.key)'",
     "python3 -u - <<'EOF' 2>&1\nprint(load().env.get('x'), rows[0].env)\nEOF",
     "python3 -c 'print(v.key)' | head -5",
+    "uv run --frozen --no-project python - <<'EOF'\nprint(v.key)\nEOF",
+    "uv run --offline python3 -c 'print(row.key)'",
 ]
 # Each row was refused before #957 and must stay refused: the text is a string literal, the
 # program is not certainly Python source, the shell can rewrite it, or a word outside the
@@ -772,6 +774,11 @@ STILL_READS_A_SECRET = [
     "PATH=/tmp/x:$PATH python3 - <<'EOF'\nsort<server.key\nEOF",
     "export PATH=/tmp/x; python3 - <<'EOF'\nsort<server.key\nEOF",
     "alias python3=bash; python3 - <<'EOF'\nsort<server.key\nEOF",
+    # a uv option with a value can pick the interpreter, so it ends the closed shape (#1000)
+    "uv run --python ./sh python - <<'EOF'\nsort<server.key\nEOF",
+    "uv run --with x python - <<'EOF'\nsort<server.key\nEOF",
+    "timeout 5 python3 - <<'EOF'\nsort<server.key\nEOF",
+    ".venv/bin/python - <<'EOF'\nsort<server.key\nEOF",
     "python3 - <<'EOF'\n#\x0c\nprint(open('/a/pin.key').read())\nxxxxxxxxxxxxxxxx().key\nEOF",
 ]
 
@@ -1895,6 +1902,15 @@ SUDO_REFUSE = [
     "python3 - <<EOF\nprint('$(sudo id)')\nEOF",
     # a script reads the heredoc as data, and may run it
     "python3 tool.py <<'EOF'\nsudo id\nEOF",
+    "uv run python tool.py <<<'sudo id'",
+    # a script's arguments are data only past a literal script path (dotfiles #1000)
+    "python3 -m timeit \"__import__('os').system('sudo id')\"",
+    "uv run python x.py; sudo id",
+    'python3 x.py "$(sudo id)"',
+    "uv run --with x python x.py --t sudo",
+    "uv run --python /tmp/p python x.py --title sudo",
+    "python3 -W ignore x.py --title sudo",
+    'python3 "$S" --title sudo',
 ]
 
 SUDO_PASS = [
@@ -1920,6 +1936,12 @@ SUDO_PASS = [
     f"ls; sudo -n {W} --help",
     f"ls\nsudo -n {W} --help",
     f"true && sudo -n {W} --label L",
+    # a Python script's arguments, and the value-free uv options (dotfiles #1000)
+    'uv run python scripts/dev/findings.py open --title "The sudo boundary reads arguments"',
+    "PYTHONPATH=. python3 -u tool.py --reason 'ran sudo k3s kubectl by hand'",
+    "uv run --no-project python - <<'EOF'\nprint('sudo')\nEOF",
+    "uv run --offline -q python3 -c \"print('sudo')\"",
+    "uv run --frozen python - <<'EOF'\nprint('sudo')\nEOF",
     # sudo only as text, never run
     "echo sudo",
     "echo 'sudo -n true'",

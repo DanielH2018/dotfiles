@@ -1075,15 +1075,35 @@ _BEFORE_PYTHON = frozenset({"cd", "pwd", "true", "echo", "set"})
 _ODD_BREAKS = frozenset("\r\x0b\x0c\x1c\x1d\x1e\x85  ")
 
 
+# The value-free `uv run` options seen before `python` in the 2026-10-17 to 2026-10-24
+# replay (dotfiles #1000). None of them changes which interpreter runs or what it reads. An
+# option that takes a value, such as `--with`, `--python` or `--project`, is left out: its
+# value could be read as the program, and `--python` or `--project` can pick an interpreter
+# planted earlier. `timeout <N>` and `.venv/bin/python` are left out for the same residual,
+# and because neither appeared in a denial that week.
+_UV_RUN_FLAGS = frozenset({"--frozen", "--no-project", "--offline", "--quiet", "-q"})
+# A script path the shell passes as written: no expansion, no quote, no leading `-`.
+_PY_SCRIPT = re.compile(r"[\w./][\w./-]*\.py")
+
+
+def _past_uv_run(words: list[str]) -> list[str]:
+    """`words` past a leading `uv run` and its value-free options (`_UV_RUN_FLAGS`)."""
+    if words[:2] != ["uv", "run"]:
+        return words
+    i = 2
+    while i < len(words) and words[i] in _UV_RUN_FLAGS:
+        i += 1
+    return words[i:]
+
+
 def _python_source(words: list[str], heredocs: tuple[str, ...]) -> str | None:
     """The Python source of a segment whose words are one of the closed shapes, or None.
 
-    The shapes are `python…` or `uv run python…`, then only value-free flags, then either
-    `-c PROGRAM` or a program read from stdin (`-` or nothing) that is the segment's one
-    heredoc on fd 0. Any leader, assignment, path-spelled interpreter, other flag, script,
-    module, `<` redirect or fd-numbered heredoc returns None."""
-    if words[:2] == ["uv", "run"]:
-        words = words[2:]
+    The shapes are `python…` or `uv run python…` (`_past_uv_run`), then only value-free
+    flags, then either `-c PROGRAM` or a program read from stdin (`-` or nothing) that is
+    the segment's one heredoc on fd 0. Any leader, assignment, path-spelled interpreter,
+    other flag, script, module, `<` redirect or fd-numbered heredoc returns None."""
+    words = _past_uv_run(words)
     if not words or not re.fullmatch(r"python[0-9.]*", words[0]):
         return None
     i = 1
@@ -1099,6 +1119,24 @@ def _python_source(words: list[str], heredocs: tuple[str, ...]) -> str | None:
     if sum("<" in w for w in words) != 1:
         return None
     return heredocs[0]
+
+
+def _script_arguments_start(argv: list[str]) -> int | None:
+    """The index in `argv` of the first argument a Python script receives, or None.
+
+    The launcher is `_python_source`'s, then only value-free interpreter flags, then a
+    literal `.py` path (`_PY_SCRIPT`). The words after that path are the script's argv,
+    which the guard reads as data for every other program too. `-c`, `-m`, `-` and every
+    other flag return None, since each makes a later word the program (dotfiles #1000)."""
+    rest = _past_uv_run(argv)
+    if not rest or not re.fullmatch(r"python[0-9.]*", rest[0]):
+        return None
+    i = 1
+    while i < len(rest) and _PY_FLAG.fullmatch(rest[i]):
+        i += 1
+    if i >= len(rest) or not _PY_SCRIPT.fullmatch(rest[i]):
+        return None
+    return len(argv) - len(rest) + i + 1
 
 
 def _masked_attributes(program: str) -> str | None:
@@ -2232,6 +2270,11 @@ def _segment_sudo(
         # so an expansion there is as unresolvable as a bare `$X -n true`.
         if _runs_variable(argv):
             found = max(found, _SUDO_VARIABLE)
+        # A Python script's own arguments are data: `findings.py open --title "…sudo…"`
+        # names the word without running it. Its stdin heredoc is still searched below.
+        start = _script_arguments_start(argv) if interpreter else None
+        if start is not None:
+            rest = argv[1:start]
         for tok in [] if inert_source else rest:
             if _loose_hit(tok) if interpreter else posixpath.basename(tok) in _ESCALATORS:
                 return _SUDO_ESCALATES

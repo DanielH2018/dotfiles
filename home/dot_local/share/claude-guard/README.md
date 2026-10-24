@@ -208,7 +208,9 @@ code. The sudo boundary skips the word search in a closed-shape Python program t
 `inert_python.py` proves starts no process. That module is an allowlist of imports, attributes
 and builtins, and it refuses a program naming a shell-startup, settings, hook or PATH file.
 A week's replay over 32,188 commands took the deny count from 316 to 262. No command went
-from allowed to denied (2026-10-24).
+from allowed to denied (2026-10-24). The boundary also reads a Python script's own arguments
+as data, past a literal `.py` path, so a `findings.py open --title` that names sudo passes.
+That took the same replay from 262 to 258 (dotfiles #1000).
 
 When nothing above decides, `readonly.py` (dotfiles #628, ported from the server repo's
 `auto-approve-readonly.py`) allows a command whose every stage is provably read-only. It
