@@ -536,6 +536,9 @@ KILL_ALLOW = [
     'echo "use killall as a last resort" >> notes.md',
     # `|kill` inside a quoted grep alternation is no pipeline stage (2026-10-24)
     "f=$(readlink -f x); grep -n -iE 'break.glass|rollback|kill switch' notes.md",
+    # killown signals only this session's processes (2026-10-25)
+    "killown 'pytest -q -n 2 -p no:cacheprovider'; sleep 1; git rebase origin/master",
+    "killown --dry-run --signal KILL 'logs -f deploy/monitor-bridge'",
 ]
 
 
@@ -2283,6 +2286,7 @@ ROUTED = [
     ("git diff ansible/vars/secrets.yml", "git-sops-diff", "secretq keys --rev"),
     ("systemctl cat claude-land@.service | grep User=", "systemctl-cat", "`unitq cat"),
     ("systemctl show x.service -p ExecStart", "systemctl-show-exec", "`unitq show"),
+    ("pkill -f 'pytest -q -n 2'", "pkill", "`killown"),
     ("python3 -c 'import os; os.environ[\"GITHUB_TOKEN\"]'", "secret-env", "Edit"),
     ("bash -c 'sudo id'", "sudo-boundary", "Edit"),
     ("ls | xargs -I{} sh -c 'echo {}' | sh", "pipe-to-shell", "while IFS= read"),

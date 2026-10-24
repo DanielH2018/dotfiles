@@ -552,6 +552,7 @@
            prints and what it never prints. */}}
       "`secretq …` (keys, has, encrypted, sha256, kubeconfig, ssh-config; piped or not, locally or over ssh) is routine and read-only even when it names a secrets file: it prints only key names of a SOPS file, an exit status, the sha256 of a SOPS-ciphertext file, a kubeconfig's context and cluster names and servers, or an ssh config's host lines. It never prints a secret value, never runs sops, and never decrypts",
       "`unitq cat [--user] UNIT…` and `unitq show [--user] UNIT PROP…` (piped or not, locally or over ssh) are routine and read-only: they run `systemctl cat` or `systemctl show -p` and print the result with Environment= values, Exec* arguments and credentials replaced by placeholders, so a unit's secrets never reach the session",
+      "`killown [--dry-run] [--signal SIG] [--max N] PATTERN` is routine: it signals only processes this Claude Code session started, identified by the session id the session's own shell carries. It never signals another session's processes, Claude Code itself, a tool shell, an MCP server or its own caller, and refuses a match wider than --max",
       {{/* Denied as "External System Writes" on 2026-09-25 while polling a fan-out wave. The
            command reaches two hosts and GitHub, which is what the classifier keyed on, but every
            reach is a read: cmd_status in scripts/dev/fanout_lib/place.py loads the manifest, runs

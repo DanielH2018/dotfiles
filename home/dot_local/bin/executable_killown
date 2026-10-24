@@ -1,0 +1,210 @@
+#!/usr/bin/python3 -I
+"""killown — signal this Claude Code session's own processes by pattern.
+
+`pkill -f PATTERN` matches every process of the user, so a pattern meant for
+this session's stray pytest also kills another session's run, a detached
+landing, or the daemon. claude-guard refuses it. killown signals only
+processes this session started:
+
+  killown [--signal SIG] [--dry-run] [--max N] PATTERN
+
+A process qualifies when its command line matches the regular expression
+PATTERN and it carries this session's CLAUDE_CODE_SESSION_ID. Claude Code
+gives every process a session starts that id, and a process keeps it after a
+setsid or nohup reparents it, which is where a descendants-only rule loses it.
+
+killown never trusts its own environment for the id, since a prefix such as
+`CLAUDE_CODE_SESSION_ID=other killown x` could forge it. It walks its own
+ancestry to the nearest Claude Code process (an executable under
+`claude/versions/`) and reads the id from that process's direct child, the
+shell Claude started, whose environment no later command can change. With no
+Claude ancestor, as over ssh, it refuses.
+
+It never signals:
+
+  - a Claude Code process;
+  - a direct child of one: the Bash tool's shells, MCP servers and hooks,
+    which a session's own commands never are, since the Bash tool runs them
+    under its shell;
+  - killown or any of its ancestors, so the invoking shell, whose command
+    line holds PATTERN, survives.
+
+Each target is pinned with pidfd_open and its start time re-checked before
+the signal, so a reused PID is never hit. More than N matches (default 5) is
+refused, to keep `killown .` from sweeping. It prints `PID comm` for each
+process, never the command line, which can carry a token.
+
+Signals: TERM (default), INT, HUP, QUIT, KILL, USR1, USR2. Exit status: 0 a
+process was signalled (or would be, with --dry-run), 1 none matched, 2
+refused.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import signal
+import sys
+
+PROG = "killown"
+PROC = "/proc"
+_CLAUDE_EXE = re.compile(r"/claude/versions/[^/]+$")
+_KEY = b"CLAUDE_CODE_SESSION_ID="
+SIGNALS = ("TERM", "INT", "HUP", "QUIT", "KILL", "USR1", "USR2")
+
+
+class Refused(Exception):
+    """A request killown will not carry out."""
+
+
+def stat_fields(pid: int) -> list[str]:
+    """/proc/PID/stat's fields after the command name, which may itself hold `)`."""
+    with open(f"{PROC}/{pid}/stat") as f:
+        return f.read().rsplit(")", 1)[1].split()
+
+
+def parent(pid: int) -> int:
+    return int(stat_fields(pid)[1])
+
+
+def start_time(pid: int) -> str:
+    return stat_fields(pid)[19]
+
+
+def is_claude(pid: int) -> bool:
+    try:
+        return bool(_CLAUDE_EXE.search(os.readlink(f"{PROC}/{pid}/exe")))
+    except OSError:
+        return False
+
+
+def session_id(pid: int) -> str | None:
+    try:
+        with open(f"{PROC}/{pid}/environ", "rb") as f:
+            entries = f.read().split(b"\0")
+    except OSError:
+        return None
+    for entry in entries:
+        if entry.startswith(_KEY):
+            return entry[len(_KEY):].decode(errors="replace")
+    return None
+
+
+def ancestry(pid: int) -> list[int]:
+    """`pid` and its ancestors, nearest first, up to but not including PID 1."""
+    chain = []
+    while pid > 1 and len(chain) < 256:
+        chain.append(pid)
+        pid = parent(pid)
+    return chain
+
+
+def own_session() -> tuple[str, set[int]]:
+    """This session's id, and the PIDs killown must never signal on its own account."""
+    chain = ancestry(os.getpid())
+    for i, pid in enumerate(chain):
+        if i and is_claude(pid):
+            # chain[0] is killown itself, whose environment a prefix can set.
+            if i == 1:
+                raise Refused("killown must run under the shell Claude Code started")
+            sid = session_id(chain[i - 1])
+            if not sid:
+                raise Refused("the shell Claude Code started carries no session id")
+            return sid, set(chain)
+    raise Refused("not inside a Claude Code session, so there is nothing to scope to")
+
+
+def candidates(pattern: re.Pattern[str], sid: str, spared: set[int]) -> list[int]:
+    uid = os.getuid()
+    found = []
+    for name in os.listdir(PROC):
+        if not name.isdigit():
+            continue
+        pid = int(name)
+        try:
+            if pid in spared or os.stat(f"{PROC}/{pid}").st_uid != uid:
+                continue
+            with open(f"{PROC}/{pid}/cmdline", "rb") as f:
+                cmdline = f.read().replace(b"\0", b" ").decode(errors="replace").strip()
+            if not cmdline or not pattern.search(cmdline):
+                continue
+            if is_claude(pid) or is_claude(parent(pid)) or session_id(pid) != sid:
+                continue
+        except OSError:
+            continue
+        found.append(pid)
+    return sorted(found)
+
+
+def comm(pid: int) -> str:
+    try:
+        with open(f"{PROC}/{pid}/comm") as f:
+            return f.read().strip()
+    except OSError:
+        return "?"
+
+
+def send(pid: int, sig: int, started: str) -> bool:
+    """Signal `pid` through a pidfd, only while it is still the process that matched."""
+    try:
+        fd = os.pidfd_open(pid)
+    except OSError:
+        return False
+    try:
+        if start_time(pid) != started:
+            return False
+        signal.pidfd_send_signal(fd, sig)
+        return True
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog=PROG, description=__doc__.split("\n")[0])
+    parser.add_argument("--signal", default="TERM", choices=SIGNALS)
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--max", type=int, default=5)
+    parser.add_argument("pattern")
+    try:
+        ns = parser.parse_args(argv)
+    except SystemExit as exc:
+        return 2 if exc.code else 0
+    try:
+        if not ns.pattern.strip():
+            raise Refused("PATTERN is empty")
+        try:
+            pattern = re.compile(ns.pattern)
+        except re.error:
+            raise Refused("PATTERN is not a valid regular expression") from None
+        sid, spared = own_session()
+        targets = candidates(pattern, sid, spared)
+        if len(targets) > ns.max:
+            n = len(targets)
+            raise Refused(f"{n} processes match; narrow PATTERN or pass --max {n}")
+    except Refused as refusal:
+        print(f"{PROG}: refused: {refusal}", file=sys.stderr)
+        return 2
+    if not targets:
+        print(f"{PROG}: no process of this session matches", file=sys.stderr)
+        return 1
+    sig = getattr(signal, f"SIG{ns.signal}")
+    hit = 0
+    for pid in targets:
+        try:
+            started, name = start_time(pid), comm(pid)
+        except OSError:
+            continue  # it exited after it matched
+        if ns.dry_run:
+            print(f"would signal {pid} {name}")
+            hit += 1
+        elif send(pid, sig, started):
+            print(f"signalled {pid} {name}")
+            hit += 1
+    return 0 if hit else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

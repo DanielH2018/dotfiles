@@ -139,6 +139,15 @@
            secret-bearing position of a fixture unit and asserts it never appears, and each
            of five leak mutants fails it. */}}
       "Bash(unitq:*)",
+      {{/* killown signals only processes that carry this session's CLAUDE_CODE_SESSION_ID,
+           which it reads from the shell Claude Code started, never from its own
+           environment, so a prefix cannot aim it at another session. It spares Claude Code
+           processes, their direct children (tool shells, MCP servers, hooks) and its own
+           ancestors, pins each target with a pidfd, refuses more than --max matches, and
+           refuses outside a Claude Code session. The kernel limits it to the caller's uid.
+           tests/killown.test.js runs two stand-in sessions with real processes, and four
+           mutants that widen its reach each fail it. */}}
+      "Bash(killown:*)",
       {{/* stdio-blocking exists so the homelab server repo's uv-python.sh hook can clear
            O_NONBLOCK on the Bash tool's stdio without its prefix landing on the
            `Bash(python3 -c:*)` ask rule — that inline form is arbitrary code execution and

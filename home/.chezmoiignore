@@ -99,6 +99,8 @@ Scripts
 .local/bin/secretq
 # unitq reads systemd, which no other OS has, through the same interpreter.
 .local/bin/unitq
+# killown reads /proc, which macOS does not have.
+.local/bin/killown
 {{ end }}
 
 # Linux-desktop utilities: each needs something the OS supplies and headless Linux does not —

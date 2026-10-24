@@ -744,9 +744,12 @@ def fork_bomb(sc: Scan, target: str) -> Verdict | None:
 
 # --- kill by pattern (:818-847) ------------------------------------------------------------------
 
+# killown signals only processes carrying this session's id, read from the shell Claude
+# started, so it is safe to name on a true match: another session's processes are out of reach.
 KILL_HINT = (
     "Kill a PID you captured at spawn, or resolve one and confirm it first "
-    "(ss -H -ltnp for a port owner, then check /proc/<pid>/cwd)."
+    "(ss -H -ltnp for a port owner, then check /proc/<pid>/cwd). To kill this session's "
+    "own processes by pattern, detached ones included, run `killown [--dry-run] PATTERN`."
 )
 KILL_AT = (
     r"(^|[;&|(`])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+|"

@@ -83,8 +83,8 @@ whole-string scan.
 | 2 | `takeover-check`: runs the allowed `sudo -n` takeover line with checked arguments and merged stderr, so its output can be piped | 10 | shipped with the `takeover-check` tool |
 | 3 | `secretq`: key names, presence, all-encrypted check and a SOPS-file hash, never a value | 13 | shipped with the `secretq` tool |
 | 4 | `unitq cat UNIT`: a unit and its drop-ins with `Environment=` values, `EnvironmentFile=` contents and `Exec*` arguments removed structurally | 14 | shipped with the `unitq` tool |
-| 5 | `claude-guard probe <check> <cases-file>`: a named internal check's verdict per case | part of 31 | planned; measure after slice 1 first |
-| 6 | `killown PATTERN`: kills only processes in the session's own tree | 8 | planned; first confirm how the session root shows in `/proc` |
+| 5 | `claude-guard probe <check> <cases-file>`: a named internal check's verdict per case | part of 31 | deferred: slice 1's replay route shipped on 2026-10-24, so the week of refusals that decides whether this is needed has not happened yet |
+| 6 | `killown PATTERN`: kills only processes carrying this session's id, read from the shell Claude started | 7 of 8 (the eighth runs over ssh, outside any session) | shipped with the `killown` tool |
 | 7 | `envq NAME…`: a value only for a non-credential name with a plain-shaped value, otherwise `set` or `unset` | 3 | planned |
 
 `secretq` never hashes a plaintext file, because a low-entropy value hashes to something a
