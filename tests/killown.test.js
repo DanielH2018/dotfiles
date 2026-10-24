@@ -130,6 +130,17 @@ test('never signals a direct child of Claude, such as an MCP server', { skip }, 
   assert.ok(alive(a.server));
 });
 
+test('refuses when Claude runs it directly, where its own environment is the only id', { skip },
+  () => {
+    const out = path.join(DIR, 'direct');
+    spawn(CLAUDE, ['-c', `python3 ${TOOL} --dry-run sleep 2> ${out}.e; echo $? > ${out}`], {
+      env: { ...process.env, CLAUDE_CODE_SESSION_ID: 'session-h' }, stdio: 'ignore',
+    });
+    const [code] = waitFor(out);
+    assert.strictEqual(code, 2);
+    assert.match(fs.readFileSync(`${out}.e`, 'utf8'), /under the shell Claude Code started/);
+  });
+
 test('refuses an empty pattern and a match wider than --max', { skip }, () => {
   const a = { ...session('session-f', 'f'), id: 'session-f' };
   assert.strictEqual(killownIn(a, ['  ']).code, 2);

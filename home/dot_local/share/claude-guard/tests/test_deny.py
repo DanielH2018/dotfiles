@@ -538,7 +538,6 @@ KILL_ALLOW = [
     "f=$(readlink -f x); grep -n -iE 'break.glass|rollback|kill switch' notes.md",
     # killown signals only this session's processes (2026-10-25)
     "killown 'pytest -q -n 2 -p no:cacheprovider'; sleep 1; git rebase origin/master",
-    "killown --dry-run --signal KILL 'logs -f deploy/monitor-bridge'",
 ]
 
 
