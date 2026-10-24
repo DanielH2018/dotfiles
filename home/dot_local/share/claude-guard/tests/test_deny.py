@@ -186,6 +186,11 @@ RM_DENY = [
     "echo $(rm -rf /)",
     "echo `rm -rf /`",
     'echo "`rm -rf /`"',
+    # a quoted or stored rm still counts once another segment runs code (2026-10-24)
+    "echo 'rm -rf ~' > x.sh; bash x.sh",
+    "cat > x.sh <<'EOF'\nrm -rf ~\nEOF\nbash x.sh",
+    "bash -c 'rm -rf ~'",
+    "python3 - <<'EOF'\nimport os\nos.system('rm -rf ~')\nEOF",
 ]
 RM_ALLOW = [
     "rm -rf ./build",
@@ -199,6 +204,12 @@ RM_ALLOW = [
     "echo $(rm -rf /some/path)",
     "echo $(rm -rf $HOME/dev/build)",
     'git commit -m "fix: handle rm -rf edge case"',
+    # each segment is matched alone, so a later `sed 's/^/x /'` is not rm's target
+    "rm -rf /tmp/out && ls | sed 's/^/--role /'",
+    # rm only inside a search pattern, a stored note, or text an inert program writes
+    "grep -n '\"Bash(rm -rf ~/ *)\",' settings.json",
+    "cat > notes.md <<'EOF'\nnever run rm -rf ~\nEOF",
+    "python3 - <<'EOF'\nfrom pathlib import Path\np = Path('a.md')\np.write_text('rm -rf ~')\nEOF",
 ]
 
 
@@ -416,10 +427,24 @@ QUOTED_PIPE_TEXT = [
     "grep -oE '[a-z/]+[.](py|sh)' doc.md | sort -u | xargs ls",
     "python3 - <<'EOF'\ns = 'a <code>|sh)</code> inside'\nEOF",
     "uv run python findings.py open --title 'quoted |sh in a title'",
+    # a later stage names `sh` in its own pattern, not as its command word (2026-10-24)
+    "grep -rn x . | grep -E '\\.(py|yml|sh|md)'",
+    "gh api repos/o/r/readme --jq .content | base64 -d | grep -iE 'parse|bash -c|sudo'",
+    # a file extension is no shell, and an escaped backtick is no substitution
+    'grep -rn "| sh\\*" --include=*.md --include=*.sh .',
+    'echo "the glob \\`* | sh*\\` denies a pipe"',
+    "cat > /tmp/has_sh.sh <<'EOF'\ncat f | sh\nEOF",
 ]
 # The re-parsing stages still run their quoted text, and a real stage is still a stage.
 REAL_PIPE_TO_SHELL = [
     "echo x | sh",
+    "cat f | sudo sh",
+    "find . | xargs -I{} sh -c 'echo {}'",
+    # a stage that runs code keeps the unanchored match: Python runs the quoted pipe
+    "cat f | python3 -c \"import os; os.system('x | sh')\"",
+    # a stored body counts once another segment runs code
+    "cat > x.sh <<'EOF'\ncat f | sh\nEOF\nbash x.sh",
+    "cat > x.txt <<'EOF'\ncat f | sh\nEOF\nbash x.txt",
     "find . -name x | xargs bash",
     "bash -c 'cat f | sh'",
     "ssh homelab 'cat f | sh'",
@@ -674,8 +699,14 @@ READS_AN_ENV_TEMPLATE = [
     "head -5 /home/u/repo/.env.template",
     "grep API_URL .env.example",
     "cat .env.example .env.sample",
+    # a Jinja template that renders to an env file at deploy (approved 2026-10-24)
+    "cat ansible/roles/x/templates/config.env.j2",
+    "grep -n KEY templates/kuma-push.env.j2",
 ]
 READS_A_REAL_ENV = [
+    "cat .env.j2",
+    "cat templates/config.env.j2.bak",
+    "cat /etc/homelab/kuma-push.env",
     "cat .env",
     "cat .env.local",
     "cat .env.production",
@@ -1855,9 +1886,24 @@ SUDO_REFUSE = [
     "bash -c 'pkexec id'",
     # a command the parser cannot read is searched word by word
     "echo 'unbalanced; sudo -n true",
+    # a Python program `inert_python` cannot prove starts no process (2026-10-24)
+    "python3 - <<'EOF'\nimport pathlib\npathlib.os.system('sudo id')\nEOF",
+    "python3 - <<'EOF'\nimport yaml\nyaml.unsafe_load('x: sudo')\nEOF",
+    "python3 -c \"getattr(__import__('os'), 'system')('sudo id')\"",
+    "python3 - <<'EOF'\nfrom pathlib import Path\nPath('/u/.zshrc').write_text('sudo id')\nEOF",
+    # an unquoted delimiter: the shell runs the substitution before Python reads a word
+    "python3 - <<EOF\nprint('$(sudo id)')\nEOF",
+    # a script reads the heredoc as data, and may run it
+    "python3 tool.py <<'EOF'\nsudo id\nEOF",
 ]
 
 SUDO_PASS = [
+    # a Python program that only edits a file, the word `sudo` in the text it writes
+    (
+        "python3 - <<'EOF'\nfrom pathlib import Path\np = Path('docs/x.md')\n"
+        "p.write_text(p.read_text().replace('a', '`sudo k3s kubectl apply`'))\nEOF"
+    ),
+    "uv run python - <<'EOF'\nimport re\ns = open('f').read()\nprint(re.sub('x', 'sudo', s))\nEOF",
     f"sudo -n {W}",
     f"sudo -n {W} --help",
     f"sudo -n {W} --label L",

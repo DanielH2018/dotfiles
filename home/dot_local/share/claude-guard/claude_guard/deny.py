@@ -70,6 +70,7 @@ from claude_guard.gitargv import (
     subcommand_at,
 )
 from claude_guard.gitread import config_read
+from claude_guard.inert_python import inert
 from claude_guard.segment import Segment, mask_substitutions, parse
 
 
@@ -289,16 +290,76 @@ def remote(sc: Scan, target: str) -> Verdict | None:
 RM_MSG = "Blocked: rm -rf targeting home or root directory. Use a specific path instead."
 
 
+# Commands whose quoted arguments are a pattern or a message that nothing runs.
+_INERT_QUOTE_HEADS = frozenset({"grep", "egrep", "fgrep", "rg", "echo", "printf"})
+
+
+def _inert_program(source: str | None, expands: bool) -> bool:
+    """Whether `source`, a closed-shape Python program (`_python_source`), starts no process.
+    When the shell expands the program first (`expands`: a `-c` argument, or a heredoc whose
+    delimiter is unquoted), a `$` or a backtick in it can run a command before Python reads
+    a word, so such a program is never inert."""
+    if source is None or (expands and ("$" in source or "`" in source)):
+        return False
+    return inert(source)
+
+
+def _heredoc_program_expands(source: str | None, heredocs: tuple[str, ...], quoted) -> bool:
+    """Whether the shell expands `source` before Python reads it: True unless `source` is one
+    of `heredocs` and that heredoc's delimiter is quoted (`<<'EOF'`)."""
+    return not any(body == source and q for body, q in zip(heredocs, quoted, strict=False))
+
+
+def _rm_members(sc: Scan) -> list[str]:
+    """The texts `rm_root` matches: each segment, substitution and heredoc body on its own.
+
+    Matching the joined SCAN paired `rm -rf /tmp/x` in one segment with the ` / ` of a later
+    `sed 's/^/--role /'`. Three things are left out. A heredoc body that is only stored
+    (`_without_stored_heredocs`). The program of a closed-shape Python segment that starts no
+    process (`_inert_program`). And a grep, echo or printf segment whose `rm` sits only
+    inside quotes. The last two are dropped only when no segment of the command runs code,
+    since `echo 'rm -rf ~' > x.sh; bash x.sh` runs what the first segment only names. A
+    command the parser refuses is matched whole, as before."""
+    sc = _without_stored_heredocs(sc)
+    p = parse(sc.command)
+    if not p.ok:
+        return [sc.scan]
+    runs_code = any(_runs_code(s.text) for s in p.segments)
+    members: list[str] = []
+    for seg in p.segments:
+        words = _words(seg.text) or []
+        argv = _argv(words)
+        source = _python_source(words, seg.heredocs) if words else None
+        expands = _heredoc_program_expands(source, seg.heredocs, seg.heredoc_quoted)
+        inert_source = _inert_program(source, expands)
+        bare = _unquoted(seg.text)
+        quoted_only = (
+            not runs_code
+            and bool(argv)
+            and posixpath.basename(argv[0]) in _INERT_QUOTE_HEADS
+            and bare is not None
+            and not re.search(r"\brm\b", bare)
+        )
+        if not quoted_only and not (inert_source and source in seg.text):
+            members.append(normalize(seg.text))
+        members += [normalize(b) for b in seg.heredocs if not (inert_source and b == source)]
+    members += [normalize(s) for s in p.substitutions]
+    return members
+
+
 def rm_root(sc: Scan, target: str) -> Verdict | None:
     """:662-667. Joined flags first, then the separated spelling (rm -r -f, --recursive
-    --force); the target check on the second arm is case-SENSITIVE (bdb_re), as the bash."""
-    if bdb_rei(sc.scan, _RM_RF_FLAGS + target):
+    --force); the target check on the second arm is case-SENSITIVE (bdb_re), as the bash.
+    Both arms read one member at a time (`_rm_members`)."""
+    members = _rm_members(sc)
+    if any(bdb_rei(m, _RM_RF_FLAGS + target) for m in members):
         return Verdict("deny", "rm-root", RM_MSG)
-    if (
-        bdb_rei(sc.scan, r"\brm\s")
-        and bdb_rei(sc.scan, r"(\s-[a-zA-Z]*r|\s--recursive)")
-        and bdb_rei(sc.scan, r"(\s-[a-zA-Z]*f|\s--force)")
-        and bdb_re(sc.scan, target)
+    if any(
+        bdb_rei(m, r"\brm\s")
+        and bdb_rei(m, r"(\s-[a-zA-Z]*r|\s--recursive)")
+        and bdb_rei(m, r"(\s-[a-zA-Z]*f|\s--force)")
+        and bdb_re(m, target)
+        for m in members
     ):
         return Verdict("deny", "rm-root-split-flags", RM_MSG)
     return None
@@ -472,10 +533,11 @@ def substitution_download(sc: Scan, target: str) -> Verdict | None:
 
 # Words that make a segment run its own quoted text as shell: `bash -c '… | sh'`,
 # `ssh host '… | sh'`, awk's `print | "sh"`. `_REPARSE` is wider (python, xargs, `<<`), and
-# reading it here denied `grep -E '(foo|sh)' f | xargs ls` (dotfiles #801).
+# reading it here denied `grep -E '(foo|sh)' f | xargs ls` (dotfiles #801). A word after a
+# `.` is a file extension (`--include=*.sh`, `x.awk`), never a command, so it is left out.
 _SHELL_REPARSE = re.compile(
     _ere(
-        r"(^|[^[:alnum:]_])(sh|bash|zsh|ksh|dash|csh|tcsh|fish|ash|mksh|pdksh|yash|osh|eval|"
+        r"(^|[^[:alnum:]_.])(sh|bash|zsh|ksh|dash|csh|tcsh|fish|ash|mksh|pdksh|yash|osh|eval|"
         r"ssh|hl|su|watch|parallel|awk|gawk|mawk|busybox)([^[:alnum:]_]|$)"
     )
 )
@@ -513,18 +575,35 @@ def _pipes_to_shell(command: str) -> bool:
     normalised text, so a `|sh` quoted inside another stage's argument is not a pipe. A
     segment that re-parses its quoted text (`_SHELL_REPARSE`) or holds a substitution is
     matched whole, with its heredoc bodies; a heredoc fed to anything else is data. A command
-    the parse refuses falls back to the whole-string match."""
+    the parse refuses falls back to the whole-string match.
+
+    A stage after a pipe is a shell only when its command word is one, so the match is
+    anchored at the stage's start: `| grep -E '\\.(py|sh|md)'` names `sh` in a pattern. A
+    stage that may run code keeps the unanchored match, since a quoted `| sh` in
+    `python3 -c "os.system('x | sh')"` runs. An escaped backtick is a literal character, not
+    a substitution. When any segment runs code, a body a data sink stores is read too, as
+    `_without_stored_heredocs` keeps it: `cat > x.sh <<'EOF' … EOF; bash x.sh` runs the body
+    it stored."""
     p = parse(command)
     if not p.ok:
         return bdb_re(normalize(command), PIPE_TO_SHELL)
+    runs_code = any(_runs_code(s.text) for s in p.segments)
     after_pipe = False
     for seg in p.segments:
         text = normalize(seg.text)
-        if after_pipe and bdb_re("|" + text, PIPE_TO_SHELL):
+        stage = PIPE_TO_SHELL if _runs_code(seg.text) else "^" + PIPE_TO_SHELL
+        if after_pipe and bdb_re("|" + text, stage):
             return True
         bare = _unquoted(seg.text)
-        whole = bare is None or _SHELL_REPARSE.search(bare) or _SUBSTITUTION.search(seg.text)
-        if whole and (bdb_re(text, PIPE_TO_SHELL) or any(map(_pipes_to_shell, seg.heredocs))):
+        whole = (
+            bare is None
+            or _SHELL_REPARSE.search(bare)
+            or _SUBSTITUTION.search(seg.text.replace("\\`", ""))
+        )
+        if whole and bdb_re(text, PIPE_TO_SHELL):
+            return True
+        stored_then_run = runs_code and _is_data_sink(seg.text, seg.sep)
+        if (whole or stored_then_run) and any(map(_pipes_to_shell, seg.heredocs)):
             return True
         after_pipe = seg.sep == "|"
     return False
@@ -633,6 +712,10 @@ def disk_wipe(sc: Scan, target: str) -> Verdict | None:
 # words. It applies only when no further path character follows, so `.env.example.local`,
 # `.env.examples` and `.env.example/x` are still refused. A symlink named like a template
 # is not resolved here; the sandbox resolves it and refuses a read that lands on a `.env`.
+# DECIDED (2026-10-24, approved): a Jinja template named `<name>.env.j2` is tracked source
+# that renders to an env file at deploy, so the third lookahead exempts it. The Read tool
+# already allows it, since its globs only match a basename that starts with `.env`. A bare
+# `.env.j2` keeps that rule's refusal, and so does the rendered `<name>.env`.
 # The fragments come from the secret table (secret_paths.json, one entry per secret), which
 # also feeds protect-secrets.sh and the settings Read()/Edit() denies. The `.env` fragment
 # is the `dotenv` entry's. A missing or unreadable table raises here at import, and the
@@ -2054,10 +2137,17 @@ def _runner_payloads(argv: list[str]) -> list[str]:
     return found
 
 
-def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool) -> int:
+def _segment_sudo(
+    text: str,
+    heredocs: tuple[str, ...],
+    depth: int,
+    nested: bool,
+    quoted: tuple[bool, ...] = (),
+) -> int:
     """The rank of what one segment runs: an escalator other than the one allowed command
     line, a command word only an expansion names, or neither. The allowed line counts only
-    as a whole top-level segment: inside a payload or a substitution it is refused too."""
+    as a whole top-level segment: inside a payload or a substitution it is refused too.
+    `quoted` holds whether each heredoc's delimiter is quoted, as the parse reports it."""
     # Bash joins a backslash-newline before it splits words; shlex would keep the newline in
     # the word, so `sudo\<newline> -n true` would read as a command named "sudo\n".
     joined = text.replace("\\\n", "")
@@ -2074,6 +2164,10 @@ def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool
     except ValueError:
         return _SUDO_ESCALATES if _loose_hit(text) else _SUDO_CLEAN
     cmds, redirected, here = _command_lines(words)
+    # A closed-shape Python program that provably starts no process (`_inert_program`) holds
+    # `sudo` only as text it writes or compares, so its word search is skipped.
+    source = _python_source(words, heredocs) if len(cmds) == 1 else None
+    inert_source = _inert_program(source, _heredoc_program_expands(source, heredocs, quoted))
     # Bash expands no brace inside quotes, and shlex has removed the quotes by the time a
     # word reaches the brace check. A brace list counts only when one survives in the
     # segment with every quoted character blanked: a Python heredoc body read as shell has
@@ -2138,7 +2232,7 @@ def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool
         # so an expansion there is as unresolvable as a bare `$X -n true`.
         if _runs_variable(argv):
             found = max(found, _SUDO_VARIABLE)
-        for tok in rest:
+        for tok in [] if inert_source else rest:
             if _loose_hit(tok) if interpreter else posixpath.basename(tok) in _ESCALATORS:
                 return _SUDO_ESCALATES
             # env -S 'sudo -n true' glues its payload to the option; bash -c, eval and
@@ -2154,7 +2248,7 @@ def _segment_sudo(text: str, heredocs: tuple[str, ...], depth: int, nested: bool
         # `os.system('sudo id')`, and it reads a Python dict literal `{"a": [1, 2]}` as a
         # brace expansion that could spell sudo.
         if interpreter:
-            if any(_loose_hit(body) for body in bodies):
+            if not inert_source and any(_loose_hit(body) for body in bodies):
                 return _SUDO_ESCALATES
         else:
             for body in bodies:
@@ -2173,7 +2267,8 @@ _CASE_ALTERNATIVE = re.compile(r"\s*\(?\s*[^\s()]*\s*")
 
 
 def _case_arms(segments: tuple[Segment, ...], nested: bool):
-    """Each segment as `(text, heredocs, nested)` for the sudo check, with case patterns cut.
+    """Each segment as `(text, heredocs, heredoc_quoted, nested)` for the sudo check, with case
+    patterns cut.
 
     The segmenter cuts `case x in a) true;; *) y;; esac` at each `;`, so `*) y` would reach
     the check with the glob `*` as its command word, and `*` matches `sudo`. This walks the
@@ -2191,7 +2286,7 @@ def _case_arms(segments: tuple[Segment, ...], nested: bool):
         masked = mask_substitutions(seg.text, _SUB_PLACEHOLDER) or seg.text
         bare = _unquoted(masked)
         if bare is None or (depth == 0 and not _CASE_HEAD.match(bare)):
-            yield seg.text, seg.heredocs, nested
+            yield seg.text, seg.heredocs, seg.heredoc_quoted, nested
             continue
         if not bare.strip():
             # `;;` is two `;` cuts around an empty segment; `;&` and `;;&` end in `&`.
@@ -2201,7 +2296,7 @@ def _case_arms(segments: tuple[Segment, ...], nested: bool):
         if _CASE_END.match(bare):
             depth -= 1
             expect = False
-            yield seg.text, seg.heredocs, nested
+            yield seg.text, seg.heredocs, seg.heredoc_quoted, nested
             continue
         pos = 0
         while True:
@@ -2222,7 +2317,7 @@ def _case_arms(segments: tuple[Segment, ...], nested: bool):
                 pos = len(bare)
             break
         if masked[pos:].strip():
-            yield masked[pos:], seg.heredocs, True
+            yield masked[pos:], seg.heredocs, seg.heredoc_quoted, True
 
 
 def _sudo_text(text: str, depth: int = 0, nested: bool = False) -> int:
@@ -2236,7 +2331,7 @@ def _sudo_text(text: str, depth: int = 0, nested: bool = False) -> int:
         return _SUDO_ESCALATES if _loose_hit(text) else _SUDO_CLEAN
     found = _SUDO_CLEAN
     for rank in itertools.chain(
-        (_segment_sudo(t, h, depth, arm) for t, h, arm in _case_arms(p.segments, nested)),
+        (_segment_sudo(t, h, depth, arm, q) for t, h, q, arm in _case_arms(p.segments, nested)),
         (_sudo_text(sub, depth, True) for sub in p.substitutions),
     ):
         found = max(found, rank)

@@ -200,6 +200,16 @@ check. When the payload's `agent_type` names an agent whose frontmatter under
 roots, a command that changes files outside them, a shell or `eval`, and any git or gh verb
 outside a read-only set. Its module docstring says why the rest is a denylist.
 
+Three rules read text that no command runs, and they skip it only where that is provable.
+`rm_root` matches each segment, substitution and heredoc body on its own. It leaves out a
+stored heredoc, and a grep, echo or printf whose `rm` is only quoted, unless another segment
+runs code. `pipe_to_shell` matches a stage after a pipe at its start, unless the stage runs
+code. The sudo boundary skips the word search in a closed-shape Python program that
+`inert_python.py` proves starts no process. That module is an allowlist of imports, attributes
+and builtins, and it refuses a program naming a shell-startup, settings, hook or PATH file.
+A week's replay over 32,188 commands took the deny count from 316 to 262. No command went
+from allowed to denied (2026-10-24).
+
 When nothing above decides, `readonly.py` (dotfiles #628, ported from the server repo's
 `auto-approve-readonly.py`) allows a command whose every stage is provably read-only. It
 applies only when the session cwd is `$HOME` itself or inside `~/server` or
