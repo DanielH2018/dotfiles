@@ -1521,8 +1521,8 @@ def secret_env(sc: Scan, target: str) -> Verdict | None:
 # --- decrypting rather than reading (:951-1044) -----------------------------------------------
 
 # :971-972. DECIDED (:958-963): these are their own arms, not SECRET_PATHS entries.
-# DECIDED (2026-10-24, the `.env.j2` ruling's analogue): a Jinja template whose name ends in
-# `secret.yaml.j2` or `.sops.yaml.j2` is tracked source that renders a manifest at deploy, so
+# DECIDED (2026-10-24, approved, the `.env.j2` ruling's analogue): a Jinja template whose
+# name ends in `secret.yaml.j2` or `.sops.yaml.j2` is tracked source that renders at deploy, so
 # the lookahead exempts a trailing `.j2`. The rendered `app-secret.yaml`, a `.j2.bak` copy and a
 # `.j2/` directory are still refused. 12 of a week's write and in-place denials were writes of
 # such a template (the 2026-10-17 to 2026-10-24 replay).
