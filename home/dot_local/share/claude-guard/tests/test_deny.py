@@ -297,8 +297,19 @@ GH_MUTATE = [
     'echo "`gh api -XPOST repos/o/r`"',
     "echo a\ngh api -XPOST /repos/o/r/issues",
     "echo one\necho two\ngh api -X POST /repos/o/r",
+    # gh's own flags still count wherever another command sits beside it (2026-10-24)
+    "gh api repos/o/r/issues -F title=@body.md | cat",
+    "gh api graphql -f query='query { viewer { login } }'",
+    "X=$(gh api repos/o/r/issues -f title=x); echo $X",
+    "gh api --jq=.x graphql",
+    "bash <<'EOF'\ngh api repos/o/r/issues -f title=x\nEOF",
 ]
 GH_ALLOW = [
+    # another command's -F, a commit message's `(gh api`, a jq field named graphql (2026-10-24)
+    "gh api --paginate repos/o/r/activity --jq '.[] | @tsv' | awk -F'\\t' '{print $2}'",
+    "gh api repos/o/r/statuses --jq '.[]' > /tmp/x; sort -t\"$(printf '\\t')\" /tmp/x",
+    "git commit -q -F - <<'EOF'\nCovers (gh api, stdin, an env file)\nEOF",
+    "gh api rate_limit --jq '.resources | {core, graphql}'",
     "gh api repos/o/r",
     "gh api repos/o/r --jq .name",
     "gh api --method=GET repos/o/r",

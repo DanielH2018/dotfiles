@@ -422,10 +422,11 @@ def push_main(sc: Scan, target: str) -> Verdict | None:
 
 # --- gh api (:730-766) -------------------------------------------------------------------------
 
-GH_API_AT = (
-    r"(^|[;&|(`])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+|"
+_GH_API_WORDS = (
+    r"[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+|"
     r"(command|env|exec|sudo|nohup|nice)[[:space:]]+)*([^[:space:];&|()]*/)?gh[[:space:]]+api\b"
 )
+GH_API_AT = rf"(^|[;&|(`]){_GH_API_WORDS}"
 GH_HINT = "Read-only requests need no prompt; approve this if the mutation is intended."
 GH_SECRET_HINT = (
     "It also names a secrets path, so it is denied rather than offered: `gh` is absent "
@@ -434,14 +435,18 @@ GH_SECRET_HINT = (
 
 
 def gh_api(sc: Scan, target: str) -> Verdict | None:
-    """:745-766. Gate on the scan set; the flag arms read SCAN. The method arm folds case.
+    """:745-766. Gate on the scan set or a heredoc a shell runs; the arms read only the
+    texts that run gh api (`_gh_api_texts`), or SCAN when the parser refuses the command.
+    The method arm folds case.
 
     A possible mutation is an ask rather than a deny: the caller is usually posting a review
     reply or editing a PR, and a prompt is the right gate for that. A command naming a
     secrets path stays a deny. `gh` is absent from READERS and this rule runs ahead of
     secret_readers, so first-match-wins leaves it the only gate on a request body read out
     of `~/.ssh/id_rsa`; an ask there would downgrade a hard stop to one approval."""
-    if not bdb_re(sc.scanset, GH_API_AT):
+    texts = _gh_api_texts(sc)
+    runs_gh = texts is not None and any(bdb_re(normalize(t), GH_API_AT) for t in texts)
+    if not (bdb_re(sc.scanset, GH_API_AT) or runs_gh):
         return None
     secret = bdb_re(sc.scan, SECRET_PATHS)
 
@@ -450,8 +455,9 @@ def gh_api(sc: Scan, target: str) -> Verdict | None:
             return Verdict("deny", rule + "-secret", message + " " + GH_SECRET_HINT)
         return Verdict("ask", rule, message + " " + GH_HINT)
 
+    subject = sc.scan if texts is None else "\n".join(map(normalize, texts))
     if bdb_rei(
-        sc.scan,
+        subject,
         r"(^|[[:space:]])(-X|--method)[[:space:]]*=?[[:space:]]*(POST|PUT|PATCH|DELETE)\b",
     ):
         return gate(
@@ -474,16 +480,75 @@ def gh_api(sc: Scan, target: str) -> Verdict | None:
             r"(^|[[:space:]])--input([[:space:]]|=)",
             "Request body read from a file.",
         ),
-        (
-            "gh-api-graphql",
-            r"(^|[[:space:]]|/)graphql\b",
-            "A graphql request, which can mutate.",
-        ),
     )
     for rule, pattern, message in arms:
-        if bdb_re(sc.scan, pattern):
+        if bdb_re(subject, pattern):
             return gate(rule, message)
+    graphql = (
+        bdb_re(subject, r"(^|[[:space:]]|/)graphql\b")
+        if texts is None
+        else any(_GH_GRAPHQL.fullmatch(e) for t in texts for e in _gh_api_endpoints(t))
+    )
+    if graphql:
+        return gate("gh-api-graphql", "A graphql request, which can mutate.")
     return None
+
+
+# gh api's options that take the next word as their value: a jq filter or template can name
+# `graphql` as a field, and a header or field value is not the endpoint either.
+_GH_VALUE_OPTS = frozenset(
+    {
+        "-X", "--method", "-H", "--header", "-f", "--raw-field", "-F", "--field", "-q", "--jq",
+        "-t", "--template", "--hostname", "--input", "-p", "--preview", "--cache",
+    }
+)  # fmt: skip
+_GH_GRAPHQL = re.compile(r"(.*/)?graphql")
+
+
+def _gh_api_texts(sc: Scan) -> list[str] | None:
+    """The texts the gh api arms read, or None when the parser refuses the command and the
+    arms read SCAN whole. The texts are each segment and substitution that runs `gh api`,
+    every heredoc body except one a data sink only stores (`_is_data_sink`), and each piece
+    of SCAN, split on `;&|`, that starts with `gh api`. The SCAN pieces keep the whole-string
+    arm: when a shell or interpreter sits anywhere in the command, SCAN keeps every quoted
+    separator, so `python3 -c x; echo "c; gh api -XPOST …"` still asks. Another command's
+    `-F` (`awk -F'\\t'`) and a commit message's `(gh api` are left out, since gh receives
+    neither."""
+    p = parse(sc.command)
+    if not p.ok:
+        return None
+    start = _pattern(rf"^{_GH_API_WORDS}", False)
+    found = [x for x in re.split(r"[;&|]", sc.scan) if start.search(x)]
+    for seg in p.segments:
+        runs_gh = bdb_re(normalize(seg.text), GH_API_AT)
+        if runs_gh:
+            found.append(seg.text)
+        if runs_gh or not _is_data_sink(seg.text, seg.sep):
+            found += [b for b in seg.heredocs if runs_gh or bdb_re(normalize(b), GH_API_AT)]
+    found += [s for s in p.substitutions if bdb_re(normalize(s), GH_API_AT)]
+    return found
+
+
+def _gh_api_endpoints(text: str) -> list[str]:
+    """The endpoint word of each `gh api` in `text`: the first word after `api` that is
+    neither an option nor an option's value (`_GH_VALUE_OPTS`). `--jq '{core, graphql}'` on
+    a REST call names no graphql endpoint. Text the word splitter refuses is split on
+    whitespace instead."""
+    words = _words(text) or text.split()
+    found = []
+    for i in range(len(words) - 1):
+        if posixpath.basename(words[i]) != "gh" or words[i + 1] != "api":
+            continue
+        j = i + 2
+        while j < len(words):
+            if words[j] in _GH_VALUE_OPTS:
+                j += 2
+            elif words[j].startswith("-"):
+                j += 1
+            else:
+                found.append(words[j])
+                break
+    return found
 
 
 # --- pipes into an interpreter (:768-786, :849-852) -------------------------------------------
