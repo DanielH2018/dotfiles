@@ -40,7 +40,10 @@ const DENY = [
   '/opt/app/server.pem',
   '/opt/app/tls.key',
   '/opt/app/cert.p12',
-  '/srv/secrets/token.txt',
+  '/run/secrets/token',
+  '/run/credstore/kuma_push_token',
+  '/var/lib/homelab-secrets/nut/upsmon.conf',
+  '/home/u/.config/libvirt/secrets/abc.base64',
 ];
 
 // Paths block-dangerous-bash.sh has always denied to Bash, which this gate did not
@@ -133,7 +136,7 @@ test('ordinary source files are allowed', { skip }, () => {
 // */-prefixed patterns to match.
 test('a relative path to a secret is denied, not just an absolute one', { skip }, () => {
   for (const p of ['.aws/credentials', '.aws/config', '.netrc', '.npmrc', '.pypirc',
-    '.gnupg/secring.gpg', 'secrets/token.txt', '.claude.json', '.git-credentials']) {
+    '.gnupg/secring.gpg', '.claude.json', '.git-credentials']) {
     assert.strictEqual(decision(runHook(p)), 'deny', `should deny relative path: ${p}`);
   }
 });
@@ -169,7 +172,10 @@ test('every SECRET_PATHS entry in the deny gate is covered by this one', { skip 
     '\\.netrc': '/home/u/.netrc',
     '\\.pypirc': '/home/u/.pypirc',
     '\\.npmrc': '/home/u/.npmrc',
-    '/secrets/': '/srv/secrets/token.txt',
+    '/run/secrets/': '/run/secrets/token',
+    '/run/credstore/': '/run/credstore/kuma_push_token',
+    '/homelab-secrets/': '/run/homelab-secrets/kuma-push.env',
+    '/libvirt/secrets/': '/etc/libvirt/secrets/abc.base64',
     '\\.git-credentials': '/home/u/.git-credentials',
     '\\.kube/config': '/home/u/.kube/config',
     '\\.docker/config\\.json': '/home/u/.docker/config.json',
@@ -253,8 +259,17 @@ test('writing an env template is still denied', { skip }, () => {
 });
 
 test('an env template under a guarded directory is denied by that directory', { skip }, () => {
-  for (const p of ['/home/u/.ssh/.env.example', '/srv/secrets/.env.example']) {
+  for (const p of ['/home/u/.ssh/.env.example', '/run/secrets/.env.example']) {
     assert.strictEqual(decision(runHookAs('Read', p)), 'deny', `Read should deny: ${p}`);
+  }
+});
+
+// A tracked source directory that happens to be named secrets holds code, not secrets: the
+// server repo's H4 secrets unit lives at hosts/components/secrets/ (2026-10-24).
+test('a source directory named secrets is not a secrets directory', { skip }, () => {
+  for (const p of ['/home/u/server/hosts/components/secrets/component.yml',
+    '/home/u/docs-site/reference/secrets/index.html']) {
+    assert.strictEqual(decision(runHookAs('Read', p)), null, `Read should allow: ${p}`);
   }
 });
 

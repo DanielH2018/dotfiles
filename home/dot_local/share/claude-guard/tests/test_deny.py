@@ -601,7 +601,12 @@ SECRET_DENY = [
     "sed -n 1p ~/.ssh/id_rsa",
     "rg TOKEN .env",
     "vim .env",
-    "strings app/secrets/token",
+    "strings /run/secrets/token",
+    # the runtime secret stores that replaced the any-depth secrets/ match (2026-10-24)
+    "cat /var/run/secrets/kubernetes.io/serviceaccount/token",
+    "cat /run/credstore/kuma_push_token",
+    "cat /var/lib/homelab-secrets/nut/upsmon.conf",
+    "cat ~/.config/libvirt/secrets/abc.base64",
     "base64 authorizer/.env",
     "python3 -c \"print(open('.env').read())\"",
     "node -e \"require('fs').readFileSync('.env')\"",
@@ -644,6 +649,9 @@ SECRET_DENY = [
     "cat ~/.ssh/id_rsa > /tmp/x",
 ]
 SECRET_ALLOW = [
+    # a source directory named secrets holds code, not secrets (2026-10-24)
+    "cat hosts/components/secrets/component.yml",
+    "grep -rn x ~/docs-site/reference/secrets/",
     # `env` as a grep pattern prints no environment (2026-10-24)
     'sed -n 1,80p claude_guard/hook.py | grep -n "env"',
     # the secret-looking text is a grep pattern or a sed `s` command's text (2026-10-24)
@@ -1005,9 +1013,9 @@ EXCLUDE_ROUND_TRIPS = [
         "rg TOKEN roles/ --glob '!.env'",
     ),
     (
-        "git grep -n TOKEN -- roles/app/secrets/",
+        "git grep -n TOKEN -- /etc/libvirt/secrets/",
         "':(exclude,glob)**/secrets/**'",
-        "git grep -n TOKEN -- roles/ ':(exclude,glob)**/secrets/**'",
+        "git grep -n TOKEN -- /etc/libvirt/ ':(exclude,glob)**/secrets/**'",
     ),
 ]
 

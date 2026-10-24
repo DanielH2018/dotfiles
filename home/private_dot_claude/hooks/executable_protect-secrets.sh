@@ -93,9 +93,9 @@ case "$FILE_PATH" in
   *.pem|*.key|*.p12|*.pfx)
     deny "Blocked: looks like a private key or certificate."
     ;;
-  # secrets-directory: anything under a directory named secrets
-  secrets/*|*/secrets/*)
-    deny "Blocked: files under a secrets/ directory."
+  # secrets-directory: the runtime directories that hold plaintext secrets: container and pod mounts, the H4 secrets unit's credstore and outputs, and libvirt's secret store. Not every directory named secrets, which matched tracked code such as hosts/components/secrets/ (2026-10-24)
+  /run/secrets/*|*/run/secrets/*|/run/credstore/*|*/run/credstore/*|*/homelab-secrets/*|*/libvirt/secrets/*)
+    deny "Blocked: a runtime secrets directory holds plaintext credentials."
     ;;
   # claude-config: the account block and, on some platforms, the OAuth token
   .claude.json|*/.claude.json)

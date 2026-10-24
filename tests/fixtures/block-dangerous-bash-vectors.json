@@ -33,7 +33,7 @@
         "sed -n 1p ~/.ssh/id_rsa",
         "rg TOKEN .env",
         "vim .env",
-        "strings app/secrets/token",
+        "strings /run/secrets/token",
         "base64 authorizer/.env",
         "python3 -c \"print(open('.env').read())\"",
         "node -e \"require('fs').readFileSync('.env')\"",

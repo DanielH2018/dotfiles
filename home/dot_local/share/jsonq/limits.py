@@ -27,7 +27,8 @@ MAX_SOURCE_BYTES = 200_000  # ast.parse is recursive; do not hand it a novel
 # not stop refusing.
 SECRET_PATHS = (
     r"((?<!process)(?<!\.\.)\.env(?!iron(?:ments?|b)?\b)(?!\.(?:example|sample|template)(?![A-Za-z0-9_./-]))(?!(?<=[A-Za-z0-9_-]\.env)\.j2(?![A-Za-z0-9_./-]))|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config"
-    r"|\.gnupg/|\.netrc|\.pypirc|\.npmrc|/secrets/|\.git-credentials"
+    r"|\.gnupg/|\.netrc|\.pypirc|\.npmrc"
+    r"|/run/secrets/|/run/credstore/|/homelab-secrets/|/libvirt/secrets/|\.git-credentials"
     r"|\.kube/config|\.docker/config\.json|\.config/gh/hosts\.yml"
     r"|\.claude/\.credentials\.json|\.claude\.json"
     r"|/etc/shadow|/etc/gshadow|/proc/[^/\s]+/environ"
