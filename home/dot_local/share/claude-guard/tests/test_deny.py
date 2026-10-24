@@ -1196,6 +1196,48 @@ def test_writing_an_ordinary_file_is_allowed():
     assert "deny" not in kinds(WRITE_ALLOW)
 
 
+# The operator's 2026-10-24 ruling: a secret-named fixture may be written into a session's
+# scratch directory, a job's `~/.claude/jobs/<id>/tmp/` or a per-user $TMPDIR. The hook
+# process sees TMPDIR but not CLAUDE_JOB_DIR, so the environment here carries only TMPDIR.
+SCRATCH_ENV = {"HOME": HOME, "TMPDIR": "/tmp/user/1000"}
+SCRATCH_FIXTURE_ALLOW = [
+    "printf 'k: ENC[x]\\n' > $CLAUDE_JOB_DIR/tmp/stub/daniel-pi.sops.yaml",
+    "printf 'k\\n' > \"${CLAUDE_JOB_DIR}/tmp/stub/secrets.yml\"",
+    "printf 'k\\n' | tee /tmp/user/1000/x/app.sops.json",
+    f"printf 'k\\n' > {HOME}/.claude/jobs/j1/tmp/f/secret.yaml",
+    "printf 'k\\n' > $TMPDIR/f/secret.yaml",
+]
+SCRATCH_FIXTURE_DENY = [
+    # bare /tmp and a repo path are shared or real
+    "printf 'k\\n' > /tmp/h45stub/daniel-pi.sops.yaml",
+    "printf 'k\\n' > hosts/lib/tests/standin/daniel-pi.sops.yaml",
+    # a path that leaves the scratch directory, or a plant target inside it
+    "printf 'k\\n' > $CLAUDE_JOB_DIR/tmp/../../../server/ansible/vars/secrets.yml",
+    f"printf k > {HOME}/.claude/jobs/x/tmp/../../../../server/secrets.yml",
+    "printf 'k\\n' > $CLAUDE_JOB_DIR/tmp/x/.bashrc",
+    "printf 'k\\n' > $CLAUDE_JOB_DIR/tmp/.git/hooks/pre-push",
+    "cp x $CLAUDE_JOB_DIR/tmp/.git/config",
+    # a second write beside the fixture, another variable, or a reassigned job dir
+    "printf 'k\\n' > $CLAUDE_JOB_DIR/tmp/a.sops.yaml; echo x > ansible/vars/secrets.yml",
+    "printf 'k\\n' > $OTHER/tmp/a.sops.yaml",
+    "CLAUDE_JOB_DIR=/home/u/server; printf k > $CLAUDE_JOB_DIR/tmp/secrets.yml",
+    f"printf k > {HOME}/.claude/jobs/x/secrets.yml",
+]
+
+
+def test_a_secret_named_fixture_in_a_scratch_directory_is_allowed():
+    assert [d.deny(c, "", SCRATCH_ENV).kind for c in SCRATCH_FIXTURE_ALLOW] == ["none"] * len(
+        SCRATCH_FIXTURE_ALLOW
+    )
+
+
+def test_a_fixture_outside_the_scratch_directory_or_beside_another_write_is_denied():
+    assert [d.deny(c, "", SCRATCH_ENV).rule for c in SCRATCH_FIXTURE_DENY] == [
+        "write-target"
+    ] * len(SCRATCH_FIXTURE_DENY)
+    assert "$CLAUDE_JOB_DIR/tmp/" in d.deny(SCRATCH_FIXTURE_DENY[0], "", SCRATCH_ENV).reason
+
+
 # --- terraform / tofu / terragrunt (:1086-1118) -----------------------------------------------
 
 TF_DENY = [

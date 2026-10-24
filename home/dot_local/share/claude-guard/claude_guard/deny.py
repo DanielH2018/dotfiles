@@ -1724,7 +1724,8 @@ def write_targets(sc: Scan, target: str) -> Verdict | None:
             "write-target",
             "Blocked: writing to a secrets, shell-startup, or git config/hook file. Ask the "
             "user to do this manually; an ordinary git setting goes through "
-            "`git config <key> <value>`.",
+            "`git config <key> <value>`. A test fixture with a secret-like name may be "
+            "written under `$CLAUDE_JOB_DIR/tmp/` or `$TMPDIR/` instead.",
         )
     if bdb_re(sc.segset, _GIT_FILE_UNSET):
         return Verdict(
@@ -1806,6 +1807,66 @@ def _inplace_edits_only_safe_files(command: str) -> bool:
             return False
         cleared = True
     return cleared
+
+
+# The write targets that stay refused even inside a session's scratch directory: a file a
+# later shell, git or Claude Code reads. Only a secret-NAMED fixture is let through there.
+_PLANT_TARGETS = re.compile(
+    _ere(
+        r"(authorized_keys|\.bashrc|\.zshrc|\.bash_profile|\.zprofile|\.profile|"
+        rf"\.claude/settings\.json|\.claude/hooks/|{GIT_CONFIG_PATHS})"
+    )
+)
+
+
+def _in_scratch(path: str, env: Mapping[str, str]) -> bool:
+    """Whether the absolute `path` sits in a session scratch directory: some job's
+    `~/.claude/jobs/<id>/tmp/`, or `$TMPDIR` unless that is bare `/tmp`, which other jobs and
+    a deploy's dry run share. The hook process sees TMPDIR but not CLAUDE_JOB_DIR, which the
+    harness sets only in the Bash tool's shell, so a job directory is matched by shape."""
+    path = posixpath.normpath(path)
+    home = env.get("HOME", "").rstrip("/")
+    if home and re.match(rf"{re.escape(home)}/\.claude/jobs/[^/]+/tmp/", path):
+        return True
+    tmp = posixpath.normpath(env.get("TMPDIR", "") or "/")
+    return tmp not in ("/", "/tmp") and path.startswith(tmp + "/")
+
+
+def _writes_only_scratch_fixtures(command: str, env: Mapping[str, str], target: str) -> bool:
+    """Whether every write-target match in `command` is a secret-named fixture written into a
+    session scratch directory (`_in_scratch`), the operator's 2026-10-24 ruling. Each
+    redirect target and tee file whose path sits there, holds no `..` and names no plant
+    target is blanked from the command, and the command is matched again: anything left
+    over keeps the refusal. `$CLAUDE_JOB_DIR` stands for `~/.claude/jobs/<id>` and `$TMPDIR`
+    for its value, unless the command assigns either one itself. A command the parser
+    refuses is not exempt."""
+    p = parse(command)
+    if not p.ok or re.search(r"\b(CLAUDE_JOB_DIR|TMPDIR)=", command):
+        return False
+    stand_in = {
+        "CLAUDE_JOB_DIR": f"{env.get('HOME', '').rstrip('/')}/.claude/jobs/job",
+        "TMPDIR": env.get("TMPDIR", ""),
+    }
+    blanked = command
+    for seg in p.segments:
+        words = _words(seg.text) or []
+        argv = _argv(words)
+        tee = bool(argv) and posixpath.basename(argv[0]) == "tee"
+        for i, w in enumerate(words):
+            after_redirect = i > 0 and _WRITE_REDIRECT.fullmatch(words[i - 1]) is not None
+            if not (after_redirect or (tee and i > 0 and not w.startswith("-"))):
+                continue
+            path = w
+            for name, value in stand_in.items():
+                path = path.replace(f"${{{name}}}", value).replace(f"${name}", value)
+            if (
+                "$" not in path
+                and ".." not in path.split("/")
+                and _in_scratch(path, env)
+                and not _PLANT_TARGETS.search(path)
+            ):
+                blanked = blanked.replace(w, "scratch-fixture")
+    return blanked != command and write_targets(build_scan(blanked), target) is None
 
 
 def inplace_edit(sc: Scan, target: str) -> Verdict | None:
@@ -2735,7 +2796,8 @@ RULES: tuple[Rule, ...] = (
 def deny(command: str, cwd: str = "", env: Mapping[str, str] | None = None) -> Verdict:
     """The bash's decision for one command. `cwd` is accepted for the hook signature the
     spec names and is unused: no rule in the bash reads the working directory. `env`
-    supplies HOME for the written-out home path (:595-598)."""
+    supplies HOME for the written-out home path (:595-598), and CLAUDE_JOB_DIR and TMPDIR
+    for the scratch directories a secret-named fixture may be written into."""
     if not command:  # :23
         return NONE
     home = (env or {}).get("HOME", "")
@@ -2743,6 +2805,12 @@ def deny(command: str, cwd: str = "", env: Mapping[str, str] | None = None) -> V
     target = rm_target(home)
     for rule in RULES:
         verdict = rule(sc, target)
+        if (
+            verdict is not None
+            and verdict.rule == "write-target"
+            and _writes_only_scratch_fixtures(command, env or {}, target)
+        ):
+            continue
         if verdict is not None:
             # An ask from an earlier rule must not hide a sudo further along the command.
             if verdict.kind != "deny":
