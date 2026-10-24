@@ -2749,8 +2749,143 @@ def _sudo_text(text: str, depth: int = 0, nested: bool = False) -> int:
     return found
 
 
+# DECIDED (2026-10-24, approved): a variable command word whose value the same command sets
+# to a literal is judged as that literal, never allowed as a variable. `F="uv run …"; $F x`
+# drew 24 refusals in a week although the message says to spell the command out. Each
+# resolved rewrite goes back through `_sudo_text`, so `S=sudo; $S id` is refused as sudo.
+# Resolution gives up, and the variable refusal stands, on anything that could change a
+# variable the text does not show: a heredoc, an IFS assignment, a function definition, a
+# command that sets variables (`read`, `export`, `eval`, `source`, `printf -v`, ...), or an
+# assignment after `&&`, `||`, `|` or `&`, or inside a compound command.
+_VAR_REF = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+# A value is literal when nothing in it expands, globs or quotes. A leading `$PWD/`,
+# `$HOME/`, `$TMPDIR/` or `$CLAUDE_JOB_DIR/` is allowed, since it only moves the directory
+# and leaves the basename, which is what the boundary reads, literal.
+_DIR_PREFIX = re.compile(r"^\$\{?(PWD|HOME|TMPDIR|CLAUDE_JOB_DIR)\}?/")
+_LITERAL_VALUE = re.compile(r"[^$`*?\[\]{}\"'\\~]*")
+_VAR_SETTERS = frozenset(
+    {
+        "source", ".", "eval", "read", "readarray", "mapfile", "declare", "typeset",
+        "local", "export", "unset", "set", "getopts", "let", "alias", "exec", "trap",
+        "builtin", "command", "enable", "coproc",
+    }
+)  # fmt: skip
+_OPENERS = frozenset({"(", "{", "if", "for", "while", "until", "case", "select"})
+_CLOSERS = frozenset({")", "}", "fi", "done", "esac"})
+_MAX_VARIANTS = 8
+
+
+def _literal_value(word: str) -> str | None:
+    """The literal value of the shlex word `word`, or None when part of it would expand."""
+    value = _DIR_PREFIX.sub("/expanded/", word)
+    return value if _LITERAL_VALUE.fullmatch(value) else None
+
+
+def _literal_variants(command: str) -> list[str]:
+    """Rewrites of `command` in which each `$NAME` the command itself set to a literal is
+    replaced by that value, one rewrite per value of each literal `for NAME in …` list, at
+    most `_MAX_VARIANTS`. A reference in single quotes is left alone, as the shell leaves
+    it; one in double quotes takes the value as is, and a bare one takes it word-split.
+    Empty when nothing can be resolved safely (the DECIDED comment above lists when)."""
+    if "<<" in command or re.search(r"\bIFS=|\w\s*\(\)", command):
+        return []
+    p = parse(command)
+    if not p.ok or p.substitutions:
+        return []
+    fixed: dict[str, tuple[int, str]] = {}
+    loops: list[tuple[str, int, list[str]]] = []
+    poisoned: set[str] = set()
+    cursor = depth = 0
+    certain = True
+    for seg in p.segments:
+        words = _words(seg.text)
+        at = command.find(seg.text.strip(), cursor)
+        if words is None or at < 0:
+            return []
+        cursor = at + len(seg.text.strip())
+        # `then S=sudo` assigns as surely as `S=sudo`, but only when its branch runs, so the
+        # keywords and a subshell's `(` ahead of a segment's command are read past, and an
+        # assignment behind one is not certain.
+        lead = 0
+        while lead < len(words) and (words[lead] in _KEYWORDS or words[lead] == "("):
+            lead += 1
+        cmd = words[lead:]
+        head = cmd[0] if cmd else ""
+        if head in _VAR_SETTERS or (head == "printf" and "-v" in cmd):
+            return []
+        top = certain and depth == 0 and lead == 0
+        if head == "for" and len(cmd) >= 3 and cmd[2] == "in":
+            values = [_literal_value(w) for w in cmd[3:]]
+            fixed.pop(cmd[1], None)
+            if top and cmd[3:] and None not in values and cmd[1] not in poisoned:
+                loops.append((cmd[1], cursor, [v for v in values if v is not None]))
+            else:
+                poisoned.add(cmd[1])
+        elif cmd and all(_ASSIGNMENT.match(w) for w in cmd):
+            for w in cmd:
+                name, _, raw = w.partition("=")
+                value = _literal_value(raw)
+                if top and value is not None and name not in poisoned:
+                    fixed[name] = (cursor, value)
+                else:
+                    poisoned.add(name)
+                    fixed.pop(name, None)
+        else:
+            # Any other assignment-shaped word, such as a case arm's `x) S=sudo` or a prefix
+            # assignment, may or may not change the name, so it stops resolving it.
+            for w in words:
+                if _ASSIGNMENT.match(w):
+                    poisoned.add(w.split("=", 1)[0])
+                    fixed.pop(w.split("=", 1)[0], None)
+        depth = max(
+            0, depth + sum(w in _OPENERS for w in words) - sum(w in _CLOSERS for w in words)
+        )
+        if seg.sep in ("&&", "||", "|", "&"):
+            certain = False
+    # A name a loop and a later assignment both set has two values at once; resolve neither.
+    both = {loop[0] for loop in loops} & set(fixed)
+    loops = [loop for loop in loops if loop[0] not in poisoned | both]
+    fixed = {name: v for name, v in fixed.items() if name not in both}
+    if not fixed and not loops:
+        return []
+    combos: list[dict[str, tuple[int, str]]] = [dict(fixed)]
+    for name, start, values in loops:
+        combos = [{**c, name: (start, v)} for c in combos for v in values]
+        if len(combos) > _MAX_VARIANTS:
+            return []
+    return [_substitute(command, binding) for binding in combos]
+
+
+def _substitute(command: str, binding: dict[str, tuple[int, str]]) -> str:
+    """`command` with each reference to a bound name after its binding point replaced, by
+    the quote rules `_literal_variants` states."""
+    out: list[str] = []
+    quote = ""
+    i = 0
+    while i < len(command):
+        c = command[i]
+        if c == "\\" and quote != "'":
+            out.append(command[i : i + 2])
+            i += 2
+            continue
+        if c in "\"'" and quote in ("", c):
+            quote = "" if quote else c
+        m = _VAR_REF.match(command, i) if c == "$" and quote != "'" else None
+        name = m and (m.group(1) or m.group(2))
+        if m and name in binding and i >= binding[name][0]:
+            value = binding[name][1]
+            out.append(value if quote == '"' else shlex.join(value.split()))
+            i = m.end()
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def sudo_boundary(sc: Scan, target: str) -> Verdict | None:
     rank = _sudo_text(sc.command)
+    if rank == _SUDO_VARIABLE and (variants := _literal_variants(sc.command)):
+        rank = max(map(_sudo_text, variants))
     if rank == _SUDO_ESCALATES:
         return Verdict("deny", "sudo-boundary", SUDO_MSG)
     if rank == _SUDO_VARIABLE:

@@ -1792,16 +1792,17 @@ def test_the_whole_corpus_is_not_silently_small():
 W = "/usr/local/sbin/homelab-takeover-check"
 
 # An executor runs its command word as the shell would, so an expansion in that word is
-# refused as a bare `$X -n true` is, under the variable message.
+# refused as a bare `$X -n true` is, under the variable message. A `read` keeps `X`
+# unresolved; a literal `X=sudo` resolves, and SUDO_REFUSE holds those rows.
 SUDO_EXECUTOR_VARIABLE = [
-    "X=sudo; env $X -n true",
-    'X=sudo; env "$X" -n true',
-    "X=sudo; timeout 5 $X -n true",
-    "X=sudo; nohup $X -n true",
-    "X=sudo; exec $X -n true",
-    "X=sudo; command $X -n true",
-    "X=sudo; xargs $X -n true < /dev/null",
-    "X=sudo; find . -maxdepth 0 -exec $X -n true ';'",
+    "read X; env $X -n true",
+    'read X; env "$X" -n true',
+    "read X; timeout 5 $X -n true",
+    "read X; nohup $X -n true",
+    "read X; exec $X -n true",
+    "read X; command $X -n true",
+    "read X; xargs $X -n true < /dev/null",
+    "read X; find . -maxdepth 0 -exec $X -n true ';'",
     "env $(echo sudo) -n true",
     "env `echo sudo` -n true",
     "env ${X} -n true",
@@ -2065,6 +2066,32 @@ SUDO_REFUSE = [
     'time -f "sudo id" bash -c "sudo id"',
     "time -f x sudo -n true",
     "timeout -s KILL 5 sh -c 'sudo id'",
+    # a literal variable resolves to its value, and only a value certain at that point
+    # resolves at all (2026-10-24)
+    "S=sudo; $S id",
+    'S=sudo; "$S" -n true',
+    "X=sudo; env $X -n true",
+    "X=sudo; timeout 5 $X -n true",
+    "X=sudo; xargs $X -n true < /dev/null",
+    "X=sudo; find . -maxdepth 0 -exec $X -n true ';'",
+    "for c in true sudo; do $c id; done",
+    "cd x && S=git; $S status",
+    "S=git; read S; $S id",
+    "S=git; S=$(which sudo); $S id",
+    "S=git; export S=sudo; $S id",
+    "S=git; trap 'S=sudo' DEBUG; $S id",
+    "IFS=x; S=sudoxid; $S",
+    "f() { S=sudo; }; S=git; f; $S id",
+    'S="git"; if true; then S=sudo; fi; $S id',
+    "S=git; while false; do S=sudo; done; $S id",
+    "S=git; (S=sudo); $S id",
+    "S=git; { S=sudo; }; $S id",
+    "S=git; for x in a; do for S in sudo; do :; done; done; $S id",
+    "S=git; case x in x) S=sudo;; esac; $S id",
+    "$S id; S=git",
+    "S='$(sudo id)'; $S",
+    "S=git; $S id <<'EOF'\nx\nEOF",
+    "GL=$(ls x | head -1); $GL version",
 ]
 
 SUDO_PASS = [
@@ -2179,6 +2206,15 @@ SUDO_PASS = [
     "case x in (s*) true;; esac",
     "case x in a) true;;& *) true;; esac",
     "case x in a) case y in *) true;; esac;; *) break;; esac",
+    # a literal variable command word resolves to its value (2026-10-24)
+    "F=\"uv run python scripts/dev/fact_status.py\"; $F verify 'CLAUDE.md#x' 2>&1 | tail -2",
+    "X=git; $X -C sub status",
+    "cd /x; PY=$PWD/.venv/bin/python; (cd /tmp && $PY scripts/r.py host)",
+    "B=/tmp/ne/root/bin/busybox; $B ls",
+    "for py in python3.14 python3.12; do $py -c 'print(1)'; done",
+    "P='uv run python probe.py metric'; for q in a b; do $P \"$q\"; done",
+    "for c in git ls; do $c x; done",
+    "S=git; echo '$S'; $S status",
 ]
 
 
