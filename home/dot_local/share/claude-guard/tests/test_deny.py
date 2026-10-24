@@ -1069,6 +1069,14 @@ WRITE_DENY = [
     "echo x > app-secret.yaml",
     "echo x > secrets.yml.j2.bak",
     "echo x > a.sops.yaml.j2x",
+    # a sed or perl file operand still counts when the script also names a target (2026-10-24)
+    "sed -i -e s/a/b/ ansible/vars/secrets.yml",
+    "sed -i.bak 's/x/y/' docs/a.md ansible/vars/secrets.yml",
+    "sed -i 's/a/b/' > /dev/null ansible/vars/secrets.yml",
+    "sed -n -i 's/secrets.yml/x/' -- ansible/vars/secrets.yml",
+    "sed -i 's/a/b/' \"$F\" ~/.zshrc",
+    "ssh host sed -i 's/secrets.yml/x/' docs/a.md",
+    'sed -i "s/$(cat ansible/vars/secrets.yml)/x/" docs/a.md',
 ]
 WRITE_ALLOW = [
     # a Jinja template renders a manifest at deploy, as `<name>.env.j2` does (2026-10-24)
@@ -1076,6 +1084,11 @@ WRITE_ALLOW = [
     "cat >> templates/config-secret.yaml.j2 <<'EOF'\nx: 1\nEOF",
     "sed -i 's/a/b/' templates/health-secret.yaml.j2",
     'grep -n "<<<<<<<\\|>>>>>>>" templates/alertmanager-secret.yaml.j2',
+    # only a sed or perl script names the target, never a file operand (2026-10-24)
+    "sed -i 's/Three shapes/A `secrets.yml` range/' deployer_lib/deploy_remediation.py",
+    "sed -i -e 's#a/env-secret.yaml#b#g' -e 's#c#d#' tests/test_x.py",
+    "sed -i 's#ansible/vars/secrets.yml#x#' docs/a.md && sed -n 1,4p docs/a.md",
+    "perl -pi -e 's/secrets.yml/x/' docs/a.md",
     "make build > build.log 2>&1",
     "echo done >> CHANGELOG.md",
     "sed -i s/a/b/ README.md",

@@ -1542,9 +1542,83 @@ def write_targets(sc: Scan, target: str) -> Verdict | None:
     return None
 
 
+_REDIRECT_WORD = re.compile(r"[0-9]*[<>|&]+")
+
+
+def _edit_operands(args: list[str], value_opts: str, script_opts: str, rest_opts: str) -> list[str]:
+    """The file operands of a sed or perl argv tail `args`: the positional words, less the
+    first when no option carried the script. In a short-option cluster, a letter in
+    `value_opts` takes the rest of the word or the next one as its value, and one in
+    `script_opts` also marks the script as given. A letter in `rest_opts` takes the rest of
+    the word (`-i.bak`, `-0777`). A redirect and its target are not operands."""
+    positional: list[str] = []
+    script = False
+    i = 0
+    while i < len(args):
+        w = args[i]
+        if w == "--":
+            positional += args[i + 1 :]
+            break
+        if _REDIRECT_WORD.fullmatch(w):
+            i += 2
+            continue
+        if w.startswith("--"):
+            name = w.split("=", 1)[0]
+            script |= name in ("--expression", "--file")
+            i += 2 if name == w and name in ("--expression", "--file", "--line-length") else 1
+            continue
+        if w.startswith("-") and len(w) > 1:
+            for j, c in enumerate(w[1:], 1):
+                if c in rest_opts:
+                    break
+                if c in value_opts:
+                    script |= c in script_opts
+                    i += j == len(w) - 1
+                    break
+            i += 1
+            continue
+        positional.append(w)
+        i += 1
+    return positional if script else positional[1:]
+
+
+def _inplace_edits_only_safe_files(command: str) -> bool:
+    """Whether every in-place edit in `command` is a plain sed or perl whose file operands
+    name no WRITE_TARGETS path. The script word is text the editor runs on a file, so a
+    `secrets.yml` inside `s/…/…/` names no file. Anything else that matched the rule keeps
+    its refusal: truncate, dd, a wrapper such as find, xargs or ssh, a substitution, a heredoc
+    body, or text the parser refuses."""
+    p = parse(command)
+    if not p.ok or p.substitutions:
+        return False
+    pattern = rf"{BDB_CMD_AT}{BDB_INPLACE}[^;&|]*{WRITE_TARGETS}"
+    cleared = False
+    for seg in p.segments:
+        if any(bdb_re(normalize(b), pattern) for b in seg.heredocs):
+            return False
+        if not bdb_re(normalize(seg.text), pattern):
+            continue
+        words = _words(seg.text)
+        argv = _argv(words) if words else []
+        name = posixpath.basename(argv[0]) if argv else ""
+        if name == "sed":
+            files = _edit_operands(argv[1:], "efl", "ef", "i")
+        elif name == "perl":
+            files = _edit_operands(argv[1:], "eE", "eE", "iIMmx0ld")
+        else:
+            return False
+        if any(bdb_re(f, WRITE_TARGETS) for f in files):
+            return False
+        cleared = True
+    return cleared
+
+
 def inplace_edit(sc: Scan, target: str) -> Verdict | None:
-    """:1099-1101."""
-    if bdb_re(sc.scan, rf"{BDB_CMD_AT}{BDB_INPLACE}[^;&|]*{WRITE_TARGETS}"):
+    """:1099-1101. A match is cleared when only a sed or perl script names the target
+    (`_inplace_edits_only_safe_files`)."""
+    if bdb_re(
+        sc.scan, rf"{BDB_CMD_AT}{BDB_INPLACE}[^;&|]*{WRITE_TARGETS}"
+    ) and not _inplace_edits_only_safe_files(sc.command):
         return Verdict(
             "deny",
             "inplace-edit",
