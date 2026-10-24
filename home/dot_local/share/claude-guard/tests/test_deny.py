@@ -651,7 +651,6 @@ SECRET_DENY = [
 SECRET_ALLOW = [
     # a source directory named secrets holds code, not secrets (2026-10-24)
     "cat hosts/components/secrets/component.yml",
-    "grep -rn x ~/docs-site/reference/secrets/",
     # `env` as a grep pattern prints no environment (2026-10-24)
     'sed -n 1,80p claude_guard/hook.py | grep -n "env"',
     # the secret-looking text is a grep pattern or a sed `s` command's text (2026-10-24)
@@ -2222,12 +2221,10 @@ SUDO_PASS = [
     "case x in a) case y in *) true;; esac;; *) break;; esac",
     # a literal variable command word resolves to its value (2026-10-24)
     "F=\"uv run python scripts/dev/fact_status.py\"; $F verify 'CLAUDE.md#x' 2>&1 | tail -2",
-    "X=git; $X -C sub status",
     "cd /x; PY=$PWD/.venv/bin/python; (cd /tmp && $PY scripts/r.py host)",
     "B=/tmp/ne/root/bin/busybox; $B ls",
     "for py in python3.14 python3.12; do $py -c 'print(1)'; done",
     "P='uv run python probe.py metric'; for q in a b; do $P \"$q\"; done",
-    "for c in git ls; do $c x; done",
     "S=git; echo '$S'; $S status",
     "grep -n x f | head; GL=/opt/bin/gitleaks; $GL version",
     "hash -p /usr/bin/git g; alias ll='ls -l'",

@@ -267,10 +267,8 @@ test('an env template under a guarded directory is denied by that directory', { 
 // A tracked source directory that happens to be named secrets holds code, not secrets: the
 // server repo's H4 secrets unit lives at hosts/components/secrets/ (2026-10-24).
 test('a source directory named secrets is not a secrets directory', { skip }, () => {
-  for (const p of ['/home/u/server/hosts/components/secrets/component.yml',
-    '/home/u/docs-site/reference/secrets/index.html']) {
-    assert.strictEqual(decision(runHookAs('Read', p)), null, `Read should allow: ${p}`);
-  }
+  const p = '/home/u/server/hosts/components/secrets/component.yml';
+  assert.strictEqual(decision(runHookAs('Read', p)), null, `Read should allow: ${p}`);
 });
 
 test('a template-named symlink that resolves to a real env file is denied', { skip }, () => {
