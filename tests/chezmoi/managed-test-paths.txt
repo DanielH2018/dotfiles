@@ -53,6 +53,7 @@
 .local/share/claude-guard/tests/test_nudges.py
 .local/share/claude-guard/tests/test_judge.py
 .local/share/claude-guard/tests/test_package.py
+.local/share/claude-guard/tests/test_prompt_tool.py
 .local/share/claude-guard/tests/test_read_only_agents.py
 .local/share/claude-guard/tests/test_readonly.py
 .local/share/claude-guard/tests/test_remote.py
