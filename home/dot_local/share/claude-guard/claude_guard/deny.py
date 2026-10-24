@@ -1119,8 +1119,10 @@ def secret_readers(sc: Scan, target: str) -> Verdict | None:
         if not words:
             continue
         head = words[0].rsplit("/", 1)[-1]
+        # `| grep -n env` names `env` as a pattern; a filter prints no environment.
         if (
             head not in _DOC_LEADERS
+            and head not in _FILTERS
             and bdb_re(piece, ENV_DUMP)
             and (not sc.parsed or bdb_re(sc.segset, ENV_DUMP))
         ):
@@ -1474,8 +1476,12 @@ def sops_decrypt(sc: Scan, target: str) -> Verdict | None:
 
 
 def git_sops_diff(sc: Scan, target: str) -> Verdict | None:
-    """:994-1014. `--stat`, `--name-only`, `--name-status` emit no content and are exempt."""
-    subject = f"{sc.scan}\n{sc.lines}"
+    """:994-1014. `--stat`, `--name-only`, `--name-status` emit no content and are exempt. An
+    exclude pathspec (`:!secrets.yml`, `:^…`, `:(exclude)…`) keeps the file out of the diff,
+    so it is dropped before the match, as `_EXCLUDE_WORD` drops it for the readers."""
+    subject = re.sub(
+        r"(^|\s):(!|\^|\([^)]*exclude[^)]*\))\S*", r"\1", f"{sc.scan}\n{sc.lines}", flags=re.M
+    )
     if bdb_re(
         subject,
         rf"{BDB_CMD_AT}git\b[^;&|]*(\bdiff\b|\bshow\b|\blog\b[^;&|]*(-p|--patch)\b)[^;&|]*"

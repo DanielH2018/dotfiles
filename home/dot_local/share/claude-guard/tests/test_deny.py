@@ -587,6 +587,7 @@ SECRET_DENY = [
     "env -0",
     "env; ls",
     "ls | env",
+    "grep x f; env",
     # a quoted grep pattern or sed script still leaves the file it reads (2026-10-24)
     "grep 'a\\|b' ~/.ssh/id_rsa",
     "grep -e x ~/.ssh/id_rsa",
@@ -597,6 +598,8 @@ SECRET_DENY = [
     "cat ~/.ssh/id_rsa > /tmp/x",
 ]
 SECRET_ALLOW = [
+    # `env` as a grep pattern prints no environment (2026-10-24)
+    'sed -n 1,80p claude_guard/hook.py | grep -n "env"',
     # the secret-looking text is a grep pattern or a sed `s` command's text (2026-10-24)
     "grep -c 'credentials.json\\|\\*\\*/.env' home/.chezmoitemplates/settings.base.json",
     'grep -rn "pin\\.key\\|self\\.env\\.\\|server\\.key" tests | head',
@@ -1014,6 +1017,8 @@ DECRYPT_DENY = [
     'docker inspect -f "{{json .Config}}" wg-easy',
     'docker inspect --format "{{json .}}" wg-easy',
     'docker inspect -f "{{.Config.Env}}" wg-easy',
+    # an exclude pathspec beside the file itself still diffs it (2026-10-24)
+    "git diff A...B -- ':!x' ansible/vars/secrets.yml",
 ]
 DECRYPT_ALLOW = [
     "sops ansible/vars/secrets.yml",
@@ -1047,6 +1052,9 @@ DECRYPT_ALLOW = [
     'git commit -m "deny sops -d and git diff on a secrets file"',
     'grep -n "systemctl cat" hook.sh',
     'grep -rn "docker inspect" tests/',
+    # an exclude pathspec keeps the file out of the diff (2026-10-24)
+    "git diff A...B -- ':!ansible/vars/secrets.yml' | head -400",
+    "git diff A...B -- ':(exclude)ansible/vars/secrets.yml'",
 ]
 
 
