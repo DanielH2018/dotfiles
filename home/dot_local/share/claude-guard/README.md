@@ -210,7 +210,12 @@ and builtins, and it refuses a program naming a shell-startup, settings, hook or
 A week's replay over 32,188 commands took the deny count from 316 to 262. No command went
 from allowed to denied (2026-10-24). The boundary also reads a Python script's own arguments
 as data, past a literal `.py` path, so a `findings.py open --title` that names sudo passes.
-That took the same replay from 262 to 258 (dotfiles #1000).
+That took the same replay from 262 to 258 (dotfiles #1000). Several rules then moved from
+matching the joined scan to confirming against the parse: gh api's flags come from gh's own
+argv, a grep pattern and a sed `s` script are one word, sed and perl -i edit only their file
+operands, and a pipe into kill or a shell running a named script is judged at the stage. A
+Jinja `secret.yaml.j2` template is not a secrets file. That took the replay from 243 denies
+and 15 asks to 208 and 4, with nothing newly refused (2026-10-24).
 
 When nothing above decides, `readonly.py` (dotfiles #628, ported from the server repo's
 `auto-approve-readonly.py`) allows a command whose every stage is provably read-only. It
