@@ -50,6 +50,7 @@ denials name the words that matched, with the exclude arguments for a recursive 
 import fnmatch
 import io
 import itertools
+import os
 import posixpath
 import re
 import shlex
@@ -71,6 +72,7 @@ from claude_guard.gitargv import (
 )
 from claude_guard.gitread import config_read
 from claude_guard.inert_python import inert
+from claude_guard.rules import load_rules
 from claude_guard.segment import Segment, mask_substitutions, parse
 
 
@@ -2977,6 +2979,142 @@ TAKEOVER_CHECK_HINT = (
 )
 
 
+# --- a changed PATH or code-loading variable ahead of an allow-listed tool ---------------------
+
+# DECIDED: one rule here, not a pinned shebang per tool. A session that can plant
+# `./bin/python3` for a `#!/usr/bin/env python3` tool can plant `./bin/ghread` as easily, so the
+# rule refuses a change to PATH or to a variable that loads code into a program, followed by a
+# command that the user's allow rules approve by name.
+#
+# Claude Code 2.1.310 already prompts for most of these forms. Its allow matcher strips a
+# leading assignment only for its safe-variable list (`wKe`), and its bare-assignment screen
+# covers PATH, LD_*, BASH_ENV and HOME. That screen misses PYTHON*, NODE_OPTIONS and PERL5OPT:
+# `PYTHONPATH=./pp; <allowed python tool>` runs with no prompt, and when PYTHONPATH is already
+# exported, the planted `sitecustomize.py` executes (measured 2026-10-24). This rule covers
+# that gap. It also covers the forms Claude Code prompts for, so that a prompt cannot be
+# approved without the operator reading it.
+#
+# The names come from the allow rules, through the loader the judge uses: a segment counts
+# when the user-level allow list grants it. `export PATH=…; node --test` therefore passes,
+# because no allow rule grants `node --test`. A runner or interpreter never counts
+# (`_granted_tool` says why).
+_LOADER_NAMES = frozenset(
+    {
+        "PATH", "BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS", "PS4", "NODE_OPTIONS", "NODE_PATH",
+        "PERLLIB", "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS", "CLASSPATH",
+        "GCONV_PATH", "BUN_OPTIONS", "ZDOTDIR",
+    }
+)  # fmt: skip
+_LOADER_PREFIXES = ("LD_", "DYLD_", "BASH_FUNC_", "PYTHON", "PERL5", "RUBY", "LUA_")
+# Claude Code strips these two from a prefix as safe (2.1.310 `wKe`), and neither loads code.
+_INERT_LOADERS = frozenset({"PYTHONUNBUFFERED", "PYTHONDONTWRITEBYTECODE"})
+# Builtins that set or export a variable for the commands after them.
+_EXPORTERS = frozenset({"export", "declare", "typeset", "local", "readonly"})
+_ENV_VALUE_OPTS = frozenset({"-u", "--unset", "-C", "--chdir", "-S", "--split-string"})
+# Builtins bash runs without a PATH lookup and that load no code, such as the
+# `PYTHONPATH=… true` a week's replay held.
+_PLAIN_BUILTINS = frozenset({"true", "false", ":", "echo", "printf", "cd", "pwd", "test", "["})
+LOADER_ENV_MSG = (
+    "Blocked: this command changes {var} and then runs `{tool}`, which an allow rule approves "
+    "by name. The change decides which file runs as `{tool}` or what code it loads, so a "
+    "planted file would run with no prompt. Run `{tool}` without changing {var}, call it by "
+    "its absolute path (`command -v {tool}` prints it), or set {var} as a prefix on only the "
+    "command that needs it: `{var}=… <cmd> | {tool}` changes it for `<cmd>` alone."
+)
+
+
+def _loads_code(name: str) -> bool:
+    if name in _INERT_LOADERS:
+        return False
+    return name in _LOADER_NAMES or name.startswith(_LOADER_PREFIXES)
+
+
+def _assigned(word: str) -> str | None:
+    """The name `word` assigns, when it is an assignment."""
+    return _NAME.match(word).group() if _ASSIGNMENT.match(word) else None
+
+
+def _past_env(argv: list[str]) -> tuple[list[str], list[str]]:
+    """(the names `env` assigns, the command it runs) for `argv` starting at `env`."""
+    names: list[str] = []
+    i = 1
+    while i < len(argv):
+        w = argv[i]
+        if w == "--":
+            i += 1
+            break
+        if w in _ENV_VALUE_OPTS:
+            i += 2
+        elif w.startswith("-"):
+            i += 1
+        elif name := _assigned(w):
+            names.append(name)
+            i += 1
+        else:
+            break
+    while i < len(argv) and (name := _assigned(argv[i])):
+        names.append(name)
+        i += 1
+    return names, argv[i:]
+
+
+def _granted_tool(argv: list[str], allows: Callable[[str], bool]) -> str | None:
+    """The bare command name of `argv` when the allow rules grant it, else None. A runner
+    or interpreter is never one: an allow rule for `uv run` or `pytest` already runs the
+    workspace's code, so a changed variable grants it nothing new. `PYTHONPATH=scripts uv
+    run …` was 252 of the 260 commands a week's replay refused before this exemption."""
+    if not argv or "/" in argv[0] or any(c in argv[0] for c in "$`"):
+        return None
+    if argv[0] in _RUNNERS or _is_interpreter(argv[0]) or argv[0] in _PLAIN_BUILTINS:
+        return None
+    return argv[0] if allows(" ".join(argv)) else None
+
+
+def loader_env(command: str, env: Mapping[str, str] | None) -> Verdict | None:
+    p = parse(command)
+    if not p.ok:
+        return None
+    lazy: list[Callable[[str], bool]] = []
+
+    def allows(segment: str) -> bool:
+        if not lazy:
+            # Read on first use: only a command that changes a watched variable reads settings.
+            e = os.environ if env is None else env
+            home = e.get("CLAUDE_GUARD_SETTINGS_HOME") or e.get("HOME", "")
+            lazy.append(load_rules(env=e).allows if home else (lambda _s: False))
+        return lazy[0](segment)
+
+    changed: str | None = None
+    for seg in p.segments:
+        words = _words(seg.text)
+        if words is None:
+            continue
+        cmd = _command_words(words)
+        lead = 0
+        while lead < len(cmd) and _assigned(cmd[lead]):
+            lead += 1
+        prefix = [n for w in cmd[:lead] if (n := _assigned(w)) and _loads_code(n)]
+        argv = cmd[lead:]
+        here = prefix[0] if prefix else None
+        if argv and argv[0] == "env":
+            names, argv = _past_env(argv)
+            here = here or next((n for n in names if _loads_code(n)), None)
+            if not argv:
+                # A bare `env NAME=…` prints the environment and changes nothing after it.
+                continue
+        elif argv and argv[0] in _EXPORTERS:
+            names = [_NAME.match(w).group() for w in argv[1:] if _NAME.match(w)]
+            changed = changed or next((n for n in names if _loads_code(n)), None)
+            continue
+        if not argv:
+            changed = changed or here
+            continue
+        var = here or changed
+        if var and (tool := _granted_tool(argv, allows)):
+            return Verdict("deny", "loader-env", LOADER_ENV_MSG.format(var=var, tool=tool))
+    return None
+
+
 # --- the decision ------------------------------------------------------------------------------
 
 # Bash order (:625-1142). The first match wins and carries its message; later tasks append.
@@ -3015,8 +3153,10 @@ RULES: tuple[Rule, ...] = (
 def deny(command: str, cwd: str = "", env: Mapping[str, str] | None = None) -> Verdict:
     """The bash's decision for one command. `cwd` is accepted for the hook signature the
     spec names and is unused: no rule in the bash reads the working directory. `env`
-    supplies HOME for the written-out home path (:595-598), and CLAUDE_JOB_DIR and TMPDIR
-    for the scratch directories a secret-named fixture may be written into."""
+    supplies HOME for the written-out home path (:595-598), CLAUDE_JOB_DIR and TMPDIR for
+    the scratch directories a secret-named fixture may be written into, and HOME or
+    CLAUDE_GUARD_SETTINGS_HOME for the allow rules `loader_env` reads. None means
+    os.environ for that last read."""
     if not command:  # :23
         return NONE
     home = (env or {}).get("HOME", "")
@@ -3037,7 +3177,8 @@ def deny(command: str, cwd: str = "", env: Mapping[str, str] | None = None) -> V
             if _GUARD_PROBE.search(command):
                 return Verdict(verdict.kind, verdict.rule, verdict.reason + GUARD_PROBE_HINT)
             return verdict
-    return NONE
+    # Last, and outside RULES, because it alone reads the user's allow rules through `env`.
+    return loader_env(command, env) or NONE
 
 
 # A probe that hands the guard test commands as text is refused for that text. Replay reads

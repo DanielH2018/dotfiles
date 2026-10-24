@@ -171,6 +171,15 @@ degrades to the whole-string subject, as the bash does — this is the one place
 segmenter's "a refusal is never a skip" contract reads differently, and it is deliberate,
 because this is a port.
 
+`loader_env` is the one deny rule that reads settings. It refuses a command that changes PATH
+or a variable that loads code (PYTHONPATH, LD_PRELOAD, NODE_OPTIONS, BASH_ENV and their kin),
+by prefix, `env`, `export`, `declare -x` or a bare assignment, and then runs a command by bare
+name that the user-level allow rules grant. Claude Code's own matcher prompts for most of
+these forms, but it lets a bare `PYTHONPATH=…;` segment through, and that segment loads code
+when PYTHONPATH is already exported. Runners, interpreters and plain builtins are exempt,
+because their allow rules already run workspace code or load none. The DECIDED comment above
+`_LOADER_NAMES` has the measurements.
+
     claude-guard explain 'ssh homelab sudo reboot'          # unchanged: segments and the judge
     claude-guard replay commands.jsonl --deny                # one line per non-none verdict
 

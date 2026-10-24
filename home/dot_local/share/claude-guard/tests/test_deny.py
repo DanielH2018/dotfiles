@@ -9,6 +9,7 @@ pinned to a fake so the home-directory anchors are deterministic.
 """
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -2319,3 +2320,97 @@ def test_the_sudo_tables_are_not_vacuous():
     assert len(SUDO_PASS) >= 25
     assert len(set(SUDO_REFUSE)) == len(SUDO_REFUSE)
     assert not set(SUDO_REFUSE) & set(SUDO_PASS)
+
+
+# --- a changed PATH or code-loading variable ahead of an allow-listed tool --------------------
+
+TEMPLATE = REPO / "home" / ".chezmoitemplates" / "settings.permissions.json"
+
+
+def _settings_home(home: Path, perms: dict) -> dict[str, str]:
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "settings.json").write_text(json.dumps({"permissions": perms}))
+    return {"HOME": str(home)}
+
+
+@pytest.fixture
+def real_env(tmp_path):
+    """A HOME whose settings are settings.permissions.json as written, so the tool names come
+    from the real allow list rather than from a copy here."""
+    text = re.sub(r"\{\{/\*.*?\*/\}\}", "", TEMPLATE.read_text(), flags=re.DOTALL)
+    text = re.sub(r"\{\{-?\s*(if\b[^}]*|end)\s*-?\}\}", "", text)
+    perms = json.loads(text)
+    assert "Bash(ghread:*)" in perms["allow"] and "Bash(jsonq:*)" in perms["allow"]
+    return _settings_home(tmp_path, perms)
+
+
+LOADER_REFUSE = [
+    "PATH=./bin:$PATH ghread pr view 1",
+    "PATH=./bin ghread pr view 1",
+    "PYTHONPATH=/tmp/x ghread pr view 1",
+    "LD_PRELOAD=/tmp/x.so jsonq 1 f.json",
+    "env PATH=./bin dockq ps",
+    "env -u HOME PYTHONPATH=/tmp/x otelq --help",
+    "export PATH=./bin:$PATH; ghread pr view 1",
+    "export PATH=./bin:$PATH && cc-wait --list",
+    "PATH=./bin:$PATH; jq . f.json",
+    "PYTHONPATH=./pp; otel-sweep --help",
+    "NODE_OPTIONS=--require=./x.js; dockrun ps",
+    "PERL5OPT=-Mx\nghread pr list",
+    "declare -x PATH=./bin; ghread pr view 1",
+    "typeset -x PYTHONPATH=./pp; jsonq 1 f.json",
+    "PYTHONPATH=./pp; export PYTHONPATH; ghread pr view 1",
+    "BASH_ENV=./x.sh claude-guard replay f.jsonl --judge",
+    "cd /tmp && PATH=. takeover-check --help",
+    "if true; then PATH=./bin; fi; ghread pr view 1",
+    # the export reaches every later command, `tail` included (two of these in a week)
+    "export PATH=$HOME/.local/share/fnm/aliases/default/bin:$PATH; node --test t.js | tail -12",
+]
+LOADER_PASS = [
+    "ghread pr view 1",
+    "export PATH=./node_modules/.bin:$PATH; node --test",
+    "PATH=./node_modules/.bin:$PATH make test",
+    "NODE_ENV=test ghread pr view 1",
+    "PYTHONUNBUFFERED=1 ghread pr view 1",
+    "FOO=bar; ghread pr view 1",
+    "export FOO=bar; ghread pr view 1",
+    "PATH=/usr/bin:/bin /home/u/.local/bin/ghread pr view 1",
+    "PATH=./bin:$PATH ./bin/ghread pr view 1",
+    "ghread pr view 1; export PATH=./bin:$PATH",
+    "env PATH=./bin",
+    "echo 'PATH=./bin ghread pr view 1'",
+    "GIT_AUTHOR_NAME=x git commit -m y",
+    # a prefix changes only the command it sits on, the route the refusal names
+    "PATH=$HOME/.local/share/fnm/aliases/default/bin:$PATH node --test t.js | tail -12",
+    # runners already run the workspace's code, so the variable grants them nothing
+    "PYTHONPATH=scripts:scripts/deploy_tools uv run pytest -q",
+    "PATH=./bin:$PATH uv run python -m x",
+    "PYTHONPATH=. pytest -q tests",
+    # a builtin runs without a PATH lookup and loads nothing
+    "PYTHONPATH=/tmp/x true",
+]
+
+
+@pytest.mark.parametrize("command", LOADER_REFUSE)
+def test_a_loader_change_ahead_of_an_allowed_tool_is_refused(command, real_env):
+    v = d.deny(command, "", real_env)
+    assert (v.kind, v.rule) == ("deny", "loader-env")
+    assert "absolute path" in v.reason and "without changing" in v.reason
+
+
+@pytest.mark.parametrize("command", LOADER_PASS)
+def test_a_loader_change_that_runs_no_allowed_tool_by_name_is_allowed(command, real_env):
+    assert d.deny(command, "", real_env).rule != "loader-env"
+
+
+def test_the_refused_tool_comes_from_the_allow_rules(tmp_path):
+    # The same text is refused only while an allow rule grants the tool by name.
+    command = "PATH=./bin:$PATH ghread pr view 1"
+    assert d.deny(command, "", _settings_home(tmp_path / "e", {"allow": []})).kind == "none"
+    v = d.deny(command, "", _settings_home(tmp_path / "g", {"allow": ["Bash(ghread:*)"]}))
+    assert (v.rule, "`ghread`" in v.reason, "PATH" in v.reason) == ("loader-env", True, True)
+
+
+def test_the_loader_tables_are_not_vacuous():
+    assert len(LOADER_REFUSE) >= 15 and len(LOADER_PASS) >= 10
+    assert not set(LOADER_REFUSE) & set(LOADER_PASS)
