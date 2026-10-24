@@ -82,7 +82,7 @@ whole-string scan.
 | 1 | This spec; Edit-tool, `claude-guard replay` and while-read routes in the deny messages; CLAUDE.md lines | 77 | shipped, #1006 (46f77522) |
 | 2 | `takeover-check`: runs the allowed `sudo -n` takeover line with checked arguments and merged stderr, so its output can be piped | 10 | shipped with the `takeover-check` tool |
 | 3 | `secretq`: key names, presence, all-encrypted check and a SOPS-file hash, never a value | 13 | shipped with the `secretq` tool |
-| 4 | `unitq cat UNIT`: a unit and its drop-ins with `Environment=` values, `EnvironmentFile=` contents and `Exec*` arguments removed structurally | 14 | planned |
+| 4 | `unitq cat UNIT`: a unit and its drop-ins with `Environment=` values, `EnvironmentFile=` contents and `Exec*` arguments removed structurally | 14 | shipped with the `unitq` tool |
 | 5 | `claude-guard probe <check> <cases-file>`: a named internal check's verdict per case | part of 31 | planned; measure after slice 1 first |
 | 6 | `killown PATTERN`: kills only processes in the session's own tree | 8 | planned; first confirm how the session root shows in `/proc` |
 | 7 | `envq NAME…`: a value only for a non-credential name with a plain-shaped value, otherwise `set` or `unset` | 3 | planned |

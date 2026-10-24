@@ -1610,7 +1610,7 @@ def systemctl_env(sc: Scan, target: str) -> Verdict | None:
             "Blocked: `systemctl cat` prints the unit file, Environment= lines and all. Use "
             "`systemctl show -p <Property> <unit>` for a STRUCTURAL field (ActiveState, User, "
             "NRestarts); the Environment and Exec* properties are denied there too, because "
-            "they render the unit's secrets and its argv.",
+            "they render the unit's secrets and its argv." + UNITQ_HINT,
         )
     if bdb_re(sc.scan, rf"{BDB_CMD_AT}systemctl\b[^;&|]*(^|[[:space:]])show([[:space:]]|$)"):
         if not bdb_re(sc.scan, r"(^|[[:space:]])(-p|--property)([[:space:]]|=)"):
@@ -1618,14 +1618,14 @@ def systemctl_env(sc: Scan, target: str) -> Verdict | None:
                 "deny",
                 "systemctl-show",
                 "Blocked: an unnarrowed `systemctl show` prints the unit's resolved "
-                "environment. Add `-p <Property>`.",
+                "environment. Add `-p <Property>`." + UNITQ_HINT,
             )
         if bdb_re(sc.scan, r"\bsystemctl\b[^;&|]*(-p|--property)[[:space:]=][^;&|]*Environment"):
             return Verdict(
                 "deny",
                 "systemctl-show-environment",
                 "Blocked: the Environment property holds the unit's secrets. Ask the user for "
-                "the one value you need.",
+                "the one value you need." + UNITQ_HINT,
             )
         # ExecStart/ExecStop/ExecReload/ExecCondition (and their Pre/Post/Ex suffixes) render
         # the command's full argv. `Exec` alone would also match ExecMainPID, ExecMainStatus
@@ -1641,9 +1641,17 @@ def systemctl_env(sc: Scan, target: str) -> Verdict | None:
                 "Blocked: an Exec* property renders the command's full argv, so a unit that "
                 "passes a token or URL as an argument prints it. Ask the user for the one "
                 "value you need, or read a structural property such as ActiveState, User or "
-                "NRestarts.",
+                "NRestarts." + UNITQ_HINT,
             )
     return None
+
+
+# unitq removes every value that can hold a secret by structure, so it is safe to name on a
+# true match: a session after a token gets `<value>`.
+UNITQ_HINT = (
+    " To read the unit with its Environment values and Exec arguments removed, run "
+    "`unitq cat [--user] <unit>` or `unitq show [--user] <unit> <Property>…`."
+)
 
 
 def docker_inspect(sc: Scan, target: str) -> Verdict | None:

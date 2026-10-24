@@ -653,6 +653,9 @@ SECRET_ALLOW = [
     "cat hosts/components/secrets/component.yml",
     # secretq's own lines, which print no value (2026-10-24)
     "secretq keys ansible/vars/cluster-vars.sops.env",
+    # unitq's own lines, which print no Environment value or Exec argument (2026-10-25)
+    "unitq cat --user claude-land@.service | grep -E 'LAND_DEADLINE|User='",
+    "ssh daniel-server unitq show claude-land@.service ExecStart Environment",
     "secretq has /etc/homelab/kuma-push.env KUMA_PUSH_TOKEN; echo $?",
     "secretq encrypted --rev origin/master ansible/vars/secrets.yml",
     "secretq kubeconfig /var/lib/claude/.kube/config | head",
@@ -2277,6 +2280,8 @@ ROUTED = [
     ("cat ~/.aws/credentials", "secret-read", "Edit"),
     ("grep -c TOKEN ~/.aws/credentials", "secret-read", "`secretq`"),
     ("git diff ansible/vars/secrets.yml", "git-sops-diff", "secretq keys --rev"),
+    ("systemctl cat claude-land@.service | grep User=", "systemctl-cat", "`unitq cat"),
+    ("systemctl show x.service -p ExecStart", "systemctl-show-exec", "`unitq show"),
     ("python3 -c 'import os; os.environ[\"GITHUB_TOKEN\"]'", "secret-env", "Edit"),
     ("bash -c 'sudo id'", "sudo-boundary", "Edit"),
     ("ls | xargs -I{} sh -c 'echo {}' | sh", "pipe-to-shell", "while IFS= read"),

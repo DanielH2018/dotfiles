@@ -58,7 +58,7 @@ repos:
       - id: ruff-check
         types_or: [python]
         # gen-lint-files: ruff-check
-        files: (\.py$|^(bin/skill-usage|home/dot_local/bin/(executable_claude-rc-resume|executable_claude-transcript-scan|executable_dockq|executable_dockrun|executable_ghread|executable_jsonq|executable_otel-sweep|executable_otelq|executable_retention-sweep|executable_secretq|executable_stdio-blocking|executable_streamdeck-usb-reset|executable_takeover-check|executable_tq|executable_wl-bmp2png|executable_wpe-pick))$)
+        files: (\.py$|^(bin/skill-usage|home/dot_local/bin/(executable_claude-rc-resume|executable_claude-transcript-scan|executable_dockq|executable_dockrun|executable_ghread|executable_jsonq|executable_otel-sweep|executable_otelq|executable_retention-sweep|executable_secretq|executable_stdio-blocking|executable_streamdeck-usb-reset|executable_takeover-check|executable_tq|executable_unitq|executable_wl-bmp2png|executable_wpe-pick))$)
 
   - repo: local
     hooks:

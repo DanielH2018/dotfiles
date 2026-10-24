@@ -1,0 +1,234 @@
+#!/usr/bin/python3 -I
+"""unitq — read systemd units with their secrets structurally removed.
+
+A session often needs a fact from a unit file: the user it runs as, its
+binary, a timeout, `LAND_DEADLINE=28800`. `systemctl cat` and `systemctl show`
+also print every Environment= value and every ExecStart argument, which is
+where units carry tokens, so claude-guard refuses them. unitq runs them and
+rewrites what comes back:
+
+  unitq cat [--user] UNIT...          the unit and its drop-ins
+  unitq show [--user] UNIT PROP...    the named properties, as `PROP=value`
+
+What survives, by structure rather than by guessing what looks like a secret:
+
+  - Environment= keeps each name. A value is kept only when it is a number,
+    a duration, a boolean or an absolute path; anything else is `<value>`.
+  - Exec*= keeps its prefix characters, the binary, each single-letter flag
+    (`-x`) and each long flag name (`--name`; `--name=v` becomes
+    `--name=<v>`). Every other word is `<arg>`, so `-pSECRET` is an argument.
+    `show` gives an Exec property as its `path=` only.
+  - SetCredential= and SetCredentialEncrypted= keep the credential name only.
+  - EnvironmentFile= keeps the path; the file is never read.
+  - Comments are dropped, except the `# /path/to/unit` header systemctl
+    prints above each file.
+  - Every other directive passes as written: none of systemd's other
+    directives takes a secret value.
+
+systemctl is /usr/bin/systemctl, run with --no-pager and a fixed
+environment. A UNIT is letters, digits and @ . _ : - and must not start with
+`-`; a PROP is letters. systemctl's exit status is unitq's; a refusal unitq
+raises itself exits 2.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import shlex
+import subprocess
+import sys
+
+PROG = "unitq"
+SYSTEMCTL = "/usr/bin/systemctl"
+_UNIT = re.compile(r"[A-Za-z0-9@._:\\-]+")
+_PROP = re.compile(r"[A-Za-z]+")
+_DIRECTIVE = re.compile(r"([A-Za-z][A-Za-z0-9]*)=(.*)")
+_PLAIN = re.compile(
+    r"-?\d+(\.\d+)?"
+    r"|\d+(\.\d+)?(us|ms|s|sec|m|min|h|hr|d|w)"
+    r"|(?i:yes|no|true|false|on|off)"
+    r"|/[A-Za-z0-9_./@%:+-]*"
+)
+_SHORT_FLAG = re.compile(r"-[A-Za-z]")
+_LONG_FLAG = re.compile(r"--[A-Za-z][A-Za-z0-9-]*")
+_CREDENTIALS = ("SetCredential", "SetCredentialEncrypted")
+# The directives and properties that hold a command line, with their Pre/Post/Ex forms.
+# ExecMainPID, ExecMainStatus and ExecSearchPath hold none and pass as written.
+_ARGV_KEY = re.compile(r"Exec(Start|Stop|Reload|Condition)")
+# The environment systemctl may read; --user needs the bus of the caller's own manager.
+_KEPT_ENV = ("XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "HOME", "USER", "LANG")
+
+
+class Refused(Exception):
+    """A request unitq will not run. The message is fixed text and arguments."""
+
+
+def plain_value(value: str) -> str:
+    return value if _PLAIN.fullmatch(value) else "<value>"
+
+
+def environment(value: str) -> str:
+    """An Environment= value with each assignment's value removed unless plain."""
+    try:
+        words = shlex.split(value)
+    except ValueError:
+        return "<value>"
+    out = []
+    for word in words:
+        name, eq, val = word.partition("=")
+        if not eq or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+            out.append("<value>")
+        else:
+            out.append(f"{name}={plain_value(val)}")
+    return " ".join(out)
+
+
+def exec_line(value: str) -> str:
+    """An Exec*= value reduced to its prefixes, binary and flag names."""
+    try:
+        words = shlex.split(value)
+    except ValueError:
+        return "<command>"
+    if not words:
+        return ""
+    # The first word is the binary, behind any of systemd's `-@:+!|` prefixes.
+    out = [words[0]]
+    for word in words[1:]:
+        if word == ";" or _SHORT_FLAG.fullmatch(word) or _LONG_FLAG.fullmatch(word):
+            out.append(word)
+        elif "=" in word and _LONG_FLAG.fullmatch(word.split("=", 1)[0]):
+            out.append(word.split("=", 1)[0] + "=<v>")
+        else:
+            out.append("<arg>")
+    return " ".join(out)
+
+
+def credential(value: str) -> str:
+    return value.split(":", 1)[0] + ":<value>" if ":" in value else "<value>"
+
+
+def directive(key: str, value: str) -> str:
+    if key == "Environment":
+        return environment(value)
+    if _ARGV_KEY.match(key):
+        return exec_line(value)
+    if key in _CREDENTIALS:
+        return credential(value)
+    return value
+
+
+def redact_cat(text: str) -> str:
+    out = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(("#", ";")):
+            if re.fullmatch(r"# /[A-Za-z0-9_./@:+-]+", stripped):
+                out.append(stripped)
+            continue
+        if not stripped or re.fullmatch(r"\[[A-Za-z]+\]", stripped):
+            out.append(stripped)
+            continue
+        m = _DIRECTIVE.fullmatch(stripped)
+        # A continuation line, or anything that is not KEY=VALUE, cannot be read safely.
+        if m:
+            out.append(f"{m.group(1)}={directive(m.group(1), m.group(2))}")
+        else:
+            out.append("<line>")
+    return "\n".join(out)
+
+
+def exec_paths(value: str) -> str:
+    return " ".join(re.findall(r"path=(\S+)", value)) or "<value>"
+
+
+def redact_show(text: str) -> str:
+    out = []
+    for line in text.splitlines():
+        key, eq, value = line.partition("=")
+        if not eq or not _PROP.fullmatch(key):
+            out.append("<line>")
+        elif key == "Environment":
+            out.append(f"{key}={environment(value)}")
+        elif _ARGV_KEY.match(key):
+            out.append(f"{key}={exec_paths(value)}")
+        elif key.startswith("SetCredential"):
+            out.append(f"{key}=<value>")
+        else:
+            out.append(line)
+    return "\n".join(out)
+
+
+def systemctl(args: list[str]) -> tuple[int, str]:
+    env = {k: os.environ[k] for k in _KEPT_ENV if k in os.environ}
+    env.update(
+        PATH="/usr/sbin:/usr/bin:/sbin:/bin", SYSTEMD_PAGER="cat", SYSTEMD_COLORS="0"
+    )
+    # stderr passes through: systemctl reports a missing unit there, never unit content.
+    proc = subprocess.run(
+        [SYSTEMCTL, *args], stdout=subprocess.PIPE, text=True, env=env, check=False
+    )
+    return proc.returncode, proc.stdout
+
+
+def parse(args: list[str]) -> tuple[list[str], list[str]]:
+    scope = []
+    if args[:1] == ["--user"]:
+        scope, args = ["--user"], args[1:]
+    return scope, args
+
+
+def check_unit(unit: str) -> None:
+    if unit.startswith("-") or not _UNIT.fullmatch(unit):
+        raise Refused("a UNIT is letters, digits and @ . _ : -, not starting with -")
+
+
+def cmd_cat(args: list[str]) -> int:
+    scope, units = parse(args)
+    if not units:
+        raise Refused("cat takes [--user] UNIT...")
+    for unit in units:
+        check_unit(unit)
+    code, out = systemctl([*scope, "cat", "--no-pager", "--", *units])
+    print(redact_cat(out))
+    return code
+
+
+def cmd_show(args: list[str]) -> int:
+    scope, rest = parse(args)
+    if len(rest) < 2:
+        raise Refused("show takes [--user] UNIT PROP...")
+    unit, props = rest[0], rest[1:]
+    check_unit(unit)
+    if not all(_PROP.fullmatch(p) for p in props):
+        raise Refused("a PROP is letters only")
+    code, out = systemctl(
+        [*scope, "show", "--no-pager", "-p", ",".join(props), "--", unit]
+    )
+    print(redact_show(out))
+    return code
+
+
+COMMANDS = {"cat": cmd_cat, "show": cmd_show}
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else argv
+    if not args or args[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0 if args else 2
+    command = COMMANDS.get(args[0])
+    if command is None:
+        print(f"{PROG}: unknown subcommand; takes cat or show", file=sys.stderr)
+        return 2
+    try:
+        return command(args[1:])
+    except Refused as refusal:
+        print(f"{PROG} {args[0]}: {refusal}", file=sys.stderr)
+    except Exception:  # noqa: BLE001 - an exception's text can quote the unit
+        print(f"{PROG} {args[0]}: could not read the unit", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

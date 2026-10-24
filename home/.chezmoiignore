@@ -97,6 +97,8 @@ Scripts
 .local/bin/takeover-check
 # secretq shares that `#!/usr/bin/python3 -I` interpreter, and with it the macOS stub.
 .local/bin/secretq
+# unitq reads systemd, which no other OS has, through the same interpreter.
+.local/bin/unitq
 {{ end }}
 
 # Linux-desktop utilities: each needs something the OS supplies and headless Linux does not —

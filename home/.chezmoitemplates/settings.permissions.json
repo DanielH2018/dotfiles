@@ -130,6 +130,15 @@
            each value position and asserts it never appears. A subcommand that prints a value
            would end this grant in the same commit. */}}
       "Bash(secretq:*)",
+      {{/* unitq prints `systemctl cat` and `systemctl show -p` output with every value that
+           can hold a secret removed by structure: an Environment= value survives only as a
+           number, duration, boolean or absolute path, an Exec line keeps its binary and
+           flag names with every other word as <arg>, SetCredential keeps its name, comments
+           go. systemctl is /usr/bin/systemctl with a fixed environment, and a UNIT or PROP
+           that could become a flag is refused. tests/unitq.test.js holds a canary in every
+           secret-bearing position of a fixture unit and asserts it never appears, and each
+           of five leak mutants fails it. */}}
+      "Bash(unitq:*)",
       {{/* stdio-blocking exists so the homelab server repo's uv-python.sh hook can clear
            O_NONBLOCK on the Bash tool's stdio without its prefix landing on the
            `Bash(python3 -c:*)` ask rule — that inline form is arbitrary code execution and
