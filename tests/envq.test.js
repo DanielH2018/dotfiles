@@ -23,6 +23,8 @@ const CANARY = 'Zx9Canary4f2e';
 const ENV = {
   GITHUB_TOKEN: CANARY,
   apiKey: CANARY,
+  // A plain-shaped value, so only the name check keeps it hidden.
+  SERVICE_PAT: CANARY.toLowerCase(),
   CLAUDE_CODE_BRIDGE_SESSION_ID: `${CANARY.toLowerCase()}0a1b`,
   DATABASE_URL: `postgres://u:${CANARY}@db/x`,
   INNOCENT_NAME: `${CANARY}${CANARY}`,
@@ -50,7 +52,7 @@ test('prints plain values under plain names, and `set` for the rest', { skip }, 
   const r = envq(Object.keys(ENV));
   assert.strictEqual(r.code, 0);
   assert.deepStrictEqual(r.stdout.split('\n'), [
-    'GITHUB_TOKEN set', 'apiKey set', 'CLAUDE_CODE_BRIDGE_SESSION_ID set', 'DATABASE_URL set',
+    'GITHUB_TOKEN set', 'apiKey set', 'SERVICE_PAT set', 'CLAUDE_CODE_BRIDGE_SESSION_ID set', 'DATABASE_URL set',
     'INNOCENT_NAME set', 'DB_PASSWORDS set', 'PYTEST_XDIST_AUTO_NUM_WORKERS=4',
     'CLAUDE_CODE_EFFORT_LEVEL=high', 'LAND_DEADLINE=28800s', 'CACHE_DIR=/var/cache/x',
     'TOKENIZERS_PARALLELISM=false', '',
