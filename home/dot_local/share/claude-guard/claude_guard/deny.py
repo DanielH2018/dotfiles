@@ -3015,8 +3015,10 @@ def deny(command: str, cwd: str = "", env: Mapping[str, str] | None = None) -> V
 
 
 # A probe that hands the guard test commands as text is refused for that text. Replay reads
-# them from a file and only judges them, so the route is safe whatever the commands are.
-_GUARD_PROBE = re.compile(r"claude[_-]guard")
+# them from a file and only judges them, so the route is safe whatever the commands are. A
+# probe imports the Python package or calls `explain`; running the binary for another
+# subcommand, such as `prompt-server` over ssh, is not one.
+_GUARD_PROBE = re.compile(r"\bclaude_guard\b|\bclaude-guard[ \t]+explain\b")
 GUARD_PROBE_HINT = (
     " To ask the guard about test commands, write them with the Write tool as JSONL "
     '`{"command": "…"}` records, then run `claude-guard replay <file> --deny`.'

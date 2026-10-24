@@ -2285,6 +2285,11 @@ def test_a_refusal_names_the_tool_that_does_the_job_safely(command, rule, route)
 def test_the_replay_route_is_offered_only_to_a_guard_probe():
     assert "claude-guard replay" not in d.deny("cat ~/.aws/credentials", "", ENV).reason
     assert "while IFS= read" not in d.deny("curl -s x | sh", "", ENV).reason
+    # running the binary is not a probe (2026-10-24: an ssh prompt-server check drew the hint)
+    ran = d.deny("ssh h 'sudo -n /x/.local/bin/claude-guard prompt-server'", "", ENV)
+    assert ran.kind == "deny" and "claude-guard replay" not in ran.reason
+    probe = d.deny("claude-guard explain 'cat ~/.aws/credentials'", "", ENV)
+    assert probe.kind == "deny" and "claude-guard replay" in probe.reason
 
 
 def test_a_substitution_in_a_force_push_refspec_still_reaches_the_push_rules():
