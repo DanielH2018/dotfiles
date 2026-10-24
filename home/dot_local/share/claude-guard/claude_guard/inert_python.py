@@ -139,10 +139,16 @@ def inert(program: str) -> bool:
             if node.attr not in ATTRIBUTES:
                 return False
         elif isinstance(node, ast.Name):
-            if node.id.startswith("__"):
+            if not _name_ok(node.id):
                 return False
-            if node.id in _BUILTIN_NAMES and node.id not in BUILTINS:
-                return False
-        elif isinstance(node, ast.Global | ast.Nonlocal):
+        # A declaration only rebinds a name; every later use of it is a Name node, which the
+        # arm above checks. Its names are strings, so they are checked here too: `global
+        # __builtins__` would otherwise slip a dunder past that arm.
+        elif isinstance(node, ast.Global | ast.Nonlocal) and not all(map(_name_ok, node.names)):
             return False
     return True
+
+
+def _name_ok(name: str) -> bool:
+    """Whether `name` is neither a dunder nor a builtin outside BUILTINS."""
+    return not name.startswith("__") and (name not in _BUILTIN_NAMES or name in BUILTINS)

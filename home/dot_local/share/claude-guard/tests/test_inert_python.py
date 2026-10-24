@@ -10,8 +10,13 @@ INERT = [
     "import sys\nfor line in sys.stdin:\n    print(line.strip().upper())",
     "def rep(s, a, b):\n    assert s.count(a) == 1\n    return s.replace(a, b)\nrep('a', 'a', 'c')",
     "s = open('docs/x.md').read()\nprint(s.replace('a', 'sudo -n /usr/local/sbin/x'))",
+    # the edit idiom that rebinds a module-level text
+    "s = open('f').read()\ndef rep(a, b):\n    global s\n    s = s.replace(a, b)\nrep('x', 'y')",
 ]
 NOT_INERT = [
+    # a declaration that names a dunder or a builtin outside the set
+    "def f():\n    global __builtins__\n    __builtins__ = 1",
+    "def f():\n    global exec\n    exec = print",
     # an import outside the closed set
     "import os\nos.system('id')",
     "import subprocess\nsubprocess.run(['id'])",
