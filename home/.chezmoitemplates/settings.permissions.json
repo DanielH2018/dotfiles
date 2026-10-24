@@ -106,6 +106,11 @@
            The tool is bin/jsonq plus the nine modules in share/jsonq, and the grant covers all ten, so the structure block reads every one of them — discovered from disk, not listed, because a block that named its files would go quiet the moment a tenth appeared. Two further assertions exist because splitting the tool created the risk: every module imports only the standard library or a sibling, and nothing touches sys.path. The second is the sharp one. share/jsonq on sys.path would let an unmanaged json.py dropped there shadow the stdlib for every later import and run under this rule; the shim binds the directory to a package __path__ instead, which resolves _jsonq.* and nothing else, so an unexpected file is inert rather than a shadow. A test also pins that the directory holds exactly the modules the shim loads.
            Residual risk is runaway work, not escape: SIGALRM cannot interrupt a C-level operation, so the caps on **, <<, sequence repetition, range(), int() and format-spec widths are load-bearing. A catastrophically backtracking regex can still hang the CLI past --timeout; that is documented in the tool and costs a Ctrl-C, not a bypass. */}}
       "Bash(jsonq:*)",
+      {{/* claude-guard's deny messages send a guard probe here, so a probe needs no prompt.
+           replay parses a JSONL file of {"command": ...} records and prints each record's
+           verdict beside its first 90 characters; it runs none of them. A file that is not
+           that JSONL fails in json.loads, whose error names a position, not the text. */}}
+      "Bash(claude-guard replay:*)",
       {{/* stdio-blocking exists so the homelab server repo's uv-python.sh hook can clear
            O_NONBLOCK on the Bash tool's stdio without its prefix landing on the
            `Bash(python3 -c:*)` ask rule — that inline form is arbitrary code execution and

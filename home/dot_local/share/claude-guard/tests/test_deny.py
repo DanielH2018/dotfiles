@@ -2265,6 +2265,31 @@ def test_a_real_sudo_beside_a_variable_command_word_keeps_the_sudo_message():
     assert v.reason == d.SUDO_MSG
 
 
+# A refusal of text that only names a protected thing routes to the tool that handles text
+# (2026-10-24). Each route must be safe on a true match too; deny.EDIT_TOOL_HINT says why.
+ROUTED = [
+    ("python3 -c 'print(\"/run/homelab-secrets/x\")'", "secret-read-interpreter", "Edit"),
+    ("cat ~/.aws/credentials", "secret-read", "Edit"),
+    ("python3 -c 'import os; os.environ[\"GITHUB_TOKEN\"]'", "secret-env", "Edit"),
+    ("bash -c 'sudo id'", "sudo-boundary", "Edit"),
+    ("ls | xargs -I{} sh -c 'echo {}' | sh", "pipe-to-shell", "while IFS= read"),
+    ("python3 -c 'from claude_guard.deny import deny; deny(\"cat ~/.aws/credentials\")'",
+     "secret-read", "claude-guard replay"),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(("command", "rule", "route"), ROUTED)
+def test_a_refusal_names_the_tool_that_does_the_job_safely(command, rule, route):
+    v = d.deny(command, "", ENV)
+    assert (v.kind, v.rule) == ("deny", rule)
+    assert route in v.reason
+
+
+def test_the_replay_route_is_offered_only_to_a_guard_probe():
+    assert "claude-guard replay" not in d.deny("cat ~/.aws/credentials", "", ENV).reason
+    assert "while IFS= read" not in d.deny("curl -s x | sh", "", ENV).reason
+
+
 def test_a_substitution_in_a_force_push_refspec_still_reaches_the_push_rules():
     v = d.deny("git push --force-with-lease=main:$(git rev-parse origin/main) origin main", "", ENV)
     assert (v.kind, v.rule) == ("deny", "push-main")

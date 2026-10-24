@@ -707,7 +707,14 @@ def pipe_to_shell(sc: Scan, target: str) -> Verdict | None:
             "pipe-to-shell",
             f"Blocked: piping output to a shell interpreter. {DOWNLOAD_MSG} If the `|` and "
             "the shell name are only text inside a shell -c, ssh or awk argument, run the "
-            "search with the Grep or Read tool, or from a tracked script, instead.",
+            "search with the Grep or Read tool, or from a tracked script, instead."
+            + (
+                " To run a command once per input line, read the lines in a loop, as in "
+                '`… | while IFS= read -r x; do cmd "$x"; done`, rather than through '
+                "`xargs sh -c`."
+                if re.search(r"\bxargs\b", sc.command)
+                else ""
+            ),
         )
     return None
 
@@ -879,9 +886,16 @@ _DOC_LEADERS = frozenset(
     {"man", "which", "whereis", "type", "command", "echo", "printf", "apropos"}
 )
 _FILTERS = frozenset({"grep", "egrep", "fgrep", "rg", "ag", "ack", "jq", "yq", "gojq", "jaq"})
+# A route in a deny message is followed on a true match as on a false one, so it must be
+# safe either way. The Read tool is refused every path SECRET_PATHS names, and the Edit and
+# Write tools never print what a file holds, so the route discloses nothing.
+EDIT_TOOL_HINT = (
+    " If the path is only text in a file you are changing, make the change with the Edit "
+    "or Write tool instead."
+)
 SECRET_READ_MSG = (
     "Blocked: reading a secrets file via bash. Use a non-sensitive path or ask the user to "
-    "share the specific value needed."
+    "share the specific value needed." + EDIT_TOOL_HINT
 )
 ENV_DUMP_MSG = (
     "Blocked: a bare environment dump prints every exported credential. Name the variable "
@@ -1236,7 +1250,7 @@ def secret_interpreter(sc: Scan, target: str) -> Verdict | None:
             "deny",
             "secret-read-interpreter",
             "Blocked: reading a secrets file via an interpreter. Ask the user to share the "
-            f"specific value needed.{_naming(_secret_words(sc.scan.split()))}",
+            f"specific value needed.{EDIT_TOOL_HINT}{_naming(_secret_words(sc.scan.split()))}",
         )
     return None
 
@@ -1514,7 +1528,8 @@ def secret_env(sc: Scan, target: str) -> Verdict | None:
         "secret-env",
         "Blocked: this reads a credential from the environment into the session. Ask the "
         "user to share the specific value needed, or run a tracked script that reads it "
-        f"without printing it.{_naming(secrets)}",
+        "without printing it. If the name is only text in a file you are changing, make the "
+        f"change with the Edit or Write tool instead.{_naming(secrets)}",
     )
 
 
@@ -2326,7 +2341,8 @@ SUDO_MSG = (
     "Blocked: sudo is refused except `sudo -n /usr/local/sbin/homelab-takeover-check` followed "
     "by plain argument words (letters, digits and _ . / , = : @ + -). Any other sudo option, "
     "a wrapper or shell in front of sudo, doas, pkexec, su, or an argument with a shell "
-    "metacharacter is not that command."
+    "metacharacter is not that command. If `sudo` is only text in a file you are changing, "
+    "make the change with the Edit or Write tool instead."
 )
 SUDO_VARIABLE_MSG = (
     'Blocked: a command word is a variable or a substitution (`"$H"`, `$(…)`), which the '
@@ -2992,5 +3008,16 @@ def deny(command: str, cwd: str = "", env: Mapping[str, str] | None = None) -> V
             # An ask from an earlier rule must not hide a sudo further along the command.
             if verdict.kind != "deny":
                 return sudo_boundary(sc, target) or verdict
+            if _GUARD_PROBE.search(command):
+                return Verdict(verdict.kind, verdict.rule, verdict.reason + GUARD_PROBE_HINT)
             return verdict
     return NONE
+
+
+# A probe that hands the guard test commands as text is refused for that text. Replay reads
+# them from a file and only judges them, so the route is safe whatever the commands are.
+_GUARD_PROBE = re.compile(r"claude[_-]guard")
+GUARD_PROBE_HINT = (
+    " To ask the guard about test commands, write them with the Write tool as JSONL "
+    '`{"command": "…"}` records, then run `claude-guard replay <file> --deny`.'
+)
