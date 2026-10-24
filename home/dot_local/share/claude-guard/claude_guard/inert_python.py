@@ -88,13 +88,18 @@ BUILTINS = frozenset(
     }
 )  # fmt: skip
 
-# Files that a later shell, git or Claude Code runs, a user-writable directory on PATH, and
-# /proc, whose `self/mem` rewrites the running interpreter. A program that names one could
-# plant a command there, so it is never inert. A root-owned directory such as /etc or
-# /usr/local/bin is not listed: an inert program starts no `sudo`, so it cannot write one.
+# Files that a later shell, ssh, git, systemd or Claude Code runs, a user-writable directory
+# on PATH, and /proc, whose `self/mem` rewrites the running interpreter. A program that names
+# one could plant a command there, so it is never inert. zsh reads `.zshenv` for every
+# `zsh -c`, which is how each Bash call runs here; `.ssh/config` runs a `ProxyCommand`;
+# `~/.config` holds git's XDG config and systemd user units; `.mcp.json` and `.claude.json`
+# start MCP servers. A root-owned directory such as /etc or /usr/local/bin is not listed: an
+# inert program starts no `sudo`, so it cannot write one.
 _PLANTS = re.compile(
-    r"\.bashrc|\.zshrc|\.bash_profile|\.zprofile|\.profile\b|\.claude/settings|"
-    r"\.claude/hooks|\.git/hooks|\.git/config|\.gitconfig|crontab|/proc/|"
+    r"\.bashrc|\.bash_profile|\.bash_login|\.bash_logout|\.profile\b|"
+    r"\.zshenv|\.zshrc|\.zprofile|\.zlogin|\.zlogout|"
+    r"\.ssh/|\.config/|\.claude/settings|\.claude/hooks|\.claude\.json|\.mcp\.json|"
+    r"\.git/hooks|\.git/config|\.gitconfig|crontab|/proc/|"
     r"\.local/bin|~/bin\b|/home/[^/\s]+/bin\b"
 )
 _BUILTIN_NAMES = frozenset(dir(builtins))

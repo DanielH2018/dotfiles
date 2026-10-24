@@ -33,6 +33,10 @@ NOT_INERT = [
     "open('/home/u/.claude/settings.json', 'w').write('{}')",
     "open('/proc/self/mem', 'wb')",
     "open('/home/u/.local/bin/git', 'w').write('id')",
+    "open('/home/u/.zshenv', 'a').write('id')",
+    "open('/home/u/.ssh/config', 'a').write('ProxyCommand id')",
+    "open('/home/u/.config/git/config', 'a').write('[core]')",
+    "open('.mcp.json', 'w').write('{}')",
     # text that is not Python
     "if x then echo; fi",
 ]
