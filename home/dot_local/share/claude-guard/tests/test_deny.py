@@ -656,6 +656,8 @@ SECRET_ALLOW = [
     "cat hosts/components/secrets/component.yml",
     # secretq's own lines, which print no value (2026-10-24)
     "secretq keys ansible/vars/cluster-vars.sops.env",
+    # envq's own lines, which print `set` in place of a credential (2026-10-25)
+    "envq --names xdist; envq GITHUB_TOKEN CLAUDE_CODE_EFFORT_LEVEL | head",
     # unitq's own lines, which print no Environment value or Exec argument (2026-10-25)
     "unitq cat --user claude-land@.service | grep -E 'LAND_DEADLINE|User='",
     "ssh daniel-server unitq show claude-land@.service ExecStart Environment",
@@ -2286,6 +2288,7 @@ ROUTED = [
     ("systemctl cat claude-land@.service | grep User=", "systemctl-cat", "`unitq cat"),
     ("systemctl show x.service -p ExecStart", "systemctl-show-exec", "`unitq show"),
     ("pkill -f 'pytest -q -n 2'", "pkill", "`killown"),
+    ("env", "env-dump", "`envq NAME"),
     ("python3 -c 'import os; os.environ[\"GITHUB_TOKEN\"]'", "secret-env", "Edit"),
     ("bash -c 'sudo id'", "sudo-boundary", "Edit"),
     ("ls | xargs -I{} sh -c 'echo {}' | sh", "pipe-to-shell", "while IFS= read"),

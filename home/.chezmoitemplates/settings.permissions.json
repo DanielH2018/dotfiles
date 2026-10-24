@@ -148,6 +148,13 @@
            tests/killown.test.js runs two stand-in sessions with real processes, and four
            mutants that widen its reach each fail it. */}}
       "Bash(killown:*)",
+      {{/* envq prints a variable's value only when the name has no credential word (the
+           guard's secret-env words plus AUTH, COOKIE, SESSION, PRIVATE, SALT, DSN and CERT)
+           and the value is a number, duration, boolean, absolute path or a short lowercase
+           word; otherwise it prints `set`. --names prints names only. tests/envq.test.js
+           holds a canary in every value that must stay hidden, and mutants that drop either
+           condition fail it. */}}
+      "Bash(envq:*)",
       {{/* stdio-blocking exists so the homelab server repo's uv-python.sh hook can clear
            O_NONBLOCK on the Bash tool's stdio without its prefix landing on the
            `Bash(python3 -c:*)` ask rule — that inline form is arbitrary code execution and

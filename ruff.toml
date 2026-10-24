@@ -10,6 +10,7 @@ extend-include = [
   "home/dot_local/bin/executable_claude-transcript-scan",
   "home/dot_local/bin/executable_dockq",
   "home/dot_local/bin/executable_dockrun",
+  "home/dot_local/bin/executable_envq",
   "home/dot_local/bin/executable_ghread",
   "home/dot_local/bin/executable_jsonq",
   "home/dot_local/bin/executable_killown",

@@ -909,9 +909,12 @@ SECRET_READ_MSG = (
     "Blocked: reading a secrets file via bash. Use a non-sensitive path or ask the user to "
     "share the specific value needed." + SECRETQ_HINT + EDIT_TOOL_HINT
 )
+# envq prints a value only for a non-credential name with a plain-shaped value, so it is safe
+# to name on a true match.
 ENV_DUMP_MSG = (
     "Blocked: a bare environment dump prints every exported credential. Name the variable "
-    "you need, e.g. `printenv PATH`."
+    "you need, e.g. `printenv PATH`, or run `envq NAME…` for values and `envq --names "
+    "[REGEX]` for names; envq prints `set` in place of any credential."
 )
 # An argument that keeps a path OUT of a search or copy reads nothing, so a secret path
 # named in one is not a read (dotfiles #802): `--exclude=`, `--exclude-dir=`, rg's

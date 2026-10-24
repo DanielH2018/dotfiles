@@ -101,6 +101,8 @@ Scripts
 .local/bin/unitq
 # killown reads /proc, which macOS does not have.
 .local/bin/killown
+# envq shares the `#!/usr/bin/python3 -I` interpreter and its macOS stub.
+.local/bin/envq
 {{ end }}
 
 # Linux-desktop utilities: each needs something the OS supplies and headless Linux does not —

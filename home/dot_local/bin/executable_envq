@@ -1,0 +1,93 @@
+#!/usr/bin/python3 -I
+"""envq — read environment variables without printing a credential.
+
+`env | grep NAME` and `printenv` dump every exported value, credentials
+included, so claude-guard refuses a bare environment dump. envq answers the
+two questions a session asks of its environment:
+
+  envq NAME...            each NAME's value, or `set`, or `unset`
+  envq --names [REGEX]    the names, never the values; with REGEX, only the
+                          names it matches, ignoring case
+
+A value is printed only when both hold:
+
+  - the name has no credential word. A name is split on `_` and on camelCase,
+    and TOKEN, SECRET, PASSWORD, PASSWD, PASSPHRASE, CREDENTIAL, APIKEY, KEY,
+    PAT, AUTH, COOKIE, SESSION, PRIVATE, SALT, DSN and CERT (and their
+    plurals) are credential words, so `GITHUB_TOKEN` and `apiKey` print `set`.
+  - the value has a plain shape: a number, a duration, a boolean, an
+    absolute path, or a lowercase word of at most 16 characters such as
+    `high` or `auto`. A URL, which can carry a password, prints `set`.
+
+Anything else prints `NAME set`. Exit status: 0 when every NAME is set, 1
+when one is unset, 2 when the arguments are refused.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import sys
+
+PROG = "envq"
+_WORDS = frozenset(
+    {
+        "TOKEN", "SECRET", "PASSWORD", "PASSWD", "PASSPHRASE", "CREDENTIAL", "APIKEY",
+        "KEY", "PAT", "AUTH", "COOKIE", "SESSION", "PRIVATE", "SALT", "DSN", "CERT",
+    }
+)  # fmt: skip
+_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_PLAIN = re.compile(
+    r"-?\d+(\.\d+)?"
+    r"|\d+(\.\d+)?(us|ms|s|sec|m|min|h|hr|d|w)"
+    r"|(?i:yes|no|true|false|on|off)"
+    r"|/[A-Za-z0-9_./@%:+-]*"
+    r"|[a-z][a-z0-9_.-]{0,15}"
+)
+
+
+def credential_name(name: str) -> bool:
+    words = re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+", name)
+    upper = [w.upper() for w in words]
+    return any(w in _WORDS or w.removesuffix("S") in _WORDS for w in upper)
+
+
+def shown(name: str, value: str) -> str:
+    if not credential_name(name) and _PLAIN.fullmatch(value):
+        return f"{name}={value}"
+    return f"{name} set"
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else argv
+    if not args or args[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0 if args else 2
+    if args[0] == "--names":
+        if len(args) > 2:
+            print(f"{PROG}: --names takes at most one REGEX", file=sys.stderr)
+            return 2
+        try:
+            pattern = re.compile(args[1] if len(args) == 2 else "", re.I)
+        except re.error:
+            print(f"{PROG}: REGEX is not a valid regular expression", file=sys.stderr)
+            return 2
+        for name in sorted(os.environ):
+            if pattern.search(name):
+                print(name)
+        return 0
+    if not all(_NAME.fullmatch(a) for a in args):
+        print(f"{PROG}: a NAME is letters, digits and _", file=sys.stderr)
+        return 2
+    missing = False
+    for name in args:
+        if name in os.environ:
+            print(shown(name, os.environ[name]))
+        else:
+            print(f"{name} unset")
+            missing = True
+    return 1 if missing else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

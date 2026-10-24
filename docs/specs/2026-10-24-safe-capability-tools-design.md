@@ -85,7 +85,7 @@ whole-string scan.
 | 4 | `unitq cat UNIT`: a unit and its drop-ins with `Environment=` values, `EnvironmentFile=` contents and `Exec*` arguments removed structurally | 14 | shipped with the `unitq` tool |
 | 5 | `claude-guard probe <check> <cases-file>`: a named internal check's verdict per case | part of 31 | deferred: slice 1's replay route shipped on 2026-10-24, so the week of refusals that decides whether this is needed has not happened yet |
 | 6 | `killown PATTERN`: kills only processes carrying this session's id, read from the shell Claude started | 7 of 8 (the eighth runs over ssh, outside any session) | shipped with the `killown` tool |
-| 7 | `envq NAME…`: a value only for a non-credential name with a plain-shaped value, otherwise `set` or `unset` | 3 | planned |
+| 7 | `envq NAME…`: a value only for a non-credential name with a plain-shaped value, otherwise `set` or `unset` | 3 | shipped with the `envq` tool |
 
 `secretq` never hashes a plaintext file, because a low-entropy value hashes to something a
 dictionary can reverse. `unitq` has no heuristic for what looks like a token; a redactor like
