@@ -1,0 +1,116 @@
+#!/usr/bin/python3 -I
+"""takeover-check — run the takeover check's one sudo line, output pipeable.
+
+claude-guard allows exactly one sudo command, alone on its line:
+`sudo -n /usr/local/sbin/homelab-takeover-check` followed by plain argument
+words. A session that pipes the output, merges stderr or names `$PWD/render`
+in an argument is refused, because the guard cannot tell what the shell
+around sudo does. This tool moves that sudo line inside a fixed program, so
+the caller's shell sees only `takeover-check`, which it may pipe and redirect.
+
+It can run nothing the guard's allowed line cannot. The invocation is built
+from constants:
+
+  - sudo is /usr/bin/sudo and the wrapper /usr/local/sbin/homelab-takeover-check,
+    never looked up on $PATH. `-I` keeps PYTHONPATH and the working directory
+    out of the interpreter.
+  - The arguments are `--help` alone, or the wrapper's four flags, each exactly
+    once with one value. The wrapper reads `--flag VALUE` as two words, so a
+    value travels as its own word; what keeps it from becoming a flag is that
+    a value starting with `-` is refused.
+  - Every value uses only the characters the guard's allowed line takes
+    (letters, digits and _ . / , = : @ + -). --render and --src are made
+    absolute first, so a relative path works where `$PWD/...` was refused.
+    The wrapper re-checks every value itself, as root.
+  - stdin is /dev/null, so sudo -n never reads a password, and stderr is
+    merged into stdout.
+  - sudo gets a fixed environment: PATH, HOME, USER and LOGNAME, nothing from
+    the caller.
+
+  takeover-check --help
+  takeover-check --label 5707 --render .fanout/render --src . --tags a,b | tail
+
+The wrapper is installed on daniel-box only, granted to the operator's account.
+Elsewhere this exits 3, as the wrapper does when the host lacks a binary. A
+refusal this tool raises exits 2, as the wrapper's own refusals do. Otherwise
+the wrapper's exit status is this tool's.
+"""
+
+from __future__ import annotations
+
+import os
+import pwd
+import re
+import sys
+
+PROG = "takeover-check"
+SUDO = "/usr/bin/sudo"
+WRAPPER = "/usr/local/sbin/homelab-takeover-check"
+FLAGS = ("--label", "--render", "--src", "--tags")
+PATH_FLAGS = ("--render", "--src")
+# The guard's allowed-line argument charset (claude_guard/deny.py, _SUDO_ARG).
+_PLAIN = re.compile(r"[A-Za-z0-9_./,=:@+-]+")
+_LABEL = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+_TAGS = re.compile(r"[A-Za-z0-9_.-]+(,[A-Za-z0-9_.-]+)*")
+
+
+def refuse(message: str) -> int:
+    print(f"{PROG}: refused: {message}", file=sys.stderr)
+    return 2
+
+
+def wrapper_argv(argv: list[str]) -> list[str] | str:
+    """The wrapper's arguments for `argv`, or the reason they are refused."""
+    if argv in (["--help"], ["-h"]):
+        return ["--help"]
+    values: dict[str, str] = {}
+    rest = list(argv)
+    while rest:
+        flag = rest.pop(0)
+        if flag not in FLAGS:
+            return f"unknown argument {flag!r}; takes {', '.join(FLAGS)} or --help"
+        if flag in values:
+            return f"{flag} given twice"
+        if not rest or rest[0].startswith("-"):
+            return f"{flag} needs a value that does not start with -"
+        value = rest.pop(0)
+        if flag in PATH_FLAGS:
+            value = os.path.abspath(value)
+        if not _PLAIN.fullmatch(value):
+            return f"{flag} value has a character outside a-z 0-9 _ . / , = : @ + -"
+        values[flag] = value
+    missing = [f for f in FLAGS if f not in values]
+    if missing:
+        return f"missing {', '.join(missing)}"
+    label = values["--label"]
+    if not _LABEL.fullmatch(label) or label in (".", ".."):
+        return "--label must match ^[A-Za-z0-9_.-]{1,64}$ and not be . or .."
+    if not _TAGS.fullmatch(values["--tags"]):
+        return "--tags must be comma-separated tag names"
+    return [word for f in FLAGS for word in (f, values[f])]
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = wrapper_argv(sys.argv[1:] if argv is None else argv)
+    if isinstance(args, str):
+        return refuse(args)
+    if not os.path.isfile(WRAPPER):
+        print(f"{PROG}: no {WRAPPER} here (daniel-box only)", file=sys.stderr)
+        return 3
+    account = pwd.getpwuid(os.getuid())
+    env = {
+        "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
+        "HOME": account.pw_dir,
+        "USER": account.pw_name,
+        "LOGNAME": account.pw_name,
+    }
+    sys.stdout.flush()
+    devnull = os.open(os.devnull, os.O_RDONLY)
+    os.dup2(devnull, 0)
+    os.dup2(1, 2)
+    os.execve(SUDO, [SUDO, "-n", WRAPPER, *args], env)
+    return 127  # execve does not return
+
+
+if __name__ == "__main__":
+    sys.exit(main())

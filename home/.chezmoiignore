@@ -91,6 +91,10 @@ Scripts
 # on daniel-server costs nothing; what matters is which host's timer enables it.
 .local/bin/claude-changelog-watch
 .local/bin/otel-sweep-watch
+# takeover-check fronts a sudoers wrapper the server repo installs on daniel-box alone; on
+# another Linux host it exits 3. Its `#!/usr/bin/python3` would be the Command Line Tools
+# stub on macOS, which can open an install dialog before any of its code runs.
+.local/bin/takeover-check
 {{ end }}
 
 # Linux-desktop utilities: each needs something the OS supplies and headless Linux does not —

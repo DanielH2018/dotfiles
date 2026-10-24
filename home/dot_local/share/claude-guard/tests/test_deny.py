@@ -2228,6 +2228,8 @@ SUDO_PASS = [
     "S=git; echo '$S'; $S status",
     "grep -n x f | head; GL=/opt/bin/gitleaks; $GL version",
     "hash -p /usr/bin/git g; alias ll='ls -l'",
+    # the takeover-check shim's own line, piped and with a $PWD path (2026-10-24)
+    'takeover-check --label 5707 --render "$PWD/.fanout/render" --src . --tags a,b 2>&1 | tail -60',
     "false && true; X=git; $X status",
     'export PATH="/opt/bin:$PATH"; for py in python3.14 python3.12; do $py -V; done',
 ]
@@ -2270,6 +2272,8 @@ ROUTED = [
     ("python3 -c 'import os; os.environ[\"GITHUB_TOKEN\"]'", "secret-env", "Edit"),
     ("bash -c 'sudo id'", "sudo-boundary", "Edit"),
     ("ls | xargs -I{} sh -c 'echo {}' | sh", "pipe-to-shell", "while IFS= read"),
+    ("sudo -n /usr/local/sbin/homelab-takeover-check --help 2>&1 | head -20", "sudo-boundary",
+     "`takeover-check`"),
     ("python3 -c 'from claude_guard.deny import deny; deny(\"cat ~/.aws/credentials\")'",
      "secret-read", "claude-guard replay"),
 ]  # fmt: skip

@@ -111,6 +111,15 @@
            verdict beside its first 90 characters; it runs none of them. A file that is not
            that JSONL fails in json.loads, whose error names a position, not the text. */}}
       "Bash(claude-guard replay:*)",
+      {{/* takeover-check runs exactly `sudo -n /usr/local/sbin/homelab-takeover-check`, the one
+           sudo line claude-guard allows, so the grant adds no privilege the operator has not
+           already given (server#5494, 2026-10-17). sudo and the wrapper are absolute paths, the
+           interpreter is /usr/bin/python3 -I, the arguments are --help or the wrapper's four
+           flags once each, and a value starting with `-` or holding a character outside the
+           guard's allowed set is refused. sudo gets a fixed environment and /dev/null on stdin.
+           tests/takeover-check.test.js pins the argv against a fake sudo. A passthrough
+           argument would end this grant in the same commit. */}}
+      "Bash(takeover-check:*)",
       {{/* stdio-blocking exists so the homelab server repo's uv-python.sh hook can clear
            O_NONBLOCK on the Bash tool's stdio without its prefix landing on the
            `Bash(python3 -c:*)` ask rule — that inline form is arbitrary code execution and

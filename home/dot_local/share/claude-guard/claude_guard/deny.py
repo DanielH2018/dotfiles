@@ -2945,10 +2945,19 @@ def sudo_boundary(sc: Scan, target: str) -> Verdict | None:
     if rank == _SUDO_VARIABLE and (variants := _literal_variants(sc.command)):
         rank = max(map(_sudo_text, variants))
     if rank == _SUDO_ESCALATES:
-        return Verdict("deny", "sudo-boundary", SUDO_MSG)
+        hint = TAKEOVER_CHECK_HINT if SUDO_WRAPPER in sc.command else ""
+        return Verdict("deny", "sudo-boundary", SUDO_MSG + hint)
     if rank == _SUDO_VARIABLE:
         return Verdict("deny", "sudo-boundary", SUDO_VARIABLE_MSG)
     return None
+
+
+# The takeover-check shim runs that one allowed line and nothing else, so a session that wraps
+# the line in a pipe, a redirect or a `$PWD` argument loses nothing by taking the route.
+TAKEOVER_CHECK_HINT = (
+    " To pipe or redirect the takeover check's output, or to pass a relative path, run "
+    "`takeover-check` with the same flags instead; it merges stderr into stdout."
+)
 
 
 # --- the decision ------------------------------------------------------------------------------

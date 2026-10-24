@@ -27,6 +27,8 @@ test('daniel-box allows the takeover-check wrapper and keeps $defaults first', {
   const entries = allow('daniel-box');
   assert.strictEqual(entries[0], '$defaults');
   assert.strictEqual(entries.filter((e) => e.includes(WRAPPER)).length, 1);
+  // The takeover-check shim runs the same line, so it rides the same host-gated entry.
+  assert.ok(entries.find((e) => e.includes(WRAPPER)).includes('`takeover-check`'));
 });
 
 test('no other host allows the takeover-check wrapper', { skip }, () => {

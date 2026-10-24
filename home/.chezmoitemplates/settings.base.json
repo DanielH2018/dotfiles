@@ -544,6 +544,9 @@
       "$defaults",
       "Read-only kubectl against the homelab k3s cluster (get, logs, describe, top, events, explain, api-resources, diff) is routine and needs no confirmation — the default credential is a read-only ServiceAccount that cannot do anything else",
       "Running the repo's own test and lint tooling is routine: `uv run pytest`, `prek run`, `ansible-lint`, and `uv run python scripts/diagnostics/probe.py` (read-only diagnostics)",
+      {{/* claude-guard's deny messages name this route for a guard probe (dotfiles #1006), and
+           classifyAllShell suspends its Bash() allow rule in auto mode. */}}
+      "`claude-guard replay <file> --deny` is routine and read-only: it judges the JSONL commands in the file and runs none of them",
       {{/* Denied as "External System Writes" on 2026-09-25 while polling a fan-out wave. The
            command reaches two hosts and GitHub, which is what the classifier keyed on, but every
            reach is a read: cmd_status in scripts/dev/fanout_lib/place.py loads the manifest, runs
@@ -586,8 +589,11 @@
            excepts one path from a deny. So settings.permissions.json does not deny
            `Bash(sudo:*)` on daniel-box, and claude_guard's `sudo-boundary` rule (deny.py)
            refuses every sudo there except this exact line. That makes this entry effective
-           (dotfiles #863). */}}
-      "On daniel-box, `sudo -n /usr/local/sbin/homelab-takeover-check --label … --render … --src … --tags …` is routine: the operator granted it on 2026-10-17 for the D5 flip pre-merge checks. The wrapper runs only dry-run checks with hard-coded flags (`flux diff`, server-side `kubectl diff`, `kubectl get`, `kubectl apply --dry-run=server`), validates every argument, and prints only object names and field paths, never values. This covers that one path and nothing else: any other `sudo` command, and any `kubectl` or `flux` invocation outside the wrapper, gets no exception from this entry"{{ end }}
+           (dotfiles #863).
+
+           `takeover-check` (slice 2 of docs/specs/2026-10-24-safe-capability-tools-design.md)
+           runs this same line and nothing else, so it shares the entry and its host gate. */}}
+      "On daniel-box, `sudo -n /usr/local/sbin/homelab-takeover-check --label … --render … --src … --tags …` is routine: the operator granted it on 2026-10-17 for the D5 flip pre-merge checks. So is `takeover-check` with the same four flags or --help, piped or redirected or not: that tool runs exactly this sudo line, with stderr merged into stdout, and refuses any other argument. The wrapper runs only dry-run checks with hard-coded flags (`flux diff`, server-side `kubectl diff`, `kubectl get`, `kubectl apply --dry-run=server`), validates every argument, and prints only object names and field paths, never values. This covers that one path and nothing else: any other `sudo` command, and any `kubectl` or `flux` invocation outside the wrapper, gets no exception from this entry"{{ end }}
     ],
 
     {{/* Destructive risks specific to this environment that the built-ins miss. Note what is NOT
