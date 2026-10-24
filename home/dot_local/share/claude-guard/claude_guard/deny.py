@@ -2754,22 +2754,33 @@ def _sudo_text(text: str, depth: int = 0, nested: bool = False) -> int:
 # drew 24 refusals in a week although the message says to spell the command out. Each
 # resolved rewrite goes back through `_sudo_text`, so `S=sudo; $S id` is refused as sudo.
 # Resolution gives up, and the variable refusal stands, on anything that could change a
-# variable the text does not show: a heredoc, an IFS assignment, a function definition, a
-# command that sets variables (`read`, `export`, `eval`, `source`, `printf -v`, ...), or an
-# assignment after `&&`, `||`, `|` or `&`, or inside a compound command.
+# variable the text does not show: a heredoc, an IFS assignment, a function definition, or
+# a command that can set any name (`eval`, `source`, `trap`, a `-n` nameref, ...). A name
+# that `read`, `export`, `printf -v` and their kind set, or that an assignment sets after
+# `&&` or `||`, in a pipeline or background job, or inside a compound command, is left
+# unresolved.
 _VAR_REF = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 # A value is literal when nothing in it expands, globs or quotes. A leading `$PWD/`,
 # `$HOME/`, `$TMPDIR/` or `$CLAUDE_JOB_DIR/` is allowed, since it only moves the directory
 # and leaves the basename, which is what the boundary reads, literal.
 _DIR_PREFIX = re.compile(r"^\$\{?(PWD|HOME|TMPDIR|CLAUDE_JOB_DIR)\}?/")
 _LITERAL_VALUE = re.compile(r"[^$`*?\[\]{}\"'\\~]*")
+# A command that can set a name its words never show gives up resolution altogether; one
+# that sets only names its words spell stops resolving those names. A `-n` nameref on the
+# second kind makes it the first.
 _VAR_SETTERS = frozenset(
     {
-        "source", ".", "eval", "read", "readarray", "mapfile", "declare", "typeset",
-        "local", "export", "unset", "set", "getopts", "let", "alias", "exec", "trap",
-        "builtin", "command", "enable", "coproc",
+        "source", ".", "eval", "set", "alias", "exec", "trap", "builtin", "command",
+        "enable", "coproc",
     }
 )  # fmt: skip
+_NAME_SETTERS = frozenset(
+    {
+        "read", "readarray", "mapfile", "declare", "typeset", "local", "export",
+        "readonly", "unset", "getopts", "let", "printf",
+    }
+)  # fmt: skip
+_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _OPENERS = frozenset({"(", "{", "if", "for", "while", "until", "case", "select"})
 _CLOSERS = frozenset({")", "}", "fi", "done", "esac"})
 _MAX_VARIANTS = 8
@@ -2796,7 +2807,7 @@ def _literal_variants(command: str) -> list[str]:
     loops: list[tuple[str, int, list[str]]] = []
     poisoned: set[str] = set()
     cursor = depth = 0
-    certain = True
+    after = ";"
     for seg in p.segments:
         words = _words(seg.text)
         at = command.find(seg.text.strip(), cursor)
@@ -2811,10 +2822,30 @@ def _literal_variants(command: str) -> list[str]:
             lead += 1
         cmd = words[lead:]
         head = cmd[0] if cmd else ""
-        if head in _VAR_SETTERS or (head == "printf" and "-v" in cmd):
+        # The builtin a segment runs sits past any prefix assignment and a `time`, so
+        # `A=1 read X` and `time read X` set X as `read X` does.
+        run = 0
+        while run < len(cmd) and (_ASSIGNMENT.match(cmd[run]) or cmd[run] in ("time", "-p", "--")):
+            run += 1
+        builtin = cmd[run] if run < len(cmd) else ""
+        if builtin in _VAR_SETTERS or (
+            builtin in _NAME_SETTERS
+            and any(w[:1] == "-" and "n" in w[1:] for w in cmd[run + 1 :])
+            and builtin not in ("read", "printf")
+        ):
             return []
-        top = certain and depth == 0 and lead == 0
-        if head == "for" and len(cmd) >= 3 and cmd[2] == "in":
+        # A segment after `&&` or `||` may not run, and a pipeline stage or a background
+        # job runs in a subshell, so an assignment in one is not certain. A `;` or newline
+        # ends that: what follows it runs, in this shell.
+        conditional = after in ("&&", "||", "|", "&") or seg.sep in ("|", "&")
+        after = seg.sep
+        top = not conditional and depth == 0 and lead == 0
+        if builtin in _NAME_SETTERS:
+            for w in cmd:
+                for name in _NAME.findall(w.split("=", 1)[0]):
+                    poisoned.add(name)
+                    fixed.pop(name, None)
+        elif head == "for" and len(cmd) >= 3 and cmd[2] == "in":
             values = [_literal_value(w) for w in cmd[3:]]
             fixed.pop(cmd[1], None)
             if top and cmd[3:] and None not in values and cmd[1] not in poisoned:
@@ -2840,8 +2871,6 @@ def _literal_variants(command: str) -> list[str]:
         depth = max(
             0, depth + sum(w in _OPENERS for w in words) - sum(w in _CLOSERS for w in words)
         )
-        if seg.sep in ("&&", "||", "|", "&"):
-            certain = False
     # A name a loop and a later assignment both set has two values at once; resolve neither.
     both = {loop[0] for loop in loops} & set(fixed)
     loops = [loop for loop in loops if loop[0] not in poisoned | both]

@@ -2077,6 +2077,12 @@ SUDO_REFUSE = [
     "for c in true sudo; do $c id; done",
     "cd x && S=git; $S status",
     "S=git; read S; $S id",
+    "S=git; time read S; $S id",
+    "S=git; A=1 read S; $S id",
+    "S=git; printf -v S sudo; $S id",
+    "S=git; declare -n S=T; T=sudo; $S id",
+    "S=sudo | cat; $S id",
+    "true | S=sudo; $S id",
     "S=git; S=$(which sudo); $S id",
     "S=git; export S=sudo; $S id",
     "S=git; trap 'S=sudo' DEBUG; $S id",
@@ -2215,6 +2221,9 @@ SUDO_PASS = [
     "P='uv run python probe.py metric'; for q in a b; do $P \"$q\"; done",
     "for c in git ls; do $c x; done",
     "S=git; echo '$S'; $S status",
+    "grep -n x f | head; GL=/opt/bin/gitleaks; $GL version",
+    "false && true; X=git; $X status",
+    'export PATH="/opt/bin:$PATH"; for py in python3.14 python3.12; do $py -V; done',
 ]
 
 
