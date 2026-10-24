@@ -587,8 +587,21 @@ SECRET_DENY = [
     "env -0",
     "env; ls",
     "ls | env",
+    # a quoted grep pattern or sed script still leaves the file it reads (2026-10-24)
+    "grep 'a\\|b' ~/.ssh/id_rsa",
+    "grep -e x ~/.ssh/id_rsa",
+    "sed -n '1r /home/u/.ssh/id_rsa' x",
+    "sed 's/a/b/w /home/u/.ssh/id_rsa' x",
+    "sed 's/a/b/' ~/.ssh/id_rsa",
+    "cat < ~/.ssh/id_rsa",
+    "cat ~/.ssh/id_rsa > /tmp/x",
 ]
 SECRET_ALLOW = [
+    # the secret-looking text is a grep pattern or a sed `s` command's text (2026-10-24)
+    "grep -c 'credentials.json\\|\\*\\*/.env' home/.chezmoitemplates/settings.base.json",
+    'grep -rn "pin\\.key\\|self\\.env\\.\\|server\\.key" tests | head',
+    "grep -a -o -E '.{0,120}Object\\.assign\\(process\\.env,.{0,120}' \"$f\" | head -5",
+    'sed -i \'s/    r"(\\\\.env|\\\\.ssh(\\/|$)|id_rsa|"/    r"(\\\\.envrc|id_rsa|"/\' tables.py',
     "cat README.md",
     "grep -r TODO src/",
     "grep TODO src/app.js",

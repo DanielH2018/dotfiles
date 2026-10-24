@@ -1036,18 +1036,62 @@ def _first_read(text: str) -> str | None:
     return next((x for x in re.split(r"[;&|]", normalize(text)) if _piece_read(x)), None)
 
 
+_WRITE_REDIRECT = re.compile(r"[0-9]*(>|>>|>\||&>|&>>)")
+# One sed `s` command and nothing else: a delimiter, a pattern, a replacement and only the
+# flags that read and write no file (`w` writes one, `e` runs the pattern space, `r` is a
+# separate command this shape cannot hold).
+_SED_SUBST = re.compile(
+    r"s(?P<d>[^\\\n])(\\.|(?!(?P=d)).)*(?P=d)(\\.|(?!(?P=d)).)*(?P=d)[gpiIM0-9]*"
+)
+
+
+def _read_head(text: str) -> str:
+    """The words of the segment `text` as `_piece_read` should see them, rejoined. `normalize`
+    splits a quoted grep pattern such as `'a\\|\\*\\*/.env'` into several words and keeps
+    only the first one out of the match, so the pattern is blanked to `_` while its quotes
+    are still known. A sed script that is one `s` command is blanked the same way, since it
+    names no file. A write redirect's target is dropped, since `cat > x` reads nothing.
+    Every other word is kept, with `;&|` turned to spaces so a quoted name cannot become a
+    separator. Text the word splitter refuses, or that holds a substitution (shlex splits `$(`
+    and `<(` into tokens of their own, which hides the command word), is returned
+    unchanged."""
+    words = None if any(m in text for m in ("$(", "<(", ">(", "`")) else _words(text)
+    if words is None:
+        return text
+    kept: list[str] = []
+    i = 0
+    while i < len(words):
+        if _WRITE_REDIRECT.fullmatch(words[i]):
+            i += 2
+            continue
+        kept.append(words[i])
+        i += 1
+    cmd = _command_words(kept)
+    if cmd:
+        head = cmd[0].rsplit("/", 1)[-1]
+        args = cmd[1:]
+        if head in _FILTERS:
+            j = next((k for k, w in enumerate(args) if not w.startswith("-")), None)
+            if j is not None:
+                args[j] = "_"
+        elif head == "sed":
+            args = ["_" if _SED_SUBST.fullmatch(w) else w for w in args]
+        kept = [*kept[: len(kept) - len(cmd)], cmd[0], *args]
+    return " ".join(re.sub(r"[;&|]", " ", w) for w in kept)
+
+
 def _member_read(text: str, depth: int = 0) -> str | None:
     """The first piece of a quote-aware member of `text` that reads a secret path, or None.
     A member is a segment, a substitution body, or a heredoc body, each split and read the
-    same way as SCAN. A segment carries its heredoc bodies, as it does in SCAN, so
-    `cat > x.py <<'EOF'` stays a read of whatever the body names: the body is written for a
-    later run, and the command may run it. A body is also parsed in turn, so `bash <<'EOF'`
-    is judged on the commands it runs. Text the parser refuses is matched whole, as SCAN
-    is."""
+    same way as SCAN. A segment's own words are read through `_read_head`. A segment carries
+    its heredoc bodies, as it does in SCAN, so `cat > x.py <<'EOF'` stays a read of whatever
+    the body names: the body is written for a later run, and the command may run it. A body
+    is also parsed in turn, so `bash <<'EOF'` is judged on the commands it runs. Text the
+    parser refuses is matched whole, as SCAN is."""
     p = parse(text)
     if not p.ok or depth > 4:
         return _first_read(text)
-    segments = ("\n".join((s.text, *s.heredocs)) for s in p.segments)
+    segments = ("\n".join((_read_head(s.text), *s.heredocs)) for s in p.segments)
     for member in [*segments, *p.substitutions]:
         if hit := _first_read(member):
             return hit
