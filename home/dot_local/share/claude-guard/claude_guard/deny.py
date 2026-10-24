@@ -2314,6 +2314,30 @@ def _runner_command(argv: list[str], values: dict[str, list[str]] | None = None)
     return None
 
 
+def _option_values(argv: list[str]) -> set[int]:
+    """The indices in `argv` of the separate values the executor `argv[0]` takes for its own
+    options, read as `_past_options` reads them: `-f FMT` and the `FMT` of `-qf FMT`. A
+    glued value (`-n5`, `--signal=KILL`) is part of its option's word and is not listed."""
+    takes, _ = _EXECUTOR_ARGS[posixpath.basename(argv[0])]
+    found: set[int] = set()
+    i = 1
+    while i < len(argv) and argv[i].startswith("-") and len(argv[i]) > 1:
+        word = argv[i]
+        i += 1
+        if word == "--":
+            break
+        option = word if word in takes else None
+        if option is None and not word.startswith("--"):
+            for j, letter in enumerate(word[1:], 2):
+                if f"-{letter}" in takes:
+                    option = f"-{letter}" if j == len(word) else None
+                    break
+        if option is not None:
+            found.update(range(i, min(i + takes[option], len(argv))))
+            i += takes[option]
+    return found
+
+
 def _executor_command(argv: list[str]) -> int:
     """The index of the word the executor `argv[0]` runs as its command, past its options,
     their values, its leading plain arguments and, for env, its assignments."""
@@ -2466,6 +2490,10 @@ def _segment_sudo(
         start = _script_arguments_start(argv) if interpreter else None
         if start is not None:
             rest = argv[1:start]
+        # An executor's own option value is data: `/usr/bin/time -f "$f %es"` is a format
+        # string, not a command line. env is left out, since its -S value is a payload.
+        values = _option_values(argv) if name in _EXECUTOR_ARGS and name != "env" else set()
+        rest = [tok for i, tok in enumerate(rest, 1) if i not in values]
         for tok in [] if inert_source else rest:
             if _loose_hit(tok) if interpreter else posixpath.basename(tok) in _ESCALATORS:
                 return _SUDO_ESCALATES

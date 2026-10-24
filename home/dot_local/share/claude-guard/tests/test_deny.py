@@ -1957,6 +1957,10 @@ SUDO_REFUSE = [
     "uv run --python /tmp/p python x.py --title sudo",
     "python3 -W ignore x.py --title sudo",
     'python3 "$S" --title sudo',
+    # an executor's option value is data, but the command after it is not (2026-10-24)
+    'time -f "sudo id" bash -c "sudo id"',
+    "time -f x sudo -n true",
+    "timeout -s KILL 5 sh -c 'sudo id'",
 ]
 
 SUDO_PASS = [
@@ -1982,6 +1986,9 @@ SUDO_PASS = [
     f"ls; sudo -n {W} --help",
     f"ls\nsudo -n {W} --help",
     f"true && sudo -n {W} --label L",
+    # /usr/bin/time's format string is not a command line (2026-10-24)
+    'for f in a b; do /usr/bin/time -f "$f %es" uv run pytest -q $f; done',
+    '/usr/bin/time -o /tmp/t -f "[$a] %e s" make',
     # a Python script's arguments, and the value-free uv options (dotfiles #1000)
     'uv run python scripts/dev/findings.py open --title "The sudo boundary reads arguments"',
     "PYTHONPATH=. python3 -u tool.py --reason 'ran sudo k3s kubectl by hand'",
