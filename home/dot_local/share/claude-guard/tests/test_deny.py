@@ -1065,8 +1065,17 @@ WRITE_DENY = [
     "truncate -s 0 ansible/vars/secrets.yml",
     "sed -i /Host/d ~/.ssh/config",
     'sed -i "$ a export EVIL=1" ~/.zshrc',
+    # a rendered manifest, or a copy of a template, is not the template (2026-10-24)
+    "echo x > app-secret.yaml",
+    "echo x > secrets.yml.j2.bak",
+    "echo x > a.sops.yaml.j2x",
 ]
 WRITE_ALLOW = [
+    # a Jinja template renders a manifest at deploy, as `<name>.env.j2` does (2026-10-24)
+    "cat > templates/longhorn-b2-secret.yaml.j2 <<'EOF'\nk: \"{{ v }}\"\nEOF",
+    "cat >> templates/config-secret.yaml.j2 <<'EOF'\nx: 1\nEOF",
+    "sed -i 's/a/b/' templates/health-secret.yaml.j2",
+    'grep -n "<<<<<<<\\|>>>>>>>" templates/alertmanager-secret.yaml.j2',
     "make build > build.log 2>&1",
     "echo done >> CHANGELOG.md",
     "sed -i s/a/b/ README.md",

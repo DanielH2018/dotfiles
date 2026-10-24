@@ -1330,7 +1330,15 @@ def secret_env(sc: Scan, target: str) -> Verdict | None:
 # --- decrypting rather than reading (:951-1044) -----------------------------------------------
 
 # :971-972. DECIDED (:958-963): these are their own arms, not SECRET_PATHS entries.
-SOPS_BASENAMES = r"(secrets?\.(ya?ml|json|env|ini)|[^[:space:]/]+\.sops\.(ya?ml|json|env|ini))"
+# DECIDED (2026-10-24, the `.env.j2` ruling's analogue): a Jinja template whose name ends in
+# `secret.yaml.j2` or `.sops.yaml.j2` is tracked source that renders a manifest at deploy, so
+# the lookahead exempts a trailing `.j2`. The rendered `app-secret.yaml`, a `.j2.bak` copy and a
+# `.j2/` directory are still refused. 12 of a week's write and in-place denials were writes of
+# such a template (the 2026-10-17 to 2026-10-24 replay).
+SOPS_BASENAMES = (
+    r"((secrets?\.(ya?ml|json|env|ini)|[^[:space:]/]+\.sops\.(ya?ml|json|env|ini))"
+    r"(?!\.j2(?![A-Za-z0-9_./-])))"
+)
 SOPS_PATHS = rf"(^|[[:space:]])([^[:space:]]*/)?{SOPS_BASENAMES}\b"
 # :983. Command position with an env assignment or an ssh/hl host allowed before the binary.
 BDB_CMD_AT = (
