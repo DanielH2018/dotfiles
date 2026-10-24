@@ -746,6 +746,37 @@ KILL_AT = (
 KILL_TAIL = r"([[:space:]]|\)|`|$)"
 
 
+_PIPE_KILL = (
+    r"\|[[:space:]]*([^[:space:]|;&]*/)?(xargs[[:space:]]+(-[^[:space:]]+[[:space:]]+)*)?"
+    rf"kill{KILL_TAIL}"
+)
+
+
+def _pipes_to_kill(command: str, depth: int = 0) -> bool:
+    """Whether a pipeline stage of `command` is kill, alone or behind xargs, as
+    `_pipes_to_shell` reads a stage: `grep -E 'rollback|kill switch'` names `kill` inside a
+    pattern. A segment that runs code or holds a substitution keeps the whole-string match on
+    its own text, since `parse` cuts a substitution body at its pipes, and so does a heredoc
+    body anything but a data sink takes. A command the parser refuses counts."""
+    p = parse(command)
+    if not p.ok or depth > 4:
+        return True
+    after_pipe = False
+    for seg in p.segments:
+        text = normalize(seg.text)
+        if after_pipe and bdb_re("|" + text, "^" + _PIPE_KILL):
+            return True
+        whole = _runs_code(seg.text) or _SUBSTITUTION.search(seg.text.replace("\\`", ""))
+        if whole and bdb_re(text, _PIPE_KILL):
+            return True
+        if not _is_data_sink(seg.text, seg.sep) and any(
+            _pipes_to_kill(b, depth + 1) for b in seg.heredocs if bdb_re(normalize(b), _PIPE_KILL)
+        ):
+            return True
+        after_pipe = seg.sep == "|"
+    return any(bdb_re(normalize(s), _PIPE_KILL) for s in p.substitutions)
+
+
 def kill_by_pattern(sc: Scan, target: str) -> Verdict | None:
     """:836-847. pkill/killall on the scan set; a pipe into kill on SCAN; kill of a
     substitution naming pgrep/ps on the raw command."""
@@ -756,11 +787,7 @@ def kill_by_pattern(sc: Scan, target: str) -> Verdict | None:
             "Blocked: pkill/killall selects processes by name or command line, which can "
             f"include this agent session. {KILL_HINT}",
         )
-    if bdb_re(
-        sc.scan,
-        r"\|[[:space:]]*([^[:space:]|;&]*/)?(xargs[[:space:]]+(-[^[:space:]]+[[:space:]]+)*)?"
-        rf"kill{KILL_TAIL}",
-    ):
+    if bdb_re(sc.scan, _PIPE_KILL) and _pipes_to_kill(sc.command):
         return Verdict("deny", "pipe-kill", f"Blocked: piping matched PIDs into kill. {KILL_HINT}")
     if bdb_re(sc.command, r"\bkill\b[^;&|]*([<$]\(|`)[^)`]*\b(pgrep|ps)\b"):
         return Verdict(
@@ -774,11 +801,40 @@ def kill_by_pattern(sc: Scan, target: str) -> Verdict | None:
 # --- disk wipes (:854-857) -------------------------------------------------------------------
 
 
+_DISK_WIPE = r"\b(mkfs|dd\s+if=.*of=/dev/|fdisk|parted)\b"
+
+
 def disk_wipe(sc: Scan, target: str) -> Verdict | None:
-    """:855-857, raw command."""
-    if bdb_re(sc.command, r"\b(mkfs|dd\s+if=.*of=/dev/|fdisk|parted)\b"):
+    """:855-857, raw command, confirmed against the parse (`_runs_disk_tool`)."""
+    if bdb_re(sc.command, _DISK_WIPE) and _runs_disk_tool(sc.command):
         return Verdict("deny", "disk-wipe", "Blocked: low-level disk operation.")
     return None
+
+
+def _runs_disk_tool(command: str) -> bool:
+    """Whether a match of `_DISK_WIPE` in `command` can run. A segment that only stores text
+    or commits a message cannot: `git commit -m "… the two parted."` names `parted` as a
+    word. Every other segment, substitution and heredoc body that matches counts, as does a
+    command the parser refuses."""
+    p = parse(command)
+    if not p.ok:
+        return True
+    for seg in p.segments:
+        words = _words(seg.text)
+        argv = _argv(words) if words else []
+        name = posixpath.basename(argv[0]) if argv else ""
+        quiet = (
+            name in ("echo", "printf")
+            or _is_data_sink(seg.text, seg.sep)
+            or (name == "git" and "commit" in argv)
+        )
+        if not quiet and bdb_re(seg.text, _DISK_WIPE):
+            return True
+        if not _is_data_sink(seg.text, seg.sep) and any(
+            bdb_re(b, _DISK_WIPE) for b in seg.heredocs
+        ):
+            return True
+    return any(bdb_re(s, _DISK_WIPE) for s in p.substitutions)
 
 
 # --- secret reads (:859-949) -------------------------------------------------------------------

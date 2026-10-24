@@ -520,6 +520,10 @@ KILL_DENY = [
     "echo $(ps aux | kill)",
     "echo a\npkill -9 node",
     "ls -la\npkill -9 node",
+    # a kill stage inside a shell's payload, a substitution or a run heredoc (2026-10-24)
+    "bash -c 'pgrep x | kill'",
+    "x=$(pgrep x | xargs kill)",
+    "bash <<'EOF'\npgrep x | xargs -r kill -9\nEOF",
 ]
 KILL_ALLOW = [
     'pgrep -f "http.server 8181"',
@@ -529,6 +533,8 @@ KILL_ALLOW = [
     "flatpak kill com.core447.StreamController",
     "git commit -m 'add pkill guard'",
     'echo "use killall as a last resort" >> notes.md',
+    # `|kill` inside a quoted grep alternation is no pipeline stage (2026-10-24)
+    "f=$(readlink -f x); grep -n -iE 'break.glass|rollback|kill switch' notes.md",
 ]
 
 
@@ -548,8 +554,37 @@ def test_killing_a_known_pid_is_allowed():
 # --- disk wipes (:854-857) -------------------------------------------------------------------
 
 
+DISK_TOOL = "parted"
+
+
 def test_disk_wipe_is_denied():
     assert rules(["dd if=/dev/zero of=/dev/sda"]) == ["disk-wipe"]
+    assert (
+        rules(
+            [
+                f"{DISK_TOOL} /dev/sda print",
+                f"git commit -m x && {DISK_TOOL} /dev/sda",
+                f'git commit -m "$({DISK_TOOL} /dev/sda)"',
+                f"ssh host {DISK_TOOL} /dev/sda",
+                f"bash <<'EOF'\n{DISK_TOOL} /dev/sda\nEOF",
+            ]
+        )
+        == ["disk-wipe"] * 5
+    )
+
+
+def test_a_disk_tool_named_in_a_message_or_stored_text_is_not_run():
+    """A commit message that says "the two parted" ran nothing (2026-10-24)."""
+    assert (
+        kinds(
+            [
+                f'git commit -q -m "Fail a test\n\nnothing noticed when the two {DISK_TOOL}."',
+                f"echo 'use {DISK_TOOL} to check'",
+                f"cat > notes.md <<'EOF'\n{DISK_TOOL} /dev/sda\nEOF",
+            ]
+        )
+        == ["none"] * 3
+    )
 
 
 def test_dd_to_a_file_is_allowed():
