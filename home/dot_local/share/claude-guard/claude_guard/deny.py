@@ -2316,7 +2316,10 @@ _INTERPRETERS = frozenset(
 _KEYWORDS = frozenset(
     {"coproc", "if", "then", "else", "elif", "do", "while", "until", "!", "{", "}"}
 )
-_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+# `X+=1 sudo id` and `a[0]=1 sudo id` both run sudo: bash takes an append and a subscript
+# as a prefix assignment too, the second with only a warning (2026-10-24).
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=")
+_PLAIN_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _BRACE_LIST = re.compile(r"\{[^}]*(,|\.\.)[^}]*\}")
 _LOOSE_SPLIT = re.compile(r"""[\s;&|()<>`'"=,{}\\$]+""")
 SUDO_MSG = (
@@ -2853,10 +2856,12 @@ def _literal_variants(command: str) -> list[str]:
             else:
                 poisoned.add(cmd[1])
         elif cmd and all(_ASSIGNMENT.match(w) for w in cmd):
+            # `S+=o` and `S[0]=x` change S without setting it to the word's value.
             for w in cmd:
-                name, _, raw = w.partition("=")
-                value = _literal_value(raw)
-                if top and value is not None and name not in poisoned:
+                name = _NAME.match(w).group()
+                value = _literal_value(w.partition("=")[2])
+                plain = _PLAIN_ASSIGNMENT.match(w)
+                if top and plain and value is not None and name not in poisoned:
                     fixed[name] = (cursor, value)
                 else:
                     poisoned.add(name)
@@ -2866,8 +2871,8 @@ def _literal_variants(command: str) -> list[str]:
             # assignment, may or may not change the name, so it stops resolving it.
             for w in words:
                 if _ASSIGNMENT.match(w):
-                    poisoned.add(w.split("=", 1)[0])
-                    fixed.pop(w.split("=", 1)[0], None)
+                    poisoned.add(_NAME.match(w).group())
+                    fixed.pop(_NAME.match(w).group(), None)
         depth = max(
             0, depth + sum(w in _OPENERS for w in words) - sum(w in _CLOSERS for w in words)
         )
