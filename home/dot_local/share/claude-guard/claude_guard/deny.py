@@ -635,6 +635,30 @@ def _unquoted(s: str) -> str | None:
 _SUBSTITUTION = re.compile(r"\$\(|`|<\(|>\(")
 
 
+_SCRIPT_PATH = re.compile(r"[\w.~/+-]*[\w~]")
+
+
+def _runs_script_file(text: str) -> bool:
+    """Whether the stage `text` is a bare shell running a script file it names, so the piped
+    stdin is that script's data: `| bash /tmp/sz.sh`. Only `-e`, `-u`, `-x` and `-v` may come
+    first, since `-c`, `-s`, `-i` and an option with a value (`-o pipefail`) leave stdin as
+    the program. A script named by an expansion, `-` or `/dev/stdin` does not count, and
+    neither does a shell behind a wrapper."""
+    words = _words(text)
+    argv = _argv(words) if words else []
+    if not argv or posixpath.basename(argv[0]) not in _SHELLS:
+        return False
+    i = 1
+    while i < len(argv) and re.fullmatch(r"-[euxv]+", argv[i]):
+        i += 1
+    return (
+        i < len(argv)
+        and _SCRIPT_PATH.fullmatch(argv[i]) is not None
+        and not argv[i].startswith("-")
+        and argv[i] != "/dev/stdin"
+    )
+
+
 def _pipes_to_shell(command: str) -> bool:
     """Whether some pipeline stage of `command` is a shell. A stage is matched on its own
     normalised text, so a `|sh` quoted inside another stage's argument is not a pipe. A
@@ -657,7 +681,7 @@ def _pipes_to_shell(command: str) -> bool:
     for seg in p.segments:
         text = normalize(seg.text)
         stage = PIPE_TO_SHELL if _runs_code(seg.text) else "^" + PIPE_TO_SHELL
-        if after_pipe and bdb_re("|" + text, stage):
+        if after_pipe and bdb_re("|" + text, stage) and not _runs_script_file(seg.text):
             return True
         bare = _unquoted(seg.text)
         whole = (

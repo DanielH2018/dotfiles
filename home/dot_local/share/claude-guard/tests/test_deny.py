@@ -445,6 +445,9 @@ QUOTED_PIPE_TEXT = [
     'grep -rn "| sh\\*" --include=*.md --include=*.sh .',
     'echo "the glob \\`* | sh*\\` denies a pipe"',
     "cat > /tmp/has_sh.sh <<'EOF'\ncat f | sh\nEOF",
+    # a shell that runs a named script reads the pipe as that script's data (2026-10-24)
+    "printf '%s' '{\"a\":1}' | bash /home/u/.claude/hooks/guard-pre-tool-use.sh",
+    "sort -u < /tmp/gap.txt | bash -e /tmp/sz.sh | sort",
 ]
 # The re-parsing stages still run their quoted text, and a real stage is still a stage.
 REAL_PIPE_TO_SHELL = [
@@ -462,6 +465,14 @@ REAL_PIPE_TO_SHELL = [
     "awk '{print | \"sh\"}' f",
     "bash <<'EOF'\ncat f | sh\nEOF",
     'echo "$(cat f | sh)"',
+    # stdin stays the program for every other shell shape (2026-10-24)
+    "echo id | bash -s",
+    "echo id | bash -o pipefail",
+    "echo id | bash -",
+    "echo id | bash /dev/stdin",
+    'echo id | bash "$S"',
+    "echo id | sudo bash x.sh",
+    "echo id | sh -x",
 ]
 
 
