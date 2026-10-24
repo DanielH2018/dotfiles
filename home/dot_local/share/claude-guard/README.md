@@ -119,6 +119,26 @@ The slice 3 cutover gate (spec row 3) was `replay --judge --compare-hooks` allow
 against the pre-cutover bash chain before the six hooks were deleted. `replay --judge` alone
 still prints that ALLOW tally and remains the load-bearing gate going forward.
 
+## The headless prompt tool
+
+A `claude -p` session opens no permission dialog, so the PermissionRequest hook never runs
+there, and every ask ends as "you haven't granted it yet". A PreToolUse `allow` does not
+override a settings `ask` rule either (measured 2026-10-24). `claude-guard prompt-server` is
+a stdio MCP server whose one tool, `decide`, a headless launch names with
+`--permission-prompt-tool`:
+
+    claude -p --mcp-config '{"mcpServers":{"claude-guard":{"command":"claude-guard","args":["prompt-server"]}}}' \
+      --permission-prompt-tool mcp__claude-guard__decide ...
+
+`decide` allows exactly what the PermissionRequest hook allows, by calling the same
+`hook.decide`, and denies everything else: another tool, a command the judge defers, a
+malformed request, any exception. Claude Code consults it for a settings ask rule and for a
+hook's ask, and never after a hook's deny. The request carries no working directory, so the
+PreToolUse arm records each Bash call's `cwd` and the environment values the judge reads
+under `~/.cache/claude-guard/tool-context/<tool_use_id>.json` (mode 0700, records older than
+an hour pruned on write). `decide` reads and deletes the record. With no record it judges
+with an empty cwd, which every cwd-dependent check refuses.
+
 ## The deny rules, live
 
 `claude_guard.deny.deny(command, cwd, env)` is `block-dangerous-bash.sh`'s decision, ported

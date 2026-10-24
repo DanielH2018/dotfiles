@@ -12,6 +12,8 @@
     claude-guard replay <jsonl> --deny     # deny/ask/allow verdict per record
     claude-guard post-tool-use             # bash-write-fanout.sh's helper: hook JSON on
                                             # stdin, {stripped, context} JSON on stdout
+    claude-guard prompt-server             # stdio MCP server: the headless sessions'
+                                            # --permission-prompt-tool (prompt_tool.py)
 
 Both hook entries are live-only: slice 6 retired the allow side's shadow mode (2026-09-17)
 and the deny side's (2026-09-18, with the bash hook it shadowed) -- see claude_guard.hook.
@@ -24,6 +26,7 @@ import os
 import sys
 from pathlib import Path
 
+from claude_guard import prompt_tool
 from claude_guard.deny import deny
 from claude_guard.hook import ASK_JSON, permission_request, post_tool_use, pre_tool_use
 from claude_guard.judge import judge
@@ -172,6 +175,10 @@ def cmd_post_tool_use(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_prompt_server(args: argparse.Namespace) -> int:
+    return prompt_tool.main()
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="claude-guard", description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -184,6 +191,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     po = sub.add_parser("post-tool-use", help="bash-write-fanout.sh's parser and apply report")
     po.set_defaults(fn=cmd_post_tool_use)
+
+    ps = sub.add_parser(
+        "prompt-server", help="stdio MCP server answering a headless session's permission prompts"
+    )
+    ps.set_defaults(fn=cmd_prompt_server)
 
     s = sub.add_parser("segment", help="decompose the command on stdin")
     s.add_argument(

@@ -23,7 +23,7 @@ import json
 import os
 from collections.abc import Mapping
 
-from claude_guard import apply_guard, bypass, tq_wrap, waits
+from claude_guard import apply_guard, bypass, prompt_tool, tq_wrap, waits
 from claude_guard.checks import git_conventions, read_only_agents, worktree_escape
 from claude_guard.checks.awk import awk_risk
 from claude_guard.deny import Verdict, deny
@@ -299,7 +299,10 @@ def pre_tool_use(stdin_text: str, env: Mapping[str, str]) -> str | None:
     stdin is no decision (:22-23). The git conventions run beside the deny rules and fail
     open (conventions()). The needless-bypass check (claude_guard.bypass) runs after them and
     also fails open. The read-only classifier runs last and only when nothing else
-    decided, so it can never outrank a deny or an ask (#628)."""
+    decided, so it can never outrank a deny or an ask (#628). Before anything decides, the
+    call's cwd is recorded for the headless prompt tool (claude_guard.prompt_tool), which
+    never raises."""
+    prompt_tool.record_context(stdin_text, env)
     try:
         command = read_command(stdin_text)
     except Exception:
