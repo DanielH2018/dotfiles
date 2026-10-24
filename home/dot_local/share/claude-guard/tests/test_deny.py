@@ -651,6 +651,12 @@ SECRET_DENY = [
 SECRET_ALLOW = [
     # a source directory named secrets holds code, not secrets (2026-10-24)
     "cat hosts/components/secrets/component.yml",
+    # secretq's own lines, which print no value (2026-10-24)
+    "secretq keys ansible/vars/cluster-vars.sops.env",
+    "secretq has /etc/homelab/kuma-push.env KUMA_PUSH_TOKEN; echo $?",
+    "secretq encrypted --rev origin/master ansible/vars/secrets.yml",
+    "secretq kubeconfig /var/lib/claude/.kube/config | head",
+    "ssh daniel-server secretq ssh-config daniel-box",
     # `env` as a grep pattern prints no environment (2026-10-24)
     'sed -n 1,80p claude_guard/hook.py | grep -n "env"',
     # the secret-looking text is a grep pattern or a sed `s` command's text (2026-10-24)
@@ -2269,6 +2275,8 @@ def test_a_real_sudo_beside_a_variable_command_word_keeps_the_sudo_message():
 ROUTED = [
     ("python3 -c 'print(\"/run/homelab-secrets/x\")'", "secret-read-interpreter", "Edit"),
     ("cat ~/.aws/credentials", "secret-read", "Edit"),
+    ("grep -c TOKEN ~/.aws/credentials", "secret-read", "`secretq`"),
+    ("git diff ansible/vars/secrets.yml", "git-sops-diff", "secretq keys --rev"),
     ("python3 -c 'import os; os.environ[\"GITHUB_TOKEN\"]'", "secret-env", "Edit"),
     ("bash -c 'sudo id'", "sudo-boundary", "Edit"),
     ("ls | xargs -I{} sh -c 'echo {}' | sh", "pipe-to-shell", "while IFS= read"),

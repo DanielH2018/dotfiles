@@ -547,6 +547,10 @@
       {{/* claude-guard's deny messages name this route for a guard probe (dotfiles #1006), and
            classifyAllShell suspends its Bash() allow rule in auto mode. */}}
       "`claude-guard replay <file> --deny` is routine and read-only: it judges the JSONL commands in the file and runs none of them",
+      {{/* Slice 3 of docs/specs/2026-10-24-safe-capability-tools-design.md. The classifier
+           reads a secret path in a command as a credential read, so this states what secretq
+           prints and what it never prints. */}}
+      "`secretq …` (keys, has, encrypted, sha256, kubeconfig, ssh-config; piped or not, locally or over ssh) is routine and read-only even when it names a secrets file: it prints only key names of a SOPS file, an exit status, the sha256 of a SOPS-ciphertext file, a kubeconfig's context and cluster names and servers, or an ssh config's host lines. It never prints a secret value, never runs sops, and never decrypts",
       {{/* Denied as "External System Writes" on 2026-09-25 while polling a fan-out wave. The
            command reaches two hosts and GitHub, which is what the classifier keyed on, but every
            reach is a read: cmd_status in scripts/dev/fanout_lib/place.py loads the manifest, runs

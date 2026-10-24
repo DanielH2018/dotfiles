@@ -893,9 +893,16 @@ EDIT_TOOL_HINT = (
     " If the path is only text in a file you are changing, make the change with the Edit "
     "or Write tool instead."
 )
+# secretq prints key names, an exit status, a SOPS-ciphertext hash, kubeconfig servers or
+# ssh-config host lines, and never a value, so it is safe to name on a true match too.
+SECRETQ_HINT = (
+    " To check that a key exists, list a SOPS file's key names, confirm every value is "
+    "ciphertext, or read a kubeconfig's servers or an ssh config's hosts, run `secretq` "
+    "(`secretq --help`); it never prints a value."
+)
 SECRET_READ_MSG = (
     "Blocked: reading a secrets file via bash. Use a non-sensitive path or ask the user to "
-    "share the specific value needed." + EDIT_TOOL_HINT
+    "share the specific value needed." + SECRETQ_HINT + EDIT_TOOL_HINT
 )
 ENV_DUMP_MSG = (
     "Blocked: a bare environment dump prints every exported credential. Name the variable "
@@ -1587,7 +1594,9 @@ def git_sops_diff(sc: Scan, target: str) -> Verdict | None:
             "git-sops-diff",
             "Blocked: the sops diff driver decrypts before diffing, so this prints plaintext "
             "credentials. Use `git diff --stat` or `--name-only` to see THAT it changed, and "
-            "`sops <file>` to inspect it.",
+            "`sops <file>` to inspect it. To list a revision's key names or check it is all "
+            "ciphertext, run `secretq keys --rev REV FILE` or `secretq encrypted --rev REV "
+            "FILE`, which read the blob without the diff driver.",
         )
     return None
 
