@@ -2587,6 +2587,14 @@ def _segment_sudo(
         if not argv:
             continue
         name = posixpath.basename(argv[0])
+        # `hash -p /usr/bin/sudo git` and `alias git=sudo` make a later `git` run sudo, so
+        # an escalator they name is refused where they name it (2026-10-24).
+        if name in ("hash", "alias") and any(
+            posixpath.basename((a.partition("=")[2] if "=" in a else a).split(" ")[0])
+            in _ESCALATORS
+            for a in argv[1:]
+        ):
+            return _SUDO_ESCALATES
         # A command word built by expansion, brace or glob could spell an escalator. A brace
         # list or glob that matches one is reported as the escalator it spells; a variable or
         # substitution is refused under its own message, since it names no escalator itself.

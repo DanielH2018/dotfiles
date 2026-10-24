@@ -2083,6 +2083,9 @@ SUDO_REFUSE = [
     "X+=1 sudo id",
     "a[0]=1 sudo id",
     "X+=1 env sudo id",
+    "hash -p /usr/bin/sudo git; git id",
+    "shopt -s expand_aliases; alias git=sudo; git id",
+    "alias g='sudo -n'; g id",
     "S=git; A=1 read S; $S id",
     "S=git; printf -v S sudo; $S id",
     "S=git; declare -n S=T; T=sudo; $S id",
@@ -2227,6 +2230,7 @@ SUDO_PASS = [
     "for c in git ls; do $c x; done",
     "S=git; echo '$S'; $S status",
     "grep -n x f | head; GL=/opt/bin/gitleaks; $GL version",
+    "hash -p /usr/bin/git g; alias ll='ls -l'",
     "false && true; X=git; $X status",
     'export PATH="/opt/bin:$PATH"; for py in python3.14 python3.12; do $py -V; done',
 ]
