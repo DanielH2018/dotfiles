@@ -24,6 +24,14 @@ A fifth rule is about a prompt, not context:
      judge admits. The rule fires on text alone, so `f=README.md` beside an unrelated
      `$( )` also trips it, which costs one line of advice once.
 
+A sixth points at a better reader, the way python-json does:
+
+  6. gitops-state: `cat`/`tail`/`head` of a file under `/var/lib/gitops-deploy/`, bare,
+     under `sudo`, or inside an `ssh` remote command. The server repo's `probe.py
+     gitops-state` prints every deployer marker and owed-ledger line with its clear
+     command, and sessions drifted back to raw reads of `owed.jsonl` and `hold_sha`
+     (dotfiles #1041).
+
 `nudge()` returns (rule, text) or None. The hook adds the text as additionalContext
 beside whatever the deny rules decided, and only once per session per rule: the text
 carries the tag `[claude-guard:nudge:<rule>]`, the harness records additionalContext in
@@ -41,6 +49,8 @@ _PYTHON = re.compile(r"^python(?:3(?:\.\d+)?)?$")
 # A `<rev>:<path>` word whose path part expands something: `origin/main:$f`.
 _REV_PATH_EXPANSION = re.compile(r"^[^-$:][^:]*:.*\$")
 _CONTROL_WORDS = frozenset({"do", "then", "else", "{", "!"})
+_GITOPS_DIR = "/var/lib/gitops-deploy/"
+_RAW_READERS = frozenset({"cat", "tail", "head"})
 
 
 def _stages(command: str) -> list[tuple[list[str], str]] | None:
@@ -149,12 +159,32 @@ def _show_substitution(stages, i) -> str | None:
     )
 
 
+def _gitops_state(stages, i) -> str | None:
+    words = []
+    # An ssh remote command arrives as one quoted word: split it to see its reader.
+    for w in stages[i][0]:
+        try:
+            words.extend(shlex.split(w) if " " in w else [w])
+        except ValueError:
+            words.append(w)
+    if not any(_GITOPS_DIR in w for w in words):
+        return None
+    if not any(w.rsplit("/", 1)[-1] in _RAW_READERS for w in words):
+        return None
+    return (
+        "This reads the GitOps deployer's state raw. In the server repo, "
+        "`uv run python scripts/diagnostics/probe.py gitops-state` prints every marker "
+        "and owed-ledger line with the command that clears it (`--json` for the raw form)."
+    )
+
+
 _RULES = (
     ("unbounded-log", _unbounded_log),
     ("recursive-ls", _recursive_ls),
     ("transcript-grep", _transcript_grep),
     ("python-json", _python_json),
     ("show-substitution", _show_substitution),
+    ("gitops-state", _gitops_state),
 )
 
 

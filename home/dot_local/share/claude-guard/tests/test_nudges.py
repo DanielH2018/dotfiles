@@ -1,4 +1,5 @@
-"""The context-discipline nudges (dotfiles #586) and the show-substitution nudge.
+"""The context-discipline nudges (dotfiles #586), the show-substitution nudge, and the
+gitops-state nudge (dotfiles #1041).
 
 Each rule has a command it must nudge and a bounded variant it must leave alone. The
 hook-level tests pin that a nudge rides beside a verdict, never on a deny, and only once
@@ -35,6 +36,9 @@ def rule(command: str) -> str | None:
             "show-substitution",
         ),
         ('git show "origin/main:$(git ls-files x | head -1)"', "show-substitution"),
+        ("cat /var/lib/gitops-deploy/owed.jsonl", "gitops-state"),
+        ("sudo tail -n 5 /var/lib/gitops-deploy/owed.jsonl", "gitops-state"),
+        ("ssh daniel-server 'cat /var/lib/gitops-deploy/hold_sha'", "gitops-state"),
     ],
 )
 def test_an_unbounded_command_is_nudged(command, expected):
@@ -57,6 +61,8 @@ def test_an_unbounded_command_is_nudged(command, expected):
         "python3 script.py data.json",
         "git show origin/main:README.md",
         "f=README.md; git show origin/main:$f",
+        "ls -l /var/lib/gitops-deploy/",
+        "cat /var/lib/other/hold_sha",
     ],
 )
 def test_a_bounded_command_is_left_alone(command):
