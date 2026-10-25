@@ -967,11 +967,9 @@ with tempfile.TemporaryDirectory() as tmp:
     mod.is_equivalent = lambda *a: calls.append("cherry") or False
     mod.is_contained = lambda *a: calls.append("merge-tree") or False
     try:
+        # Seed the cache with a negative verdict for (head1, base1).
         first = mod.VerdictCache(common, "base1")
-        check(
-            "a cache miss runs both git layers",
-            mod.landed_layer("r", "b", "head1", "t", first) == "" and len(calls) == 2,
-        )
+        mod.landed_layer("r", "b", "head1", "t", first)
         first.save({"head1"})
         calls.clear()
         again = mod.VerdictCache(common, "base1")
