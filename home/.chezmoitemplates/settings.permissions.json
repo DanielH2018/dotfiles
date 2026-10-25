@@ -522,6 +522,33 @@
       "mcp__homelab__workload_status",
       "mcp__homelab__list_nodes",
       "mcp__homelab__pod_logs",
+      {{/* GitGuardian's read tools. Named individually for the same reason as mcp__homelab__ above:
+           the server declares no read-only annotations, so a write tool added upstream must not
+           inherit auto-approval. scan_secrets and every tool that changes dashboard state are in
+           the ask list instead. */}}
+      "mcp__gitguardian__list_remediation_targets",
+      "mcp__gitguardian__list_incidents",
+      "mcp__gitguardian__count_incidents",
+      "mcp__gitguardian__list_repo_occurrences",
+      "mcp__gitguardian__list_public_incidents",
+      "mcp__gitguardian__get_public_incident",
+      "mcp__gitguardian__list_public_occurrences",
+      "mcp__gitguardian__find_current_source_id",
+      "mcp__gitguardian__list_honeytokens",
+      "mcp__gitguardian__list_users",
+      "mcp__gitguardian__list_detectors",
+      "mcp__gitguardian__list_sources",
+      "mcp__gitguardian__get_incident",
+      "mcp__gitguardian__get_member",
+      "mcp__gitguardian__get_remediation_workflow",
+      "mcp__gitguardian__list_incident_members",
+      "mcp__gitguardian__list_incident_teams",
+      "mcp__gitguardian__list_incident_comments",
+      "mcp__gitguardian__list_public_incident_comments",
+      "mcp__gitguardian__list_incident_activity_logs",
+      "mcp__gitguardian__list_public_incident_activity_logs",
+      "mcp__gitguardian__get_current_token_info",
+      "mcp__gitguardian__read_custom_tags",
       "Bash(~/.claude/plugins/cache/claude-plugins-official/ralph-loop/*)",
       "Bash(bash ~/.claude/hooks/session-context.sh)",
       {{/* claude-guard slice 4 cutover (Rollout row 4) unregistered block-dangerous-bash.sh
@@ -1120,6 +1147,24 @@
            where no classifier runs (curl_safe/readonly_remote_safe ran as the standalone
            bash hooks allow-safe-curl.sh/allow-readonly-remote.sh until claude-guard slice 3
            deleted them and moved the same decision into guard-permission-request.sh). */}}
+      {{/* GitGuardian. scan_secrets uploads the content it is given to GitGuardian's API, so a
+           rendered manifest or a decrypted temp file would leave the machine in plaintext; it
+           prompts so I see what is being sent. The rest change dashboard state other people see,
+           and revoke_secret revokes the credential at its provider, which can take a live
+           service down. */}}
+      "mcp__gitguardian__scan_secrets",
+      "mcp__gitguardian__generate_honeytoken",
+      "mcp__gitguardian__update_or_create_incident_custom_tags",
+      "mcp__gitguardian__update_incident_severity",
+      "mcp__gitguardian__write_custom_tags",
+      "mcp__gitguardian__manage_private_incident",
+      "mcp__gitguardian__revoke_secret",
+      "mcp__gitguardian__assign_incident",
+      "mcp__gitguardian__assign_public_incident",
+      "mcp__gitguardian__update_public_incident_status",
+      "mcp__gitguardian__create_code_fix_request",
+      "mcp__gitguardian__manage_incident_comment",
+      "mcp__gitguardian__manage_public_incident_comment",
       {{/* the hooks are this config's own enforcement layer — never editable without a prompt (Edit rules also cover Write) */}}
       "Edit(~/.claude/hooks/**)",
       {{/* The deployed claude-guard package is the other half of that layer: deny.py holds the
