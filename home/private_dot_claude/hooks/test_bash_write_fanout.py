@@ -139,6 +139,14 @@ with tempfile.TemporaryDirectory() as tmp:
     )
     check("perl -pi", extracted("perl -pi -e 's/a/b/' b.txt", root) == ["b.txt"])
     check(
+        "perl -lpi: -l takes only digits",
+        extracted("perl -lpi -e 's/a/b/' b.txt", root) == ["b.txt"],
+    )
+    check(
+        "perl -0pi: -0 takes only digits",
+        extracted("perl -0pi -e 's/a/b/' b.txt", root) == ["b.txt"],
+    )
+    check(
         "tee writes every non-flag argument",
         extracted("echo hi | tee a.txt b.txt", root) == ["a.txt", "b.txt"],
     )

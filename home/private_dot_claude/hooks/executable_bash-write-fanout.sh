@@ -313,8 +313,10 @@ extract_paths() {
           --*) ;;
           -*)
             # BSD sed spells it -I, and perl's -I is an include directory instead.
+            # Perl's -l and -0 take only optional digits, which match neither set, so
+            # the walk goes on past them: `-lpi` and `-0777pi` edit in place.
             if [ "$cmdword" = perl ]; then
-              cluster_edits_in_place "$t" i eEIlMm0xCdDF && inplace=1
+              cluster_edits_in_place "$t" i eEIMmxCdDF && inplace=1
             else
               cluster_edits_in_place "$t" iI efl && inplace=1
             fi ;;
