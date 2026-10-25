@@ -126,6 +126,19 @@ with tempfile.TemporaryDirectory() as tmp:
         extracted("sed -i.bak 's/x/y/' b.txt", root) == ["b.txt"],
     )
     check(
+        "BSD sed -I with an empty suffix",
+        extracted("sed -I '' s/a/b/ b.txt", root) == ["b.txt"],
+    )
+    check(
+        "BSD sed -I with a suffix",
+        extracted("sed -I.bak s/a/b/ b.txt", root) == ["b.txt"],
+    )
+    check(
+        "sed -i inside an option cluster",
+        extracted("sed -ni s/a/b/p b.txt", root) == ["b.txt"],
+    )
+    check("perl -pi", extracted("perl -pi -e 's/a/b/' b.txt", root) == ["b.txt"])
+    check(
         "tee writes every non-flag argument",
         extracted("echo hi | tee a.txt b.txt", root) == ["a.txt", "b.txt"],
     )
@@ -154,6 +167,14 @@ with tempfile.TemporaryDirectory() as tmp:
         extracted("ls -la > /dev/null 2>&1", root) == [],
     )
     check("sed without -i", extracted("sed -n '1,5p' a.txt", root) == [])
+    check(
+        "an i in an attached -e script is not -i",
+        extracted("sed -es/i/x/ a.txt", root) == [],
+    )
+    check(
+        "perl's -I is an include directory, not -I in place",
+        extracted("perl -Ilib -ne print a.txt", root) == [],
+    )
     check("plain read", extracted("cat a.txt", root) == [])
     check(
         "the sed script is not mistaken for a file",

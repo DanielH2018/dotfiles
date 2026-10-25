@@ -54,10 +54,10 @@ CMD=$(hook_field '.tool_input.command // empty')
 
 # The bail. This fires on EVERY Bash call, and the overwhelming majority are reads that
 # neither hold a write construct nor name chezmoi. `>` alone covers redirects and is by far
-# the most common; the other three are checked because they write without one.
+# the most common; the others are checked because they write without one.
 WRITES=1
 case "$CMD" in
-  *'>'*|*tee*|*'sed '*|*'dd '*) ;;
+  *'>'*|*tee*|*'sed '*|*'perl '*|*'dd '*) ;;
   *) WRITES=0 ;;
 esac
 [ "${CLAUDE_BASH_WRITE_FANOUT:-1}" != 0 ] || WRITES=0
@@ -253,6 +253,21 @@ tokenize() {
 
 declare -a CANDIDATES=()
 
+# Whether the short-option cluster $1 (`-ni`, `-I.bak`, `-pi`) asks for an in-place edit.
+# It walks the cluster as getopt does, the way claude_guard's sed_readonly does: a letter
+# in $2 edits in place, and a letter in $3 takes the rest of the word as its value, so
+# `-es/i/x/` is a script and not an `-i`.
+cluster_edits_in_place() {
+  local word=${1#-} c
+  while [ -n "$word" ]; do
+    c=${word:0:1}
+    case $2 in *"$c"*) return 0 ;; esac
+    case $3 in *"$c"*) return 1 ;; esac
+    word=${word:1}
+  done
+  return 1
+}
+
 extract_paths() {
   local shell_text
   case $1 in
@@ -294,8 +309,15 @@ extract_paths() {
       sed|gsed|perl)
         # In-place editing only. Without -i, sed and perl write nothing.
         case $t in
-          -i|-i.*|--in-place|--in-place=*) inplace=1 ;;
-          -*) ;;
+          --in-place|--in-place=*) inplace=1 ;;
+          --*) ;;
+          -*)
+            # BSD sed spells it -I, and perl's -I is an include directory instead.
+            if [ "$cmdword" = perl ]; then
+              cluster_edits_in_place "$t" i eEIlMm0xCdDF && inplace=1
+            else
+              cluster_edits_in_place "$t" iI efl && inplace=1
+            fi ;;
           *) if [ "$inplace" = 1 ]; then CANDIDATES+=("$t"); fi ;;
         esac ;;
       dd)
