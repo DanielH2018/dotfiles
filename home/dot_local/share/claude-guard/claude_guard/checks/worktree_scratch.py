@@ -269,16 +269,15 @@ def worktree_clean_safe(part: str, cwd: str, cwd_changed: bool, project_dir: str
 
 
 _STASH_INDEX = re.compile(r"stash@\{\d+\}")
-_STASH_SHA = re.compile(r"[0-9a-f]{7,40}")
 # A whole unquoted `stash@{n}` word. bash and zsh both leave a brace holding one item
 # unexpanded, so the word is literal, but `tokenize` refuses every unquoted brace.
 _BARE_STASH_INDEX = re.compile(r"(?<![^ \t])(stash@\{\d+\})(?![^ \t])")
 
 
 def worktree_stash_drop_safe(part: str, cwd: str, cwd_changed: bool, project_dir: str) -> bool:
-    """True when `part` is `git stash drop [-q] <ref>` and `<ref>` names one stash entry
-    created on the branch the session worktree holding `cwd` and `project_dir` has checked
-    out (dotfiles #1023).
+    """True when `part` is `git stash drop [-q] stash@{n}` and entry `n` was created on the
+    branch the session worktree holding `cwd` and `project_dir` has checked out (dotfiles
+    #1023).
 
     The stash stack is shared by every worktree of a repository, so a drop can destroy
     another session's entry. git writes the branch into every stash subject (`On <branch>:`
@@ -286,17 +285,21 @@ def worktree_stash_drop_safe(part: str, cwd: str, cwd_changed: bool, project_dir
     own branch, so the subject identifies the entry's owner. A branch name cannot hold `:`,
     so the prefix cannot match a longer branch name.
 
-    `<ref>` is `stash@{n}` or a hex SHA that is a prefix of exactly one entry's commit. A
-    drop with no ref drops `stash@{0}`, whoever owns it, and is refused, as is
+    Only the index form passes: git refuses `stash drop <sha>` as "not a stash reference".
+    A drop with no ref drops `stash@{0}`, whoever owns it, and is refused, as is
     `git stash clear`, a detached HEAD, and any drop after an earlier segment moved the
-    shell's cwd. The check and the drop are not atomic: a `stash push` by another session
-    between them shifts every `stash@{n}` by one, which a SHA does not suffer.
+    shell's cwd.
+
+    The check reads the stack as it is when the command is judged. The caller must refuse
+    a grant in a command that can change the stack before the drop runs: a second `stash`
+    segment or a loop (`judge()` does). A concurrent `stash push` by another session still
+    shifts every index between the check and the drop (dotfiles #1027).
     """
     tokens = tokenize(_BARE_STASH_INDEX.sub(r"'\1'", part))
     if not tokens or tokens[:3] != ["git", "stash", "drop"]:
         return False
     refs = [tok for tok in tokens[3:] if tok not in ("-q", "--quiet")]
-    if len(refs) != 1 or not (_STASH_INDEX.fullmatch(refs[0]) or _STASH_SHA.fullmatch(refs[0])):
+    if len(refs) != 1 or not _STASH_INDEX.fullmatch(refs[0]):
         return False
     if cwd_changed:
         return False
@@ -307,13 +310,12 @@ def worktree_stash_drop_safe(part: str, cwd: str, cwd_changed: bool, project_dir
     if head is None or not head.startswith("refs/heads/"):
         return False
     branch = head.strip().removeprefix("refs/heads/")
-    listing = _git(root, "stash", "list", "--format=%gd%x00%H%x00%s")
+    listing = _git(root, "stash", "list", "--format=%gd%x00%s")
     if listing is None:
         return False
-    ref = refs[0]
-    subjects = []
-    for line in listing.splitlines():
-        fields = line.split("\0")
-        if len(fields) == 3 and ref in (fields[0], fields[1][: len(ref)]):
-            subjects.append(fields[2])
+    subjects = [
+        fields[1]
+        for fields in (line.split("\0") for line in listing.splitlines())
+        if len(fields) == 2 and fields[0] == refs[0]
+    ]
     return len(subjects) == 1 and subjects[0].startswith((f"On {branch}:", f"WIP on {branch}:"))

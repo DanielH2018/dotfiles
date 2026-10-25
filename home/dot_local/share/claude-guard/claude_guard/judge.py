@@ -563,6 +563,9 @@ def _bare_command(part: str) -> str:
     return words.rest if words else part
 
 
+# Any word `stash`, `stash@{n}` included: a segment that can read or change the stash stack.
+_STASH_WORD = re.compile(r"(?<![\w-])stash(?![\w-])")
+
 # `git -C <path> <rest>`: git runs `<rest>` as if started in `<path>`.
 _GIT_DASH_C = re.compile(rf"^git[{WS}]+-C[{WS}]+(?P<path>[^{WS}]+)[{WS}]+(?P<rest>.+)$")
 
@@ -1314,6 +1317,11 @@ def judge(
     # A scratch redirect is vetted against the filesystem as it is now, so it is admitted
     # only when no segment of the chain can put a link at its target first (LINK_MAKERS).
     scratch_ok = not any(_makes_links(_bare_command(_trim(seg.text))) for seg in parsed.segments)
+    # `worktree_stash_drop_safe` judges a drop against the stash stack as it is now, so its
+    # grant holds only when nothing else in the command can change that stack first: no
+    # other segment names `stash`, and no loop can run the drop twice (dotfiles #1023).
+    stash_segments = sum(_STASH_WORD.search(seg.text) is not None for seg in parsed.segments)
+    looped = any(_loop_command(_trim(seg.text), roots, scratch_ok)[1] for seg in parsed.segments)
 
     # Names a standalone assignment or a `for` loop set from a substitution. A later `$NAME`
     # carries the substitution's output as surely as the placeholder does, so it is held
@@ -1384,6 +1392,8 @@ def judge(
         ok, reason = judge_segment(
             part, rules, roots, cwd, cwd_changed, project_dir, scratch_ok, job_dir
         )
+        if reason == "worktree-stash-drop-check" and (stash_segments > 1 or looped):
+            ok, reason = False, "worktree-stash-drop:stack-changes"
         reasons.append(reason)
         if not ok:
             return Decision(False, f"segment:{i}:{reason}", tuple(reasons))
