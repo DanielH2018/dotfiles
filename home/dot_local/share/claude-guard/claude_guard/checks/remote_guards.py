@@ -306,8 +306,13 @@ def sed_readonly(argv: list[str]) -> bool:
                 i += 1
             break
         if a.startswith("-") and a != "-":
-            if a.startswith("-i") or a.startswith("--in-place"):
+            if a.startswith("--in-place"):
                 return False  # in-place edit writes
+            # A short-option cluster edits in place when `i`, or BSD sed's `I`, comes before
+            # a letter that takes the rest of the word as its value: `-ni` and `-I.bak` do,
+            # `-es/i/x/` does not.
+            if not a.startswith("--") and re.match(r"-[^efl]*[iI]", a):
+                return False
             if a == "-f" or a == "--file" or a.startswith("--file="):
                 return False  # program file (uninspectable)
             if a in ("-e", "--expression"):

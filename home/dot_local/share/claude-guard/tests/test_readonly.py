@@ -56,6 +56,8 @@ APPROVE = [
     "ls | awk '{print $9}'",
     "awk 'NR==1' file",
     "sed -n '1,5p' file",
+    # `-e` takes the rest of the word, so its `i` is script text, not `-i`
+    "sed -es/i/x/ file",
     "sed 's/foo/bar/' file",
     "echo x | sed 's/x/y/'",
     r"sed -E 's/(public key:|private key:).*/\1 [redacted]/'",
@@ -153,6 +155,10 @@ REJECT = [
     "sed '/foo/w out' file",
     "cat a > b 2>/dev/null",
     "sed -i 's/a/b/' file",
+    "sed -ni 's/a/b/p' file",
+    # BSD sed on macOS edits in place with `-I` too (#1019)
+    "sed -I '' 's/a/b/' file",
+    "sed -I.bak 's/a/b/' file",
     "sed 's/a/b/w out.txt' file",
     "sed 's/a/b/e' file",
     "sed -n 'w out.txt' file",

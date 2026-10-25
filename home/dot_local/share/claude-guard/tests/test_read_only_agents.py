@@ -55,6 +55,7 @@ REDIRECTS_INTO_THE_TREE = [
 CHANGES_FILES = [
     "rm -rf src",
     "sed -i 's/a/b/' src/app.py",
+    "sed -I '' 's/a/b/' src/app.py",
     "mv a.py b.py",
     "touch /repo/new.py",
     "cp /tmp/x.py src/x.py",
