@@ -1,9 +1,9 @@
 // Regression guard for home/dot_local/bin/executable_ghread.
 // ghread carries a blanket `Bash(ghread:*)` allow rule on the unsandboxed path, and that
-// rule is defensible only while every gh invocation is built from constants: GET only, a
-// field only ever as a raw query parameter, no body and no graphql, no caller text that can
-// become a flag, an --out that cannot leave scratch, and a gh the caller's environment
-// cannot choose. ghread looks gh up in fixed directories, never $PATH, so the tests load it
+// rule is defensible only while every gh invocation is built from constants: `api` sends a
+// GET with a field only ever as a raw query parameter and no body, `graphql` is the one POST
+// and carries a single document with no mutation in it, no caller text can become a flag,
+// --out cannot leave scratch, and the caller's environment cannot choose gh. ghread looks gh up in fixed directories, never $PATH, so the tests load it
 // as a module and point GH_DIRS at a fake `gh` that prints the argv it was given. Each test
 // asserts the exact invocation, and an empty stdout proves gh was never started.
 const { test } = require('node:test');
@@ -104,6 +104,8 @@ test('graphql refuses a write operation, a missing query and a file read without
     [['graphql', '-f', 'query=MUTATION{x}'], /mutation/],
     [['graphql', '-f', 'query=subscription { x }'], /subscription/],
     [['graphql', '-f', 'query={ a }', '-f', 'query=mutation { b }'], /second query/],
+    [['graphql', '-f', 'query={ a }', '-f', 'query[]=mutation { b }'], /one plain query/],
+    [['graphql', '-f', 'query={ a }', '-f', 'operationName[]=b'], /one plain query/],
     [['graphql', '-F', 'n=1'], /needs -f query/],
     [['graphql', '-f', 'query={ a }', '-F', 'v=@/etc/passwd'], /read a file/],
     [['graphql', '-f', 'query={ a \x1b }'], /control character/],

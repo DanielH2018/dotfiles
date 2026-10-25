@@ -360,6 +360,10 @@ def build_graphql(ns) -> list[str]:
             if not sep:
                 raise GhreadError(f"refusing {flag} {item!r}: expected key=value")
             _check(_FIELD_KEY, key, f"{flag} key")
+            # gh lifts `query` and `operationName` out of the variables by their base
+            # name, so `query[]=...` would carry a second document past the check.
+            if key != "query" and key.removesuffix("[]") in ("query", "operationName"):
+                raise GhreadError(f"refusing {flag} {key}: only one plain query field")
             if key == "query":
                 if query is not None:
                     raise GhreadError("refusing a second query field")
