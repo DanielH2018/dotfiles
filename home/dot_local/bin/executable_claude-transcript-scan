@@ -22,7 +22,7 @@ is how long it stays valid.
   claude-transcript-scan --since 72         # ...or a different window, in hours
   claude-transcript-scan --session PATH     # one transcript (what the SessionEnd hook runs)
   claude-transcript-scan --all              # every transcript on the machine
-  claude-transcript-scan --accept-baseline  # add this run's findings to the baseline; report only new ones
+  claude-transcript-scan --accept-baseline  # baseline the findings the pending marker lists; no rescan
   claude-transcript-scan --paranoid         # gitleaks' FULL ruleset, for a deliberate audit
   claude-transcript-scan --no-loki          # transcripts only; skip the Loki store
 
@@ -60,8 +60,15 @@ failure mode as a monitor nobody trusts. So known findings are accepted once, by
 after triage, and only what is NEW alerts.
 
 The risk runs the other way too, which is why accepting is never automatic and never part
-of the timer: a blanket --accept-baseline over an untriaged sweep is exactly how a real
-leak gets buried. Triage first, accept second.
+of the timer. Triage first, accept second.
+
+--accept-baseline does NOT scan. It baselines exactly the fingerprints the pending marker
+holds, which are the findings the timer reported and the operator read. An accept that
+rescanned would use its own window (24h by default, against the timer's 25h), so a leak that
+appeared after triage was accepted unseen and a triaged finding older than that window was
+cleared from the marker without ever being baselined. With no marker, or a marker holding no
+fingerprints, it accepts nothing and exits 0. Marker rows for sources that were not scanned
+stay in the marker, because nothing was accepted for them.
 
 WHY A NARROWED RULESET. The baseline clears the historical backlog; it does not stop the
 drip. Live sessions kept producing fresh `generic-api-key` matches — 4 in the two minutes
@@ -608,10 +615,6 @@ class Scanner:
             self.seen.add(fp)
             if fp in self.baselined:
                 self.known += 1
-                if not self.accept:
-                    continue
-            if self.accept:
-                self._append(self.baseline + ".new", fp + "\n")
                 continue
             self.found += 1
             self.new_fps.append(fp)
@@ -700,6 +703,11 @@ class Scanner:
                 f"The log at {self.log} is untouched."
             )
             return 0
+        # Accepting reads the marker and nothing else: no transcript, no gitleaks, no
+        # Loki. It has to return before any of them is resolved, so a machine that
+        # cannot scan can still settle what the timer already reported.
+        if self.accept:
+            return self.accept_pending()
         if not re.fullmatch(r"[0-9]+", self.since_h):
             _err(f"{PROG}: --since wants whole hours")
             return 2
@@ -884,30 +892,6 @@ class Scanner:
             partial = f"{self.failed} source(s) failed to scan: {failed_names}"
             _err(f"{PROG}: {partial} — treat those as not scanned")
 
-        if self.accept:
-            self.write_baseline()
-            # Everything outstanding is now baselined, so the marker has nothing left to
-            # report -- except the sources this run never saw, which nothing was
-            # accepted for.
-            with contextlib.suppress(OSError):
-                os.remove(self.pending)
-            if partial:
-                self.mark_unavailable(partial)
-            try:
-                with open(self.baseline, "rb") as fh:
-                    held = fh.read().count(b"\n")
-            except OSError:
-                held = 0
-            _out(
-                f"{PROG}: accepted this run's findings; "
-                f"the baseline in {self.baseline} holds {held} finding(s)"
-            )
-            _out(
-                "Only findings NOT in that file are reported from now on. "
-                "Triage before accepting — accepting is how a real leak gets buried."
-            )
-            return 0
-
         if partial:
             self.mark_unavailable(partial)
 
@@ -1007,6 +991,83 @@ class Scanner:
             self.scan_work(f"{label} ago", "loki", rules, _lines_bytes(outs))
             h = until_h
 
+    # Accepts what the operator was shown, not what a fresh scan would find. Column 4 of
+    # each pending-marker row is the fingerprints that row reported (see report_found).
+    # Rows without one are `mark_unavailable` rows -- a scan that could not run, or ran
+    # partly -- and they stay: no fingerprint was accepted for a source nobody scanned.
+    def accept_pending(self):
+        try:
+            rows = _read_lines(self.pending)
+        except OSError:
+            rows = []
+        fps, kept = [], []
+        for row in rows:
+            cols = row.split("\t")
+            held = [f for f in cols[3].split(",") if f] if len(cols) >= 4 else []
+            if held:
+                fps.extend(held)
+            elif row:
+                kept.append(row)
+        if not fps:
+            _out(
+                f"{PROG}: no fingerprints in the pending marker ({self.pending}); "
+                "nothing accepted. A scan that finds something writes them."
+            )
+            return 0
+        fps = list(dict.fromkeys(fps))
+        try:
+            self.baselined = set(_read_lines(self.baseline))
+        except OSError:
+            self.baselined = set()
+        added = [fp for fp in fps if fp not in self.baselined]
+        with contextlib.suppress(OSError):
+            os.makedirs(_dirname(self.baseline), exist_ok=True)
+        # A `.new` left by an interrupted accept holds fingerprints nobody read. Drop it
+        # before write_baseline merges the file in.
+        with contextlib.suppress(OSError):
+            os.remove(self.baseline + ".new")
+        for fp in added:
+            self._append(self.baseline + ".new", fp + "\n")
+        if not self.write_baseline():
+            _err(f"{PROG}: could not write {self.baseline}; the marker is untouched")
+            return 3
+        # The baseline holds the fingerprints, so the marker's finding rows are done.
+        # Rewrite through a temp file so a concurrent SessionEnd scan never reads half a
+        # marker.
+        if kept:
+            tmp = f"{self.pending}.tmp.{os.getpid()}"
+            try:
+                body = "\n".join(kept) + "\n"
+                with open(tmp, "wb") as fh:
+                    fh.write(body.encode("utf-8", "surrogateescape"))
+                os.replace(tmp, self.pending)
+            except OSError:
+                with contextlib.suppress(OSError):
+                    os.remove(tmp)
+        else:
+            with contextlib.suppress(OSError):
+                os.remove(self.pending)
+        try:
+            with open(self.baseline, "rb") as fh:
+                total = fh.read().count(b"\n")
+        except OSError:
+            total = 0
+        _out(
+            f"{PROG}: accepted {len(added)} finding(s) from the pending marker "
+            f"({len(fps) - len(added)} already baselined); "
+            f"the baseline in {self.baseline} holds {total} finding(s)"
+        )
+        if kept:
+            _out(
+                f"  {len(kept)} marker row(s) for sources that were not scanned remain "
+                "in the marker."
+            )
+        _out(
+            "Only findings NOT in that file are reported from now on. "
+            "Nothing was rescanned."
+        )
+        return 0
+
     def write_baseline(self):
         new = self.baseline + ".new"
         try:
@@ -1030,10 +1091,11 @@ class Scanner:
                 body = "".join(f"{fp}\n" for fp in sorted(merged))
                 fh.write(body.encode("utf-8", "surrogateescape"))
         except OSError:
-            return
+            return False
         if lines is not None:
             with contextlib.suppress(OSError):
                 os.remove(new)
+        return True
 
     def report_found(self, found_transcripts, found_loki, partial, failed_names):
         # Per-store counts, because "18 findings" does not tell you which store to go

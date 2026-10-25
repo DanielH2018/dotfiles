@@ -103,7 +103,8 @@ add() { put "$@"; end_seg; }
 # Segment: transcript credential leaks (red). First, so a narrow terminal cannot pack it
 # off the row. claude-transcript-scan writes this marker because neither of its unattended
 # callers keeps a verdict. The marker stays until the operator answers it with
-# `claude-transcript-scan --clear-pending` (after a rotation) or `--accept-baseline`.
+# `claude-transcript-scan --clear-pending` (after a rotation) or `--accept-baseline`, which
+# baselines the fingerprints in this file's fourth column without rescanning.
 # It used to be a SECURITY banner in session-context.sh's SessionStart output. That put
 # it in the model's context at every session start, while only the operator can act on
 # it (#693). A leak is a fact about the machine, so this reads it in any directory.

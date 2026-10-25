@@ -143,6 +143,13 @@ function run(args, sb, extraEnv = {}) {
   });
 }
 
+// --accept-baseline reads the pending marker a scan wrote; it never scans. So "accept what a
+// sweep found" is two steps: the scan that raises the finding, then the accept.
+function scanThenAccept(sb, scanArgs) {
+  run(scanArgs, sb);
+  return run(['--accept-baseline'], sb);
+}
+
 test('a transcript carrying a credential is flagged', { skip }, () => {
   const sb = sandbox();
   const r = run(['--session', path.join(sb.projects, 'dirty.jsonl')], sb);
@@ -198,7 +205,7 @@ test('a missing gitleaks reports could-not-evaluate, never clean', { skip: PYTHO
 // still report what was not.
 test('an accepted finding stops being reported', { skip }, () => {
   const sb = sandbox();
-  const accept = run(['--since', '1', '--accept-baseline'], sb);
+  const accept = scanThenAccept(sb, ['--since', '1']);
   assert.strictEqual(accept.status, 0);
   assert.ok(fs.existsSync(sb.baseline), 'the baseline file is written');
 
@@ -212,7 +219,7 @@ test('an accepted finding stops being reported', { skip }, () => {
 
 test('a finding the baseline does not cover is still reported', { skip }, () => {
   const sb = sandbox();
-  run(['--since', '1', '--accept-baseline'], sb);
+  scanThenAccept(sb, ['--since', '1']);
   // A second, different credential appears after the baseline was taken.
   fs.writeFileSync(path.join(sb.projects, 'newleak.jsonl'),
     JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'GITHUB_TOKEN=ghp_4kM8vB2nQ7wR5xT9zY1cD3fH6jL0pS8uA2eG' }] } }) + '\n');
@@ -226,16 +233,20 @@ test('a finding the baseline does not cover is still reported', { skip }, () => 
 // whose window did not hold it. A wider scan then reported all of them as new.
 test('an accept keeps baseline entries outside its own window', { skip }, () => {
   const sb = sandbox();
-  run(['--session', path.join(sb.projects, 'dirty.jsonl'), '--accept-baseline'], sb);
+  scanThenAccept(sb, ['--session', path.join(sb.projects, 'dirty.jsonl')]);
   const first = fs.readFileSync(sb.baseline, 'utf8').trim();
   assert.match(first, /^github-pat:dirty\.jsonl:[0-9a-f]{16}$/, 'the first accept recorded the finding');
   const byHand = 'generic-api-key:loki:0123456789abcdef';
   fs.appendFileSync(sb.baseline, byHand + '\n');
 
-  const again = run(['--session', path.join(sb.projects, 'clean.jsonl'), '--accept-baseline'], sb);
+  // A second finding, from a session whose window never held the first, is accepted too.
+  fs.writeFileSync(path.join(sb.projects, 'second.jsonl'),
+    JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'GITHUB_TOKEN=ghp_4kM8vB2nQ7wR5xT9zY1cD3fH6jL0pS8uA2eG' }] } }) + '\n');
+  const again = scanThenAccept(sb, ['--session', path.join(sb.projects, 'second.jsonl')]);
   assert.strictEqual(again.status, 0, `${again.stdout}${again.stderr}`);
   const kept = fs.readFileSync(sb.baseline, 'utf8').split('\n').filter(Boolean);
-  assert.deepStrictEqual(kept.sort(), [byHand, first].sort());
+  assert.strictEqual(kept.length, 3, `expected the old entries plus the new one, got ${kept}`);
+  assert.ok(kept.includes(byHand) && kept.includes(first), 'earlier entries survive the accept');
 });
 
 test('the fingerprint is rule, file name and a hash of the matched line', { skip }, () => {
@@ -252,7 +263,7 @@ test('the fingerprint is rule, file name and a hash of the matched line', { skip
 
 test('the fingerprint keys on content, not on line position', { skip }, () => {
   const sb = sandbox();
-  run(['--session', path.join(sb.projects, 'dirty.jsonl'), '--accept-baseline'], sb);
+  scanThenAccept(sb, ['--session', path.join(sb.projects, 'dirty.jsonl')]);
   // Prepending a record renumbers every line of the extracted stream. gitleaks' own
   // Fingerprint is `:<rule>:<line>` and would stop matching here; hashing the matched line
   // survives it. Compaction does exactly this to a real transcript.
@@ -846,7 +857,7 @@ test('--accept-baseline also disarms the banner', { skip }, () => {
   const sb = sandbox();
   run(['--session', path.join(sb.projects, 'dirty.jsonl')], sb);
   assert.strictEqual(fs.existsSync(sb.pending), true, 'precondition: the marker is armed');
-  run(['--session', path.join(sb.projects, 'dirty.jsonl'), '--accept-baseline'], sb);
+  run(['--accept-baseline'], sb);
   assert.strictEqual(fs.existsSync(sb.pending), false,
     'everything outstanding is now baselined, so the banner has nothing left to report');
 });
@@ -868,4 +879,42 @@ test('a scan that could not run records that it could not run', { skip: PYTHON ?
   assert.match(ts, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
   assert.strictEqual(count, '0', 'a could-not-evaluate row carries count 0, not a finding count');
   assert.match(why, /gitleaks/, `the row says what was missing, got: ${why}`);
+});
+
+// The bug this pair pins: --accept-baseline used to rescan with its own 24h window and baseline
+// whatever THAT found, so a leak that appeared after triage was accepted unseen, and a triaged
+// finding older than the window was never baselined while its marker was still cleared.
+test('--accept-baseline takes the marker fingerprints and scans nothing', { skip }, () => {
+  const sb = sandbox();
+  run(['--session', path.join(sb.projects, 'dirty.jsonl')], sb);
+  const marked = fs.readFileSync(sb.pending, 'utf8').trim().split('\t')[3];
+  // A leak that appears after the operator read the marker. A rescan would accept it.
+  fs.writeFileSync(path.join(sb.projects, 'late.jsonl'),
+    JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'GITHUB_TOKEN=ghp_4kM8vB2nQ7wR5xT9zY1cD3fH6jL0pS8uA2eG' }] } }) + '\n');
+  // No gitleaks and no otelq resolvable: only a path that never scans can succeed.
+  const r = run(['--accept-baseline'], sb, { PATH: '/usr/bin:/bin', GITLEAKS_BIN: '/nonexistent', HOME: sb.dir });
+  assert.strictEqual(r.status, 0, `${r.stdout}${r.stderr}`);
+  assert.strictEqual(fs.readFileSync(sb.baseline, 'utf8').trim(), marked, 'exactly the marker fingerprint');
+  assert.strictEqual(fs.existsSync(sb.pending), false, 'the marker is cleared');
+  const after = run(['--session', path.join(sb.projects, 'late.jsonl')], sb);
+  assert.strictEqual(after.status, 1, 'the unseen leak is still reported');
+});
+
+test('--accept-baseline with no marker accepts nothing', { skip }, () => {
+  const sb = sandbox();
+  const r = run(['--accept-baseline'], sb);
+  assert.strictEqual(r.status, 0, `${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /nothing accepted/);
+  assert.strictEqual(fs.existsSync(sb.baseline), false, 'no baseline is written');
+});
+
+test('--accept-baseline keeps the could-not-scan rows', { skip }, () => {
+  const sb = sandbox();
+  run(['--session', path.join(sb.projects, 'dirty.jsonl')], sb);
+  const down = '2026-10-25T00:00:00Z\t0\t1 source(s) failed to scan: loki';
+  fs.appendFileSync(sb.pending, down + '\n');
+  const r = run(['--accept-baseline'], sb);
+  assert.strictEqual(r.status, 0, `${r.stdout}${r.stderr}`);
+  assert.strictEqual(fs.readFileSync(sb.pending, 'utf8').trim(), down,
+    'nothing was accepted for an unscanned source, so its row stays');
 });
