@@ -1227,6 +1227,11 @@ WRITE_DENY = [
     "cat docs/a.md | sed -n 'p;w ~/.zshrc'",
     "bash -c \"sed -n 'w ~/.zshrc' docs/a.md\"",
     "echo $(sed -n 'w ~/.zshrc' docs/a.md)",
+    # bash runs a quoted or escaped command word as sed all the same
+    "\"se\"d -n 'w ~/.zshrc' docs/a.md",
+    "s''ed -n 'w ~/.zshrc' docs/a.md",
+    "s\\ed -n 'w ~/.zshrc' docs/a.md",
+    "bash -c \"s''ed -n 'w ~/.zshrc' docs/a.md\"",
 ]
 WRITE_ALLOW = [
     # a sed that reads a target, or writes an ordinary file, writes no target (#1037)

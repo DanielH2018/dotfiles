@@ -1806,15 +1806,16 @@ def _sed_writes_target(text: str, depth: int = 0) -> bool:
     Only the words after a `sed` word that are not its file operands are read, so
     `sed -n p ~/work/.zshrc` reads its operand and writes nothing. A word that holds a
     whole command line, as `bash -c` and ssh take, a substitution body and a heredoc body
-    are each read in turn. Text the parser or the word splitter refuses is refused whenever
-    a `sed` in it is followed by a match."""
+    are each read in turn. The `sed` word is found after shell unquoting, since bash runs
+    `"se"d` and `s\\ed` as sed. Text the parser or the word splitter refuses is refused
+    on any match of `_SED_WRITE`, because its command word cannot be read."""
     p = parse(text)
     if not p.ok or depth > 4:
-        return bdb_re(text, rf"sed\b.*{_SED_WRITE}")
+        return bdb_re(text, _SED_WRITE)
     for seg in p.segments:
         words = _words(seg.text)
         if words is None:
-            if bdb_re(seg.text, rf"sed\b.*{_SED_WRITE}"):
+            if bdb_re(seg.text, _SED_WRITE):
                 return True
             continue
         for i, w in enumerate(words):
@@ -1823,7 +1824,7 @@ def _sed_writes_target(text: str, depth: int = 0) -> bool:
                 operands, _ = _edit_operands(args, "eflI", "ef", "i", "iI")
                 if any(bdb_re(a, _SED_WRITE) for k, a in enumerate(args) if k not in operands):
                     return True
-            elif "sed" in w and any(c.isspace() for c in w) and _sed_writes_target(w, depth + 1):
+            elif any(c.isspace() for c in w) and _sed_writes_target(w, depth + 1):
                 return True
     return any(_sed_writes_target(t, depth + 1) for s in p.segments for t in s.heredocs) or any(
         _sed_writes_target(t, depth + 1) for t in p.substitutions
@@ -1836,7 +1837,7 @@ def write_targets(sc: Scan, target: str) -> Verdict | None:
     if (
         bdb_re(sc.scan, rf"{_REDIRECT_OR_TEE}{WRITE_TARGETS}")
         or any(bdb_re(sc.segset, p) for p in (_COPY_ONTO, _COPY_INTO_DIR))
-        or ("sed" in sc.command and _sed_writes_target(sc.command))
+        or _sed_writes_target(sc.command)
     ):
         return Verdict(
             "deny",
