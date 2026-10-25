@@ -1220,7 +1220,9 @@ def secret_readers(sc: Scan, target: str) -> Verdict | None:
     space, so `cd "$S" || exit 1` and a jq on the next line share one piece whose head is
     `exit`, and the jq filter is matched as a path. When the parse succeeds, some
     segment, substitution or heredoc body must read a secret path too (`_member_read`),
-    and the denial names what that piece reads."""
+    and the denial names what that piece reads. When no naive piece reads, a quote-aware
+    member that reads still denies on its own, since a quoted `;&|` in a file name splits
+    the naive scan (#1004)."""
     sc = _without_stored_heredocs(sc)
     confirmed: str | None = None
     for piece in re.split(r"[;&|]", sc.scan):

@@ -906,6 +906,8 @@ def test_the_ciphertext_check_in_any_other_shape_is_still_refused():
         CIPHERTEXT_CHECK.replace("--ciphertext-only", "--ciphertext-only --plain"),
         f"{CIPHERTEXT_CHECK}; cat x",
         f"cd /srv && {CIPHERTEXT_CHECK}",
+        f"ssh daniel-server '{CIPHERTEXT_CHECK}'",
+        f"bash -c '{CIPHERTEXT_CHECK}'",
     ]
     assert rules(other_shapes) == ["secret-read-interpreter"] * len(other_shapes)
 
