@@ -3088,6 +3088,8 @@ def sudo_boundary(sc: Scan, target: str) -> Verdict | None:
         rank = max(map(_sudo_text, variants))
     if rank == _SUDO_ESCALATES:
         hint = TAKEOVER_CHECK_HINT if SUDO_WRAPPER in sc.command else ""
+        if "homelab-rootq" in sc.command:
+            hint += ROOTQ_HINT
         return Verdict("deny", "sudo-boundary", SUDO_MSG + hint)
     if rank == _SUDO_VARIABLE:
         return Verdict("deny", "sudo-boundary", SUDO_VARIABLE_MSG)
@@ -3100,6 +3102,8 @@ TAKEOVER_CHECK_HINT = (
     " To pipe or redirect the takeover check's output, or to pass a relative path, run "
     "`takeover-check` with the same flags instead; it merges stderr into stdout."
 )
+# The rootq shim is the one entry point to homelab-rootq (#1050), so the refusal names it.
+ROOTQ_HINT = " To read root-only host state, run `rootq` with the same arguments instead."
 
 
 # --- rootq's sudo test seam (dotfiles #1050) --------------------------------------------------
@@ -3108,9 +3112,12 @@ TAKEOVER_CHECK_HINT = (
 # allow rule approves it by name. The shim also honours HOMELAB_ROOTQ_SUDO as a test seam that
 # names the program to run in place of sudo, so a command that sets it and runs rootq would run
 # any program with no prompt. The root-side script checks its own arguments, so this rule is
-# the only argument check the guard adds for rootq. The match is on text: any mention of the
-# name, or of a HOMELAB_ROOTQ prefix that a substitution could finish, refuses the command.
+# the only argument check the guard adds for rootq. The match is on text, so a payload that
+# `ssh`, `bash -c` or `env -S` runs is covered too: a command that names rootq and mentions
+# the seam, or a HOMELAB_ROOTQ prefix a substitution could finish, is refused. The shlex words
+# add the spellings a quote splits, such as `root""q`.
 ROOTQ_SEAM = "HOMELAB_ROOTQ_SUDO"
+_ROOTQ_WORD = re.compile(r"(?<![\w-])rootq(?![\w.-])")
 ROOTQ_SEAM_MSG = (
     "Blocked: HOMELAB_ROOTQ_SUDO is the rootq shim's test seam. It names the program the shim "
     "runs in place of sudo, so setting it would run that program under rootq's allow rule. "
@@ -3119,13 +3126,11 @@ ROOTQ_SEAM_MSG = (
 
 
 def rootq_seam(sc: Scan, target: str) -> Verdict | None:
-    words = _words(sc.command)
-    if words is None:
-        # Unparseable text fails closed on the name alone.
-        runs, names = "rootq" in sc.command, "HOMELAB_ROOTQ" in sc.command
-    else:
-        runs = any(posixpath.basename(w) == "rootq" for w in words)
-        names = "HOMELAB_ROOTQ" in sc.command or any(ROOTQ_SEAM in w for w in words)
+    words = _words(sc.command) or []
+    runs = bool(_ROOTQ_WORD.search(sc.command)) or any(
+        posixpath.basename(w) == "rootq" for w in words
+    )
+    names = "HOMELAB_ROOTQ" in sc.command or any(ROOTQ_SEAM in w for w in words)
     return Verdict("deny", "rootq-seam", ROOTQ_SEAM_MSG) if runs and names else None
 
 

@@ -2374,6 +2374,7 @@ ROUTED = [
     ("ls | xargs -I{} sh -c 'echo {}' | sh", "pipe-to-shell", "while IFS= read"),
     ("sudo -n /usr/local/sbin/homelab-takeover-check --help 2>&1 | head -20", "sudo-boundary",
      "`takeover-check`"),
+    ("sudo -n /usr/local/sbin/homelab-rootq ufw", "sudo-boundary", "run `rootq`"),
     ("python3 -c 'from claude_guard.deny import deny; deny(\"cat ~/.aws/credentials\")'",
      "secret-read", "claude-guard replay"),
 ]  # fmt: skip
@@ -2426,6 +2427,12 @@ ROOTQ_REFUSE = [
     ("export HOMELAB_ROOTQ_SUDO=./fake; rootq ufw", "rootq-seam"),
     ('declare -x "HOMELAB_ROOTQ_""SUDO=./fake"; rootq nft', "rootq-seam"),
     ("S=SUDO; export HOMELAB_ROOTQ_$S=./fake; rootq nft", "rootq-seam"),
+    ('HOMELAB_ROOTQ_SUDO=./fake root""q ufw', "rootq-seam"),
+    # a payload another program runs as shell is one quoted word
+    ("ssh daniel-server 'HOMELAB_ROOTQ_SUDO=x rootq ufw'", "rootq-seam"),
+    ("bash -c 'HOMELAB_ROOTQ_SUDO=x rootq ufw'", "rootq-seam"),
+    ("env -S 'HOMELAB_ROOTQ_SUDO=x rootq ufw'", "rootq-seam"),
+    ('sh -c "export HOMELAB_ROOTQ_SUDO=x; rootq nft"', "rootq-seam"),
     ("sudo -n /usr/local/sbin/homelab-rootq ufw", "sudo-boundary"),
     ("rootq ufw > ~/.bashrc", "write-target"),
 ]

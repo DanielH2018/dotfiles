@@ -566,10 +566,6 @@ def test_the_real_template_allows_the_rootq_shim_by_either_name(real, command):
     assert allowed(command, real)
 
 
-def test_the_real_template_does_not_allow_the_rootq_script_through_sudo(real):
-    assert not allowed("sudo -n /usr/local/sbin/homelab-rootq ufw", real)
-
-
 def test_the_real_template_leaves_an_rm_below_root_or_home_to_the_rm_rules(real):
     # `rm -rf /*` extracted to the plain prefix `rm -rf /`, which never matched a deeper
     # path here; the over-match was Claude Code's own matcher. So the cleanup below pins
