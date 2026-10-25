@@ -3102,6 +3102,33 @@ TAKEOVER_CHECK_HINT = (
 )
 
 
+# --- rootq's sudo test seam (dotfiles #1050) --------------------------------------------------
+
+# The rootq shim (server#6323) runs `/usr/bin/sudo -n /usr/local/sbin/homelab-rootq`, and an
+# allow rule approves it by name. The shim also honours HOMELAB_ROOTQ_SUDO as a test seam that
+# names the program to run in place of sudo, so a command that sets it and runs rootq would run
+# any program with no prompt. The root-side script checks its own arguments, so this rule is
+# the only argument check the guard adds for rootq. The match is on text: any mention of the
+# name, or of a HOMELAB_ROOTQ prefix that a substitution could finish, refuses the command.
+ROOTQ_SEAM = "HOMELAB_ROOTQ_SUDO"
+ROOTQ_SEAM_MSG = (
+    "Blocked: HOMELAB_ROOTQ_SUDO is the rootq shim's test seam. It names the program the shim "
+    "runs in place of sudo, so setting it would run that program under rootq's allow rule. "
+    "Run `rootq` without it."
+)
+
+
+def rootq_seam(sc: Scan, target: str) -> Verdict | None:
+    words = _words(sc.command)
+    if words is None:
+        # Unparseable text fails closed on the name alone.
+        runs, names = "rootq" in sc.command, "HOMELAB_ROOTQ" in sc.command
+    else:
+        runs = any(posixpath.basename(w) == "rootq" for w in words)
+        names = "HOMELAB_ROOTQ" in sc.command or any(ROOTQ_SEAM in w for w in words)
+    return Verdict("deny", "rootq-seam", ROOTQ_SEAM_MSG) if runs and names else None
+
+
 # --- a changed PATH or code-loading variable ahead of an allow-listed tool ---------------------
 
 # DECIDED: one rule here, not a pinned shebang per tool. A session that can plant
@@ -3269,6 +3296,7 @@ RULES: tuple[Rule, ...] = (
     push_no_verify,
     config_write,
     machine_config_write,
+    rootq_seam,
     sudo_boundary,
 )
 

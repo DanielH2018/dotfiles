@@ -2408,6 +2408,45 @@ def test_the_sudo_tables_are_not_vacuous():
     assert not set(SUDO_REFUSE) & set(SUDO_PASS)
 
 
+# --- the rootq shim (#1050) --------------------------------------------------------------------
+
+# An allow rule approves the shim by name, and its root-side script checks every argument, so
+# the guard adds no argument filter. It refuses only the shim's sudo test seam, a direct sudo
+# of the root-side script, and its usual refusals.
+ROOTQ_PASS = [
+    "rootq stat /etc/netplan/x.yaml",
+    "rootq ufw",
+    "rootq matches PATH FILE",
+    "/usr/local/bin/rootq nft | head -40",
+    "rootq sshd 2>&1 | grep -i permitroot",
+]
+ROOTQ_REFUSE = [
+    ("HOMELAB_ROOTQ_SUDO=x rootq ufw", "rootq-seam"),
+    ("env HOMELAB_ROOTQ_SUDO=./fake /usr/local/bin/rootq ufw", "rootq-seam"),
+    ("export HOMELAB_ROOTQ_SUDO=./fake; rootq ufw", "rootq-seam"),
+    ('declare -x "HOMELAB_ROOTQ_""SUDO=./fake"; rootq nft', "rootq-seam"),
+    ("S=SUDO; export HOMELAB_ROOTQ_$S=./fake; rootq nft", "rootq-seam"),
+    ("sudo -n /usr/local/sbin/homelab-rootq ufw", "sudo-boundary"),
+    ("rootq ufw > ~/.bashrc", "write-target"),
+]
+
+
+@pytest.mark.parametrize("command", ROOTQ_PASS)
+def test_the_rootq_shim_with_its_arguments_is_no_decision(command):
+    assert d.deny(command, "", ENV) == d.NONE
+
+
+@pytest.mark.parametrize(("command", "rule"), ROOTQ_REFUSE)
+def test_the_rootq_seam_a_direct_sudo_and_a_protected_redirect_are_refused(command, rule):
+    v = d.deny(command, "", ENV)
+    assert (v.kind, v.rule) == ("deny", rule)
+
+
+def test_the_rootq_seam_named_without_rootq_is_no_decision():
+    # The server repo's own tests set the seam for their fake sudo, and run no rootq.
+    assert d.deny("HOMELAB_ROOTQ_SUDO=./fake ./rootq.sh ufw", "", ENV) == d.NONE
+
+
 # --- a changed PATH or code-loading variable ahead of an allow-listed tool --------------------
 
 TEMPLATE = REPO / "home" / ".chezmoitemplates" / "settings.permissions.json"

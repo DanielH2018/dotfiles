@@ -120,6 +120,16 @@
            tests/takeover-check.test.js pins the argv against a fake sudo. A passthrough
            argument would end this grant in the same commit. */}}
       "Bash(takeover-check:*)",
+      {{/* rootq (server#6323, installed on daniel-box and daniel-server) runs only
+           `/usr/bin/sudo -n /usr/local/sbin/homelab-rootq "$@"` against one NOPASSWD sudoers
+           line. The root-side script accepts a fixed set of read verbs, checks every path
+           against its own allowlist and redacts what it prints, so the shim is the boundary
+           and these rules filter no argument. The operator ruled on 2026-10-25 (dotfiles
+           #1050) that the shim is the only entry point: a direct `sudo … homelab-rootq` stays
+           refused by claude_guard's sudo-boundary rule, and its rootq-seam rule refuses a
+           command that sets the shim's HOMELAB_ROOTQ_SUDO test seam. */}}
+      "Bash(rootq:*)",
+      "Bash(/usr/local/bin/rootq:*)",
       {{/* secretq reads files the Read tool is refused, so its output is the boundary: it
            prints key names (from a file carrying SOPS metadata only), an exit status, the
            sha256 of a SOPS-ciphertext file, a kubeconfig's names and servers, or an ssh
