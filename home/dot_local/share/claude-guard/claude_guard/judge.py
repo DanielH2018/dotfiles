@@ -397,7 +397,7 @@ def _cd_to_session_worktree(part: str, project_dir: str) -> str | None:
     the shape the denials show; a subdirectory keeps the flag.
     """
     words = tokenize(part)
-    if len(words) != 2 or words[0] != "cd":
+    if words is None or len(words) != 2 or words[0] != "cd":
         return None
     target = words[1]
     if not target.startswith("/") or ".." in target.split("/"):

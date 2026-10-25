@@ -322,3 +322,14 @@ def test_cleanup_after_a_cd_to_the_worktree_root_needs_an_unbroken_and_run(repo,
         assert not judge(command, rules, roots, sub, wt).allow, command
         assert not judge(command, rules, roots, "", wt).allow, command
     assert not judge(f"cd {wt} && rm .git-pr-body.md", rules, roots, sub, main).allow
+
+
+def test_a_cd_whose_words_tokenize_refuses_is_refused_rather_than_raising(repo, tmp_path):
+    _, wt = repo
+    rules, roots = _ask_rules(tmp_path)
+    for command in [
+        "cd ~ && rm .git-pr-body.md",
+        'cd "$HOME" && rm .git-pr-body.md',
+        "cd /tmp 2>/dev/null && rm .git-pr-body.md",
+    ]:
+        assert not judge(command, rules, roots, wt, wt).allow, command
