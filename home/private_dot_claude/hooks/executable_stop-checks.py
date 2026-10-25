@@ -43,10 +43,6 @@ Checks:
       line does not. link-artifact.sh emits the link and tells the model where to put
       it; this is the half that checks where it went.
 
-  preamble (turn) -- daniel-voice.md "No preamble". The reply's first line opens with
-      a whole stock phrase ("Great question", "Sure!", "You're right"). A sentence that
-      only contains one of those words does not match.
-
   evidence-for-claims (turn) -- CLAUDE.md "evidence before claims". The reply says the
       tests pass or the linter is clean, outside a fence and not marked unverified, and
       no Bash command in the session looks like a test or lint run.
@@ -481,36 +477,6 @@ def artifact_link_last(turn: Turn) -> str | None:
     )
 
 
-# ------------------------------------------------------------------ preamble
-
-# Openers that only delay the answer. Each is a whole phrase at the very start of the
-# reply, so a sentence that merely contains "sure" or "great" never matches.
-PREAMBLE = re.compile(
-    r"^\W*(?:"
-    r"(?:great|good|excellent|interesting) question"
-    r"|(?:sure|certainly|absolutely|of course|okay|ok|alright|got it|understood)"
-    r"(?:\s+thing)?\s*[,.!:]"
-    r"|you'?re (?:absolutely |completely )?right\b"
-    r"|i'?d be (?:happy|glad) to\b"
-    r"|happy to help\b"
-    r"|great[,.!]"
-    r")",
-    re.I,
-)
-
-
-def preamble(turn: Turn) -> str | None:
-    first = next((ln for ln in turn.reply.splitlines() if ln.strip()), "")
-    found = PREAMBLE.match(first)
-    if not found:
-        return None
-    return (
-        f'Your reply opens with a preamble ("{found.group(0).strip()}"). The voice '
-        "rule is to lead with the outcome. Send the reply again without the opener, "
-        "starting from what happened or what you found."
-    )
-
-
 # ------------------------------------------------------------------ evidence-for-claims
 
 # A claim, and the Bash commands that count as having run the thing claimed. The
@@ -714,7 +680,6 @@ def migration(turn: Turn) -> str | None:
 CHECKS = [
     ("git-state", "turn", git_state),
     ("artifact-link-last", "turn", artifact_link_last),
-    ("preamble", "turn", preamble),
     ("evidence-for-claims", "turn", evidence_for_claims),
     ("tests-for-source", "session", tests_for_source),
     ("test-hygiene", "session", test_hygiene),

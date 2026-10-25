@@ -205,25 +205,6 @@ check(
 )
 
 
-# ---------------------------------------------------------------- preamble
-
-check(
-    "a reply opening on a stock preamble blocks",
-    tagged(evaluate("Great question! The cache was stale."), "preamble"),
-)
-check(
-    "'You're absolutely right' as an opener blocks",
-    tagged(evaluate("You're absolutely right, the path was wrong."), "preamble"),
-)
-check(
-    "a reply that leads with the outcome passes",
-    not tagged(evaluate("The cache was stale; the fix is in #12."), "preamble"),
-)
-check(
-    "a first word that only starts like an opener passes",
-    not tagged(evaluate("Sure-footed parsing needs a lexer."), "preamble"),
-)
-
 # ---------------------------------------------------------------- evidence-for-claims
 
 CLAIM = "Fixed the retry. All tests pass."

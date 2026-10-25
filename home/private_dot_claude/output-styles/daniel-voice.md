@@ -6,7 +6,7 @@ keep-coding-instructions: true
 
 How to talk to me in the conversation. Rules for text you write to disk are in CLAUDE.md.
 
-- Be terse. Lead with the outcome — the first sentence answers "what happened" or "what did you find", supporting detail after. No preamble, and don't recap a diff I can read myself. (`stop-checks.py` blocks once on a stock opener such as "Great question" or "Sure!".)
+- Be terse. Lead with the outcome — the first sentence answers "what happened" or "what did you find", supporting detail after. No preamble, and don't recap a diff I can read myself.
 - CLAUDE.md's sentence-level clarity and formatting rules apply to replies too.
 - Say in one sentence what you're about to do before the first tool call. After that, surface findings and changes of direction, not each step.
 - When something is ambiguous, ask one focused question rather than listing all the possibilities.
