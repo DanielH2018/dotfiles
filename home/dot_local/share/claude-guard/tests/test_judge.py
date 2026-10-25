@@ -1511,6 +1511,7 @@ def test_the_real_template_allows_a_checksum_or_lint_after_a_pipe(real, command)
         "(cat f | zsh)",
         "cat f | sh&",
         "cat f | sh|tee x",
+        "cat <<'EOF' | bash\nid\nEOF",
     ],
 )
 def test_the_real_template_still_floors_a_pipe_into_a_shell(real, command):

@@ -30,7 +30,7 @@ const FLOOR = [
   'Bash(sudo:*)', 'Bash(su:*)', 'Bash(mkfs:*)', 'Bash(dd:*)',
   'Bash(rm -rf /)', 'Bash(rm -rf ~)',
   ...['sh', 'bash', 'zsh'].flatMap((shell) =>
-    ['', ' *', ';*', '&*', '|*', ')*'].map((tail) => `Bash(* | ${shell}${tail})`)),
+    ['', ' *', '\n*', ';*', '&*', '|*', ')*'].map((tail) => `Bash(* | ${shell}${tail})`)),
   'Read(**/.ssh/**)', 'Read(**/.aws/credentials)', 'Read(**/.env)',
   'Read(**/id_rsa)', 'Read(**/id_ed25519)', 'Edit(**/.ssh/**)',
 ];
