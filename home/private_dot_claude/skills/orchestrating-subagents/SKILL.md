@@ -33,7 +33,10 @@ its subtask genuinely needs the stronger reasoning.
 **Every subagent brief carries:** one core objective; background on how it fits the whole; which tools
 to use (for internal questions, prefer internal MCP sources over the web); the expected output format;
 and a budget — roughly <5 tool calls (simple) / 5 / ~10 (hard) / up to 15, hard stop ~20. If every
-brief is followed, their union must fully answer the question.
+brief is followed, their union must fully answer the question. A brief for an agent spawned with `isolation: "worktree"` also says: start every compound
+Bash command with `cd <your worktree> &&`. The Claude Code binary refuses a loop, a heredoc,
+a `$(...)` or a variable expansion it cannot confine to the worktree, and the same command with
+that prefix passes (1,047 refusals across 99 sessions, 2026-10-16 to 2026-10-25).
 
 **Name the stop conditions, or the agent improvises past a wrong premise.** A brief that says
 what to do but never what makes the work impossible gets a confident report built on an
