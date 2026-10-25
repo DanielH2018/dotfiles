@@ -1751,11 +1751,12 @@ WRITE_TARGETS = (
 # `-M` and `-x` take the rest of the word as a value, so the letters before perl's `i`
 # leave those out: `-Mstrict` and `-Ilib` are not in-place edits (#1018). BSD sed on macOS
 # also edits in place with `-I`, whose suffix is the rest of the word or the next one
-# (`-I ''`, `-I.bak`); GNU sed has no `-I` (#1019).
+# (`-I ''`, `-I.bak`); GNU sed has no `-I` (#1019). GNU sed takes any unambiguous prefix of a
+# long option, and `--i` is already one of `--in-place`.
 BDB_INPLACE = (
     r"(sed\b[^;&|]*(^|[[:space:]])-[A-Za-z]*[iI]|"
     r"perl\b[^;&|]*(^|[[:space:]])-[a-cf-hj-ln-wyzABGHJ-LN-Z0-9]*i|"
-    r"(sed|perl)\b[^;&|]*(^|[[:space:]])--in-place|truncate\b|"
+    r"(sed|perl)\b[^;&|]*(^|[[:space:]])--i(n(-(p(l(a(ce?)?)?)?)?)?)?([=[:space:]]|$)|truncate\b|"
     r"dd\b[^;&|]*(^|[[:space:]])of=)"
 )
 # A redirect, or any file argument of tee (tee writes every file it names, not just the first).
@@ -1819,35 +1820,47 @@ def write_targets(sc: Scan, target: str) -> Verdict | None:
 _REDIRECT_WORD = re.compile(r"[0-9]*[<>|&]+")
 
 
+# GNU sed's long options that this code reads, each with its shortest unambiguous prefix:
+# getopt accepts `--in` for `--in-place`, and `--f` is ambiguous with `--follow-symlinks`.
+_SED_LONG = {"--expression": 3, "--file": 4, "--line-length": 3, "--in-place": 3}
+
+
+def _long_opt(word: str, full: str) -> bool:
+    """Whether the long option name `word` spells `full` or an unambiguous prefix of it."""
+    return len(word) >= _SED_LONG[full] and full.startswith(word)
+
+
 def _edit_operands(
     args: list[str], value_opts: str, script_opts: str, rest_opts: str, inplace_opts: str
-) -> tuple[list[str], bool]:
-    """The file operands of a sed or perl argv tail `args`, and whether an option word asks
-    for an in-place edit. The operands are the positional words, less the first when no
-    option carried the script. In a short-option cluster, a letter in `value_opts` takes the
-    rest of the word or the next one as its value, and one in `script_opts` also marks the
-    script as given. A letter in `rest_opts` takes the rest of the word (`-i.bak`, `-0777`).
-    A letter in `inplace_opts`, or `--in-place`, is an in-place edit. A word that is a bare
-    in-place letter, such as sed's `-i`, takes a following empty word as BSD's backup suffix
-    (`-i ''`). GNU sed would read that empty word as the script instead, which edits nothing.
-    A redirect and its target are not operands."""
-    positional: list[str] = []
+) -> tuple[list[int], bool]:
+    """The indices into a sed or perl argv tail `args` of its file operands, and whether an
+    option word asks for an in-place edit. The operands are the positional words, less the
+    first when no option carried the script. In a short-option cluster, a letter in
+    `value_opts` takes the rest of the word or the next one as its value, and one in
+    `script_opts` also marks the script as given. A letter in `rest_opts` takes the rest of
+    the word (`-i.bak`, `-0777`). A letter in `inplace_opts`, or `--in-place`, is an in-place
+    edit. A long option may be abbreviated, as getopt allows (`_long_opt`). A word that is a
+    bare in-place letter, such as sed's `-i`, takes a following empty word as BSD's backup
+    suffix (`-i ''`). GNU sed would read that empty word as the script instead, which edits
+    nothing. A redirect and its target are not operands."""
+    positional: list[int] = []
     script = False
     inplace = False
     i = 0
     while i < len(args):
         w = args[i]
         if w == "--":
-            positional += args[i + 1 :]
+            positional += range(i + 1, len(args))
             break
         if _REDIRECT_WORD.fullmatch(w):
             i += 2
             continue
         if w.startswith("--"):
             name = w.split("=", 1)[0]
-            script |= name in ("--expression", "--file")
-            inplace |= name == "--in-place"
-            i += 2 if name == w and name in ("--expression", "--file", "--line-length") else 1
+            given = {full for full in _SED_LONG if _long_opt(name, full)}
+            script |= bool(given & {"--expression", "--file"})
+            inplace |= "--in-place" in given
+            i += 2 if name == w and given - {"--in-place"} else 1
             continue
         if w.startswith("-") and len(w) > 1:
             for j, c in enumerate(w[1:], 1):
@@ -1862,7 +1875,7 @@ def _edit_operands(
                     break
             i += 1
             continue
-        positional.append(w)
+        positional.append(i)
         i += 1
     return (positional if script else positional[1:]), inplace
 
@@ -1889,16 +1902,17 @@ def _inplace_edits_only_safe_files(command: str) -> bool:
         argv = _argv(words) if words else []
         name = posixpath.basename(argv[0]) if argv else ""
         if name == "sed":
-            files, inplace = _edit_operands(argv[1:], "eflI", "ef", "i", "iI")
+            operands, inplace = _edit_operands(argv[1:], "eflI", "ef", "i", "iI")
             # Without an in-place option sed writes only through its script, so the words
-            # other than the files it reads are the ones checked.
+            # other than the files it reads are the ones checked. They are told apart by
+            # position, since a script word can repeat an operand's text.
             if not inplace:
-                files = [w for w in argv[1:] if w not in files]
+                operands = [k for k in range(len(argv) - 1) if k not in operands]
         elif name == "perl":
-            files, _ = _edit_operands(argv[1:], "eE", "eE", "iIMmx0ld", "i")
+            operands, _ = _edit_operands(argv[1:], "eE", "eE", "iIMmx0ld", "i")
         else:
             return False
-        if any(bdb_re(f, WRITE_TARGETS) for f in files):
+        if any(bdb_re(argv[1 + k], WRITE_TARGETS) for k in operands):
             return False
         cleared = True
     return cleared

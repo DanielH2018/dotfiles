@@ -1214,6 +1214,11 @@ WRITE_DENY = [
     'sed -i "s/$(cat ansible/vars/secrets.yml)/x/" docs/a.md',
     # a sed with no in-place option still writes through its script's `w` command (#1035)
     "sed -n '/ -i/w ansible/vars/secrets.yml' docs/a.md",
+    "sed -n '/ -i/w ansible/vars/secrets.yml' '/ -i/w ansible/vars/secrets.yml'",
+    # GNU sed takes an unambiguous prefix of a long option (#1035)
+    "sed --in-pl 's/ -i/x/' ansible/vars/secrets.yml",
+    "sed --in-pla=.bak s/a/x/ ansible/vars/secrets.yml",
+    "sed -i --expr=s/a/b/ ansible/vars/secrets.yml",
 ]
 WRITE_ALLOW = [
     # a Jinja template renders a manifest at deploy, as `<name>.env.j2` does (2026-10-24)
