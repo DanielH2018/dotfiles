@@ -84,12 +84,22 @@ function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', env: CLEAN_ENV }).trim();
 }
 
+// land refuses a cwd outside its own repository (#1005), so each fixture commits its own
+// copy of the scripts and the tests run that copy. Committed, not left untracked: an
+// untracked file would trip the dirty-worktree refusal first.
+const SCRIPTS = ['land', 'land-sync', path.join('lib', 'repo-lock.sh'), path.join('lib', 'own-repo.sh')];
+function installScripts(dir) {
+  fs.mkdirSync(path.join(dir, 'bin', 'lib'), { recursive: true });
+  for (const f of SCRIPTS) fs.copyFileSync(repoPath('bin', f), path.join(dir, 'bin', f));
+}
+
 function makeRepo() {
   const dir = scratch(os.tmpdir(), 'land-repo-');
   git(dir, 'init', '-q', '-b', 'main');
   git(dir, 'config', 'user.email', 't@example.test');
   git(dir, 'config', 'user.name', 'Test');
   fs.writeFileSync(path.join(dir, 'README'), 'x\n');
+  installScripts(dir);
   git(dir, 'add', '-A');
   git(dir, 'commit', '-qm', 'init');
   git(dir, 'checkout', '-qb', 'feature');
@@ -111,6 +121,7 @@ function makeRepoWithOrigin() {
   git(dir, 'config', 'user.email', 't@example.test');
   git(dir, 'config', 'user.name', 'Test');
   fs.writeFileSync(path.join(dir, 'README'), 'x\n');
+  installScripts(dir);
   git(dir, 'add', '-A');
   git(dir, 'commit', '-qm', 'init');
   git(dir, 'remote', 'add', 'origin', origin);
@@ -131,11 +142,11 @@ const remoteHas = (dir, branch) => git(dir, 'ls-remote', '--heads', 'origin', br
 // 60s one; the test that exercises the wait sets its own.
 function land(cwd, args = [], {
   pr = '7', draft = 'false', state = 'MERGED', openFor = '0', lock = null,
-  deadline = '0', stubs = null, check = 'success',
+  deadline = '0', stubs = null, check = 'success', script = path.join(cwd, 'bin', 'land'),
 } = {}) {
   const calls = path.join(cwd, '.gh-calls');
   const probe = { held: path.join(cwd, '.lock-probe'), pid: path.join(cwd, '.daemon-pid') };
-  const r = run('bash', [LAND, ...args], {
+  const r = run('bash', [script, ...args], {
     cwd,
     env: {
       ...CLEAN_ENV, PATH: `${stubs ? `${stubs}:` : ''}${BIN}:${CLEAN_ENV.PATH}`,
@@ -352,10 +363,26 @@ test('lands from a linked worktree while the primary holds main', { skip }, () =
   const wt = path.join(base, 'wt');
   git(dir, 'worktree', 'add', '-q', wt, 'feature');
 
-  const r = land(wt, [], { draft: 'true' });
+  // The primary checkout's copy, not the worktree's: another worktree of the same
+  // repository shares its common dir, so the foreign-repo refusal must not fire.
+  const r = land(wt, [], { draft: 'true', script: path.join(dir, 'bin', 'land') });
   assert.strictEqual(r.code, 0, r.stderr);
   assert.match(r.stdout, /landed feature/);
   assert.ok(!remoteHas(dir, 'feature'), 'origin still holds the landed branch');
+});
+
+// #1005: run by its absolute path from a server worktree, land picked up that repo's
+// branch and PR and fetched its remote. The fixture has an origin/main, so without the
+// refusal this run lands the scratch branch onto it.
+test('refuses to land a repository other than its own checkout', { skip }, () => {
+  const { dir, origin } = makeRepoWithOrigin();
+  const mainBefore = execFileSync('git', ['--git-dir', origin, 'rev-parse', 'main'], { encoding: 'utf8', env: CLEAN_ENV }).trim();
+  const r = land(dir, [], { draft: 'true', script: LAND });
+  assert.strictEqual(r.code, 1, r.stdout);
+  assert.match(r.stderr, /a different repository from this script's/);
+  assert.doesNotMatch(r.stdout, /landing feature/);
+  assert.strictEqual(execFileSync('git', ['--git-dir', origin, 'rev-parse', 'main'], { encoding: 'utf8', env: CLEAN_ENV }).trim(), mainBefore, 'main moved');
+  assert.ok(!fs.existsSync(r.calls), 'land made a state-changing gh call');
 });
 
 // --- the lock fd -------------------------------------------------------------

@@ -54,9 +54,13 @@ say() { printf '  %s\n' "$1"; }
 
 # shellcheck source=bin/lib/repo-lock.sh
 . "${BASH_SOURCE[0]%/*}/lib/repo-lock.sh" || die "cannot load lib/repo-lock.sh"
+# shellcheck source=bin/lib/own-repo.sh
+. "${BASH_SOURCE[0]%/*}/lib/own-repo.sh" || die "cannot load lib/own-repo.sh"
 
 command -v gh >/dev/null 2>&1 || die "gh is required (it does the merge)"
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not in a git repo"
+# Land the cwd's branch only when the cwd is in this script's own repository (#1005).
+require_own_repo "${BASH_SOURCE[0]}"
 
 ROOT=$(git rev-parse --show-toplevel) || exit 1
 CURRENT=$(git rev-parse --abbrev-ref HEAD) || exit 1

@@ -49,6 +49,12 @@ function makeFixture() {
   git(primary, 'config', 'user.name', 'Test');
   fs.mkdirSync(path.join(primary, 'home'));
   fs.writeFileSync(path.join(primary, 'home', 'dot_file'), 'before\n');
+  // land-sync refuses a cwd outside its own repository (#1005), so the fixture commits
+  // its own copy and the tests run that.
+  fs.mkdirSync(path.join(primary, 'bin', 'lib'), { recursive: true });
+  for (const f of ['land-sync', path.join('lib', 'repo-lock.sh'), path.join('lib', 'own-repo.sh')]) {
+    fs.copyFileSync(repoPath('bin', f), path.join(primary, 'bin', f));
+  }
   git(primary, 'add', '-A');
   git(primary, 'commit', '-qm', 'init');
   git(primary, 'remote', 'add', 'origin', origin);
@@ -69,7 +75,9 @@ function makeFixture() {
   return { base, origin, primary, wt, landedTip };
 }
 
-const landSync = (cwd, args = []) => run('bash', [LAND_SYNC, ...args], { cwd, env: CLEAN_ENV });
+// Runs the copy checked out in cwd unless `script` names another.
+const landSync = (cwd, args = [], script = path.join(cwd, 'bin', 'land-sync')) =>
+  run('bash', [script, ...args], { cwd, env: CLEAN_ENV });
 
 test('fast-forwards the primary onto origin/main when it is on main', { skip }, () => {
   const f = makeFixture();
@@ -129,4 +137,16 @@ test('--dry-run prints the plan and moves nothing', { skip }, () => {
   assert.strictEqual(r.code, 0, r.stderr);
   assert.match(r.stdout, /merge --ff-only origin\/main/);
   assert.strictEqual(git(f.primary, 'rev-parse', 'main'), before, 'main moved on a dry run');
+});
+
+// #1005: from another repository's worktree, land-sync would fast-forward THAT repo's
+// primary checkout onto its origin/main.
+test('refuses to sync a repository other than its own checkout', { skip }, () => {
+  const f = makeFixture();
+  const before = git(f.primary, 'rev-parse', 'main');
+
+  const r = landSync(f.wt, [], LAND_SYNC);
+  assert.strictEqual(r.code, 1, r.stdout);
+  assert.match(r.stderr, /a different repository from this script's/);
+  assert.strictEqual(git(f.primary, 'rev-parse', 'main'), before, 'the foreign primary moved');
 });

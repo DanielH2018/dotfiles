@@ -47,8 +47,12 @@ say() { printf '  %s\n' "$1"; }
 
 # shellcheck source=bin/lib/repo-lock.sh
 . "${BASH_SOURCE[0]%/*}/lib/repo-lock.sh" || die "cannot load lib/repo-lock.sh"
+# shellcheck source=bin/lib/own-repo.sh
+. "${BASH_SOURCE[0]%/*}/lib/own-repo.sh" || die "cannot load lib/own-repo.sh"
 
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not in a git repo"
+# Sync only the repository this script belongs to (#1005).
+require_own_repo "${BASH_SOURCE[0]}"
 
 # git lists the primary checkout first, always — so this works identically from the
 # primary and from any worktree, and it beats a hardcoded ~/.local/share/chezmoi,
