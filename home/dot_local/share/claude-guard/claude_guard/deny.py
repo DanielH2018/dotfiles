@@ -3112,26 +3112,59 @@ ROOTQ_HINT = " To read root-only host state, run `rootq` with the same arguments
 # allow rule approves it by name. The shim also honours HOMELAB_ROOTQ_SUDO as a test seam that
 # names the program to run in place of sudo, so a command that sets it and runs rootq would run
 # any program with no prompt. The root-side script checks its own arguments, so this rule is
-# the only argument check the guard adds for rootq. The match is on text, so a payload that
-# `ssh`, `bash -c` or `env -S` runs is covered too: a command that names rootq and mentions
-# the seam, or a HOMELAB_ROOTQ prefix a substitution could finish, is refused. The shlex words
-# add the spellings a quote splits, such as `root""q`.
+# the only argument check the guard adds for rootq. It refuses a command that runs rootq and
+# mentions the seam, or a HOMELAB_ROOTQ prefix a substitution could finish. Runs means rootq is
+# a command word, the command an executor, ssh or a shell runs, or the same inside a quoted
+# payload such as `bash -c '…'`, so a search for the seam in the server repo's rootq files is
+# not refused.
 ROOTQ_SEAM = "HOMELAB_ROOTQ_SUDO"
-_ROOTQ_WORD = re.compile(r"(?<![\w-])rootq(?![\w.-])")
 ROOTQ_SEAM_MSG = (
     "Blocked: HOMELAB_ROOTQ_SUDO is the rootq shim's test seam. It names the program the shim "
     "runs in place of sudo, so setting it would run that program under rootq's allow rule. "
     "Run `rootq` without it."
 )
+# Programs whose later words can be the command they run.
+_ROOTQ_LAUNCHERS = _EXECUTORS | _SHELLS | {"ssh"}
+
+
+def _runs_rootq(command: str, depth: int = 0) -> bool:
+    p = parse(command)
+    if not p.ok:
+        # Fails closed: unparseable text counts when it names rootq at all.
+        return "rootq" in command
+    for seg in p.segments:
+        words = _words(seg.text)
+        if words is None:
+            if "rootq" in seg.text:
+                return True
+            continue
+        argv = _command_words(words)
+        while argv and _assigned(argv[0]):
+            argv = argv[1:]
+        if argv and argv[0] == "env":
+            argv = _past_env(argv)[1] or argv
+        if not argv:
+            continue
+        if posixpath.basename(argv[0]) == "rootq":
+            return True
+        if posixpath.basename(argv[0]) in _ROOTQ_LAUNCHERS and any(
+            posixpath.basename(w) == "rootq" for w in argv[1:]
+        ):
+            return True
+        # A word holding a space or a separator is a payload some program may run as shell.
+        if depth < 3 and any(
+            _runs_rootq(w, depth + 1) for w in argv[1:] if any(c in w for c in " \t\n;&|")
+        ):
+            return True
+    return False
 
 
 def rootq_seam(sc: Scan, target: str) -> Verdict | None:
-    words = _words(sc.command) or []
-    runs = bool(_ROOTQ_WORD.search(sc.command)) or any(
-        posixpath.basename(w) == "rootq" for w in words
-    )
-    names = "HOMELAB_ROOTQ" in sc.command or any(ROOTQ_SEAM in w for w in words)
-    return Verdict("deny", "rootq-seam", ROOTQ_SEAM_MSG) if runs and names else None
+    if "HOMELAB_ROOTQ" not in sc.command and not any(
+        ROOTQ_SEAM in w for w in _words(sc.command) or []
+    ):
+        return None
+    return Verdict("deny", "rootq-seam", ROOTQ_SEAM_MSG) if _runs_rootq(sc.command) else None
 
 
 # --- a changed PATH or code-loading variable ahead of an allow-listed tool ---------------------

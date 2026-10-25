@@ -2433,6 +2433,8 @@ ROOTQ_REFUSE = [
     ("bash -c 'HOMELAB_ROOTQ_SUDO=x rootq ufw'", "rootq-seam"),
     ("env -S 'HOMELAB_ROOTQ_SUDO=x rootq ufw'", "rootq-seam"),
     ('sh -c "export HOMELAB_ROOTQ_SUDO=x; rootq nft"', "rootq-seam"),
+    ("ssh daniel-server HOMELAB_ROOTQ_SUDO=x rootq ufw", "rootq-seam"),
+    ("HOMELAB_ROOTQ_SUDO=x timeout 5 rootq ufw", "rootq-seam"),
     ("sudo -n /usr/local/sbin/homelab-rootq ufw", "sudo-boundary"),
     ("rootq ufw > ~/.bashrc", "write-target"),
 ]
@@ -2449,9 +2451,21 @@ def test_the_rootq_seam_a_direct_sudo_and_a_protected_redirect_are_refused(comma
     assert (v.kind, v.rule) == ("deny", rule)
 
 
-def test_the_rootq_seam_named_without_rootq_is_no_decision():
-    # The server repo's own tests set the seam for their fake sudo, and run no rootq.
-    assert d.deny("HOMELAB_ROOTQ_SUDO=./fake ./rootq.sh ufw", "", ENV) == d.NONE
+# A session working on the server repo's rootq role searches for the seam and runs the shim's
+# tests with it set, and runs no rootq.
+ROOTQ_SEAM_PASS = [
+    "HOMELAB_ROOTQ_SUDO=./fake ./rootq.sh ufw",
+    "grep -rn HOMELAB_ROOTQ_SUDO roles/rootq/",
+    "rg HOMELAB_ROOTQ_SUDO ansible/roles/claude_code/files/rootq",
+    "git log -S HOMELAB_ROOTQ_SUDO -- files/rootq",
+    "HOMELAB_ROOTQ_SUDO=./fake bats tests/rootq",
+    "grep -n rootq README.md # HOMELAB_ROOTQ",
+]
+
+
+@pytest.mark.parametrize("command", ROOTQ_SEAM_PASS)
+def test_the_rootq_seam_named_without_running_rootq_is_no_decision(command):
+    assert d.deny(command, "", ENV) == d.NONE
 
 
 # --- a changed PATH or code-loading variable ahead of an allow-listed tool --------------------
