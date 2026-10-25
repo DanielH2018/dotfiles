@@ -222,6 +222,7 @@ const CITATION = /(?:^|[^/A-Za-z0-9_.-])([A-Za-z0-9_][A-Za-z0-9_.-]*\.(?:sh|py))
 const NOT_A_HOOK = {
   'allow-readonly-remote.sh': 'deleted in the claude-guard slice 3 cutover; homelab/SKILL.md cites it as what judge() ported',
   'conftest.py': 'pytest\'s own filename, in rules/python.md',
+  'fanout.py': 'the server repo\'s fan-out entry point, in CLAUDE.md.tmpl\'s review-stage exemption (#837)',
   'install.sh': 'the work-laptop-config repo\'s installer',
   'land.sh': 'the server repo\'s merge tool, in pr-authoring/SKILL.md',
   'probe.py': 'the server repo\'s diagnostics entry point',
