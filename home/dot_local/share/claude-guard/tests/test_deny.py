@@ -1191,6 +1191,9 @@ WRITE_DENY = [
     # perl reads the rest of the `-i` word as the backup suffix too (#1018)
     "perl -pi~ -e s/a/b/ ~/.zshrc",
     "perl -i~ -pe s/a/b/ ~/.zshrc",
+    # BSD sed on macOS edits in place with `-I` too (#1019)
+    "sed -I '' s/a/b/ ansible/vars/secrets.yml",
+    "sed -I.bak s/a/b/ ansible/vars/secrets.yml",
     "sed --in-place s/a/b/ ansible/vars/secrets.yml",
     "perl -pi -e s/a/b/ ansible/vars/secrets.yml",
     "truncate -s 0 ansible/vars/secrets.yml",
@@ -1220,6 +1223,8 @@ WRITE_ALLOW = [
     "sed -i -e 's#a/env-secret.yaml#b#g' -e 's#c#d#' tests/test_x.py",
     "sed -i 's#ansible/vars/secrets.yml#x#' docs/a.md && sed -n 1,4p docs/a.md",
     "perl -pi -e 's/secrets.yml/x/' docs/a.md",
+    # BSD sed's `-I` takes the next word as its suffix, so the word after `''` is the script
+    "sed -I '' 's/secrets.yml/x/' docs/a.md",
     # `-M` and `-I` take the rest of the word as a value, so no `i` in it is `-i` (#1018)
     "perl -Mstrict -Ilib -e 1 ansible/vars/secrets.yml",
     "make build > build.log 2>&1",

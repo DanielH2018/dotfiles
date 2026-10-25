@@ -1749,9 +1749,11 @@ WRITE_TARGETS = (
 # with suffix `e` (#1003), and sed's `-i` matches whatever follows it. perl reads its `-i`
 # suffix the same way (`-pi~`), but its `-C`, `-d`, `-D`, `-e`, `-E`, `-F`, `-I`, `-m`,
 # `-M` and `-x` take the rest of the word as a value, so the letters before perl's `i`
-# leave those out: `-Mstrict` and `-Ilib` are not in-place edits (#1018).
+# leave those out: `-Mstrict` and `-Ilib` are not in-place edits (#1018). BSD sed on macOS
+# also edits in place with `-I`, whose suffix is the rest of the word or the next one
+# (`-I ''`, `-I.bak`); GNU sed has no `-I` (#1019).
 BDB_INPLACE = (
-    r"(sed\b[^;&|]*(^|[[:space:]])-[A-Za-z]*i|"
+    r"(sed\b[^;&|]*(^|[[:space:]])-[A-Za-z]*[iI]|"
     r"perl\b[^;&|]*(^|[[:space:]])-[a-cf-hj-ln-wyzABGHJ-LN-Z0-9]*i|"
     r"(sed|perl)\b[^;&|]*(^|[[:space:]])--in-place|truncate\b|"
     r"dd\b[^;&|]*(^|[[:space:]])of=)"
@@ -1874,7 +1876,7 @@ def _inplace_edits_only_safe_files(command: str) -> bool:
         argv = _argv(words) if words else []
         name = posixpath.basename(argv[0]) if argv else ""
         if name == "sed":
-            files = _edit_operands(argv[1:], "efl", "ef", "i")
+            files = _edit_operands(argv[1:], "eflI", "ef", "i")
         elif name == "perl":
             files = _edit_operands(argv[1:], "eE", "eE", "iIMmx0ld")
         else:
