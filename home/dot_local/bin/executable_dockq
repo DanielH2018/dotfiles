@@ -30,19 +30,44 @@ What makes a blanket `Bash(dockq:*)` allow rule defensible is construction:
   dockq inspect claude-otel-loki-1 --field state --field ports
   dockq compose -p claude-otel logs loki --tail 100
   dockq manifest inspect grafana/loki:3.4.2
+  dockq tags ghcr.io/home-assistant/home-assistant
+  dockq digest grafana/loki:3.4.2
+  dockq digest library/postgres:17 --registry localhost:5002
 
-docker's exit status is dockq's exit status. A refusal dockq raises itself
-exits 2.
+`tags` and `digest` do not use docker. They ask a registry directly over HTTP,
+which makes them a network client on the unsandboxed path, so they are confined
+by construction as well:
+
+  - The registry is one of a closed set: ghcr.io, Docker Hub, or a loopback
+    `host:port` given with `--registry` (the local mirror). Any other host is
+    refused before a request is sent.
+  - Requests are GET or HEAD only. The token endpoint is pinned per public
+    registry, and for a loopback registry it must be on the same host:port, so
+    a `WWW-Authenticate` challenge cannot point dockq anywhere else.
+  - Redirects are not followed, no proxy is used whatever HTTPS_PROXY says, and
+    tag-list pagination follows only the same tag-list path on the same registry.
+  - The flow is anonymous. dockq never reads docker's credential store, and the
+    only Authorization header it sends is the pull token it just fetched.
+  - A repository, tag or digest is checked against the OCI reference grammar
+    before it goes into a URL.
+
+For docker verbs, docker's exit status is dockq's exit status. A registry
+request that fails exits 1. A refusal dockq raises itself exits 2.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import pwd
 import re
 import subprocess
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 
 PROG = "dockq"
 
@@ -83,6 +108,44 @@ INSPECT_FIELDS = {
     "platform": ".Platform",
 }
 DEFAULT_FIELDS = ("name", "image", "state", "restart_count", "ports")
+
+
+# Registries `tags` and `digest` may reach, as name -> (base URL, token realm,
+# token service). The realm is pinned rather than read from the challenge, so a
+# response cannot choose where dockq sends its next request.
+REGISTRIES = {
+    "ghcr.io": ("https://ghcr.io", "https://ghcr.io/token", "ghcr.io"),
+    "docker.io": (
+        "https://registry-1.docker.io",
+        "https://auth.docker.io/token",
+        "registry.docker.io",
+    ),
+}
+_REGISTRY_ALIASES = {
+    "registry-1.docker.io": "docker.io",
+    "index.docker.io": "docker.io",
+}
+# A loopback mirror such as localhost:5002. Plain HTTP, because that is how a
+# local registry:2 listens, and the request never leaves the machine.
+_LOOPBACK = re.compile(r"^(localhost|127\.0\.0\.1|\[::1\]):[0-9]{1,5}$")
+_REPO_PART = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
+_REPO = re.compile(rf"^{_REPO_PART}(?:/{_REPO_PART})*$")
+_TAG = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$")
+_DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
+# The manifest types a HEAD accepts. The index and list types come first: without
+# them a registry answers with one platform's manifest, whose digest is not the
+# one `docker pull` or a compose pin shows.
+MANIFEST_ACCEPT = ", ".join(
+    (
+        "application/vnd.oci.image.index.v1+json",
+        "application/vnd.docker.distribution.manifest.list.v2+json",
+        "application/vnd.oci.image.manifest.v1+json",
+        "application/vnd.docker.distribution.manifest.v2+json",
+    )
+)
+HTTP_TIMEOUT = 20
+MAX_TAG_PAGES = 20
+MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 
 
 class DockqError(Exception):
@@ -171,6 +234,194 @@ def build(ns) -> list[str]:
     )
 
 
+class RegistryError(Exception):
+    """A registry request that failed; dockq exits 1."""
+
+
+class Registry:
+    """One registry dockq may reach, and the pull token it holds for one repository."""
+
+    def __init__(self, base: str, realm: str | None, service: str | None):
+        self.base = base
+        self.netloc = urllib.parse.urlsplit(base).netloc
+        self.realm = realm
+        self.service = service
+        self.token: str | None = None
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+# An empty ProxyHandler stops urllib reading HTTP(S)_PROXY, so an environment
+# prefix cannot route a request through a host of the caller's choosing.
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
+
+
+def registry_for(host: str) -> Registry:
+    host = _REGISTRY_ALIASES.get(host, host)
+    if host in REGISTRIES:
+        return Registry(*REGISTRIES[host])
+    if _LOOPBACK.match(host):
+        # The realm comes from the challenge and must be on this same host:port.
+        return Registry(f"http://{host}", None, None)
+    raise DockqError(
+        f"refusing registry {host!r}: only ghcr.io, docker.io or a loopback host:port"
+    )
+
+
+def parse_ref(ref: str, registry: str | None, *, want_reference: bool):
+    """Split `[host/]repo[:tag|@digest]` into (Registry, repo, reference)."""
+    host = None
+    first, sep, rest = ref.partition("/")
+    if sep and ("." in first or ":" in first or first == "localhost"):
+        host, ref = first, rest
+    if (
+        host
+        and registry
+        and (
+            _REGISTRY_ALIASES.get(host, host)
+            != _REGISTRY_ALIASES.get(registry, registry)
+        )
+    ):
+        raise DockqError(
+            f"refusing {host!r} in the reference with --registry {registry!r}"
+        )
+    reg = registry_for(host or registry or "docker.io")
+    reference = None
+    if "@" in ref:
+        ref, reference = ref.split("@", 1)
+        _check(_DIGEST, reference, "digest")
+    elif ":" in ref:
+        ref, reference = ref.rsplit(":", 1)
+        _check(_TAG, reference, "tag")
+    if reference and not want_reference:
+        raise DockqError(f"refusing a tag or digest on a repository: {reference!r}")
+    _check(_REPO, ref, "repository")
+    if reg.netloc == "registry-1.docker.io" and "/" not in ref:
+        ref = f"library/{ref}"
+    return reg, ref, reference or ("latest" if want_reference else None)
+
+
+def _challenge(header: str) -> dict:
+    scheme, _, params = header.partition(" ")
+    if scheme.lower() != "bearer":
+        raise RegistryError(f"unsupported auth challenge {header!r}")
+    return dict(re.findall(r'(\w+)="([^"]*)"', params))
+
+
+def _fetch_token(reg: Registry, repo: str, challenge: dict) -> str:
+    realm, service = reg.realm, reg.service
+    if realm is None:
+        realm = challenge.get("realm", "")
+        parts = urllib.parse.urlsplit(realm)
+        if parts.scheme not in ("http", "https") or parts.netloc != reg.netloc:
+            raise DockqError(f"refusing token realm {realm!r}: not on {reg.netloc}")
+        service = challenge.get("service")
+    query = {"scope": f"repository:{repo}:pull"}
+    if service:
+        query["service"] = service
+    try:
+        with _open(
+            urllib.request.Request(f"{realm}?{urllib.parse.urlencode(query)}")
+        ) as r:
+            body = json.load(r)
+    except urllib.error.HTTPError as exc:
+        raise RegistryError(f"HTTP {exc.code} for token {realm}") from None
+    token = body.get("token") or body.get("access_token")
+    if not token:
+        raise RegistryError(f"no token from {realm}")
+    return token
+
+
+def _open(req: urllib.request.Request):
+    req.add_header("User-Agent", PROG)
+    try:
+        return _OPENER.open(req, timeout=HTTP_TIMEOUT)
+    except urllib.error.HTTPError:
+        raise
+    except (urllib.error.URLError, OSError) as exc:
+        raise RegistryError(f"{req.get_method()} {req.full_url}: {exc}") from None
+
+
+def registry_request(reg: Registry, repo: str, method: str, path: str, accept=None):
+    """GET or HEAD `path` on `reg`, answering one bearer challenge anonymously."""
+    while True:
+        req = urllib.request.Request(reg.base + path, method=method)
+        if accept:
+            req.add_header("Accept", accept)
+        if reg.token:
+            req.add_header("Authorization", f"Bearer {reg.token}")
+        try:
+            return _open(req)
+        except urllib.error.HTTPError as exc:
+            if exc.code != 401 or reg.token:
+                raise RegistryError(
+                    f"HTTP {exc.code} for {method} {req.full_url}"
+                ) from None
+            reg.token = _fetch_token(
+                reg, repo, _challenge(exc.headers.get("WWW-Authenticate", ""))
+            )
+
+
+def _next_page(link: str | None, path: str) -> str | None:
+    m = re.match(r'\s*<([^>]+)>\s*;\s*rel="?next"?', link or "")
+    if not m:
+        return None
+    nxt = urllib.parse.urlsplit(m.group(1))
+    # Only the same tag list on the same registry; never another path or host.
+    if nxt.scheme or nxt.netloc or nxt.path != path:
+        return None
+    return f"{nxt.path}?{nxt.query}" if nxt.query else nxt.path
+
+
+def list_tags(ns) -> list[str]:
+    reg, repo, _ = parse_ref(ns.repo, ns.registry, want_reference=False)
+    path = f"/v2/{repo}/tags/list"
+    url, tags = f"{path}?n=1000", []
+    for _ in range(MAX_TAG_PAGES):
+        with registry_request(reg, repo, "GET", url) as resp:
+            tags.extend(json.load(resp).get("tags") or [])
+            url = _next_page(resp.headers.get("Link"), path)
+        if url is None:
+            return tags
+    print(f"{PROG}: stopped after {MAX_TAG_PAGES} pages", file=sys.stderr)
+    return tags
+
+
+def manifest_digest(ns) -> str:
+    reg, repo, reference = parse_ref(ns.ref, ns.registry, want_reference=True)
+    path = f"/v2/{repo}/manifests/{reference}"
+    with registry_request(reg, repo, "HEAD", path, MANIFEST_ACCEPT) as resp:
+        digest = resp.headers.get("Docker-Content-Digest")
+    if digest and _DIGEST.match(digest):
+        return digest
+    # A registry may leave the header off a HEAD. The digest is then the hash of
+    # the manifest bytes exactly as served.
+    with registry_request(reg, repo, "GET", path, MANIFEST_ACCEPT) as resp:
+        body = resp.read(MAX_MANIFEST_BYTES + 1)
+    if len(body) > MAX_MANIFEST_BYTES:
+        raise RegistryError(f"manifest over {MAX_MANIFEST_BYTES} bytes")
+    return "sha256:" + hashlib.sha256(body).hexdigest()
+
+
+def registry_main(ns) -> int:
+    try:
+        if ns.cmd == "tags":
+            tags = list_tags(ns)
+            print(json.dumps(tags) if ns.json else "\n".join(tags))
+        else:
+            print(manifest_digest(ns))
+    except DockqError as exc:
+        print(f"{PROG}: {exc}", file=sys.stderr)
+        return 2
+    except RegistryError as exc:
+        print(f"{PROG}: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=PROG, description="Read Docker state (closed set of read verbs)."
@@ -209,6 +460,22 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("verb", choices=("inspect",))
     p.add_argument("image")
 
+    on_registry = argparse.ArgumentParser(add_help=False)
+    on_registry.add_argument(
+        "--registry",
+        help="ghcr.io, docker.io, or a loopback host:port such as localhost:5002",
+    )
+    p = sub.add_parser(
+        "tags",
+        parents=[as_json, on_registry],
+        help="a repository's tags, from its registry",
+    )
+    p.add_argument("repo", help="[host/]repository, e.g. ghcr.io/owner/image")
+    p = sub.add_parser(
+        "digest", parents=[on_registry], help="the manifest digest a tag resolves to"
+    )
+    p.add_argument("ref", help="[host/]repository[:tag|@digest], default tag latest")
+
     compose = sub.add_parser("compose", help="compose ps and logs")
     compose.add_argument("-p", "--project-name", dest="project")
     verbs = compose.add_subparsers(dest="verb", required=True)
@@ -236,6 +503,8 @@ def docker_env() -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     ns = _parser().parse_args(argv)
+    if ns.cmd in ("tags", "digest"):
+        return registry_main(ns)
     try:
         docker_args = build(ns)
         docker = find_docker()
