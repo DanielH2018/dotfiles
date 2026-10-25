@@ -3,7 +3,7 @@
 # Stops a repo tool from acting on a repository other than its own: it dies unless the
 # shell's working directory is in the same repository as the checkout holding the script.
 #
-# land and land-sync act on whatever repository git finds from the cwd, and nothing tied
+# land, land-sync and try act on whatever repository git finds from the cwd, and nothing tied
 # that to the checkout the script came from. Run by its absolute path from a server
 # worktree, land printed `landing worktree-agent-dotfiles-on-daniel-server (PR #6118)`
 # and fetched the server remote. It stopped only because that repo has no origin/main.

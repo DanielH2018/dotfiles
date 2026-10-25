@@ -67,6 +67,12 @@ function makeRepo() {
   git(dir, 'config', 'user.email', 't@example.test');
   git(dir, 'config', 'user.name', 'Test');
   fs.writeFileSync(path.join(dir, 'README'), 'x\n');
+  // try refuses a cwd outside its own repository (#1005), so the fixture commits its own
+  // copy of the script and bin/lib, and the tests run that copy. Untracked, they would
+  // trip the dirty-checkout refusal.
+  fs.mkdirSync(path.join(dir, 'bin', 'lib'), { recursive: true });
+  const libs = fs.readdirSync(repoPath('bin', 'lib')).map((f) => path.join('lib', f));
+  for (const f of ['try', ...libs]) fs.copyFileSync(repoPath('bin', f), path.join(dir, 'bin', f));
   git(dir, 'add', '-A');
   git(dir, 'commit', '-qm', 'init');
   git(dir, 'remote', 'add', 'origin', origin);
@@ -86,10 +92,11 @@ const branchOf = (dir) => git(dir, 'rev-parse', '--abbrev-ref', 'HEAD');
 
 // The calls file lives outside the repo on purpose: dropped inside it, it would
 // itself make the tree dirty and trip try's own guard on the next invocation.
-function run(cwd, args = [], extraEnv = {}) {
+// `script` defaults to the copy checked out in cwd.
+function run(cwd, args = [], extraEnv = {}, script = path.join(cwd, 'bin', 'try')) {
   const box = scratch(os.tmpdir(), 'try-calls-');
   const file = path.join(box, 'calls');
-  const r = spawnScript('bash', [TRY, ...args], {
+  const r = spawnScript('bash', [script, ...args], {
     cwd,
     env: {
       ...CLEAN_ENV, PATH: `${BIN}:${CLEAN_ENV.PATH}`, STUB_CHEZMOI_CALLS: file, ...extraEnv,
@@ -103,6 +110,19 @@ test('refuses to run from a linked worktree', { skip }, () => {
   const r = run(wt, ['feature']);
   assert.strictEqual(r.code, 1);
   assert.match(r.stderr, /linked worktree — run try from the primary checkout/);
+});
+
+// #1005: run by path from another repository's primary checkout, try detached that
+// repository onto the branch and then deployed this repo's source.
+test('refuses to bench a repository other than its own checkout', { skip }, () => {
+  const { dir } = makeRepo();
+  const before = head(dir);
+  const r = run(dir, ['feature'], {}, TRY);
+  assert.strictEqual(r.code, 1, r.stdout);
+  assert.match(r.stderr, /a different repository from this script's/);
+  assert.strictEqual(head(dir), before, 'the foreign checkout moved');
+  assert.strictEqual(branchOf(dir), 'main', 'the foreign checkout left main');
+  assert.strictEqual(calls(r.file), '', 'chezmoi ran against the foreign bench');
 });
 
 test('refuses a dirty primary checkout, which is usually another session', { skip }, () => {

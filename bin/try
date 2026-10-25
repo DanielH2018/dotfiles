@@ -41,6 +41,8 @@ say() { printf '  %s\n' "$1"; }
 
 # shellcheck source=bin/lib/repo-lock.sh
 . "${BASH_SOURCE[0]%/*}/lib/repo-lock.sh" || die "cannot load lib/repo-lock.sh"
+# shellcheck source=bin/lib/own-repo.sh
+. "${BASH_SOURCE[0]%/*}/lib/own-repo.sh" || die "cannot load lib/own-repo.sh"
 
 MODE=peek
 BRANCH=''
@@ -62,6 +64,9 @@ done
 
 command -v chezmoi >/dev/null 2>&1 || die "chezmoi is required (it does the deploy)"
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not in a git repo"
+# Bench only a checkout of this script's own repository (#1005): chezmoi deploys
+# from this repo, so moving some other repo's HEAD would deploy nothing it holds.
+require_own_repo "${BASH_SOURCE[0]}"
 
 # The bench is the primary checkout by definition: it is the one directory chezmoi
 # reads as its source without --source. A linked worktree has a git dir of its
