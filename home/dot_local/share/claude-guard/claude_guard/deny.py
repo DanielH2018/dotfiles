@@ -1746,12 +1746,13 @@ WRITE_TARGETS = (
 )
 # :1081. Editors that unambiguously rewrite the file they name; cp/mv deliberately absent.
 # GNU sed reads everything after `-i` in the word as the backup suffix, so `-ie` is `-i`
-# with suffix `e` (#1003), and sed's `-i` matches whatever follows it. perl keeps the space
-# or `.` after `-i`: its `-M`, `-I`, `-m` and `-x` take the rest of the word as a value, so
-# `-Mstrict` would read as an in-place edit.
+# with suffix `e` (#1003), and sed's `-i` matches whatever follows it. perl reads its `-i`
+# suffix the same way (`-pi~`), but its `-C`, `-d`, `-D`, `-e`, `-E`, `-F`, `-I`, `-m`,
+# `-M` and `-x` take the rest of the word as a value, so the letters before perl's `i`
+# leave those out: `-Mstrict` and `-Ilib` are not in-place edits (#1018).
 BDB_INPLACE = (
     r"(sed\b[^;&|]*(^|[[:space:]])-[A-Za-z]*i|"
-    r"perl\b[^;&|]*(^|[[:space:]])-[A-Za-z]*i([[:space:]]|\.)|"
+    r"perl\b[^;&|]*(^|[[:space:]])-[a-cf-hj-ln-wyzABGHJ-LN-Z0-9]*i|"
     r"(sed|perl)\b[^;&|]*(^|[[:space:]])--in-place|truncate\b|"
     r"dd\b[^;&|]*(^|[[:space:]])of=)"
 )
