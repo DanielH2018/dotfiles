@@ -134,6 +134,14 @@ with tempfile.TemporaryDirectory() as tmp:
         extracted("sed -I.bak s/a/b/ b.txt", root) == ["b.txt"],
     )
     check(
+        "sed script w command without -i",
+        extracted("sed -n 'w sub/c.txt' a.txt", root) == ["c.txt"],
+    )
+    check(
+        "sed s///w flag in an -e script, after a w that is not a command",
+        extracted("sed -n -e 's/w/x/;s/x/y/w b.txt' a.txt", root) == ["b.txt"],
+    )
+    check(
         "sed -i inside an option cluster",
         extracted("sed -ni s/a/b/p b.txt", root) == ["b.txt"],
     )
@@ -175,6 +183,10 @@ with tempfile.TemporaryDirectory() as tmp:
         extracted("ls -la > /dev/null 2>&1", root) == [],
     )
     check("sed without -i", extracted("sed -n '1,5p' a.txt", root) == [])
+    check(
+        "a w in a sed file operand is not read as a w command",
+        extracted("sed -n p sub/wa.txt", root) == [],
+    )
     check(
         "an i in an attached -e script is not -i",
         extracted("sed -es/i/x/ a.txt", root) == [],

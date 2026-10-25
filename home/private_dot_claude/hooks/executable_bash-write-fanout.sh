@@ -268,6 +268,24 @@ cluster_edits_in_place() {
   return 1
 }
 
+# Add the file each `w` command in the sed script $1 writes. sed's `w` command and the `w`
+# flag of `s` write to the file named by the rest of the script line, with or without -n
+# or -i; GNU's `W` writes the first line of the pattern space there (#1043). The letter
+# shape is `_SED_WRITE`'s in claude_guard/deny.py: a `w` after a non-letter, such as an
+# address, a `;` or a closing delimiter, with only `s` flags between. A `w` that is not a
+# command, as in `s/w/x/`, over-collects the rest of the line; the scan goes on past it so
+# a later real `w` is still found, and the exists test drops the bogus names.
+sed_script_writes() {
+  local line rest
+  while IFS= read -r line; do
+    rest=$line
+    while [[ $rest =~ (^|[^A-Za-z])[gpiIMme0-9]*[wW](.*)$ ]]; do
+      rest=${BASH_REMATCH[2]}
+      CANDIDATES+=("${rest#"${rest%%[![:space:]]*}"}")
+    done
+  done <<<"$1"
+}
+
 extract_paths() {
   local shell_text
   case $1 in
@@ -283,6 +301,9 @@ extract_paths() {
   esac
   tokenize "$shell_text"
   local i=0 n=${#TOKENS[@]} t tgt cmdword='' inplace=0
+  # sed's script state: sedval names the option whose value the next word is (e, f or l),
+  # sedexpr says an -e or -f supplied the script, sedscript that the first operand did.
+  local sedval='' sedexpr=0 sedscript=0 rest c
   while [ "$i" -lt "$n" ]; do
     t=${TOKENS[i]}
     case $t in
@@ -296,18 +317,59 @@ extract_paths() {
         i=$((i + 2)); continue ;;
       '|'|';'|'&'|'<')
         # A new command starts here: reset the per-command state.
-        cmdword=''; inplace=0; i=$((i + 1)); continue ;;
+        cmdword=''; inplace=0; sedval=''; sedexpr=0; sedscript=0
+        i=$((i + 1)); continue ;;
     esac
     if [ -z "$cmdword" ]; then
       cmdword=${t##*/}
       i=$((i + 1)); continue
+    fi
+    if [ "$cmdword" = sed ] || [ "$cmdword" = gsed ]; then
+      # Only the script is read for `w`, so a file operand such as `out/w.md` is not.
+      if [ -n "$sedval" ]; then
+        [ "$sedval" = e ] && sed_script_writes "$t"
+        sedval=''
+      else
+        case $t in
+          --expression=*) sedexpr=1; sed_script_writes "${t#*=}" ;;
+          --expression) sedexpr=1; sedval=e ;;
+          --file=*) sedexpr=1 ;;
+          --file) sedexpr=1; sedval=f ;;
+          --line-length) sedval=l ;;
+          --*) ;;
+          -*)
+            # Walk the cluster as getopt does: e, f and l take the rest of the word, or
+            # the next word when nothing follows; i and I take the rest as a suffix.
+            rest=${t#-}
+            while [ -n "$rest" ]; do
+              c=${rest:0:1}; rest=${rest:1}
+              case $c in
+                e) sedexpr=1
+                   if [ -n "$rest" ]; then sed_script_writes "$rest"; else sedval=e; fi
+                   break ;;
+                f|l) [ "$c" = f ] && sedexpr=1
+                     [ -n "$rest" ] || sedval=$c
+                     break ;;
+                i|I) break ;;
+              esac
+            done ;;
+          # BSD's `-I ''` leaves an empty word, which is a suffix and not the script.
+          '') ;;
+          *)
+            if [ "$sedexpr" = 0 ] && [ "$sedscript" = 0 ]; then
+              sedscript=1
+              sed_script_writes "$t"
+            fi ;;
+        esac
+      fi
     fi
     case $cmdword in
       tee)
         # Every non-flag argument to tee is a file it writes.
         case $t in -*) ;; *) CANDIDATES+=("$t") ;; esac ;;
       sed|gsed|perl)
-        # In-place editing only. Without -i, sed and perl write nothing.
+        # In-place editing only. Without -i, perl writes nothing, and sed writes only
+        # through a `w` in its script, which the block above reads.
         case $t in
           --in-place|--in-place=*) inplace=1 ;;
           --*) ;;
