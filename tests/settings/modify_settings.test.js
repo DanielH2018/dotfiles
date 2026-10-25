@@ -1,5 +1,5 @@
 const { test, before } = require('node:test');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -70,11 +70,20 @@ test('stdin is ignored except for runtime-owned keys', { skip }, () => {
 });
 
 // The regression this slice exists for: `/effort` writes effortLevel into the deployed file,
-// no template sets it, so every `chezmoi apply` silently dropped the pin mid-session.
-test('a runtime-owned key in stdin survives the re-derive', { skip }, () => {
-  const out = JSON.parse(run(JSON.stringify({ effortLevel: 'xhigh' })));
-  assert.strictEqual(out.effortLevel, 'xhigh', 'effortLevel must survive an apply');
-  assert.ok(!('effortLevel' in JSON.parse(run(''))), 'and stays absent when nothing set it');
+// and every `chezmoi apply` silently replaced it mid-session. Since da3a452c (2026-09-24)
+// settings.base.json pins effortLevel, and a template pin beats the deployed value by design;
+// claude-settings-merge.test.js covers the unpinned carry-forward on the merge itself. What
+// this end-to-end test can still prove is the wiring: stdin reaches the merge, which reports
+// the value it replaced. That warning is the only way a reverted /effort is visible (#1055).
+test('a deployed effortLevel in stdin reaches the merge, and the template pin wins', { skip }, () => {
+  const pin = JSON.parse(run('')).effortLevel;
+  assert.ok(pin !== undefined,
+    'settings.base.json no longer pins effortLevel: assert the carry-forward here instead');
+  const deployed = pin === 'low' ? 'high' : 'low';
+  const r = spawnSync('bash', [script], { input: JSON.stringify({ effortLevel: deployed }), encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(JSON.parse(r.stdout).effortLevel, pin, 'the template pin wins over the deployed value');
+  assert.ok(r.stderr.includes(`replacing deployed ${JSON.stringify(deployed)}`), r.stderr);
 });
 
 // 3. Idempotent: feeding the output back in yields identical output.
