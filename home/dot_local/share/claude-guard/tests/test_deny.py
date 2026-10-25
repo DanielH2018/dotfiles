@@ -1193,6 +1193,7 @@ WRITE_DENY = [
     "perl -i~ -pe s/a/b/ ~/.zshrc",
     # BSD sed on macOS edits in place with `-I` too (#1019)
     "sed -I '' s/a/b/ ansible/vars/secrets.yml",
+    "sed -i '' s/a/b/ ansible/vars/secrets.yml",
     "sed -I.bak s/a/b/ ansible/vars/secrets.yml",
     "sed --in-place s/a/b/ ansible/vars/secrets.yml",
     "perl -pi -e s/a/b/ ansible/vars/secrets.yml",
@@ -1211,6 +1212,8 @@ WRITE_DENY = [
     "sed -i 's/a/b/' \"$F\" ~/.zshrc",
     "ssh host sed -i 's/secrets.yml/x/' docs/a.md",
     'sed -i "s/$(cat ansible/vars/secrets.yml)/x/" docs/a.md',
+    # a sed with no in-place option still writes through its script's `w` command (#1035)
+    "sed -n '/ -i/w ansible/vars/secrets.yml' docs/a.md",
 ]
 WRITE_ALLOW = [
     # a Jinja template renders a manifest at deploy, as `<name>.env.j2` does (2026-10-24)
@@ -1225,6 +1228,11 @@ WRITE_ALLOW = [
     "perl -pi -e 's/secrets.yml/x/' docs/a.md",
     # BSD sed's `-I` takes the next word as its suffix, so the word after `''` is the script
     "sed -I '' 's/secrets.yml/x/' docs/a.md",
+    # BSD sed's bare `-i` takes a following empty word as its suffix as well (#1035)
+    "sed -i '' 's/secrets.yml/x/' docs/a.md",
+    # a ` -i` inside a sed script is not sed's option (#1035)
+    "sed -n '/ -I/p' ansible/vars/secrets.yml",
+    "sed -n '/ -i/p' ansible/vars/secrets.yml",
     # `-M` and `-I` take the rest of the word as a value, so no `i` in it is `-i` (#1018)
     "perl -Mstrict -Ilib -e 1 ansible/vars/secrets.yml",
     "make build > build.log 2>&1",

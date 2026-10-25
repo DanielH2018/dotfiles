@@ -1819,14 +1819,21 @@ def write_targets(sc: Scan, target: str) -> Verdict | None:
 _REDIRECT_WORD = re.compile(r"[0-9]*[<>|&]+")
 
 
-def _edit_operands(args: list[str], value_opts: str, script_opts: str, rest_opts: str) -> list[str]:
-    """The file operands of a sed or perl argv tail `args`: the positional words, less the
-    first when no option carried the script. In a short-option cluster, a letter in
-    `value_opts` takes the rest of the word or the next one as its value, and one in
-    `script_opts` also marks the script as given. A letter in `rest_opts` takes the rest of
-    the word (`-i.bak`, `-0777`). A redirect and its target are not operands."""
+def _edit_operands(
+    args: list[str], value_opts: str, script_opts: str, rest_opts: str, inplace_opts: str
+) -> tuple[list[str], bool]:
+    """The file operands of a sed or perl argv tail `args`, and whether an option word asks
+    for an in-place edit. The operands are the positional words, less the first when no
+    option carried the script. In a short-option cluster, a letter in `value_opts` takes the
+    rest of the word or the next one as its value, and one in `script_opts` also marks the
+    script as given. A letter in `rest_opts` takes the rest of the word (`-i.bak`, `-0777`).
+    A letter in `inplace_opts`, or `--in-place`, is an in-place edit. A word that is a bare
+    in-place letter, such as sed's `-i`, takes a following empty word as BSD's backup suffix
+    (`-i ''`). GNU sed would read that empty word as the script instead, which edits nothing.
+    A redirect and its target are not operands."""
     positional: list[str] = []
     script = False
+    inplace = False
     i = 0
     while i < len(args):
         w = args[i]
@@ -1839,11 +1846,15 @@ def _edit_operands(args: list[str], value_opts: str, script_opts: str, rest_opts
         if w.startswith("--"):
             name = w.split("=", 1)[0]
             script |= name in ("--expression", "--file")
+            inplace |= name == "--in-place"
             i += 2 if name == w and name in ("--expression", "--file", "--line-length") else 1
             continue
         if w.startswith("-") and len(w) > 1:
             for j, c in enumerate(w[1:], 1):
+                inplace |= c in inplace_opts
                 if c in rest_opts:
+                    if j == len(w) - 1 and c in inplace_opts and args[i + 1 : i + 2] == [""]:
+                        i += 1
                     break
                 if c in value_opts:
                     script |= c in script_opts
@@ -1853,15 +1864,17 @@ def _edit_operands(args: list[str], value_opts: str, script_opts: str, rest_opts
             continue
         positional.append(w)
         i += 1
-    return positional if script else positional[1:]
+    return (positional if script else positional[1:]), inplace
 
 
 def _inplace_edits_only_safe_files(command: str) -> bool:
     """Whether every in-place edit in `command` is a plain sed or perl whose file operands
     name no WRITE_TARGETS path. The script word is text the editor runs on a file, so a
-    `secrets.yml` inside `s/…/…/` names no file. Anything else that matched the rule keeps
-    its refusal: truncate, dd, a wrapper such as find, xargs or ssh, a substitution, a heredoc
-    body, or text the parser refuses."""
+    `secrets.yml` inside `s/…/…/` names no file. A sed whose option words ask for no
+    in-place edit matched only on a ` -i` inside its script, and is cleared unless a word
+    other than its file operands names a target, as the `w` command can. Anything else that
+    matched the rule keeps its refusal: truncate, dd, a wrapper such as find, xargs or ssh, a
+    substitution, a heredoc body, or text the parser refuses."""
     p = parse(command)
     if not p.ok or p.substitutions:
         return False
@@ -1876,9 +1889,13 @@ def _inplace_edits_only_safe_files(command: str) -> bool:
         argv = _argv(words) if words else []
         name = posixpath.basename(argv[0]) if argv else ""
         if name == "sed":
-            files = _edit_operands(argv[1:], "eflI", "ef", "i")
+            files, inplace = _edit_operands(argv[1:], "eflI", "ef", "i", "iI")
+            # Without an in-place option sed writes only through its script, so the words
+            # other than the files it reads are the ones checked.
+            if not inplace:
+                files = [w for w in argv[1:] if w not in files]
         elif name == "perl":
-            files = _edit_operands(argv[1:], "eE", "eE", "iIMmx0ld")
+            files, _ = _edit_operands(argv[1:], "eE", "eE", "iIMmx0ld", "i")
         else:
             return False
         if any(bdb_re(f, WRITE_TARGETS) for f in files):
