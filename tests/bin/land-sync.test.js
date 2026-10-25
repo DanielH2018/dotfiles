@@ -52,7 +52,8 @@ function makeFixture() {
   // land-sync refuses a cwd outside its own repository (#1005), so the fixture commits
   // its own copy and the tests run that.
   fs.mkdirSync(path.join(primary, 'bin', 'lib'), { recursive: true });
-  for (const f of ['land-sync', path.join('lib', 'repo-lock.sh'), path.join('lib', 'own-repo.sh')]) {
+  const libs = fs.readdirSync(repoPath('bin', 'lib')).map((f) => path.join('lib', f));
+  for (const f of ['land-sync', ...libs]) {
     fs.copyFileSync(repoPath('bin', f), path.join(primary, 'bin', f));
   }
   git(primary, 'add', '-A');

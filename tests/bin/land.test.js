@@ -87,10 +87,11 @@ function git(cwd, ...args) {
 // land refuses a cwd outside its own repository (#1005), so each fixture commits its own
 // copy of the scripts and the tests run that copy. Committed, not left untracked: an
 // untracked file would trip the dirty-worktree refusal first.
-const SCRIPTS = ['land', 'land-sync', path.join('lib', 'repo-lock.sh'), path.join('lib', 'own-repo.sh')];
+// The whole of bin/lib goes in, so a library the scripts start sourcing needs no edit here.
 function installScripts(dir) {
   fs.mkdirSync(path.join(dir, 'bin', 'lib'), { recursive: true });
-  for (const f of SCRIPTS) fs.copyFileSync(repoPath('bin', f), path.join(dir, 'bin', f));
+  const libs = fs.readdirSync(repoPath('bin', 'lib')).map((f) => path.join('lib', f));
+  for (const f of ['land', 'land-sync', ...libs]) fs.copyFileSync(repoPath('bin', f), path.join(dir, 'bin', f));
 }
 
 function makeRepo() {
