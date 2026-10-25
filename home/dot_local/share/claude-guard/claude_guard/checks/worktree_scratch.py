@@ -1,5 +1,5 @@
 """Scratch cleanup inside a session's own worktree: `rm` and `git clean` of untracked
-files, `git restore`.
+files, `git restore`, and `git stash drop` of an entry made on the worktree's branch.
 
 All three commands sit in the ask tier, because each destroys work no reflog brings back.
 A headless session has no prompt to answer, so every cleanup it ran was refused: 41
@@ -32,6 +32,11 @@ What bounds them:
     gate the heredoc-write carve-out in judge.py uses. A `cd` to the session worktree's
     root, followed only by `&&`, does not count as a move: judge.py judges the later
     segments in that root (dotfiles #987).
+
+`git stash drop` is bounded differently, because the stash stack is shared by every
+worktree of a repository: its one ref must name an entry whose subject carries the branch
+the session worktree has checked out (dotfiles #1023). `worktree_stash_drop_safe` has the
+details.
 
 The git probes run a subprocess, as git_reset.py's do, and any failure of one is no opinion.
 """
@@ -261,3 +266,54 @@ def worktree_clean_safe(part: str, cwd: str, cwd_changed: bool, project_dir: str
     if _git(root, "ls-files", "--", *operands) != "":
         return False
     return all(_is_scratch(op, root) for op in operands)
+
+
+_STASH_INDEX = re.compile(r"stash@\{\d+\}")
+_STASH_SHA = re.compile(r"[0-9a-f]{7,40}")
+# A whole unquoted `stash@{n}` word. bash and zsh both leave a brace holding one item
+# unexpanded, so the word is literal, but `tokenize` refuses every unquoted brace.
+_BARE_STASH_INDEX = re.compile(r"(?<![^ \t])(stash@\{\d+\})(?![^ \t])")
+
+
+def worktree_stash_drop_safe(part: str, cwd: str, cwd_changed: bool, project_dir: str) -> bool:
+    """True when `part` is `git stash drop [-q] <ref>` and `<ref>` names one stash entry
+    created on the branch the session worktree holding `cwd` and `project_dir` has checked
+    out (dotfiles #1023).
+
+    The stash stack is shared by every worktree of a repository, so a drop can destroy
+    another session's entry. git writes the branch into every stash subject (`On <branch>:`
+    for `stash push -m`, `WIP on <branch>:` otherwise), and each session worktree is on its
+    own branch, so the subject identifies the entry's owner. A branch name cannot hold `:`,
+    so the prefix cannot match a longer branch name.
+
+    `<ref>` is `stash@{n}` or a hex SHA that is a prefix of exactly one entry's commit. A
+    drop with no ref drops `stash@{0}`, whoever owns it, and is refused, as is
+    `git stash clear`, a detached HEAD, and any drop after an earlier segment moved the
+    shell's cwd. The check and the drop are not atomic: a `stash push` by another session
+    between them shifts every `stash@{n}` by one, which a SHA does not suffer.
+    """
+    tokens = tokenize(_BARE_STASH_INDEX.sub(r"'\1'", part))
+    if not tokens or tokens[:3] != ["git", "stash", "drop"]:
+        return False
+    refs = [tok for tok in tokens[3:] if tok not in ("-q", "--quiet")]
+    if len(refs) != 1 or not (_STASH_INDEX.fullmatch(refs[0]) or _STASH_SHA.fullmatch(refs[0])):
+        return False
+    if cwd_changed:
+        return False
+    root = session_root(cwd, project_dir)
+    if root is None:
+        return False
+    head = _git(root, "symbolic-ref", "--quiet", "HEAD")
+    if head is None or not head.startswith("refs/heads/"):
+        return False
+    branch = head.strip().removeprefix("refs/heads/")
+    listing = _git(root, "stash", "list", "--format=%gd%x00%H%x00%s")
+    if listing is None:
+        return False
+    ref = refs[0]
+    subjects = []
+    for line in listing.splitlines():
+        fields = line.split("\0")
+        if len(fields) == 3 and ref in (fields[0], fields[1][: len(ref)]):
+            subjects.append(fields[2])
+    return len(subjects) == 1 and subjects[0].startswith((f"On {branch}:", f"WIP on {branch}:"))

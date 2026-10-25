@@ -43,6 +43,7 @@ from claude_guard.checks.worktree_scratch import (
     worktree_clean_safe,
     worktree_restore_safe,
     worktree_rm_safe,
+    worktree_stash_drop_safe,
 )
 from claude_guard.gitread import git_read
 from claude_guard.rules import Rules
@@ -1074,15 +1075,17 @@ def judge_segment(
     if word == "rm" and rm_confined(part, roots, job_dir, globs=scratch_ok, links=not scratch_ok):
         return True, "rm-check"
 
-    # dotfiles #861 and #864. The same ask rules (`rm:*`, `git restore:*`, `git clean:*`)
-    # resolved for cleanup inside the session's own worktree, which a headless session
-    # otherwise cannot run.
+    # dotfiles #861, #864 and #1023. The same ask rules (`rm:*`, `git restore:*`,
+    # `git clean:*`, `git stash drop:*`) resolved for cleanup inside the session's own
+    # worktree, which a headless session otherwise cannot run.
     if word == "rm" and worktree_rm_safe(part, cwd, cwd_changed, project_dir):
         return True, "worktree-rm-check"
     if word == "git" and worktree_restore_safe(part, cwd, cwd_changed, project_dir):
         return True, "worktree-restore-check"
     if word == "git" and worktree_clean_safe(part, cwd, cwd_changed, project_dir):
         return True, "worktree-clean-check"
+    if word == "git" and worktree_stash_drop_safe(part, cwd, cwd_changed, project_dir):
+        return True, "worktree-stash-drop-check"
 
     # server #1898. The per-segment twin of judge()'s two whole-command remote arms, so an
     # ssh/hl stage can sit in a LOCAL pipeline — `ssh host docker ps | head -3` — with every

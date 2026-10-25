@@ -964,7 +964,8 @@
       {{/* stash pop/drop/clear survive the cull for a reason the classifier cannot know: the
            stash stack is SHARED across every worktree and parallel session on this machine, so
            a pop or drop can silently take another session's entry. `push` and `apply` are not
-           destructive and are gone. */}}
+           destructive and are gone. claude_guard resolves a drop whose one ref names an entry
+           made on the session worktree's own branch (dotfiles #1023). */}}
       "Bash(git stash pop:*)",
       "Bash(git stash drop:*)",
       "Bash(git stash clear)",

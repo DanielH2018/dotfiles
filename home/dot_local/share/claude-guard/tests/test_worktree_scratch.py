@@ -235,7 +235,8 @@ def _ask_rules(tmp_path):
     (home / ".claude").mkdir(parents=True)
     (home / ".claude" / "settings.json").write_text(
         '{"permissions": {"allow": ["Bash(cd:*)", "Bash(true)", "Bash(ls:*)"],'
-        ' "ask": ["Bash(rm:*)", "Bash(git clean:*)", "Bash(git restore:*)"]}}'
+        ' "ask": ["Bash(rm:*)", "Bash(git clean:*)", "Bash(git restore:*)",'
+        ' "Bash(git stash drop:*)", "Bash(git stash clear)"]}}'
     )
     return load_rules(home=str(home), project_dir=None), scratch_roots(str(home))
 
@@ -333,3 +334,54 @@ def test_a_cd_whose_words_tokenize_refuses_is_refused_rather_than_raising(repo, 
         "cd /tmp 2>/dev/null && rm .git-pr-body.md",
     ]:
         assert not judge(command, rules, roots, wt, wt).allow, command
+
+
+def _stashes(main: str, wt: str) -> tuple[str, str]:
+    """Pushes one stash entry from the session worktree's branch, then one from the primary
+    checkout's, so `stash@{0}` is the primary's and `stash@{1}` the session's. Returns the
+    two commit SHAs, the session's first."""
+    _sh(wt, "git", "stash", "push", "-q", "-m", "mine", "--", "src/app.py")
+    with open(os.path.join(main, "src", "app.py"), "w") as f:
+        f.write("x = 3\n")
+    _sh(main, "git", "stash", "push", "-q")
+
+    def sha(ref: str) -> str:
+        out = subprocess.run(["git", "rev-parse", ref], cwd=main, capture_output=True, text=True)
+        return out.stdout.strip()
+
+    return sha("stash@{1}"), sha("stash@{0}")
+
+
+@only_posix_allow
+def test_a_drop_of_a_stash_entry_made_on_the_sessions_branch_is_allowed(repo, tmp_path):
+    main, wt = repo
+    rules, roots = _ask_rules(tmp_path)
+    mine, _ = _stashes(main, wt)
+    for command in [
+        "git stash drop stash@{1}",
+        "git stash drop -q 'stash@{1}'",
+        f"git stash drop {mine}",
+        f"git stash drop -q {mine[:12]}",
+    ]:
+        assert judge(command, rules, roots, wt, wt).allow, command
+    assert judge(f"cd {wt} && git stash drop -q {mine}", rules, roots, "", wt).allow
+
+
+def test_a_drop_of_another_branchs_entry_or_of_no_one_entry_is_refused(repo, tmp_path):
+    main, wt = repo
+    rules, roots = _ask_rules(tmp_path)
+    mine, theirs = _stashes(main, wt)
+    for command in [
+        "git stash drop stash@{0}",
+        f"git stash drop -q {theirs}",
+        "git stash drop",
+        "git stash drop -q",
+        "git stash clear",
+        "git stash drop stash@{2}",
+        "git stash drop deadbeef",
+        f"git stash drop {mine[:7]} stash@{{1}}",
+        "git stash drop stash@{1}.",
+    ]:
+        assert not judge(command, rules, roots, wt, wt).allow, command
+    assert not judge("git stash drop stash@{1}", rules, roots, main, main).allow
+    assert not judge(f"cd {main} && git stash drop {mine}", rules, roots, wt, wt).allow
