@@ -1219,8 +1219,20 @@ WRITE_DENY = [
     "sed --in-pl 's/ -i/x/' ansible/vars/secrets.yml",
     "sed --in-pla=.bak s/a/x/ ansible/vars/secrets.yml",
     "sed -i --expr=s/a/b/ ansible/vars/secrets.yml",
+    # a sed script's `w` command or `s///w` flag writes the file it names (#1037)
+    "sed -n 'w ansible/vars/secrets.yml' docs/a.md",
+    "sed -n '/x/w ~/.zshrc' docs/a.md",
+    "sed 's/a/b/gw ~/.bashrc' docs/a.md",
+    "sed -n -e p -e '1W ansible/vars/secrets.yml' docs/a.md",
+    "cat docs/a.md | sed -n 'p;w ~/.zshrc'",
+    "bash -c \"sed -n 'w ~/.zshrc' docs/a.md\"",
+    "echo $(sed -n 'w ~/.zshrc' docs/a.md)",
 ]
 WRITE_ALLOW = [
+    # a sed that reads a target, or writes an ordinary file, writes no target (#1037)
+    "sed -n 1p ~/work/.zshrc",
+    "sed -n 'w out.txt' ~/.zshrc",
+    "sed 's/new/old/' ~/.bashrc",
     # a Jinja template renders a manifest at deploy, as `<name>.env.j2` does (2026-10-24)
     "cat > templates/longhorn-b2-secret.yaml.j2 <<'EOF'\nk: \"{{ v }}\"\nEOF",
     "cat >> templates/config-secret.yaml.j2 <<'EOF'\nx: 1\nEOF",
