@@ -308,24 +308,38 @@ def sed_readonly(argv: list[str]) -> bool:
         if a.startswith("-") and a != "-":
             if a.startswith("--in-place"):
                 return False  # in-place edit writes
-            # A short-option cluster edits in place when `i`, or BSD sed's `I`, comes before
-            # a letter that takes the rest of the word as its value: `-ni` and `-I.bak` do,
-            # `-es/i/x/` does not.
-            if not a.startswith("--") and re.match(r"-[^efl]*[iI]", a):
-                return False
-            if a == "-f" or a == "--file" or a.startswith("--file="):
+            if not a.startswith("--"):
+                # Walk a short-option cluster as getopt does. `i`, or BSD sed's `I`, edits in
+                # place and `f` names an uninspectable program file. `e` and `l` take the rest
+                # of the word, or the next argument, as their value, so `-nes/a/b/w out` is
+                # `-n -e 's/a/b/w out'` and `-es/i/x/` is a script, not an in-place edit.
+                j = 1
+                while j < len(a):
+                    c = a[j]
+                    if c in "iIf":
+                        return False
+                    if c in "el":
+                        value = a[j + 1 :]
+                        if not value:
+                            if i + 1 >= n:
+                                return False
+                            i += 1
+                            value = argv[i]
+                        if c == "e":
+                            script.append(value)
+                            saw_script = True
+                        break
+                    j += 1  # safe flags: -n -E -r -s -u -z ...
+                i += 1
+                continue
+            if a == "--file" or a.startswith("--file="):
                 return False  # program file (uninspectable)
-            if a in ("-e", "--expression"):
+            if a == "--expression":
                 if i + 1 >= n:
                     return False
                 script.append(argv[i + 1])
                 saw_script = True
                 i += 2
-                continue
-            if a.startswith("-e"):
-                script.append(a[2:])
-                saw_script = True
-                i += 1
                 continue
             if a.startswith("--expression="):
                 script.append(a.split("=", 1)[1])
