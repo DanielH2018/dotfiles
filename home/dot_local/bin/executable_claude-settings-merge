@@ -181,11 +181,18 @@ const applyRemovals = (acc) => {
 // environment variable, so no caller of this script can widen it.
 const SUDO_BOUNDARY_IN_CLAUDE_GUARD = new Set(['daniel-box']);
 const HOST = os.hostname().split('.')[0];
+// A pipe into a shell, matched as the bare name, the name before a space, and the name
+// before `;`, `&`, `|` or `)`. A suffix glob such as `* | sh*` also hard-denied a pipe into
+// `sha256sum` or `shellcheck -` (dotfiles #971; operator ruling 2026-10-25). claude_guard's
+// pipe_to_shell deny stays the backstop for the other spellings.
+const PIPE_TO_SHELL_DENY = ['sh', 'bash', 'zsh'].flatMap((shell) =>
+  ['', ' *', ';*', '&*', '|*', ')*'].map((tail) => `Bash(* | ${shell}${tail})`));
+
 const FLOOR_DENY = [
   ...(SUDO_BOUNDARY_IN_CLAUDE_GUARD.has(HOST) ? [] : ['Bash(sudo:*)']),
   'Bash(su:*)', 'Bash(mkfs:*)', 'Bash(dd:*)',
   'Bash(rm -rf /)', 'Bash(rm -rf ~)',
-  'Bash(* | sh*)', 'Bash(* | bash*)', 'Bash(* | zsh*)',
+  ...PIPE_TO_SHELL_DENY,
   'Read(**/.ssh/**)', 'Read(**/.aws/credentials)', 'Read(**/.env)',
   'Read(**/id_rsa)', 'Read(**/id_ed25519)', 'Edit(**/.ssh/**)',
 ];

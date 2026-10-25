@@ -779,7 +779,7 @@
       "Bash(git push --force-with-lease * main *)",
       "Bash(git push --force-with-lease * master *)",
       {{/* DECIDED: every rule from here down that carries an INTERIOR `*` -- the --no-verify
-           pair, the three pipe-to-shell rules, the find/awk execution forms below, and the
+           pair, the pipe-to-shell rules, the find/awk execution forms below, and the
            `gh api -X`/`npx -p` families in the ask tier -- is read by TWO engines.
 
            Claude Code's own matcher reads them, and it is the one that hard-denies: the
@@ -812,9 +812,29 @@
       "Bash(git commit *--no-verify*)",
       "Bash(git commit -n:*)",
       "Bash(git push *--no-verify*)",
-      "Bash(* | sh*)",
-      "Bash(* | bash*)",
-      "Bash(* | zsh*)",
+      {{/* Each shell name is matched bare, before a space, and before `;`, `&`, `|` or `)`.
+           A suffix glob such as `* | sh*` also hard-denied a pipe into `sha256sum` or
+           `shellcheck -` (dotfiles #971; operator ruling 2026-10-25). claude_guard's
+           pipe_to_shell deny catches the other spellings, such as a newline after the name.
+           FLOOR_DENY in claude-settings-merge lists the same rules. */}}
+      "Bash(* | sh)",
+      "Bash(* | sh *)",
+      "Bash(* | sh;*)",
+      "Bash(* | sh&*)",
+      "Bash(* | sh|*)",
+      "Bash(* | sh)*)",
+      "Bash(* | bash)",
+      "Bash(* | bash *)",
+      "Bash(* | bash;*)",
+      "Bash(* | bash&*)",
+      "Bash(* | bash|*)",
+      "Bash(* | bash)*)",
+      "Bash(* | zsh)",
+      "Bash(* | zsh *)",
+      "Bash(* | zsh;*)",
+      "Bash(* | zsh&*)",
+      "Bash(* | zsh|*)",
+      "Bash(* | zsh)*)",
       {{/* claude_guard.rules reads an allow rule as an exact command or as a prefix
            matched on "prefix + space", never as a wider glob. find/awk/xargs are everyday tools and
            stay allow-listed, but each takes a command as an argument, so the allow rule alone

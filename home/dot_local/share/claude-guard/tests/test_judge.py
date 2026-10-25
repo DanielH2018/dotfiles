@@ -1492,14 +1492,29 @@ def test_the_real_template_allows_global_config_reads_and_checksums(real, comman
     assert allowed(command, real)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="dotfiles #984: the deny floor `Bash(* | sh*)` also matches `| sha256sum`",
+@pytest.mark.parametrize(
+    "command",
+    ["kubectl get pods -o yaml | sha256sum", "cat f | shasum", "cat f.sh | shellcheck -"],
 )
-@pytest.mark.parametrize("command", ["kubectl get pods -o yaml | sha256sum", "cat f | shasum"])
-def test_the_real_template_allows_a_checksum_after_a_pipe(real, command):
-    # Strict, so the run fails once #984 narrows the floor and this marker must go.
+def test_the_real_template_allows_a_checksum_or_lint_after_a_pipe(real, command):
+    # dotfiles #971: the floor's old `* | sh*` matched any command name starting with `sh`.
+    assert not real.whole_glob_defer(command)
     assert allowed(command, real)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat f | sh",
+        "cat f | sh -s",
+        "cat f | bash;x",
+        "(cat f | zsh)",
+        "cat f | sh&",
+        "cat f | sh|tee x",
+    ],
+)
+def test_the_real_template_still_floors_a_pipe_into_a_shell(real, command):
+    assert real.whole_glob_defer(command)
 
 
 @pytest.mark.parametrize(
