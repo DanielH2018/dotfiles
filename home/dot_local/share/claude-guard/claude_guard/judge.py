@@ -39,6 +39,7 @@ from claude_guard.checks.remote import readonly_remote_safe, trusted_host_safe
 from claude_guard.checks.remote_guards import git_readonly
 from claude_guard.checks.scratch import rm_confined, tokenize, write_confined
 from claude_guard.checks.worktree_scratch import (
+    session_root,
     worktree_clean_safe,
     worktree_restore_safe,
     worktree_rm_safe,
@@ -336,8 +337,10 @@ def _changes_cwd(part: str) -> bool:
     this one in the chain. No attempt at tracking WHERE it moves to: the brief's own
     instruction is not to, since resolving a `cd` target means resolving variables,
     `cd -`, and a directory-stack, and every gap in that resolution is its own fail-open.
-    `judge()` exempts one target that needs none of that resolving, a bare `cd` to the
-    session's own cwd (`_cd_stays`, dotfiles #864). This is a pure detector, consulted by
+    `judge()` exempts two targets that need none of that resolving: a bare `cd` to the
+    session's own cwd (`_cd_stays`, dotfiles #864), and one to the root of the session's
+    worktree (`_cd_to_session_worktree`, dotfiles #987), which becomes the cwd the later
+    segments of an `&&` run are judged in. This is a pure detector, consulted by
     `judge()` to gate the heredoc-write carve-out (see the `cwd_changed` DECIDED marker in
     `judge_segment`).
 
@@ -379,6 +382,30 @@ def _cd_stays(part: str, cwd: str) -> bool:
     if not target.startswith("/") or not cwd.startswith("/"):
         return False
     return os.path.realpath(target) == os.path.realpath(cwd)
+
+
+def _cd_to_session_worktree(part: str, project_dir: str) -> str | None:
+    """The worktree root a bare `cd <literal absolute path>` lands in, when that path is
+    the root of the session worktree holding `project_dir`, else None.
+
+    `_cd_stays` needs the hook's cwd to be the worktree root. The cwd is a subdirectory
+    when the session's shell stayed in one, and it is "" when the prompt server finds no
+    recorded context, so `cd <worktree> && rm <relative>` was refused (dotfiles #987).
+    The target needs no resolving: it is literal, and it exists, so the `cd` cannot fail
+    on a missing directory. A `..` component is refused, because bash's `cd` drops it
+    lexically while realpath follows a symlink first. Only the root is accepted, which is
+    the shape the denials show; a subdirectory keeps the flag.
+    """
+    words = tokenize(part)
+    if len(words) != 2 or words[0] != "cd":
+        return None
+    target = words[1]
+    if not target.startswith("/") or ".." in target.split("/"):
+        return None
+    real = os.path.realpath(target)
+    if not os.path.isdir(real):
+        return None
+    return real if session_root(real, project_dir) == real else None
 
 
 def _mask_quotes(s: str) -> str:
@@ -1280,6 +1307,7 @@ def judge(
     # `cd` segment itself is still judged against its own cwd. Threaded into
     # `judge_segment` to gate the heredoc-write carve-out; see the DECIDED marker there.
     cwd_changed = False
+    moved = False
     # A scratch redirect is vetted against the filesystem as it is now, so it is admitted
     # only when no segment of the chain can put a link at its target first (LINK_MAKERS).
     scratch_ok = not any(_makes_links(_bare_command(_trim(seg.text))) for seg in parsed.segments)
@@ -1295,6 +1323,11 @@ def judge(
         return Decision(False, f"segment:{i}:{reason}", tuple(reasons))
 
     for i, seg in enumerate(parsed.segments):
+        # After a `cd` into the session worktree (`_cd_to_session_worktree`), a segment
+        # behind any separator but `&&` runs even when the `cd` failed, in a directory this
+        # judge never measured.
+        if moved and parsed.segments[i - 1].sep != "&&":
+            cwd_changed = True
         part = _trim(seg.text)
         if not part:
             continue
@@ -1352,5 +1385,10 @@ def judge(
         if not ok:
             return Decision(False, f"segment:{i}:{reason}", tuple(reasons))
         if _changes_cwd(part) and not _cd_stays(part, cwd):
-            cwd_changed = True
+            target = _cd_to_session_worktree(part, project_dir)
+            if target and not cwd_changed:
+                cwd = target
+                moved = True
+            else:
+                cwd_changed = True
     return Decision(True, "allow", tuple(reasons))

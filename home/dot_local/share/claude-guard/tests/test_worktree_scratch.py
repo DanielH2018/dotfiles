@@ -103,6 +103,7 @@ def test_git_restore_of_tracked_files_to_head_is_allowed(repo):
         "git restore src/app.py",
         "git restore --staged --worktree src/app.py",
         "git restore --source=HEAD --staged --worktree src/app.py",
+        "git restore -SW --source=HEAD src/app.py",
         "git restore -s HEAD -- src/app.py",
         f"git restore {wt}/src/app.py",
     ]:
@@ -116,11 +117,21 @@ def test_git_restore_from_another_source_or_with_other_options_is_refused(repo):
         "git restore --source=main src/app.py",
         "git restore -s HEAD~1 src/app.py",
         "git restore -p src/app.py",
+        "git restore -Sp src/app.py",
         "git restore ':(glob)src/*'",
         f"git restore {main}/src/app.py",
         "git restore .",
     ]:
         assert not worktree_restore_safe(command, wt, cwd_changed=False, project_dir=wt), command
+
+
+@only_posix_allow
+def test_git_restore_brings_back_a_file_whose_deletion_is_staged(repo):
+    _, wt = repo
+    _sh(wt, "git", "rm", "-qf", "src/app.py")
+    command = "git restore --staged --worktree --source=HEAD src/app.py"
+    assert worktree_restore_safe(command, wt, cwd_changed=False, project_dir=wt)
+    assert not worktree_restore_safe("git restore --staged src", wt, False, wt)
 
 
 def test_the_judge_resolves_both_ask_rules_inside_a_session_worktree(repo, tmp_path):
@@ -223,7 +234,8 @@ def _ask_rules(tmp_path):
     home = tmp_path / "home"
     (home / ".claude").mkdir(parents=True)
     (home / ".claude" / "settings.json").write_text(
-        '{"permissions": {"allow": ["Bash(cd:*)"], "ask": ["Bash(rm:*)", "Bash(git clean:*)"]}}'
+        '{"permissions": {"allow": ["Bash(cd:*)"], "ask": ["Bash(rm:*)", "Bash(git clean:*)",'
+        ' "Bash(git restore:*)"]}}'
     )
     return load_rules(home=str(home), project_dir=None), scratch_roots(str(home))
 
@@ -279,3 +291,30 @@ def test_a_cd_to_the_sessions_own_cwd_leaves_relative_cleanup_allowed(repo, tmp_
         f"pushd {wt} && rm .git-pr-body.md",
     ]:
         assert not judge(command, rules, roots, wt, wt).allow, command
+
+
+@only_posix_allow
+def test_a_cd_to_the_worktree_root_from_elsewhere_allows_relative_cleanup(repo, tmp_path):
+    _, wt = repo
+    rules, roots = _ask_rules(tmp_path)
+    for command in [
+        f"cd {wt} && rm .git-pr-body.md",
+        f"cd {wt} && git restore --staged --worktree --source=HEAD src/app.py",
+    ]:
+        assert judge(command, rules, roots, os.path.join(wt, "src"), wt).allow, command
+        assert judge(command, rules, roots, "", wt).allow, command
+
+
+def test_cleanup_after_a_cd_to_the_worktree_root_needs_an_unbroken_and_run(repo, tmp_path):
+    main, wt = repo
+    rules, roots = _ask_rules(tmp_path)
+    sub = os.path.join(wt, "src")
+    for command in [
+        f"cd {wt}; rm .git-pr-body.md",
+        f"cd {wt} || rm .git-pr-body.md",
+        f"cd {wt} && rm -r scratch; rm .git-pr-body.md",
+        f"cd {wt}/src/.. && rm .git-pr-body.md",
+        f"cd {main}/.claude/worktrees/fanout-1/scratch && rm probe.py",
+    ]:
+        assert not judge(command, rules, roots, sub, wt).allow, command
+    assert not judge(f"cd {wt} && rm .git-pr-body.md", rules, roots, sub, main).allow

@@ -21,13 +21,17 @@ What bounds them:
     key). A root catch-all rule (`/*`, as the homelab repo has) ignores every new scratch
     file, so it does not count as a specific rule. `.fanout/`, the fan-out batches' own
     scratch directory, is exempt from the ignore rule and not from the name check.
-  - `git restore` takes only `--staged`/`--worktree`/`--quiet` and a source of `HEAD`, and
-    each operand must name exactly one tracked file. A directory, `.` or a glob would
-    discard more than the session edited, so none of them passes.
+  - `git restore` takes only `--staged`/`--worktree`/`--quiet` (bundled as `-SW` too) and
+    a source of `HEAD`, and each operand must name exactly one file in the index or in
+    HEAD. HEAD covers a file whose deletion the session staged, which `--staged --source=HEAD`
+    brings back (dotfiles #987). A directory, `.` or a glob would discard more than the
+    session edited, so none of them passes.
   - No operand carries a glob character, because the shell or git would expand it to paths
     no operand spells out.
   - A relative operand is refused once an earlier segment moved the shell's cwd, the same
-    gate the heredoc-write carve-out in judge.py uses.
+    gate the heredoc-write carve-out in judge.py uses. A `cd` to the session worktree's
+    root, followed only by `&&`, does not count as a move: judge.py judges the later
+    segments in that root (dotfiles #987).
 
 The git probes run a subprocess, as git_reset.py's do, and any failure of one is no opinion.
 """
@@ -51,7 +55,8 @@ _STATE_NAME = re.compile(
 )
 _WALK_LIMIT = 5000
 _GLOB = re.compile(r"[*?\[\]{}\\]")
-_RESTORE_FLAGS = frozenset({"--staged", "-S", "--worktree", "-W", "-q", "--quiet"})
+_RESTORE_FLAGS = frozenset({"--staged", "--worktree", "--quiet"})
+_RESTORE_SHORT = frozenset("SWq")
 
 
 def _worktree_root(cwd: str) -> str | None:
@@ -65,7 +70,7 @@ def _worktree_root(cwd: str) -> str | None:
     return root if _SESSION_WORKTREE.search(root) else None
 
 
-def _session_root(cwd: str, project_dir: str) -> str | None:
+def session_root(cwd: str, project_dir: str) -> str | None:
     """The worktree root `cwd` sits in, when `project_dir` sits in the same one."""
     root = _worktree_root(cwd)
     if root is None or not project_dir:
@@ -94,7 +99,7 @@ def worktree_rm_safe(part: str, cwd: str, cwd_changed: bool, project_dir: str) -
     tokens = tokenize(part)
     if not tokens or tokens[0].rsplit("/", 1)[-1] != "rm":
         return False
-    root = _session_root(cwd, project_dir)
+    root = session_root(cwd, project_dir)
     if root is None:
         return False
     operands: list[str] = []
@@ -161,9 +166,16 @@ def _names_state(real: str, root: str) -> bool:
 
 
 def _is_one_tracked_file(real: str, root: str) -> bool:
-    """True when `real` is exactly one path in the index, which a directory never is."""
+    """True when `real` is exactly one file in the index or in HEAD, which a directory
+    never is. HEAD answers for a file whose deletion is staged."""
     rel = os.path.relpath(real, root)
-    return _git(root, "ls-files", "--", rel) == rel + "\n"
+    if _git(root, "ls-files", "--", rel) == rel + "\n":
+        return True
+    entry = _git(root, "ls-tree", "HEAD", "--", rel)
+    # `<mode> blob <sha>\t<path>`: a tree or a submodule (`commit`) entry is not one file.
+    return (
+        entry is not None and re.fullmatch(rf"\d+ blob \w+\t{re.escape(rel)}\n", entry) is not None
+    )
 
 
 def worktree_restore_safe(part: str, cwd: str, cwd_changed: bool, project_dir: str) -> bool:
@@ -173,7 +185,7 @@ def worktree_restore_safe(part: str, cwd: str, cwd_changed: bool, project_dir: s
     tokens = tokenize(part)
     if not tokens or tokens[:2] != ["git", "restore"]:
         return False
-    root = _session_root(cwd, project_dir)
+    root = session_root(cwd, project_dir)
     if root is None:
         return False
     paths = 0
@@ -186,8 +198,11 @@ def worktree_restore_safe(part: str, cwd: str, cwd_changed: bool, project_dir: s
         elif not endopts and tok in ("-s", "--source"):
             if not rest or rest.pop(0) != "HEAD":
                 return False
-        elif not endopts and tok.startswith("-"):
+        elif not endopts and tok.startswith("--"):
             if tok not in _RESTORE_FLAGS and tok != "--source=HEAD":
+                return False
+        elif not endopts and tok.startswith("-"):
+            if len(tok) == 1 or any(ch not in _RESTORE_SHORT for ch in tok[1:]):
                 return False
         elif tok.startswith(":"):
             # `:(…)` is pathspec magic, which can name paths no operand spells out.
@@ -217,7 +232,7 @@ def worktree_clean_safe(part: str, cwd: str, cwd_changed: bool, project_dir: str
     tokens = tokenize(part)
     if not tokens or tokens[:2] != ["git", "clean"]:
         return False
-    root = _session_root(cwd, project_dir)
+    root = session_root(cwd, project_dir)
     if root is None:
         return False
     operands: list[str] = []
