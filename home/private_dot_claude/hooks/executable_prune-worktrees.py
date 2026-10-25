@@ -167,6 +167,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import json
 import os
 import select
 import subprocess
@@ -256,6 +257,21 @@ FRESH_GRACE_S = 7 * 24 * 3600
 # Held by a --prune run for its whole sweep, in the git common dir so every worktree of
 # the repo contends for the same file.
 PRUNE_LOCK = "claude-prune-worktrees.lock"
+
+# The merged-verdict cache, in the git common dir beside the lock so it is never in a
+# working tree. The server repo's `scripts/lib/worktrees.py` keeps the same file in
+# the same shape: a JSON object `{"<head sha>:<base sha>": "<layer or empty>"}`. Keep
+# the two in step by hand; neither imports the other.
+VERDICT_CACHE = "claude-merged-verdicts.json"
+# A bound for a repo whose branches never go away; entries whose head is no longer a ref
+# tip are dropped first.
+VERDICT_CACHE_MAX = 2048
+# The layers a verdict can name. "" is a pure-layer negative: neither patch-id nor
+# content found the branch landed at this head and base.
+LAYER_EQUIVALENT = "equivalent"
+LAYER_CONTAINED = "contained"
+LAYER_FORGE = "forge"
+KNOWN_LAYERS = ("", LAYER_EQUIVALENT, LAYER_CONTAINED, LAYER_FORGE)
 
 LOG_PATH = (
     Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
@@ -386,6 +402,102 @@ def is_contained(repo: str, branch: str, target: str) -> bool:
     if result.returncode != 0:
         return False
     return merge_tree_says_contained(result.stdout, target_tree)
+
+
+class VerdictCache:
+    """Remembers which layer found a branch landed, keyed by (head sha, base sha).
+
+    `git cherry` and `git merge-tree` answer from two commits alone, so their verdicts,
+    positive and negative, hold until either sha moves. A forge "merged" answer for a
+    head can never become false, so only the positive is stored: a negative reads
+    "not merged yet", which the next minute can overturn. Everything about the tree
+    itself (dirty, lock, busy process, freshness) stays live and is never cached.
+
+    Any read problem means an empty cache, and any write problem means the verdicts
+    are recomputed next time. Neither is worth a traceback at session start.
+    """
+
+    def __init__(self, common_dir: Path | None, base: str) -> None:
+        self.path = common_dir / VERDICT_CACHE if common_dir and base else None
+        self.base = base
+        self.entries = self._read()
+        self.updates: dict[str, str] = {}
+
+    def _read(self) -> dict[str, str]:
+        if self.path is None:
+            return {}
+        try:
+            data = json.loads(self.path.read_text())
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        return {
+            k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str)
+        }
+
+    def get(self, head: str) -> str | None:
+        """The cached layer for `head` against this base, or None when unknown."""
+        if self.path is None:
+            return None
+        layer = self.entries.get(f"{head}:{self.base}")
+        return layer if layer in KNOWN_LAYERS else None
+
+    def put(self, head: str, layer: str) -> None:
+        if self.path is None or not head:
+            return
+        key = f"{head}:{self.base}"
+        # A forge positive outranks everything else and is never downgraded.
+        if self.entries.get(key) == LAYER_FORGE:
+            return
+        self.entries[key] = layer
+        self.updates[key] = layer
+
+    def save(self, live_heads: set[str]) -> None:
+        """Merge with the file as it is now, drop dead heads, and rename into place.
+
+        Concurrent sessions run this hook, so the file is re-read here and the new
+        entries laid over it, then written to a temp file and renamed: a reader sees
+        the old file or the new one, never half of one.
+        """
+        if self.path is None or not self.updates:
+            return
+        merged = self._read()
+        for key, layer in self.updates.items():
+            if merged.get(key) != LAYER_FORGE:
+                merged[key] = layer
+        kept = {k: v for k, v in merged.items() if k.split(":", 1)[0] in live_heads}
+        while len(kept) > VERDICT_CACHE_MAX:
+            del kept[next(iter(kept))]
+        tmp = self.path.with_name(f"{self.path.name}.{os.getpid()}.tmp")
+        try:
+            tmp.write_text(json.dumps(kept, sort_keys=True))
+            os.replace(tmp, self.path)
+        except OSError:
+            with contextlib.suppress(OSError):
+                tmp.unlink()
+
+
+def landed_layer(
+    repo: str, branch: str, head: str, target: str, cache: VerdictCache
+) -> str:
+    """Which layer says `branch` landed on `target`: equivalent, contained, forge or "".
+
+    The cherry and merge-tree layers run only on a cache miss. A forge positive cached
+    for this head comes back as LAYER_FORGE; the caller still lets the live checks
+    (dirty, lock, busy process) decide whether the tree goes.
+    """
+    cached = cache.get(head)
+    if cached is not None:
+        return cached
+    if is_equivalent(repo, branch, target):
+        layer = LAYER_EQUIVALENT
+    elif is_contained(repo, branch, target):
+        layer = LAYER_CONTAINED
+    else:
+        layer = ""
+    cache.put(head, layer)
+    return layer
 
 
 def busy_process(path: str, holds: list[tuple[int, str, str]]) -> str:
@@ -773,12 +885,31 @@ def main() -> int:
     target = default_ref(repo)
     session = session_dirs()
     deadline = time.monotonic() + FORGE_BUDGET_S
+    cache = VerdictCache(
+        Path(common_dir), _git(["rev-parse", target], cwd=repo) if target else ""
+    )
+    # Branch tips by name: the orphan sweep reads its heads from here, and the cache
+    # keeps only entries whose head is still one of these or a worktree's HEAD.
+    tips: dict[str, str] = {}
+    for row in _git(
+        ["for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/"],
+        cwd=repo,
+    ).splitlines():
+        name, _, oid = row.rpartition(" ")
+        tips[name] = oid
 
     def forge_confirms(branch: str, head: str) -> bool:
+        # A cached positive needs no budget and no network: a merged PR for this exact
+        # head stays merged. A negative is never stored, because it can flip.
+        if cache.get(head) == LAYER_FORGE:
+            return True
         remaining = deadline - time.monotonic()
         if remaining < 1.0:
             return False
-        return forge_says_merged(repo, branch, head, timeout=min(5.0, remaining))
+        if forge_says_merged(repo, branch, head, timeout=min(5.0, remaining)):
+            cache.put(head, LAYER_FORGE)
+            return True
+        return False
 
     # Trees and branches the forge confirmed, keyed to the head it confirmed, so the
     # branch deletion can re-check that the tip has not moved since.
@@ -800,22 +931,16 @@ def main() -> int:
         merged = ancestor and not fresh
         # The cherry test costs a patch-id walk per branch, so it only runs once the
         # cheap ancestor test has already failed — which is the only case it can change.
-        equivalent = (
-            not merged
-            and not fresh
-            and bool(target)
-            and tree.branch is not None
-            and is_equivalent(repo, tree.branch, target)
+        # Both layers are pure functions of the two shas, so they come from the cache
+        # when it holds this pair. A cached forge positive reads as `equivalent` here:
+        # it only has to reach the REVIEW branch, where forge_confirms settles it.
+        layer = (
+            landed_layer(repo, tree.branch, tree.head, target, cache)
+            if not merged and not fresh and target and tree.branch is not None
+            else ""
         )
-        # Last and dearest: a real merge, run only once both history checks have failed.
-        contained = (
-            not merged
-            and not fresh
-            and not equivalent
-            and bool(target)
-            and tree.branch is not None
-            and is_contained(repo, tree.branch, target)
-        )
+        equivalent = layer in (LAYER_EQUIVALENT, LAYER_FORGE)
+        contained = layer == LAYER_CONTAINED
         dirty = is_dirty(tree.path)
         is_current = any(d == resolved or resolved in d.parents for d in session)
         verdict, reason = classify(
@@ -876,16 +1001,17 @@ def main() -> int:
         for b in orphans
         if b not in orphan_merged
         and bool(target)
-        and (is_equivalent(repo, b, target) or is_contained(repo, b, target))
+        and landed_layer(repo, b, tips.get(b, ""), target, cache) != ""
     ]
     # The forge settles an orphan the same way it settles a tree.
     orphan_forge = []
     for b in orphan_review:
-        tip = _git(["rev-parse", f"refs/heads/{b}"], cwd=repo)
+        tip = tips.get(b, "")
         if tip and forge_confirms(b, tip):
             confirmed[b] = tip
             orphan_forge.append(b)
     orphan_review = [b for b in orphan_review if b not in orphan_forge]
+    cache.save(set(tips.values()) | {t.head for t in trees})
 
     if not args.prune:
         for tree in removable:

@@ -634,7 +634,20 @@ def build_branch_repo(root):
     # main's tip and never moved is the case the fresh check keeps.
     git(["branch", "worktree-orphan-merged", "main~1"], repo)
     git(["branch", "-f", "worktree-orphan-merged", "main"], repo)
-    git(["branch", "worktree-orphan-squashed", f"{sha}"], repo)
+    # Its own commit, same patch as the tree's: a forge positive is cached per head sha,
+    # so sharing the tree's sha would let the tree's confirmation settle this orphan.
+    orphan_sq = git(
+        [
+            "commit-tree",
+            f"{sha}^{{tree}}",
+            "-p",
+            f"{sha}~1",
+            "-m",
+            "squashed work, orphan copy",
+        ],
+        repo,
+    ).stdout.strip()
+    git(["branch", "worktree-orphan-squashed", orphan_sq], repo)
     git(["branch", "worktree-orphan-live", "main"], repo)
     git(["worktree", "add", "-q", "--detach", str(root / "scratch")], repo)
     (root / "scratch" / "live").write_text("live\n")
@@ -663,8 +676,21 @@ def build_branch_repo(root):
     git(["merge", "-q", "--squash", "worktree-collapsed"], repo)
     git(["commit", "-qm", "collapsed work (#2)"], repo)
     git(["push", "-q", "origin", "main"], repo)
-    # Its orphan twin: same commits, no worktree.
-    collapsed_sha = git(["rev-parse", "worktree-collapsed"], repo).stdout.strip()
+    # Its orphan twin, no worktree: the tree's content in a commit of its own.
+    # The merged-verdict cache keys a forge positive on the head sha, so a twin at the
+    # SAME sha would inherit the orphan's confirmation and the "another tip" check
+    # below would test the cache.
+    collapsed_sha = git(
+        [
+            "commit-tree",
+            "worktree-collapsed^{tree}",
+            "-p",
+            "worktree-collapsed~1",
+            "-m",
+            "second half, orphan copy",
+        ],
+        repo,
+    ).stdout.strip()
     git(["branch", "worktree-orphan-collapsed", collapsed_sha], repo)
 
     # Squash-merged, then main drifted into a conflict on a file the branch touched:
@@ -868,6 +894,31 @@ with tempfile.TemporaryDirectory() as tmp:
         f"[{mod.REMOVABLE:9}] {(trees / 'squashed').as_posix()}" in forge_report.stdout
         and "exactly this tip" in forge_report.stdout,
     )
+    # The merged-verdict cache lives in the git common dir. A forge positive is stored
+    # against the exact tip; a PR from another tip, and every forge negative, is not.
+    cache_file = repo / ".git" / mod.VERDICT_CACHE
+    stored = json.loads(cache_file.read_text())
+    by_head = {k.split(":")[0]: v for k, v in stored.items()}
+    check(
+        "a forge positive is cached against the tip it confirmed",
+        by_head.get(tip("worktree-squashed")) == "forge",
+    )
+    check(
+        "a forge negative is not cached: the pure verdict stays",
+        by_head.get(tip("worktree-collapsed")) == "contained",
+    )
+    # With gh down, the cached positive still settles the tree.
+    offline = subprocess.run(
+        [sys.executable, str(SCRIPT)],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env={**env, "GH_BIN": "false"},
+    )
+    check(
+        "a cached forge positive needs no gh call",
+        f"[{mod.REMOVABLE:9}] {(trees / 'squashed').as_posix()}" in offline.stdout,
+    )
     subprocess.run(
         [sys.executable, str(SCRIPT), "--prune"],
         cwd=repo,
@@ -905,6 +956,51 @@ with tempfile.TemporaryDirectory() as tmp:
     check(
         "a failing gh leaves the collapsed tree at review",
         f"[{mod.REVIEW:9}] {(trees / 'collapsed').as_posix()}" in failed_report.stdout,
+    )
+
+# ── the merged-verdict cache ─────────────────────────────────────────────────────
+
+with tempfile.TemporaryDirectory() as tmp:
+    common = Path(tmp)
+    calls = []
+    real = (mod.is_equivalent, mod.is_contained)
+    mod.is_equivalent = lambda *a: calls.append("cherry") or False
+    mod.is_contained = lambda *a: calls.append("merge-tree") or False
+    try:
+        first = mod.VerdictCache(common, "base1")
+        check(
+            "a cache miss runs both git layers",
+            mod.landed_layer("r", "b", "head1", "t", first) == "" and len(calls) == 2,
+        )
+        first.save({"head1"})
+        calls.clear()
+        again = mod.VerdictCache(common, "base1")
+        check(
+            "a cache hit skips the git layers, negative verdicts included",
+            mod.landed_layer("r", "b", "head1", "t", again) == "" and calls == [],
+        )
+        moved = mod.VerdictCache(common, "base2")
+        mod.landed_layer("r", "b", "head1", "t", moved)
+        check("a moved base sha is a miss", len(calls) == 2)
+    finally:
+        mod.is_equivalent, mod.is_contained = real
+
+with tempfile.TemporaryDirectory() as tmp:
+    common = Path(tmp)
+    for junk in ("{not json", "[1, 2]", '{"h:b": 7}'):
+        (common / mod.VERDICT_CACHE).write_text(junk)
+        check(
+            f"a corrupt cache reads as empty: {junk}",
+            mod.VerdictCache(common, "b").get("h") is None,
+        )
+    stale = mod.VerdictCache(common, "b")
+    stale.put("deadbeef", "equivalent")
+    stale.put("live", "contained")
+    stale.save({"live"})
+    check(
+        "a head that is no longer a ref tip is dropped on save",
+        json.loads((common / mod.VERDICT_CACHE).read_text()) == {"live:b": "contained"}
+        and not list(common.glob("*.tmp")),
     )
 
 finish()
