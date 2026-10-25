@@ -45,8 +45,11 @@ _WRITE_SHAPES = (
     re.compile(r">>?\s*([^\s;&|<>()]+)"),
     # `tee path`, `tee -a path`: a pipe's write end.
     re.compile(r"\btee\s+(?:-[^\s]+\s+)*([^\s;&|<>()]+)"),
-    # `sed -i … path`, `perl -pi -e … path`: in-place editors, target last.
-    re.compile(r"\b(?:sed|perl)\b[^;&|]*?\s-[A-Za-z]*i(?:\.[^\s]*)?\s[^;&|]*?([^\s;&|<>()]+)\s*$"),
+    # `sed -i … path`, `perl -pi -e … path`: in-place editors, target last. BSD sed on macOS
+    # also spells in-place `-I` (`-I ''`, `-I.bak`); perl's `-I` is an include path, so only
+    # the sed arm takes the capital.
+    re.compile(r"\bsed\b[^;&|]*?\s-[A-Za-z]*[iI](?:\.[^\s]*)?\s[^;&|]*?([^\s;&|<>()]+)\s*$"),
+    re.compile(r"\bperl\b[^;&|]*?\s-[A-Za-z]*i(?:\.[^\s]*)?\s[^;&|]*?([^\s;&|<>()]+)\s*$"),
 )
 
 # Command words that take a heredoc and then write files the command text never names. This is

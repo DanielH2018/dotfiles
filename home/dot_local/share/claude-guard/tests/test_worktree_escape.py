@@ -78,6 +78,9 @@ def test_a_heredoc_after_a_cd_into_the_sessions_own_worktree_is_clean(checkouts)
 ESCAPING_WRITES = [
     "cd {primary} && cat > notes.md <<'EOF'\nhi\nEOF",
     "cd {primary} && sed -i s/a/b/ README.md",
+    # BSD sed's capital spelling of an in-place edit, with an empty and a named backup suffix.
+    "sed -I '' s/a/b/ {primary}/README.md",
+    "sed -I.bak s/a/b/ {primary}/README.md",
     "echo x | tee {primary}/README.md",
     "echo x > {primary}/README.md",
     "echo x >> {primary}/README.md",
@@ -92,6 +95,8 @@ CONTAINED_WRITES = [
     "echo x > README.md",
     "echo x > {worktree}/README.md",
     "sed -i s/a/b/ {worktree}/README.md",
+    # perl's `-I` adds an include path; it is not an in-place edit, so nothing is written.
+    "perl -I lib -ne print {primary}/README.md",
     "cd {primary} && grep -rn token .",
     "cd {primary} && cat README.md > /tmp/copy.txt",
     "cd {primary}",
