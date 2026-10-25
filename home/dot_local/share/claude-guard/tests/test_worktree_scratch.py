@@ -230,11 +230,12 @@ def test_a_glob_or_a_directory_is_not_a_tracked_file_to_restore(repo):
         assert not worktree_restore_safe(command, cwd, False, project_dir=wt), (cwd, command)
 
 
-def _ask_rules(tmp_path):
+def _ask_rules(tmp_path, allow=()):
     home = tmp_path / "home"
     (home / ".claude").mkdir(parents=True)
+    allowed = ", ".join(f'"{rule}"' for rule in ("Bash(cd:*)", "Bash(true)", "Bash(ls:*)", *allow))
     (home / ".claude" / "settings.json").write_text(
-        '{"permissions": {"allow": ["Bash(cd:*)", "Bash(true)", "Bash(ls:*)"],'
+        f'{{"permissions": {{"allow": [{allowed}],'
         ' "ask": ["Bash(rm:*)", "Bash(git clean:*)", "Bash(git restore:*)",'
         ' "Bash(git stash drop:*)", "Bash(git stash clear)"]}}'
     )
@@ -393,13 +394,18 @@ def test_a_drop_of_another_branchs_entry_or_of_no_one_entry_is_refused(repo, tmp
 
 def test_a_drop_is_refused_when_the_command_can_change_the_stack_first(repo, tmp_path):
     main, wt = repo
-    rules, roots = _ask_rules(tmp_path)
+    # The deployed settings allow these two, so a push or list before the drop can run (#1030).
+    rules, roots = _ask_rules(tmp_path, ("Bash(git stash push -u -m:*)", "Bash(git stash list:*)"))
     _stashes(main, wt)
     for command in [
         "git stash drop stash@{1}; git stash drop stash@{1}",
         "git stash drop stash@{1} && git stash drop stash@{1}",
-        "git stash push -q -m new && git stash drop stash@{1}",
+        "git stash push -u -m new && git stash drop stash@{1}",
         "git stash list && git stash drop stash@{1}",
+    ]:
+        d = judge(command, rules, roots, wt, wt)
+        assert not d.allow and d.reasons[-1] == "worktree-stash-drop:stack-changes", command
+    for command in [
         "for i in 1 2; do git stash drop stash@{1}; done",
         "while true; do git stash drop stash@{1}; done",
     ]:
