@@ -650,6 +650,8 @@ SECRET_DENY = [
     "sed 's/a/b/' ~/.ssh/id_rsa",
     "cat < ~/.ssh/id_rsa",
     "cat ~/.ssh/id_rsa > /tmp/x",
+    # a quoted separator in a file name does not split the read (#1004)
+    'cat "a|b" ~/.ssh/id_rsa',
 ]
 SECRET_ALLOW = [
     # a source directory named secrets holds code, not secrets (2026-10-24)
@@ -883,6 +885,29 @@ def test_a_python_attribute_access_is_not_a_secret_path():
 
 def test_a_secret_named_outside_certain_python_attributes_is_still_refused():
     assert kinds(STILL_READS_A_SECRET) == ["deny"] * len(STILL_READS_A_SECRET)
+
+
+# dotfiles #975, the operator's 2026-10-25 ruling. The server repo's ciphertext check passes
+# only as the exact whole command. A program that names the service-account token path stays
+# refused, even in a string literal (pinned in STILL_READS_A_SECRET above).
+CIPHERTEXT_CHECK = (
+    "uv run python scripts/secrets_mgmt/cluster_vars.py check --ciphertext-only "
+    "ansible/vars/cluster-vars.sops.env"
+)
+
+
+def test_the_ciphertext_only_check_is_allowed_as_the_whole_command():
+    assert kinds([CIPHERTEXT_CHECK]) == ["none"]
+
+
+def test_the_ciphertext_check_in_any_other_shape_is_still_refused():
+    other_shapes = [
+        CIPHERTEXT_CHECK.replace(" --ciphertext-only", ""),
+        CIPHERTEXT_CHECK.replace("--ciphertext-only", "--ciphertext-only --plain"),
+        f"{CIPHERTEXT_CHECK}; cat x",
+        f"cd /srv && {CIPHERTEXT_CHECK}",
+    ]
+    assert rules(other_shapes) == ["secret-read-interpreter"] * len(other_shapes)
 
 
 # A heredoc that is only stored, by a command that runs nothing, reads no secret: the
@@ -1159,6 +1184,8 @@ WRITE_DENY = [
     "cat foo | tee app/config.sops.json",
     "sed -i s/a/b/ ansible/vars/secrets.yml",
     "sed -i.bak s/a/b/ ansible/vars/secrets.yml",
+    # GNU sed reads `-ie` as `-i` with the backup suffix `e` (#1003)
+    "sed -ie s/a/b/ ansible/vars/secrets.yml",
     "sed --in-place s/a/b/ ansible/vars/secrets.yml",
     "perl -pi -e s/a/b/ ansible/vars/secrets.yml",
     "truncate -s 0 ansible/vars/secrets.yml",

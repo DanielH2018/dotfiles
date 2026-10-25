@@ -1242,23 +1242,50 @@ def secret_readers(sc: Scan, target: str) -> Verdict | None:
             if confirmed is None:
                 confirmed = _member_read(sc.command) or ""
             piece = confirmed
-        if read := _piece_read(piece):
-            words = _command_words(piece.split())
-            words = [words[0], *_drop_excludes(words[1:])]
-            secrets = _secret_words(read.split()[1:])
-            reason = SECRET_READ_MSG + _naming(secrets)
-            if args := _exclude_args(words, secrets):
-                reason += (
-                    " To search a tree that holds them, replace each of those words with its "
-                    f"parent directory and add {' '.join(args)}. The guard does not count an "
-                    "exclude argument as a read."
-                )
-            return Verdict("deny", "secret-read", reason)
+        if _piece_read(piece):
+            return _secret_read_denial(piece)
+    # A quoted `;&|` inside a file name splits the naive scan, so `cat "a|b" ~/.ssh/id_rsa`
+    # leaves no piece that reads. The quote-aware members keep the read whole (#1004).
+    if sc.parsed and confirmed is None and (piece := _member_read(sc.command)):
+        return _secret_read_denial(piece)
     return None
 
 
+def _secret_read_denial(piece: str) -> Verdict:
+    """The `secret-read` denial for `piece`, which `_piece_read` matches. It names the words
+    that matched, and for a recursive search the exclude arguments that would let it
+    through (#802)."""
+    read = _piece_read(piece) or ""
+    words = _command_words(piece.split())
+    words = [words[0], *_drop_excludes(words[1:])]
+    secrets = _secret_words(read.split()[1:])
+    reason = SECRET_READ_MSG + _naming(secrets)
+    if args := _exclude_args(words, secrets):
+        reason += (
+            " To search a tree that holds them, replace each of those words with its "
+            f"parent directory and add {' '.join(args)}. The guard does not count an "
+            "exclude argument as a read."
+        )
+    return Verdict("deny", "secret-read", reason)
+
+
+# DECIDED (dotfiles #975, operator ruling 2026-10-25): the server repo's ciphertext check
+# reads only the SOPS ciphertext, which the public repo already holds, so it passes as this
+# exact whole command. A compound command, another flag, or the same check without
+# `--ciphertext-only` keeps the refusal. A Python program that names the service-account
+# token path stays refused even in a string literal: no narrowing of that arm still refuses
+# an `open()` on the token.
+_CIPHERTEXT_CHECK = re.compile(
+    r"uv run python scripts/secrets_mgmt/cluster_vars\.py check --ciphertext-only "
+    r"[\w./][\w./-]*\.sops\.env"
+)
+
+
 def secret_interpreter(sc: Scan, target: str) -> Verdict | None:
-    """:945-949. The denial names the words that matched SECRET_PATHS (#802)."""
+    """:945-949. The denial names the words that matched SECRET_PATHS (#802). The ciphertext
+    check `_CIPHERTEXT_CHECK` passes."""
+    if _CIPHERTEXT_CHECK.fullmatch(sc.command.strip()):
+        return None
     sc = _without_python_attributes(_without_stored_heredocs(sc))
     if bdb_re(sc.scan, rf"{_INTERPRETER_WORD}.*{SECRET_PATHS}"):
         return Verdict(
@@ -1716,8 +1743,14 @@ WRITE_TARGETS = (
     rf"\.zprofile|\.profile|\.claude/settings\.json|\.claude/hooks/|{GIT_CONFIG_PATHS})"
 )
 # :1081. Editors that unambiguously rewrite the file they name; cp/mv deliberately absent.
+# GNU sed reads everything after `-i` in the word as the backup suffix, so `-ie` is `-i`
+# with suffix `e` (#1003), and sed's `-i` matches whatever follows it. perl keeps the space
+# or `.` after `-i`: its `-M`, `-I`, `-m` and `-x` take the rest of the word as a value, so
+# `-Mstrict` would read as an in-place edit.
 BDB_INPLACE = (
-    r"((sed|perl)\b[^;&|]*(^|[[:space:]])(-[A-Za-z]*i([[:space:]]|\.)|--in-place)|truncate\b|"
+    r"(sed\b[^;&|]*(^|[[:space:]])-[A-Za-z]*i|"
+    r"perl\b[^;&|]*(^|[[:space:]])-[A-Za-z]*i([[:space:]]|\.)|"
+    r"(sed|perl)\b[^;&|]*(^|[[:space:]])--in-place|truncate\b|"
     r"dd\b[^;&|]*(^|[[:space:]])of=)"
 )
 # A redirect, or any file argument of tee (tee writes every file it names, not just the first).
