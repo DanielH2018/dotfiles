@@ -11,6 +11,7 @@ extend-include = [
   "home/dot_local/bin/executable_dockq",
   "home/dot_local/bin/executable_dockrun",
   "home/dot_local/bin/executable_envq",
+  "home/dot_local/bin/executable_gh-rerun-failed",
   "home/dot_local/bin/executable_ghread",
   "home/dot_local/bin/executable_jsonq",
   "home/dot_local/bin/executable_killown",

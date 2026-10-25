@@ -89,6 +89,33 @@ test('api sends fields only as raw query parameters on a pinned GET', { skip }, 
   }
 });
 
+test('graphql posts one query document to the fixed endpoint, variables typed by -F', { skip }, () => {
+  const query = 'query($n: Int!) {\n  repository(owner: "o", name: "r") { a: pullRequest(number: $n) { state } }\n}';
+  assert.deepStrictEqual(
+    argvOf(['graphql', '-f', `query=${query}`, '-F', 'n=4956', '-f', 'owner=o', '--paginate',
+      '--jq', '.data']),
+    ['api', `--raw-field=query=${query}`, '--raw-field=owner=o', '--field=n=4956', '--paginate',
+      '--jq=.data', '--', 'graphql']);
+});
+
+test('graphql refuses a write operation, a missing query and a file read without starting gh', { skip }, () => {
+  const refused = [
+    [['graphql', '-f', 'query=mutation { addStar(input: {starrableId: "x"}) { clientMutationId } }'], /mutation/],
+    [['graphql', '-f', 'query=MUTATION{x}'], /mutation/],
+    [['graphql', '-f', 'query=subscription { x }'], /subscription/],
+    [['graphql', '-f', 'query={ a }', '-f', 'query=mutation { b }'], /second query/],
+    [['graphql', '-F', 'n=1'], /needs -f query/],
+    [['graphql', '-f', 'query={ a }', '-F', 'v=@/etc/passwd'], /read a file/],
+    [['graphql', '-f', 'query={ a \x1b }'], /control character/],
+  ];
+  for (const [args, message] of refused) {
+    const r = ghread(args);
+    assert.strictEqual(r.code, 2, `${args.join(' ')}: ${r.stderr}`);
+    assert.match(r.stderr, message, args.join(' '));
+    assert.strictEqual(r.stdout, '', `${args.join(' ')} reached gh`);
+  }
+});
+
 test('search puts the query after -- so a term cannot become a flag', { skip }, () => {
   assert.deepStrictEqual(
     argvOf(['search', 'prs', '-R', 'o/r', '--state', 'open', '-q', '.[].url', '--json', 'url',

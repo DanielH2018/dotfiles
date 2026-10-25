@@ -319,6 +319,10 @@ GH_ALLOW = [
     'gh api -H "Accept: application/vnd.github+json" repos/o/r',
     "gh pr list",
     "gh pr view 42 --json state",
+    # the routes the graphql and rerun asks name (#1040)
+    "ghread graphql -f query='{ viewer { login } }' --jq .data",
+    "ghread graphql -f query='query($n: Int!) { viewer { login } }' -F n=1",
+    "gh-rerun-failed 4567 -R o/r",
 ]
 
 
@@ -338,6 +342,13 @@ def test_gh_api_mutation_asks():
         "gh-api-input",
         "gh-api-graphql",
     ]
+
+
+def test_gh_api_graphql_ask_names_the_ghread_route():
+    """Whichever arm fires first, a graphql request names `ghread graphql`; a REST one doesn't."""
+    for command in ("gh api graphql -f query='{ viewer { login } }'", "gh api --jq=.x graphql"):
+        assert "ghread graphql" in d.deny(command, "", ENV).reason, command
+    assert "ghread graphql" not in d.deny("gh api repos/o/r/issues -f title=x", "", ENV).reason
 
 
 def test_gh_api_naming_a_secrets_path_is_still_denied():

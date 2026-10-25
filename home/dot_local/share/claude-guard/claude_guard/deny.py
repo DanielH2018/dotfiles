@@ -430,6 +430,12 @@ _GH_API_WORDS = (
 )
 GH_API_AT = rf"(^|[;&|(`]){_GH_API_WORDS}"
 GH_HINT = "Read-only requests need no prompt; approve this if the mutation is intended."
+# Most graphql calls carry `-f query=`, so the field arm fires on them before the graphql arm
+# does. The route is named wherever the endpoint is graphql, whichever arm fires.
+GH_GRAPHQL_HINT = (
+    " For a query, run `ghread graphql -f query='...'` instead; it refuses a document "
+    "containing `mutation` and needs no prompt."
+)
 GH_SECRET_HINT = (
     "It also names a secrets path, so it is denied rather than offered: `gh` is absent "
     "from READERS, which leaves this rule the only gate on that path."
@@ -451,13 +457,19 @@ def gh_api(sc: Scan, target: str) -> Verdict | None:
     if not (bdb_re(sc.scanset, GH_API_AT) or runs_gh):
         return None
     secret = bdb_re(sc.scan, SECRET_PATHS)
+    subject = sc.scan if texts is None else "\n".join(map(normalize, texts))
+    graphql = (
+        bdb_re(subject, r"(^|[[:space:]]|/)graphql\b")
+        if texts is None
+        else any(_GH_GRAPHQL.fullmatch(e) for t in texts for e in _gh_api_endpoints(t))
+    )
 
     def gate(rule: str, message: str) -> Verdict:
         if secret:
             return Verdict("deny", rule + "-secret", message + " " + GH_SECRET_HINT)
-        return Verdict("ask", rule, message + " " + GH_HINT)
+        hint = GH_HINT + (GH_GRAPHQL_HINT if graphql else "")
+        return Verdict("ask", rule, message + " " + hint)
 
-    subject = sc.scan if texts is None else "\n".join(map(normalize, texts))
     if bdb_rei(
         subject,
         r"(^|[[:space:]])(-X|--method)[[:space:]]*=?[[:space:]]*(POST|PUT|PATCH|DELETE)\b",
@@ -486,11 +498,6 @@ def gh_api(sc: Scan, target: str) -> Verdict | None:
     for rule, pattern, message in arms:
         if bdb_re(subject, pattern):
             return gate(rule, message)
-    graphql = (
-        bdb_re(subject, r"(^|[[:space:]]|/)graphql\b")
-        if texts is None
-        else any(_GH_GRAPHQL.fullmatch(e) for t in texts for e in _gh_api_endpoints(t))
-    )
     if graphql:
         return gate("gh-api-graphql", "A graphql request, which can mutate.")
     return None

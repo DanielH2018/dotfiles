@@ -554,6 +554,10 @@
       "`unitq cat [--user] UNIT…` and `unitq show [--user] UNIT PROP…` (piped or not, locally or over ssh) are routine and read-only: they run `systemctl cat` or `systemctl show -p` and print the result with Environment= values, Exec* arguments and credentials replaced by placeholders, so a unit's secrets never reach the session",
       "`killown [--dry-run] [--signal SIG] [--max N] PATTERN` is routine: it signals only processes this Claude Code session started, identified by the session id the session's own shell carries. It never signals another session's processes, Claude Code itself, a tool shell, an MCP server or its own caller, and refuses a match wider than --max",
       "`envq NAME…` and `envq --names [REGEX]` are routine and read-only: they print an environment variable's value only when its name carries no credential word and the value is a plain number, duration, boolean, path or short word, and print `set` otherwise, so no credential reaches the session",
+      {{/* dotfiles #1040. classifyAllShell suspends the Bash() allow rules for these in auto mode,
+           and the classifier reads a graphql POST or a CI rerun as an external write. */}}
+      "`ghread graphql -f query='…' [-F var=value] [--paginate] [--jq EXPR]` is routine and read-only: ghread sends the document to GitHub's graphql endpoint and refuses, before gh starts, any document containing `mutation` or `subscription`, so only a query can run",
+      "`gh-rerun-failed RUN_ID [-R OWNER/REPO]` is routine: it runs only `gh run rerun --failed` on a run that finished with a failure, in a repository owned by the account gh is logged in as, and refuses a run on its third attempt. It cannot re-run a successful run, pick a job, enable debug logging or touch another owner's repository",
       {{/* Denied as "External System Writes" on 2026-09-25 while polling a fan-out wave. The
            command reaches two hosts and GitHub, which is what the classifier keyed on, but every
            reach is a read: cmd_status in scripts/dev/fanout_lib/place.py loads the manifest, runs
@@ -1296,9 +1300,11 @@
            shell-escape body, and `gh extension install`, can execute arbitrary code. Neither is
            allowlisted, so both face the classifier rather than running silently. */}}
       "gh",
-      {{/* ghread, dockq and dockrun wrap gh and docker, inherit their reason to be here, and
-           are equally inert where the list is. None has an alias or extension surface. */}}
+      {{/* ghread, gh-rerun-failed, dockq and dockrun wrap gh and docker, inherit their reason
+           to be here, and are equally inert where the list is. None has an alias or extension
+           surface. */}}
       "ghread",
+      "gh-rerun-failed",
       "dockq",
       "dockrun"
     ]

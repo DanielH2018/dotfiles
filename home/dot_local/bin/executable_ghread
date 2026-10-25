@@ -21,7 +21,10 @@ constants and validated values:
     stays on gh's default GET. With fields it sends `--method=GET` itself, so a
     field becomes a query parameter and never a request body. Every field
     travels as `--raw-field`, so gh's `-F key=@file` never reads a local file.
-    `--input` and graphql are never sent.
+    `--input` is never sent, and `api` refuses a graphql path.
+  - `graphql` is the one POST. It sends a query document to gh's fixed
+    `graphql` endpoint, and refuses a document that names `mutation` or
+    `subscription` anywhere, so only a read operation can reach GitHub.
   - `--out` writes only under a scratch root, and refuses a symlink or hard link
     as the target, so it replaces `> file` without becoming a write primitive.
   - gh is found in fixed system directories, never through the caller's $PATH,
@@ -35,6 +38,8 @@ constants and validated values:
   ghread run logs 4567 --failed --out "$TMPDIR/run.log"
   ghread api repos/owner/repo/pulls --paginate --jq '.[].number'
   ghread api -X GET search/issues -f q='repo:owner/repo is:open' -f per_page=10
+  ghread graphql -f query='{ repository(owner:"o", name:"r") { stargazerCount } }'
+  ghread graphql -f query='query($n: Int!) { viewer { login } }' -F n=1 --jq .data
   ghread search prs -R owner/repo --state open -- 'review:required'
   ghread stack view --short
 
@@ -89,6 +94,15 @@ _JQ_ENV = re.compile(r"\$ENV\b|\benv\b|\$__prog_env\b")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 MAX_TEXT = 4096
+# A graphql document with a dozen aliased pullRequest lookups passes 4096 easily.
+MAX_QUERY = 65536
+# GraphQL names are [_A-Za-z][_0-9A-Za-z]*, with no escape that could spell one, so an
+# operation keyword appears in the document as these letters in a row or not at all. A
+# plain substring match is therefore enough, and it over-refuses a field or string that
+# merely contains the word, which costs a rewording and nothing else.
+_GRAPHQL_WRITE = re.compile(r"mutation|subscription", re.IGNORECASE)
+# A document may span lines; every other control character is still refused.
+_QUERY_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 MAX_LIMIT = 1000
 
 # Scratch roots for --out. TMPDIR comes from the caller's environment, so it is
@@ -319,6 +333,53 @@ def build_api(ns) -> list[str]:
     return argv + ["--", path]
 
 
+def _graphql_query(doc: str) -> str:
+    if len(doc) > MAX_QUERY or _QUERY_CONTROL.search(doc):
+        raise GhreadError("refusing query: too long or contains a control character")
+    if _GRAPHQL_WRITE.search(doc):
+        raise GhreadError(
+            "refusing a graphql document that contains `mutation` or `subscription`:"
+            " graphql reads only"
+        )
+    return doc
+
+
+def build_graphql(ns) -> list[str]:
+    """One POST to gh's fixed `graphql` endpoint, carrying a read-only document.
+
+    The document is the `query` field and nothing else may carry one: `--input` is never
+    sent and every field goes through `_graphql_query` or `_text`. Unlike `api`, `-F` is
+    sent as gh's typed `--field`, because a variable declared `Int!` rejects the string
+    a raw field would send. An `@` value is still refused, so `-F` never reads a file.
+    """
+    query = None
+    out = []
+    for flag, items in (("-f", ns.raw_field or []), ("-F", ns.field or [])):
+        for item in items:
+            key, sep, value = item.partition("=")
+            if not sep:
+                raise GhreadError(f"refusing {flag} {item!r}: expected key=value")
+            _check(_FIELD_KEY, key, f"{flag} key")
+            if key == "query":
+                if query is not None:
+                    raise GhreadError("refusing a second query field")
+                query = _graphql_query(value)
+                continue
+            _text(value, f"{flag} {key}")
+            if flag == "-F" and value.startswith("@"):
+                raise GhreadError(f"refusing -F {key}=@...: gh would read a file")
+            kind = "field" if flag == "-F" else "raw-field"
+            out.append(f"--{kind}={key}={value}")
+    if query is None:
+        raise GhreadError("graphql needs -f query='...'")
+    argv = ["api", f"--raw-field=query={query}"] + out
+    if ns.paginate:
+        argv.append("--paginate")
+    if ns.jq:
+        argv.append(f"--jq={_jq(ns.jq)}")
+    return argv + ["--", "graphql"]
+
+
 def build_search(ns) -> list[str]:
     terms = [_text(t, "search term") for t in ns.terms]
     if not terms:
@@ -345,7 +406,8 @@ def build_stack(ns) -> list[str]:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog=PROG, description="Read GitHub through gh (GET only, fixed invocations)."
+        prog=PROG,
+        description="Read GitHub through gh: REST GET or a graphql query.",
     )
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument(
@@ -444,6 +506,26 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("-q", "--jq", metavar="EXPR")
 
     p = top.add_parser(
+        "graphql", parents=[common], help="POST one read-only graphql query document"
+    )
+    p.add_argument(
+        "-f",
+        "--raw-field",
+        action="append",
+        metavar="KEY=VALUE",
+        help="query=DOCUMENT (required, once), or a string variable",
+    )
+    p.add_argument(
+        "-F",
+        "--field",
+        action="append",
+        metavar="KEY=VALUE",
+        help="a typed variable (number, true, false, null); an @file value is refused",
+    )
+    p.add_argument("--paginate", action="store_true", help="follow $endCursor")
+    p.add_argument("-q", "--jq", metavar="EXPR")
+
+    p = top.add_parser(
         "search", parents=[common, repo, json_], help="gh search; query after --"
     )
     p.add_argument("kind", choices=("prs", "issues", "code", "repos", "commits"))
@@ -471,6 +553,7 @@ BUILDERS = {
     "issue": build_issue,
     "run": build_run,
     "api": build_api,
+    "graphql": build_graphql,
     "search": build_search,
     "stack": build_stack,
 }
