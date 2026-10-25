@@ -17,8 +17,8 @@ both costs in its own window and returns a conclusion. The exception is the targ
 already know the file and the symbol, just read it, however many calls that takes.
 
 Beyond that trigger, delegate work that is genuinely independent and sizeable — a wide multi-file
-investigation, a broad gather across distinct sub-topics. Don't spawn a subagent to verify or
-double-check your own work. If one subagent can do the job, use one rather than several. Past one,
+investigation, a broad gather across distinct sub-topics. Don't spawn a subagent on your own
+initiative to verify or double-check your own work; a review stage a tool runs as a fixed step is not your initiative. If one subagent can do the job, use one rather than several. Past one,
 scale the count to the work: 2–3 for a standard question, 3–5 for distinct sub-topics or lenses, and
 5–10 for a large gather. The hard cap is 20.
 
@@ -92,7 +92,7 @@ question plus a grep/offset to reach for — never the bare path and a hope they
 earn their cost on high-stakes artifacts — a security sweep, a migration, a spec I'm about to build
 from, or anything I've explicitly asked you to audit or be thorough about. They are not how ordinary work
 ends. On a routine change you catch your own mistakes already, and a verification fan-out just multiplies
-spend for the same answer. Reach for them when I ask, or when being wrong is expensive.
+spend for the same answer. Reach for them when I ask, or when being wrong is expensive. A pipeline that reviews as a fixed stage, such as the homelab fan-out's review phase, has already opted in. Its cost was judged against 86 batches in DanielH2018/server#3675 (0.65 real findings per PR, about $2.60 of review spend per PR).
 
 **Stop at diminishing returns.** Once the answer is good enough, stop spawning and write it — don't
 chase marginal coverage.

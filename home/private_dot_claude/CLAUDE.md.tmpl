@@ -90,7 +90,7 @@ before you write a stub or a textual assertion.
 
 ## Verification & self-checking
 
-Don't dispatch a review subagent on your own initiative to double-check work you already finished. User instructions take precedence over skills, and this is the instruction. Asked for a review, run one.
+Don't dispatch a review subagent on your own initiative to double-check work you already finished. User instructions take precedence over skills, and this is the instruction. Asked for a review, run one. A review stage that a tool runs as a fixed step is not your initiative, so this rule does not cover it. The homelab fan-out's review phase (`fanout.py place launch` reviews every batch unless given `--no-review`) is that kind of stage: let it run, and act on its findings.
 
 **Evidence before claims.** Say tests pass, the linter is clean or a bug is fixed only when you ran that command in this session and read its output; otherwise say the status is unverified.
 
