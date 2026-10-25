@@ -1386,7 +1386,10 @@ def judge(
             return Decision(False, f"segment:{i}:{reason}", tuple(reasons))
         if _changes_cwd(part) and not _cd_stays(part, cwd):
             target = _cd_to_session_worktree(part, project_dir)
-            if target and not cwd_changed:
+            # Behind `||` the `cd` may be skipped while the rest still runs, and behind `|`
+            # it runs in a subshell, so either way the shell may never reach `target`.
+            reached = i == 0 or parsed.segments[i - 1].sep in ("&&", ";", "newline")
+            if target and reached and not cwd_changed:
                 cwd = target
                 moved = True
             else:

@@ -234,8 +234,8 @@ def _ask_rules(tmp_path):
     home = tmp_path / "home"
     (home / ".claude").mkdir(parents=True)
     (home / ".claude" / "settings.json").write_text(
-        '{"permissions": {"allow": ["Bash(cd:*)"], "ask": ["Bash(rm:*)", "Bash(git clean:*)",'
-        ' "Bash(git restore:*)"]}}'
+        '{"permissions": {"allow": ["Bash(cd:*)", "Bash(true)", "Bash(ls:*)"],'
+        ' "ask": ["Bash(rm:*)", "Bash(git clean:*)", "Bash(git restore:*)"]}}'
     )
     return load_rules(home=str(home), project_dir=None), scratch_roots(str(home))
 
@@ -297,11 +297,12 @@ def test_a_cd_to_the_sessions_own_cwd_leaves_relative_cleanup_allowed(repo, tmp_
 def test_a_cd_to_the_worktree_root_from_elsewhere_allows_relative_cleanup(repo, tmp_path):
     _, wt = repo
     rules, roots = _ask_rules(tmp_path)
+    sub = os.path.join(wt, "src")
     for command in [
         f"cd {wt} && rm .git-pr-body.md",
         f"cd {wt} && git restore --staged --worktree --source=HEAD src/app.py",
     ]:
-        assert judge(command, rules, roots, os.path.join(wt, "src"), wt).allow, command
+        assert judge(command, rules, roots, sub, wt).allow, command
         assert judge(command, rules, roots, "", wt).allow, command
 
 
@@ -313,8 +314,11 @@ def test_cleanup_after_a_cd_to_the_worktree_root_needs_an_unbroken_and_run(repo,
         f"cd {wt}; rm .git-pr-body.md",
         f"cd {wt} || rm .git-pr-body.md",
         f"cd {wt} && rm -r scratch; rm .git-pr-body.md",
+        f"true || cd {wt} && rm .git-pr-body.md",
+        f"ls | cd {wt} && rm .git-pr-body.md",
         f"cd {wt}/src/.. && rm .git-pr-body.md",
         f"cd {main}/.claude/worktrees/fanout-1/scratch && rm probe.py",
     ]:
         assert not judge(command, rules, roots, sub, wt).allow, command
+        assert not judge(command, rules, roots, "", wt).allow, command
     assert not judge(f"cd {wt} && rm .git-pr-body.md", rules, roots, sub, main).allow
