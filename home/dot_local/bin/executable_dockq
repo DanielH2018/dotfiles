@@ -365,13 +365,20 @@ def registry_request(reg: Registry, repo: str, method: str, path: str, accept=No
             )
 
 
-def _next_page(link: str | None, path: str) -> str | None:
+def _next_page(link: str | None, reg: Registry, path: str) -> str | None:
     m = re.match(r'\s*<([^>]+)>\s*;\s*rel="?next"?', link or "")
     if not m:
         return None
     nxt = urllib.parse.urlsplit(m.group(1))
-    # Only the same tag list on the same registry; never another path or host.
-    if nxt.scheme or nxt.netloc or nxt.path != path:
+    # Only the same tag list on the same registry; never another path or host. A
+    # registry may spell the link absolute, so an absolute URL on reg.base is fine.
+    base = urllib.parse.urlsplit(reg.base)
+    same_registry = not (nxt.scheme or nxt.netloc) or (
+        (nxt.scheme, nxt.netloc) == (base.scheme, base.netloc)
+    )
+    if not same_registry or nxt.path != path:
+        # Stopping here leaves the list short, so say so rather than look complete.
+        print(f"{PROG}: not following next page {m.group(1)!r}", file=sys.stderr)
         return None
     return f"{nxt.path}?{nxt.query}" if nxt.query else nxt.path
 
@@ -383,7 +390,7 @@ def list_tags(ns) -> list[str]:
     for _ in range(MAX_TAG_PAGES):
         with registry_request(reg, repo, "GET", url) as resp:
             tags.extend(json.load(resp).get("tags") or [])
-            url = _next_page(resp.headers.get("Link"), path)
+            url = _next_page(resp.headers.get("Link"), reg, path)
         if url is None:
             return tags
     print(f"{PROG}: stopped after {MAX_TAG_PAGES} pages", file=sys.stderr)

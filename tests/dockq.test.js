@@ -172,8 +172,19 @@ const server = http.createServer((req, res) => {
   }
   if (url.pathname.endsWith('/tags/list')) {
     const first = !url.searchParams.has('last');
-    if (first) res.setHeader('Link', '<' + url.pathname + '?last=b&n=2>; rel="next"');
+    // team/app links by path; the others spell the link absolute, or point it away.
+    const next = {
+      'abs/app': 'http://127.0.0.1:' + port + url.pathname,
+      'away/app': '/v2/other/app/tags/list',
+      'offhost/app': 'http://localhost:' + port + url.pathname,
+    }[repo] ?? url.pathname;
+    if (first) res.setHeader('Link', '<' + next + '?last=b&n=2>; rel="next"');
     res.end(JSON.stringify({ tags: first ? ['a', 'b'] : ['c'] }));
+    return;
+  }
+  if (repo === 'redir/app') {
+    res.writeHead(302, { Location: '/v2/team/app/manifests/1.0' });
+    res.end();
     return;
   }
   if (repo === 'nohdr/app') {
@@ -274,4 +285,91 @@ test('requests ignore a proxy variable', { skip }, () => {
   });
   assert.strictEqual(r.code, 0, r.stderr);
   assert.strictEqual(r.stdout.trim(), DIGEST_INDEX);
+});
+
+test('tags follows an absolute next link on the same registry only', { skip }, () => {
+  const abs = viaRegistry(['tags', 'abs/app', '--registry', REGISTRY]);
+  assert.strictEqual(abs.code, 0, abs.stderr);
+  assert.deepStrictEqual(abs.stdout.trim().split('\n'), ['a', 'b', 'c']);
+  for (const repo of ['away/app', 'offhost/app']) {
+    const r = viaRegistry(['tags', repo, '--registry', REGISTRY]);
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.deepStrictEqual(r.stdout.trim().split('\n'), ['a', 'b'], repo);
+    assert.match(r.stderr, /not following next page/, repo);
+    assert.ok(r.seen.every((s) => s.url.startsWith(`/v2/${repo}/`) || s.url.startsWith('/token')),
+      JSON.stringify(r.seen));
+  }
+});
+
+test('digest does not follow a redirect', { skip }, () => {
+  const r = viaRegistry(['digest', 'redir/app:1.0', '--registry', REGISTRY]);
+  assert.strictEqual(r.code, 1, r.stderr);
+  assert.match(r.stderr, /HTTP 302/);
+  assert.ok(!r.seen.some((s) => s.url.startsWith('/v2/team/')), JSON.stringify(r.seen));
+});
+
+test('digest accepts a digest reference', { skip }, () => {
+  const r = viaRegistry(['digest', `team/app@${DIGEST_SINGLE}`, '--registry', REGISTRY]);
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.strictEqual(r.seen.at(-1).url, `/v2/team/app/manifests/${DIGEST_SINGLE}`);
+});
+
+// The public registries cannot be reached from a test, so these load dockq as a module and
+// call the step under test directly, with the one network call replaced by a recorder.
+const MODULE = `
+import importlib.machinery, importlib.util, json, sys, urllib.request
+loader = importlib.machinery.SourceFileLoader('dockq', sys.argv[1])
+mod = importlib.util.module_from_spec(importlib.util.spec_from_loader('dockq', loader))
+loader.exec_module(mod)
+exec(sys.argv[2])
+`;
+
+function inModule(code, env = {}) {
+  const r = run('python3', ['-c', MODULE, DOCKQ, code], { env: { ...process.env, ...env } });
+  assert.strictEqual(r.code, 0, r.stderr);
+  return JSON.parse(r.stdout);
+}
+
+test('Docker Hub names get library/ and ghcr.io names keep their owner', { skip }, () => {
+  const out = inModule(`
+refs = ['nginx', 'grafana/loki:3.4.2', 'docker.io/postgres:17', 'ghcr.io/o/img:v1']
+print(json.dumps([[r.base, repo, ref] for r, repo, ref in
+                  (mod.parse_ref(x, None, want_reference=True) for x in refs)]))`);
+  assert.deepStrictEqual(out, [
+    ['https://registry-1.docker.io', 'library/nginx', 'latest'],
+    ['https://registry-1.docker.io', 'grafana/loki', '3.4.2'],
+    ['https://registry-1.docker.io', 'library/postgres', '17'],
+    ['https://ghcr.io', 'o/img', 'v1'],
+  ]);
+});
+
+test('a public registry asks its pinned realm, whatever the challenge names', { skip }, () => {
+  const out = inModule(`
+seen = []
+class Stop(Exception): pass
+def record(req):
+    seen.append(req.full_url)
+    raise Stop
+mod._open = record
+for host in ('ghcr.io', 'docker.io'):
+    try:
+        mod._fetch_token(mod.registry_for(host), 'o/img',
+                         {'realm': 'https://evil.example/token', 'service': 'evil'})
+    except Stop:
+        pass
+print(json.dumps(seen))`);
+  assert.deepStrictEqual(out, [
+    'https://ghcr.io/token?scope=repository%3Ao%2Fimg%3Apull&service=ghcr.io',
+    'https://auth.docker.io/token?scope=repository%3Ao%2Fimg%3Apull&service=registry.docker.io',
+  ]);
+});
+
+test('the opener holds no proxy for any scheme', { skip }, () => {
+  // The public registries are https, which the loopback proxy test above cannot reach.
+  const out = inModule(`
+print(json.dumps([h.proxies for h in mod._OPENER.handlers
+                  if isinstance(h, urllib.request.ProxyHandler) and h.proxies]))`,
+  { HTTPS_PROXY: 'http://127.0.0.1:9', https_proxy: 'http://127.0.0.1:9',
+    HTTP_PROXY: 'http://127.0.0.1:9', http_proxy: 'http://127.0.0.1:9' });
+  assert.deepStrictEqual(out, []);
 });
