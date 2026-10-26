@@ -262,7 +262,7 @@ rg = { repo = "BurntSushi/ripgrep", tag = "15.2.0" }
 # renovate: datasource=github-releases depName=tomnomnom/gron
 gron = { repo = "tomnomnom/gron", tag = "v0.7.1" }
 # renovate: datasource=github-releases depName=neovim/neovim
-nvim = { repo = "neovim/neovim", tag = "v0.12.5" }
+nvim = { repo = "neovim/neovim", tag = "v0.12.6" }
 # renovate: datasource=github-releases depName=sxyazi/yazi
 yazi = { repo = "sxyazi/yazi", tag = "v26.9.1" }
 # renovate: datasource=github-releases depName=ryanoasis/nerd-fonts
