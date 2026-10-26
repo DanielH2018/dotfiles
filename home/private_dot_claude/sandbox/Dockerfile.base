@@ -245,7 +245,7 @@ RUN mkdir -p /audit && chown claudebot:claudebot /audit
 # npm's cache is a build cache mount, so it speeds up rebuilds without landing
 # in the image (which is what `npm cache clean --force` used to buy).
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_CODE_VERSION=2.1.280
+ARG CLAUDE_CODE_VERSION=2.1.310
 ARG CLAUDE_CODE_REFRESH="0"
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
     echo "claude-code refresh token: ${CLAUDE_CODE_REFRESH}" \
