@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { renderTemplate, renderFile } = require('../lib/render');
+const { renderFile, chezmoiAvailable } = require('../lib/render');
 const { scratch } = require('../lib/tmp');
 const { srcPath } = require('../lib/paths');
 
@@ -15,37 +15,39 @@ const { srcPath } = require('../lib/paths');
 // stdin (the current target content) is intentionally ignored.
 const TEMPLATE = srcPath('private_dot_claude', 'modify_settings.json.sh.tmpl');
 
-// This test renders a chezmoi template via `includeTemplate`; skip cleanly where
-// chezmoi can't render THIS repo — the binary is absent, or its configured source
-// dir isn't this repo (e.g. a sandbox pointing at an empty default source dir).
-//
-// `.chezmoi.sourceDir` is whatever chezmoi is configured with, which is the primary
-// checkout — never a worktree. The rendered script therefore invokes the PRIMARY
-// checkout's claude-settings-merge, not this tree's. Run from a worktree, this suite
-// used to render the worktree's template against the primary checkout's binary and
-// report the result as if it had tested the worktree: false green, or a false red like
-// the one that surfaced this. Require the resolved source dir to be this tree's `home/`
-// and skip otherwise, so a worktree gets no signal rather than wrong signal.
-const REPO_SOURCE_DIR = srcPath();
-function chezmoiCanRenderRepo() {
-  try {
-    const srcDir = renderTemplate('{{ .chezmoi.sourceDir }}', { source: null }).trim();
-    if (!srcDir || !fs.existsSync(path.join(srcDir, '.chezmoitemplates', 'settings.base.json'))) return false;
-    return fs.realpathSync(srcDir) === fs.realpathSync(REPO_SOURCE_DIR);
-  } catch { return false; }
-}
-const skip = chezmoiCanRenderRepo() ? false : 'chezmoi cannot render this repo\'s templates';
+// Render with `--source` set to this tree's `home/` (renderTemplate's default), so
+// `.chezmoi.sourceDir` is this tree and the rendered script invokes THIS tree's
+// claude-settings-merge. This suite used to render with chezmoi's configured source dir,
+// which is always the primary checkout, and skip wherever that was not this tree. That
+// covered CI and every worktree, so da3a452c broke a test here and nothing turned red for
+// a month (#1057). Skip only where chezmoi is not installed.
+const skip = chezmoiAvailable ? false : 'chezmoi not installed';
+
+// The rendered script refuses to run when the settings templates are uncommitted. That
+// guard protects `chezmoi apply`; here it would fail every test exactly while the
+// templates are being edited, so the suite opts out of it.
+const env = { ...process.env, CLAUDE_SETTINGS_ALLOW_DIRTY: '1' };
 
 let tmp, script, run;
 before(() => {
   if (skip) return;
-  const rendered = renderFile(TEMPLATE, { source: null });
+  const rendered = renderFile(TEMPLATE);
 
   tmp = scratch(os.tmpdir(), 'modset-');
   script = path.join(tmp, 'modify_settings.sh');
   fs.writeFileSync(script, rendered, { mode: 0o755 });
   // Run via bash (not the .sh directly): Windows can't exec a .sh (EFTYPE); bash handles both.
-  run = (input) => execFileSync('bash', [script], { input, encoding: 'utf8' });
+  run = (input) => execFileSync('bash', [script], { input, encoding: 'utf8', env });
+});
+
+// The rendered script must call this tree's merge binary, not the primary checkout's.
+// Rendering with chezmoi's configured source dir would point it there.
+test('the rendered script runs this tree\'s claude-settings-merge', { skip }, () => {
+  const rendered = fs.readFileSync(script, 'utf8').match(/^MERGE="(.*)"$/m);
+  assert.ok(rendered, 'rendered script has no MERGE= line');
+  // realpath both sides: chezmoi may resolve a symlinked checkout path (macOS /tmp).
+  const merge = srcPath('dot_local', 'bin', 'executable_claude-settings-merge');
+  assert.strictEqual(fs.realpathSync(rendered[1]), fs.realpathSync(merge));
 });
 
 // 1. Output is valid JSON carrying the base structure (the base always defines permissions).
@@ -80,7 +82,7 @@ test('a deployed effortLevel in stdin reaches the merge, and the template pin wi
   assert.ok(pin !== undefined,
     'settings.base.json no longer pins effortLevel: assert the carry-forward here instead');
   const deployed = pin === 'low' ? 'high' : 'low';
-  const r = spawnSync('bash', [script], { input: JSON.stringify({ effortLevel: deployed }), encoding: 'utf8' });
+  const r = spawnSync('bash', [script], { input: JSON.stringify({ effortLevel: deployed }), encoding: 'utf8', env });
   assert.strictEqual(r.status, 0, r.stderr);
   assert.strictEqual(JSON.parse(r.stdout).effortLevel, pin, 'the template pin wins over the deployed value');
   assert.ok(r.stderr.includes(`replacing deployed ${JSON.stringify(deployed)}`), r.stderr);

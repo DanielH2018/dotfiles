@@ -5,9 +5,9 @@
 // `['execute-template']`. The first two are equivalent -- chezmoi reads .chezmoiroot from the
 // repo root and descends to home/ -- and the third is a genuinely different mode, not a typo for
 // them: with no --source chezmoi uses its CONFIGURED source dir, which always resolves to the
-// primary checkout. modify_settings.test.js depends on exactly that and skips when the configured
-// dir is not this tree. So both modes stay available here, and this refactor kept every call site
-// on the one it already had.
+// primary checkout. So both modes stay available here, and this refactor kept every call site
+// on the one it already had. A template that reads .chezmoi.sourceDir wants the default: in the
+// configured mode it resolves to the primary checkout even when the test runs in a worktree.
 //
 // Twelve of them also open-coded the same availability probe, in two spellings, and six
 // re-memoised the render with their own `rendered ??=` plus their own comment explaining why.
