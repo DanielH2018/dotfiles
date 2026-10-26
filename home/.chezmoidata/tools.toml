@@ -254,7 +254,7 @@ sd = { repo = "chmln/sd", tag = "v1.1.0" }
 # renovate: datasource=github-releases depName=starship/starship
 starship = { repo = "starship/starship", tag = "v1.26.0" }
 # renovate: datasource=github-releases depName=junegunn/fzf
-fzf = { repo = "junegunn/fzf", tag = "v0.74.4" }
+fzf = { repo = "junegunn/fzf", tag = "v0.74.5" }
 # renovate: datasource=github-releases depName=ajeetdsouza/zoxide
 zoxide = { repo = "ajeetdsouza/zoxide", tag = "v0.10.0" }
 # renovate: datasource=github-releases depName=BurntSushi/ripgrep
