@@ -38,7 +38,8 @@ shared rules are in `comments.md`.
   arguments in its own `Args:`.
 - **Implementation comments:** a comment before a complicated block, or at the end of a
   non-obvious line. An inline comment starts at least two spaces after the code, then `#`,
-  then one space. Comment the part a reviewer would ask about, and never narrate the code.
+  then one space. Comment only what a later maintainer would get wrong without it, and
+  never narrate the code.
 - **Write comments as prose,** with capitalisation and punctuation. A complete sentence is
   more readable than a fragment.
 - **TODO:** `# TODO: <link> - <explanation>`.

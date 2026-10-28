@@ -38,13 +38,28 @@ have in common, so it is not repeated there.
 - **Document the contract, not the code.** Skip a doc comment that only restates the
   signature when the name already says it (`getFoo()` returning foo). Keep it when a typical
   reader needs a term explained, such as what "canonical name" means.
-- **Implementation comments explain why, on the code that needs it.** Comment the tricky,
-  non-obvious or surprising part, the part you would have to explain in review. Assume the
-  reader knows the language better than they know this code, and do not describe what the
-  code does.
-- **No decorative comments.** Do not restate the code (`// increment i`), narrate the
-  obvious, or write flavor text. Write a comment only to explain why.
-- **Complete sentences, capitalised and punctuated.** A fragment is acceptable only as an
+- **A mandate in a per-language file applies only where the repo already follows it.**
+  Before adding a file header, a function header or a doc comment that a per-language rule
+  requires, check the neighbouring files. If they do not carry one, match them instead.
+- **The default is no implementation comment.** Add one only when a maintainer who has the
+  code, but not the PR, the ticket or this conversation, would get something wrong without
+  it: a constraint the code cannot express, a non-obvious invariant, a trap. Assume the
+  reader knows the language better than they know this code. If a better name or a smaller
+  function would carry the point, change the code instead.
+- **Write for the next maintainer, not for the reviewer.** Anything that explains the change
+  belongs in the commit message or the PR body: what the code replaces, what it used to do,
+  how it matches an old implementation, which ticket asked for it, the SHA of a dependency
+  it imitates. Do not write "previously", "now", "the old callers", "added for" or
+  "reproduces what X did", and do not name a file that is not in this repo.
+- **One line is the budget.** Go past one line only to state a constraint that needs the
+  space. The prose rules in CLAUDE.md govern documents, not code comments, so a short
+  fragment is better than two full sentences.
+- **No decorative comments.** Do not restate the code (`// increment i`), label a section
+  (`// Validate input`), narrate the obvious, address the reader ("Note that…"), or write
+  flavor text.
+- **Remove what you added to get the code working.** Debug comments, commented-out code and
+  "TODO: remove" lines do not survive into the commit.
+- **Capitalise and punctuate a sentence.** A fragment is fine, most of all as an
   end-of-line note where the field or variable name is the subject (`// lines per page`).
 - **Summary first.** A doc comment opens with one summary line, then a blank line, then the
   detail. Use the descriptive third person ("Fetches rows from Bigtable") or the imperative

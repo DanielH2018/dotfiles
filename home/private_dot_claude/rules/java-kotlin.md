@@ -23,8 +23,6 @@ section of Google's Kotlin style guide
   `protected` members in Kotlin), and every record component. Two exceptions: a
   self-explanatory member such as `getFoo()`, unless a reader needs a term explained; and
   a method overriding a supertype method.
-- **Whenever an implementation comment would describe purpose or behaviour, write it as a
-  doc comment instead** (`/** ... */`), even where one is not required.
 - **General form:** `/**` on its own line, each line prefixed by an aligned ` *`, closing
   `*/` on its own line. A block with no tags that fits on one line may be `/** Returns the
   customer ID. */`.

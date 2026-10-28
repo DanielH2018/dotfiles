@@ -180,7 +180,9 @@ Both flags are advisory, and the user confirms before any rewrite.
      `--force`, never `--no-verify`.
 
 Once the draft PR is open, run a `pr-curator` agent if one is installed. It posts
-numbered reading-order review comments. Without one, skip the step.
+numbered reading-order review comments. Without one, skip the step. Tell it to skip its
+"Add Code Comments" step: that step adds comments that summarise what each block does,
+which `rules/comments.md` forbids. Reading-order notes belong in the review comments.
 
 ## Handing the body to `gh`
 
