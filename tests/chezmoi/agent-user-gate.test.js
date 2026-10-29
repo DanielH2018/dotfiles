@@ -192,11 +192,11 @@ test("the agent on a host outside the server's dev_tooling_hosts gets nothing fr
 
 test('the tools.toml pins are the values the server repo installs', { skip }, () => {
   // Both installers write ~/.local/bin/uv and the prek tool, so a different value makes each
-  // apply of one undo the other. Values from the server repo as of 2026-10-24:
+  // apply of one undo the other. Values from the server repo as of 2026-10-29:
   // initial_setup_uv_version, the `prek==` loop in initial_setup's host-basics.yml and
   // host_python_version. Moving one here means moving the server's too (H7.38).
   const { uv, prek, python } = pins();
-  assert.deepStrictEqual({ uv, prek, python }, { uv: '0.13.4', prek: '0.5.5', python: '3.14.6' });
+  assert.deepStrictEqual({ uv, prek, python }, { uv: '0.13.5', prek: '0.5.5', python: '3.14.6' });
 });
 
 test('claude_guard and claude_worktree deploy to the agent from this repo, with Claude Code', { skip }, () => {

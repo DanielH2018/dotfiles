@@ -106,7 +106,7 @@ RUN set -eux; \
 # `uname -m` here, not the chezmoi layer's `dpkg --print-architecture`: uv names its release
 # assets aarch64/x86_64, where dpkg says arm64/amd64. Copying the line above 404s at build.
 # renovate: datasource=github-releases depName=astral-sh/uv
-ARG UV_VERSION=0.13.4
+ARG UV_VERSION=0.13.5
 RUN set -eux; \
     arch="$(uname -m)"; \
     base="https://github.com/astral-sh/uv/releases/download/${UV_VERSION}"; \
