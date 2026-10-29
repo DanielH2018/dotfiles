@@ -4,7 +4,8 @@ Every wait a session makes goes through `cc-wait` (docs/specs/2026-10-04-cc-wait
 This module is that spec's harness binding: the one rule deciding how a wait runs, so no
 skill, brief or prompt has to carry the decision.
 
-THE REWRITE. A Bash call that runs `cc-wait`:
+THE REWRITE. A Bash call that runs `cc-wait` on a source, other than to print that source's
+`--help`:
 
   * in a session a task notification can wake, gets `run_in_background: true` and a 30-minute
     Bash timeout. When `cc-wait` is the command's last stage it also gets `--budget 1740`, so a
@@ -91,10 +92,18 @@ def _program(words: list[str]) -> str:
 
 # `cc-wait --list` and `--help` print and exit at once; only a named source waits.
 _NOT_A_WAIT = frozenset({"--list", "--help", "-h"})
+_HELP = frozenset({"--help", "-h"})
 
 
 def _is_wait(words: list[str]) -> bool:
-    return _program(words) == "cc-wait" and len(words) > 1 and words[1] not in _NOT_A_WAIT
+    """Whether this stage waits. `cc-wait <source> [args] --help` prints that source's usage and
+    exits, as cc-wait's own CLI reads a trailing help flag, so it stays in the foreground."""
+    return (
+        _program(words) == "cc-wait"
+        and len(words) > 1
+        and words[1] not in _NOT_A_WAIT
+        and words[-1] not in _HELP
+    )
 
 
 # --- the rewrite -------------------------------------------------------------------------------

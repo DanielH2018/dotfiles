@@ -235,7 +235,8 @@ code. A failure inside it is no decision, never the `ask` above: it can only rem
 `waits.py` is the `cc-wait` binding (docs/specs/2026-10-04-cc-wait-design.md). Beside the
 rules above it denies a hand-written wait in the foreground: `sleep` of 10s or more, a loop
 around `sleep`, `tail -f`, `gh run watch`, `gh pr checks --watch` and `kubectl … --watch`. A
-call that runs `cc-wait` gets an `updatedInput` and no decision. Where a task notification can
+call that runs `cc-wait` on a source gets an `updatedInput` and no decision; `cc-wait
+<source> --help` prints usage, so it is left in the foreground. Where a task notification can
 wake the session, that is `run_in_background: true`; where one cannot, it is a 600s foreground
 timeout. A failure inside the rewrite leaves the call as typed.
 

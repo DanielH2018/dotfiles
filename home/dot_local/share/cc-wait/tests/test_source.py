@@ -22,3 +22,9 @@ def test_a_source_declaring_a_reserved_code_is_refused(code):
 def test_describe_json_without_a_terminal_object_is_refused():
     with pytest.raises(SourceError, match="no `terminal` object"):
         description_from_json('{"watch": []}')
+
+
+def test_a_probe_cannot_claim_the_clock_exemption():
+    desc = description_from_json('{"terminal": {"done": 0}, "clock": true}')
+    with pytest.raises(SourceError, match="no failure state"):
+        validate(desc)

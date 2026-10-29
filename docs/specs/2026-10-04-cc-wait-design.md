@@ -51,7 +51,16 @@ budget runs out.
   that declares either code is refused. A probe whose own tool uses one remaps it.
 - **A failure state is required.** A source must declare at least one terminal state with a
   non-zero code, or `cc-wait` refuses it. This enforces Monitor's "silence is not success"
-  rule once instead of trusting every call.
+  rule once instead of trusting every call. The built-in `time` source is the one exception.
+  Its writer is the clock, which cannot crash, so it sets `Description.clock` and ends only
+  in `reached`. A probe cannot claim the exemption, because `--describe` output never sets
+  that field.
+- **A clock wait resumes at the same moment.** `cc-wait time --after 15m` binds to an
+  absolute deadline, and its resume command names that deadline as `--at <ISO time>Z`. A
+  budget shorter than the deadline therefore ends in exit 75 like any other wait. It is not
+  an error, because `claude-guard` appends `--budget 1740` to every backgrounded wait, and an
+  error would make any clock wait past 29 minutes impossible. `--at` refuses a time with no
+  zone and a time that has passed; it never rolls a passed time to tomorrow.
 - **One output format.** One line per change of state or detail
   (`16:20:01 <state>: <detail>`), then a final `WAIT: <state> <detail>`. The same command
   works as a background task, which gives one notification, and as a Monitor command, which
@@ -116,6 +125,9 @@ A `claude-guard` PreToolUse arm rewrites a Bash call that runs `cc-wait`:
   570s (dotfiles #781).
 - **One that cannot** stays in the foreground with `timeout: 600000`. The 120s default would
   cut off a 570s budget.
+- **A source's `--help` is not a wait.** A stage whose last word is `--help` or `-h` prints
+  usage and exits, so the arm leaves it in the foreground. Backgrounded, its usage text came
+  back only as a task notification.
 - **The rewrite copies the whole tool input.** The harness replaces the input with
   `updatedInput` rather than merging it (server #3501, dotfiles #771). The arm emits no
   `permissionDecision`.

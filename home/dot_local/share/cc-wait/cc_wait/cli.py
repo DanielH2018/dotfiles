@@ -128,7 +128,9 @@ def main(argv: list[str] | None = None, out=None, cwd: Path | None = None, env=N
             exc = SourceError(f"{exc}\ncc-wait bounds every wait with --budget S, which exits 75")
         print(f"WAIT: error {exc}", file=out, flush=True)
         return COULD_NOT_WAIT
-    resume = shlex.join(["cc-wait", *argv])
+    resume_args = bound.resume_args() if hasattr(bound, "resume_args") else rest[1:]
+    budget_args = ["--budget", f"{budget:g}"] if budget else []
+    resume = shlex.join(["cc-wait", rest[0], *resume_args, *budget_args])
     budget_s = budget or default_budget(env)
     return loop.run(bound, budget_s, resume, out=out, cache=cache_dir(env))
 

@@ -137,3 +137,13 @@ def test_listing_or_help_is_not_a_wait():
     """Measured: `cc-wait --list` in a chain was backgrounded, and its output came back late."""
     for command in ("cc-wait --list", "cc-wait --help", "cc-wait", "true && cc-wait --list"):
         assert waits.rewrite(call(command), 300, ps_for(BRIDGE)) is None, command
+
+
+def test_a_source_s_help_is_not_a_wait():
+    """Measured: `cc-wait file --help` was backgrounded, so its usage arrived as a notification."""
+    for command in (
+        "cc-wait file --help",
+        "cc-wait time -h",
+        "chezmoi source-path x; cc-wait file --help",
+    ):
+        assert waits.rewrite(call(command), 300, ps_for(BRIDGE)) is None, command

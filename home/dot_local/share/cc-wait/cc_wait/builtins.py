@@ -1,5 +1,5 @@
 """The sources every repo gets: `file` and `exit` here, and those of `cc_wait.github`,
-`cc_wait.systemd` and `cc_wait.k8s`, all registered in BUILTINS.
+`cc_wait.systemd`, `cc_wait.k8s` and `cc_wait.clock`, all registered in BUILTINS.
 
 `file` and `exit` require a way to see failure, not only success. `file` takes `--fail` or
 `--pid`, and `exit` reads a recorded exit code, so neither can wait out its whole budget on a
@@ -12,7 +12,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from cc_wait import github, k8s, systemd
+from cc_wait import clock, github, k8s, systemd
 from cc_wait.source import ArgParser, Description, ParsedSource, ReadError, Reading, SourceError
 
 
@@ -176,5 +176,6 @@ BUILTINS = {
         github.CiSource(),
         systemd.UnitSource(),
         k8s.RolloutSource(),
+        clock.TimeSource(),
     )
 }

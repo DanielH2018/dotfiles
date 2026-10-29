@@ -45,12 +45,15 @@ class Description:
       watch: paths whose change should trigger a re-read before the interval elapses.
       interval_s: the longest gap between two reads.
       remote: whether a read calls a remote API.
+      clock: the wait ends at a wall-clock deadline, so nothing can fail. Only the built-in
+        `time` source sets it; `description_from_json` never reads it, so a probe cannot.
     """
 
     terminal: dict[str, int]
     watch: tuple[str, ...] = ()
     interval_s: float = 5.0
     remote: bool = False
+    clock: bool = False
 
 
 @dataclass(frozen=True)
@@ -67,6 +70,10 @@ class Bound(Protocol):
     Its repr must name the source and its arguments and nothing process-specific: cc-wait keys
     the cache a remote source's reads are shared through on it (`cc_wait.cache`). A frozen
     dataclass with no callable in its repr meets that.
+
+    A bound source whose typed arguments would not resume it, such as `time --after`, which
+    would restart the duration, may define `resume_args()`. That method returns the arguments
+    the printed resume command uses in their place.
     """
 
     def describe(self) -> Description: ...
@@ -105,7 +112,8 @@ def validate(desc: Description) -> Description:
     """Return `desc` unchanged, or raise SourceError naming why cc-wait refuses it.
 
     The failure-state rule is Monitor's "silence is not success" enforced once: a source that
-    can only end in success reads a crash as "still waiting" until the budget runs out.
+    can only end in success reads a crash as "still waiting" until the budget runs out. A clock
+    source is exempt: its writer is the clock, which cannot crash.
     """
     if not desc.terminal:
         raise SourceError("it declares no terminal state, so nothing could end the wait")
@@ -118,7 +126,7 @@ def validate(desc: Description) -> Description:
             f"it declares a reserved exit code ({COULD_NOT_WAIT} or {BUDGET_ELAPSED}) for "
             f"{', '.join(reserved)}; those belong to cc-wait"
         )
-    if all(code == 0 for code in desc.terminal.values()):
+    if not desc.clock and all(code == 0 for code in desc.terminal.values()):
         raise SourceError(
             "it declares no failure state (a terminal state with a non-zero exit code), so a "
             "crash would read as still waiting"
