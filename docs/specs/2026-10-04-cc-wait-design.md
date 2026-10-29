@@ -140,6 +140,7 @@ A `claude-guard` PreToolUse arm rewrites a Bash call that runs `cc-wait`:
 |---|---|---|
 | Interactive terminal | `claude` with no `--print` | background |
 | Bridge / remote-control | `claude --print --sdk-url … --input-format stream-json` | background |
+| Claude desktop app (Code tab) | `~/.claude/remote/ccd-cli/<version> … --input-format stream-json`, no `--print` | background |
 | Fan-out agent | `claude -p … --output-format json` | foreground, 600s |
 | Agent-tool subagent | `agent_id` in the hook input | foreground, 600s |
 | Cannot tell | no `claude` ancestor | foreground, 600s |

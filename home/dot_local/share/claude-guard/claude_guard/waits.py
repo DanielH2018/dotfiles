@@ -136,6 +136,9 @@ def _is_claude(argv: list[str]) -> bool:
         return False
     if PurePath(argv[0]).name == "claude" or "/claude/versions/" in argv[0]:
         return True
+    # The Claude desktop app runs its Code sessions as `~/.claude/remote/ccd-cli/<version>`.
+    if "/ccd-cli/" in argv[0]:
+        return True
     # An npm install runs as `node .../@anthropic-ai/claude-code/cli.js`.
     return PurePath(argv[0]).name == "node" and any("claude-code" in a for a in argv[1:2])
 

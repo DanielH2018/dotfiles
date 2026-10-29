@@ -12,6 +12,10 @@ BRIDGE = (
     "/home/u/.local/share/claude/versions/2.1.289 --print --sdk-url https://x/sessions/s "
     "--session-id s --input-format stream-json --output-format stream-json"
 )
+DESKTOP = (
+    "/home/u/.claude/remote/ccd-cli/2.1.309-537ebbf12df5 --output-format stream-json --verbose "
+    "--input-format stream-json --effort=medium --model=claude-opus-5-5"
+)
 FANOUT = "claude -p --model opus --permission-mode auto --output-format json"
 INTERACTIVE = "claude --model opus"
 
@@ -27,7 +31,7 @@ def call(command: str, **tool_input) -> dict:
     return {"tool_name": "Bash", "tool_input": {"command": command, **tool_input}}
 
 
-@pytest.mark.parametrize("claude_args", [INTERACTIVE, BRIDGE])
+@pytest.mark.parametrize("claude_args", [INTERACTIVE, BRIDGE, DESKTOP])
 def test_a_wait_in_a_wakeable_session_is_backgrounded(claude_args):
     updated = waits.rewrite(call("cc-wait land 3511", description="Wait"), 300, ps_for(claude_args))
     assert updated == {
