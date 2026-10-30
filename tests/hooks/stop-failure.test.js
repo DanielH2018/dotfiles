@@ -59,16 +59,21 @@ test('does not notify for a server error', { skip }, () => {
   assert.strictEqual(notified({ hook_event_name: 'StopFailure', error: 'server_error' }), '');
 });
 
-const START = (instance) => `start\n--no-block\n--no-ask-password\nfanout-alert@${instance}.service\n`;
+const START = (instance) => `start\n--no-block\n--no-ask-password\nclaude-stop-alert@${instance}.service\n`;
 
 test('starts the alert unit with an instance naming the cause', { skip }, () => {
   assert.strictEqual(run({ hook_event_name: 'StopFailure', error: 'server_error' }).systemctl,
-    START('fanout-stopfailure-server_error:failed'));
+    START('server_error'));
 });
 
 test('replaces characters a unit instance may not carry', { skip }, () => {
   assert.strictEqual(run({ hook_event_name: 'StopFailure', error: 'x/../y z' }).systemctl,
-    START('fanout-stopfailure-x____y_z:failed'));
+    START('x____y_z'));
+});
+
+test('names an empty cause unknown, since the polkit rule refuses an empty instance', { skip }, () => {
+  assert.strictEqual(run({ hook_event_name: 'StopFailure', error: '' }).systemctl,
+    START('unknown'));
 });
 
 test('pages once per cause inside the quiet window', { skip }, () => {
@@ -77,7 +82,7 @@ test('pages once per cause inside the quiet window', { skip }, () => {
   run({ hook_event_name: 'StopFailure', error: 'rate_limit' }, SESSION_CGROUP, dir);
   const { systemctl } = run({ hook_event_name: 'StopFailure', error: 'overloaded' }, SESSION_CGROUP, dir);
   assert.strictEqual(systemctl,
-    START('fanout-stopfailure-rate_limit:failed') + START('fanout-stopfailure-overloaded:failed'));
+    START('rate_limit') + START('overloaded'));
 });
 
 test('skips the alert inside a fan-out batch, which pages on its own', { skip }, () => {

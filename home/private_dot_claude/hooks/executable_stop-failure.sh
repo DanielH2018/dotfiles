@@ -11,13 +11,12 @@
 #
 # macOS: a desktop notification, for rate limits only.
 # Linux (daniel-box, daniel-server): a Discord page for every cause (#850). The session never
-# holds the webhook. It starts the server repo's fanout-alert@<unit>:<state>.service, the
-# system unit a stopped fan-out batch pages through, and that repo's polkit rule
-# (50-claude-fanout-alert.rules) lets the user start it for an instance of that shape and
-# nothing else. The instance is fanout-stopfailure-<cause>:failed, so the page opens with the
-# cause; its body still reads as a fan-out batch's. A host without the unit or the rule
-# refuses the start, which --no-ask-password keeps silent. A fan-out batch is skipped: its own
-# ExecStopPost= already pages it as `failed` or `no-report`.
+# holds the webhook. It starts the server repo's claude-stop-alert@<cause>.service (server
+# #6021), whose page names the cause and reads as a session ending, and that repo's polkit rule
+# (50-claude-stop-alert.rules) lets the user start it for an instance matching [a-z0-9_]+ and
+# nothing else. A host without the unit or the rule refuses the start, which
+# --no-ask-password keeps silent. A fan-out batch is skipped: its own ExecStopPost= already
+# pages it as `failed` or `no-report`.
 
 set -u
 
@@ -56,13 +55,15 @@ QUIET_MINUTES=30
 if command -v systemctl >/dev/null 2>&1 && ! in_fanout_batch; then
   # A systemd instance name may carry only a fixed alphabet. The harness's causes are
   # lower-case words joined by `_`, so anything else becomes `_`.
+  # An empty cause would name claude-stop-alert@.service, which the polkit rule refuses.
   CAUSE=$(printf '%s' "$ERROR_TYPE" | tr -c 'a-z0-9_' '_')
+  CAUSE=${CAUSE:-unknown}
   STAMP_DIR="${XDG_RUNTIME_DIR:-/tmp}/claude-stop-alert-$(id -u)"
   STAMP="$STAMP_DIR/$CAUSE"
   if [ -z "$(find "$STAMP" -mmin "-$QUIET_MINUTES" 2>/dev/null)" ]; then
     # A stamp that cannot be written costs the window, not the page.
     { [ -d "$STAMP_DIR" ] || mkdir -m 700 "$STAMP_DIR"; } 2>/dev/null && touch "$STAMP" 2>/dev/null
-    systemctl start --no-block --no-ask-password "fanout-alert@fanout-stopfailure-${CAUSE}:failed.service" \
+    systemctl start --no-block --no-ask-password "claude-stop-alert@${CAUSE}.service" \
       >/dev/null 2>&1 || true
   fi
 fi
