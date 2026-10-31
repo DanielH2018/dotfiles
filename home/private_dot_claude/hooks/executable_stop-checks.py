@@ -129,10 +129,10 @@ def outside_fences(text: str) -> str:
 
 
 def _records(lines):
-    """Parse JSONL lines into conversation records, skipping anything that does not parse.
+    """Parse JSONL lines into conversation records, skipping lines that do not parse.
 
-    An `api-request-blob` record is Claude Code's copy of a request it sent: it repeats
-    earlier user text and tool calls, the latter with the input as rewritten for the wire.
+    An `api-request-blob` record is Claude Code's copy of a request it sent. It repeats
+    earlier user text and tool calls, each call with its input rewritten for the wire.
     Read as conversation, it would end a turn early and count each call twice.
     """
     for line in lines:
