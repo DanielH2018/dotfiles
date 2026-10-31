@@ -59,9 +59,21 @@ elif verb == "scope":
     reachable = set(json.loads(sys.argv[3]))
     m._accepts = lambda base, timeout: base in reachable
     print(m.loki_scope())
-elif verb == "failscope":
-    # A failures report as cmd_savings builds it, with the scope loki_scope() returned.
-    print(json.dumps(m.report_failures([], "7d", sys.argv[2])))
+elif verb == "wired":
+    # cmd_savings end to end, with only the network stubbed: does each Loki-backed
+    # report carry the scope loki_scope() derives from what accepts a connection?
+    import argparse
+    m.LOKI = m.LOKI_BASES[0]
+    reachable = set(json.loads(sys.argv[2]))
+    m._accepts = lambda base, timeout: base in reachable
+    m._savings_fetch = lambda *a, **k: []
+    m._bytes_by_tool = lambda *a, **k: {}
+    m._count_matching = lambda *a, **k: 0
+    out = {}
+    for report in ("prompts", "bytes", "failures", "subst", "all"):
+        ns = argparse.Namespace(report=report, since="1d", timeout=1)
+        out[report] = m.cmd_savings(ns, 1700000000)["scope"]
+    print(json.dumps(out))
 elif verb == "win":
     until = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] != "-" else None
     print(json.dumps(list(m._window(sys.argv[2], float(sys.argv[3]), until))))
@@ -467,13 +479,15 @@ test('savings scope is this machine when only a local stack answers', { skip }, 
     '127.0.0.1 (this machine only)');
 });
 
-test('savings states the window and the scope it was given', { skip }, () => {
-  const out = JSON.parse(drive(['failscope', 'cluster (daniel-box + daniel-server)']));
-  assert.strictEqual(out.window, '7d');
-  assert.strictEqual(out.scope, 'cluster (daniel-box + daniel-server)');
-  assert.match(drive(['srows'], JSON.stringify(out)).split('\n')[0],
-    /\(cluster \(daniel-box \+ daniel-server\)\)$/,
-    'the headline carries the scope, so a reader cannot miss it');
+test('cmd_savings labels every Loki-backed report with the derived scope', { skip }, () => {
+  const [[loopback, clusterIp]] = JSON.parse(drive(['candidates']));
+  const reports = ['prompts', 'bytes', 'failures', 'subst', 'all'];
+  const onCluster = JSON.parse(drive(['wired', JSON.stringify([loopback, clusterIp])]));
+  const local = JSON.parse(drive(['wired', JSON.stringify([loopback])]));
+  for (const r of reports) {
+    assert.strictEqual(onCluster[r], 'cluster (daniel-box + daniel-server)', r);
+    assert.strictEqual(local[r], '127.0.0.1 (this machine only)', r);
+  }
 });
 
 test('savings exposes no flag that could redirect the response', { skip }, () => {
