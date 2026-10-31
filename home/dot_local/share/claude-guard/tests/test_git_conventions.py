@@ -139,7 +139,7 @@ def test_merge_reason_names_the_rebase_onto_the_merged_ref(config):
 
 def test_merge_reason_falls_back_to_a_placeholder_for_two_refs(config):
     reason = run_hook("git merge -m 'x' topic other")["permissionDecisionReason"]
-    assert "`git rebase <upstream>`" in reason
+    assert "`git rebase --onto <upstream> <old-base>`" in reason
 
 
 # --- git pull (#607) -----------------------------------------------------------------------------
