@@ -10,7 +10,8 @@ values the way ghread is:
     must be a number, and the repo travels inside its `--repo=` element, so no caller
     text becomes a flag. `--job` and `--debug` are never sent.
   - The repo must belong to the account gh is logged in as. gh names both: `api user`
-    gives the login, and `repo view` resolves `-R` or the cwd's repository. The
+    gives the login, and `repo view` resolves the `-R` repo, which it takes as a
+    positional rather than a flag, or the cwd's repository. The
     resolved name, not the caller's spelling, goes to the rerun.
   - The run must have finished with a failure, and its attempt count must be under
     MAX_ATTEMPTS. A failure that survives that many attempts is not an infrastructure
@@ -107,8 +108,10 @@ def preflight(gh: str, env: dict, run_id: str, repo: str | None) -> str:
       GhFailed: one of the reads failed.
     """
     login = _read(gh, env, ["api", "--jq=.login", "--", "user"])
-    view = ["repo", "view"] + ([f"--repo={repo}"] if repo else [])
-    resolved = _read(gh, env, view + ["--json=nameWithOwner", "--jq=.nameWithOwner"])
+    # `repo view` takes the repo as a positional and has no --repo flag; the `--`
+    # keeps a validated name a positional anyway.
+    view = ["repo", "view", "--json=nameWithOwner", "--jq=.nameWithOwner"]
+    resolved = _read(gh, env, view + (["--", repo] if repo else []))
     if not _REPO.match(resolved):
         raise RerunError(f"gh resolved an unexpected repository {resolved!r}")
     owner = resolved.split("/", 1)[0]

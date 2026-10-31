@@ -35,8 +35,13 @@ const has = (a) => argv.includes(a);
 if (argv[0] === 'api' && argv.at(-1) === 'user') {
   process.stdout.write(process.env.FAKE_LOGIN + '\\n');
 } else if (argv[0] === 'repo' && argv[1] === 'view') {
-  const flag = argv.find((a) => a.startsWith('--repo='));
-  process.stdout.write((flag ? flag.slice(7) : 'Owner/cwd-repo') + '\\n');
+  // Like the real gh: \`repo view\` has no --repo flag, only a positional repository.
+  if (argv.some((a) => a === '-R' || a.startsWith('--repo'))) {
+    process.stderr.write('unknown flag: --repo\\n');
+    process.exit(1);
+  }
+  const sep = argv.indexOf('--');
+  process.stdout.write((sep === -1 ? 'Owner/cwd-repo' : argv[sep + 1]) + '\\n');
 } else if (argv[0] === 'run' && argv[1] === 'view') {
   process.stdout.write(process.env.FAKE_RUN);
 } else if (!(argv[0] === 'run' && argv[1] === 'rerun' && has('--failed'))) {
@@ -57,8 +62,8 @@ sys.exit(mod.main(sys.argv[3:]))
 const FAILED_RUN = JSON.stringify({ status: 'completed', conclusion: 'failure', attempt: 1 });
 const PREFLIGHT = (repo) => [
   ['api', '--jq=.login', '--', 'user'],
-  ['repo', 'view', ...(repo ? [`--repo=${repo}`] : []), '--json=nameWithOwner',
-    '--jq=.nameWithOwner'],
+  ['repo', 'view', '--json=nameWithOwner', '--jq=.nameWithOwner',
+    ...(repo ? ['--', repo] : [])],
 ];
 
 function rerun(t, args, { login = 'owner', runJson = FAILED_RUN } = {}) {
