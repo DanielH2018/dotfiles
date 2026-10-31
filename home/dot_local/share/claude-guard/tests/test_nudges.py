@@ -15,7 +15,7 @@ import pytest
 
 from claude_guard.deny import NONE, Verdict
 from claude_guard.hook import pre_tool_use_json
-from claude_guard.nudges import nudge, read_nudge, seen, tag
+from claude_guard.nudges import nudge, seen, tag
 
 
 def rule(command: str) -> str | None:
@@ -193,6 +193,8 @@ def test_the_hook_resolves_cat_against_the_session_cwd(big_and_small):
 
 @pytest.mark.parametrize("path", ["{d}/big.j2", "big.j2"])
 def test_a_whole_read_of_a_big_file_is_nudged(big_and_small, path):
+    from claude_guard.nudges import read_nudge
+
     found = read_nudge({"file_path": path.format(d=big_and_small)}, cwd=str(big_and_small))
     assert found and found[0] == "whole-file-read"
     assert found[1].startswith(tag("whole-file-read"))
@@ -209,6 +211,8 @@ def test_a_whole_read_of_a_big_file_is_nudged(big_and_small, path):
     ],
 )
 def test_a_bounded_small_or_non_text_read_is_left_alone(big_and_small, tool_input):
+    from claude_guard.nudges import read_nudge
+
     (big_and_small / "big.png").write_bytes(b"x" * 30_000)
     assert read_nudge(tool_input, cwd=str(big_and_small)) is None
 
