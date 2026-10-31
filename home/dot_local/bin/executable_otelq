@@ -431,6 +431,25 @@ def _ranked(counter, key_name):
             for k, n in sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))]
 
 
+def command_key(command):
+    """The command from its first real program onward, so one command is one key.
+
+    A session runs the same command bare and behind `cd <worktree> &&`, and the
+    two are one thing to allow or fix. Dropping the leading segments that
+    program_of skips makes them group together, where the raw text would split
+    one command's count across two rows.
+    """
+    start = 0
+    for sep in [*_SPLIT_SEGMENTS.finditer(command), None]:
+        end = sep.start() if sep else len(command)
+        if program_of(command[start:end]) != "?":
+            return command[start:].strip()
+        if sep is None:
+            break
+        start = sep.end()
+    return command.strip()
+
+
 def _label_of(event):
     """What to rank an event under: the program for Bash, else the tool name."""
     tool = event.get("tool_name") or "?"
@@ -449,22 +468,49 @@ def _tallied(labels):
 
 
 def _rank_by_program(events):
-    """Rank events by the program behind them, keeping one example of each.
+    """Rank events by the program behind them, keeping its most frequent command.
 
     The example is what makes a row actionable — an allowlist rule or a fix can
-    be written from it without going back to the transcript.
+    be written from it without going back to the transcript. The row's count
+    covers every command the program ran, so the example carries its own count
+    and the number of distinct commands beside it. Without them a reader takes
+    the program total for the example's total.
     """
-    by_program, by_tool, examples = {}, {}, {}
+    by_program, by_tool, commands = {}, {}, {}
     for event in events:
         label = _label_of(event)
         _tally(by_program, label)
         _tally(by_tool, event.get("tool_name") or "?")
-        if label not in examples:
-            examples[label] = (_command_of(event) or event.get("tool_name") or "")[:120]
+        _tally(commands.setdefault(label, {}), _command_key_of(event))
     ranked = _ranked(by_program, "program")
     for row in ranked:
-        row["example"] = examples.get(row["program"], "")
+        seen = commands[row["program"]]
+        # max() keeps the first of equal counts, which is the first one seen.
+        top = max(seen, key=seen.get)
+        row["example"] = top[:120]
+        row["example_count"] = seen[top]
+        row["commands"] = len(seen)
     return ranked, _ranked(by_tool, "tool")
+
+
+def _command_key_of(event):
+    return command_key(_command_of(event)) or event.get("tool_name") or ""
+
+
+def _rank_by_command(events):
+    """Every distinct command with its own count, most frequent first."""
+    rows = _ranked(_tallied(_command_key_of(e) for e in events), "command")
+    for row in rows:
+        row["command"] = row["command"][:120]
+    return rows
+
+
+def _example_cell(row):
+    """`2x, 1 of 31 commands` — the example's own share of the program's count."""
+    cell = f"{row['example_count']}x"
+    if row["commands"] > 1:
+        cell += f", 1 of {row['commands']} commands"
+    return cell
 
 
 def report_prompts(events, window, scope):
@@ -490,6 +536,7 @@ def report_prompts(events, window, scope):
         "prompts_fired": len(prompts),
         "by_program": by_program,
         "by_tool": by_tool,
+        "by_command": _rank_by_command(prompts),
         "hook_decisions": _ranked(hooks, "decision"),
     }
 
@@ -1023,7 +1070,8 @@ def _savings_rows(payload):
         lines.append(f"{payload['big_calls']}\tcalls over "
                      f"{payload['big_call_threshold']} bytes, by program:")
         for row in payload["big_calls_by_program"]:
-            lines.append(f"{row['count']}\t{row['program']}\t{row['example']}")
+            lines.append(f"{row['count']}\t{row['program']}\t"
+                         f"{_example_cell(row)}\t{row['example']}")
         return "\n".join(_truncation_note(payload) + lines)
 
     if payload["report"] == "failures":
@@ -1036,13 +1084,15 @@ def _savings_rows(payload):
         for row in payload.get("by_error_type", []):
             lines.append(f"{row['count']}\terror_type={row['error_type']}")
         for row in payload["by_program"]:
-            lines.append(f"{row['count']}\t{row['program']}\t{row['example']}")
+            lines.append(f"{row['count']}\t{row['program']}\t"
+                         f"{_example_cell(row)}\t{row['example']}")
         return "\n".join(_truncation_note(payload) + lines)
 
     lines = [f"{payload['prompts_fired']}\tprompts fired over {payload['window']} "
              f"({payload['scope']})"]
     for row in payload["by_program"]:
-        lines.append(f"{row['count']}\t{row['program']}\t{row['example']}")
+        lines.append(f"{row['count']}\t{row['program']}\t"
+                         f"{_example_cell(row)}\t{row['example']}")
     for row in payload["hook_decisions"]:
         lines.append(f"{row['count']}\thook:{row['decision']}\t(no human involved)")
     return "\n".join(_truncation_note(payload) + lines)

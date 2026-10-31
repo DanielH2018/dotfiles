@@ -447,6 +447,25 @@ test('prompts survives tool_parameters that is absent or not JSON', { skip }, ()
   assert.deepStrictEqual(out.by_program.map((r) => r.program), ['?']);
 });
 
+test('a program row gives its example the command\'s own count, not the program total', { skip }, () => {
+  // The row count covers every git command; the example must not read as having it all.
+  const events = [bash('git checkout -B x'), bash('git push'), bash('git push')];
+  const out = JSON.parse(drive(['prompts'], JSON.stringify(events)));
+  const row = out.by_program[0];
+  assert.deepStrictEqual([row.count, row.example, row.example_count, row.commands],
+    [3, 'git push', 2, 2], 'the most frequent command is the example, with its own count');
+  assert.deepStrictEqual(out.by_command.map((r) => [r.command, r.count]),
+    [['git push', 2], ['git checkout -B x', 1]]);
+  assert.match(drive(['srows'], JSON.stringify(out)),
+    /^3\tgit\t2x, 1 of 2 commands\tgit push$/m);
+});
+
+test('a command run bare and behind cd counts as one command', { skip }, () => {
+  const events = [bash('git push'), bash('cd /w && git push'), bash('cd /w; export A=1; git push')];
+  const out = JSON.parse(drive(['prompts'], JSON.stringify(events)));
+  assert.deepStrictEqual(out.by_command, [{ command: 'git push', count: 3 }]);
+});
+
 test('prompts caps the example so one long command cannot flood the digest', { skip }, () => {
   const out = JSON.parse(drive(['prompts'], JSON.stringify([bash(`git ${'x'.repeat(400)}`)])));
   assert.strictEqual(out.by_program[0].example.length, 120);
