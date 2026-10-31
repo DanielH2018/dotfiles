@@ -33,10 +33,22 @@ its subtask genuinely needs the stronger reasoning.
 **Every subagent brief carries:** one core objective; background on how it fits the whole; which tools
 to use (for internal questions, prefer internal MCP sources over the web); the expected output format;
 and a budget — roughly <5 tool calls (simple) / 5 / ~10 (hard) / up to 15, hard stop ~20. If every
-brief is followed, their union must fully answer the question. A brief for an agent spawned with `isolation: "worktree"` also says: start every compound
-Bash command with `cd <your worktree> &&`. The Claude Code binary refuses a loop, a heredoc,
-a `$(...)` or a variable expansion it cannot confine to the worktree, and the same command with
-that prefix passes (1,047 refusals across 99 sessions, 2026-10-16 to 2026-10-25).
+brief is followed, their union must fully answer the question. A brief for an agent spawned with `isolation: "worktree"` also says two things about Bash.
+First, start every compound command with `cd <your worktree> &&`; the prefix cleared 1,047
+refusals across 99 sessions (2026-10-16 to 2026-10-25). Second, write every command in plain
+literal form, because the Claude Code binary refuses three constructs as "too complex to
+verify" with or without the prefix:
+
+- a shell expansion: `$VAR`, `$TMPDIR`, `$?`, `$(…)`, backticks or `{a,b}`. Write the literal
+  path; `envq TMPDIR` prints the temp directory once.
+- control flow: a `for` or `while` loop, a function, a `( … )` subshell, a trailing `&` or `<(…)`.
+  Make one call per item.
+- a here-document. Write file content with the Write tool instead.
+
+These shapes drew 412 refusals in the 7 days to 2026-10-31, and `agent-*` subagents drew 228 of
+the 306 in the largest bucket ([server#6732](https://github.com/DanielH2018/server/issues/6732)).
+The server repo's `CLAUDE.md`, section *Parallel Claude Sessions*, holds the full rule. Never
+put one of these shapes in a brief as a command to copy.
 
 **Name the stop conditions, or the agent improvises past a wrong premise.** A brief that says
 what to do but never what makes the work impossible gets a confident report built on an
