@@ -71,6 +71,9 @@ _BOUNDING_READERS = frozenset({"head", "tail", "wc", "grep", "rg", "ugrep"})
 _STDOUT_REDIRECT = re.compile(r"(?:^1|^|[^0-9])>")
 # A redirect operator standing alone as a word, its target in the next word: `2>`, `<`.
 _REDIRECT_OPERATOR = re.compile(r"^(?:\d*|&)(?:<|>>?)&?$")
+# Stdin read from a file, which `cat` then prints: `<`, `0<`, or `<f` glued to its target.
+# `<<` and `<<<` are a heredoc and a herestring, not a file.
+_STDIN_FROM = re.compile(r"^0?<(?![<&])(.*)$")
 
 
 def _stages(command: str) -> list[tuple[list[str], str]] | None:
@@ -239,7 +242,13 @@ def _whole_file_cat(stages, i, cwd: str) -> str | None:
     files = []
     words = iter(stage[1:])
     for w in words:
-        if _REDIRECT_OPERATOR.match(w):
+        stdin = _STDIN_FROM.match(w)
+        if stdin:
+            # `cat < big.j2` prints big.j2 as surely as `cat big.j2` does.
+            target = stdin.group(1) or next(words, None)
+            if target:
+                files.append(target)
+        elif _REDIRECT_OPERATOR.match(w):
             # `2> err.log`: the word after a spaced operator is its target, not an operand.
             next(words, None)
         elif not w.startswith("-") and "<" not in w and ">" not in w:
