@@ -90,7 +90,7 @@ def numbered(*quads):
 
 def test_a_cancelled_run_superseded_by_a_green_run_passes():
     """Issue #1098: GitHub cancelled a queued CI run; a newer run of the same check passed."""
-    data = numbered((12, "prek", "completed", "success"), (11, "prek", "completed", "cancelled"))
+    data = numbered((11, "prek", "completed", "cancelled"), (12, "prek", "completed", "success"))
     assert ci({RUNS: data}).state == "passed"
 
 
