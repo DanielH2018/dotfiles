@@ -280,6 +280,8 @@
            refuses `-O`. `git -C <path> <sub>` is judged there as `git <sub>` too. */}}
       "Bash(git check-ignore:*)",
       "Bash(git merge-tree --write-tree:*)",
+      "Bash(git merge --no-edit:*)",
+      "Bash(git merge --abort)",
       {{/* Branch-level git the reflog recovers. autoMode.allow already calls this routine
            in prose, which the classifier honours — but claude_guard.judge reads Bash()
            prefixes, not prose, so every `cd X && git switch Y` chain prompted anyway (56 of
