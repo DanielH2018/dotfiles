@@ -2,7 +2,8 @@
 
     git commit --amend                      ask   "Create a new commit rather than amending
                                                    unless I ask."
-    git merge (without --ff-only)           ask   "Prefer rebase over merge."
+    git merge (without --ff-only)           ask   "Prefer rebase over merge." The reason names
+                                                   the `git rebase` to run instead (#1074)
     git pull that can merge                 ask   the same rule: a pull without --ff-only or
                                                    --rebase, and without config that makes it
                                                    fast-forward-only or rebasing (#607)
@@ -124,11 +125,29 @@ AMEND_REASON = (
     "git-conventions: `git commit --amend` rewrites a commit. CLAUDE.md: create a new commit "
     "rather than amending unless the user asked for an amend. Approve only if they did."
 )
-MERGE_REASON = (
-    "git-conventions: `git merge` without --ff-only can create a merge commit. CLAUDE.md: "
-    "prefer rebase over merge (`git rebase <upstream>`, or `git merge --ff-only`). "
-    "Approve only if a merge commit is what the user wants."
-)
+_REDIRECT = re.compile(r"^(\d*|&)(>>?|<)&?")
+# A ref safe to quote back in a reason. Anything else reads as `<upstream>`.
+_REF = re.compile(r"^[\w./@{}^~-]+$")
+
+
+def merge_reason(refs: list[str]) -> str:
+    """The ask reason for a merge of `refs`, naming the rebase to run in its place.
+
+    A session that is only told "prefer rebase" retries the same merge behind a `cd`. Naming
+    the exact command, and the `--onto` form for a branch whose base was squash-merged, gives
+    it something to run instead.
+    """
+    up = refs[0] if len(refs) == 1 and _REF.match(refs[0]) else "<upstream>"
+    return (
+        "git-conventions: `git merge` without --ff-only can create a merge commit. CLAUDE.md: "
+        f"prefer rebase over merge. Run `git rebase {up}` instead, or `git merge --ff-only "
+        f"{up}` when the branch has no commits of its own. For a branch stacked on one that "
+        f"was squash-merged into {up}, run `git rebase --onto {up} <old-base>`, where "
+        "<old-base> is the stacked-on branch's last commit, then push with "
+        "`--force-with-lease`. Approve only if a merge commit is what the user wants."
+    )
+
+
 HOOKS_REASON = (
     "git-conventions: this commit skips the repo's hooks (`--no-verify`, `-n`, or an inline "
     "`core.hooksPath`). The settings deny `git commit *--no-verify*` and `git commit -n`; a "
@@ -188,6 +207,35 @@ def _flags(args: list[str], with_arg: frozenset[str], short_with_arg: frozenset[
         elif not tok.startswith("--") and len(tok) > 2:
             # A short cluster: `-am msg`. The first letter that takes a value swallows the
             # rest of the token, or the next word when it is the last letter.
+            for pos, ch in enumerate(tok[1:], start=1):
+                if ch in short_with_arg:
+                    skip = pos == len(tok) - 1
+                    break
+    return out
+
+
+def _positionals(
+    args: list[str], with_arg: frozenset[str], short_with_arg: frozenset[str]
+) -> list[str]:
+    """The non-option words in `args`, skipping every option's value and every redirection
+    (a segment's text keeps its `2>&1`). Words after `--` count."""
+    out: list[str] = []
+    skip = False
+    for i, tok in enumerate(args):
+        if skip:
+            skip = False
+            continue
+        if redirect := _REDIRECT.match(tok):
+            skip = redirect.end() == len(tok)  # `> file`: the target is the next word
+            continue
+        if tok == "--":
+            out.extend(args[i + 1 :])
+            break
+        if not tok.startswith("-") or tok == "-":
+            out.append(tok)
+        elif tok in with_arg:
+            skip = True
+        elif not tok.startswith("--") and len(tok) > 1:
             for pos, ch in enumerate(tok[1:], start=1):
                 if ch in short_with_arg:
                     skip = pos == len(tok) - 1
@@ -427,7 +475,7 @@ def _one(argv: list[str], cwd: str, read_config: ConfigReader) -> tuple[str, str
     elif sub == "merge":
         flags = _flags(args, _MERGE_WITH_ARG, frozenset("mFsX"))
         if not flags & _MERGE_EXEMPT:
-            return ("ask", MERGE_REASON)
+            return ("ask", merge_reason(_positionals(args, _MERGE_WITH_ARG, frozenset("mFsX"))))
     elif sub == "pull" and _pull_can_merge(args, global_opts, cwd, read_config):
         return ("ask", PULL_REASON)
     return None

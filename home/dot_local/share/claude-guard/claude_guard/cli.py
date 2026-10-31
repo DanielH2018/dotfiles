@@ -9,7 +9,8 @@
                                             # against the deployed settings
     claude-guard pre-tool-use              # hook entry: hook JSON on stdin, deny/ask JSON
                                             # or nothing on stdout
-    claude-guard replay <jsonl> --deny     # deny/ask/allow verdict per record
+    claude-guard replay <jsonl> --deny     # deny/ask/allow verdict and reason per record,
+                                            # git conventions included
     claude-guard post-tool-use             # bash-write-fanout.sh's helper: hook JSON on
                                             # stdin, {stripped, context} JSON on stdout
     claude-guard prompt-server             # stdio MCP server: the headless sessions'
@@ -28,7 +29,14 @@ from pathlib import Path
 
 from claude_guard import prompt_tool
 from claude_guard.deny import deny
-from claude_guard.hook import ASK_JSON, permission_request, post_tool_use, pre_tool_use
+from claude_guard.hook import (
+    ASK_JSON,
+    combine_conventions,
+    conventions,
+    permission_request,
+    post_tool_use,
+    pre_tool_use,
+)
 from claude_guard.judge import judge
 from claude_guard.rules import load_rules
 from claude_guard.segment import Parsed, parse
@@ -136,13 +144,17 @@ def _replay_deny(records: list[dict]) -> int:
     cutover gate ran this with `--compare-hook` against block-dangerous-bash.sh (`AGREE
     1058/1058` on the prompted corpus, `AGREE 281/281` on the vectors); slice 6 deleted that
     hook, so the agreement half is gone and the vector file (`tests/test_deny.py`) is the
-    rules' oracle."""
+    rules' oracle. The git conventions are merged in the way the PreToolUse hook merges them,
+    so a merge or an amend shows the ask that hook would print. Each verdict line is followed
+    by its reason, indented, because the reason is what names the form to run instead."""
     for rec in records:
         command = rec["command"]
         cwd = rec.get("cwd", "")
-        v = deny(command, cwd, {**os.environ})
+        v = combine_conventions(deny(command, cwd, {**os.environ}), conventions(command, cwd))
         if v.kind != "none":
             print(f"{v.kind.upper()} {v.rule}: {_head(command)}")
+            if v.reason:
+                print(f"    {v.reason}")
     return 0
 
 

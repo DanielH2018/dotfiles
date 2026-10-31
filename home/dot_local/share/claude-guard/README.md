@@ -181,7 +181,10 @@ because their allow rules already run workspace code or load none. The DECIDED c
 `_LOADER_NAMES` has the measurements.
 
     claude-guard explain 'ssh homelab sudo reboot'          # unchanged: segments and the judge
-    claude-guard replay commands.jsonl --deny                # one line per non-none verdict
+    claude-guard replay commands.jsonl --deny                # one line per non-none verdict, then
+                                                             # its reason indented; the git
+                                                             # conventions are merged in as the
+                                                             # PreToolUse hook merges them
 
 `~/.claude/hooks/guard-pre-tool-use.sh` runs `claude-guard pre-tool-use` on PreToolUse for
 every Bash call and is the sole decision for Bash PreToolUse on THIS HOST: it computes

@@ -262,10 +262,19 @@ def test_replay_deny_prints_rule_lines_and_the_command_head(tmp_path):
     corpus = write_corpus(tmp_path, ["rm -rf /", "ls -la", "git push --force origin feat"])
     rc, out = run_cli(["replay", corpus, "--deny"])
     assert rc == 0
-    lines = out.splitlines()
+    lines = [line for line in out.splitlines() if not line.startswith("    ")]
     assert lines[0] == "DENY rm-root: rm -rf /"
     assert lines[1] == "DENY force-push-flag: git push --force origin feat"
     assert "ls -la" not in out
+
+
+def test_replay_deny_prints_the_git_conventions_ask_and_its_reason(tmp_path):
+    corpus = write_corpus(tmp_path, ['git merge origin/master -m "catch up"'])
+    rc, out = run_cli(["replay", corpus, "--deny"])
+    assert rc == 0
+    verdict, reason = out.splitlines()
+    assert verdict == 'ASK git-conventions: git merge origin/master -m "catch up"'
+    assert "`git rebase origin/master`" in reason
 
 
 def test_replay_refuses_deny_with_judge(tmp_path):

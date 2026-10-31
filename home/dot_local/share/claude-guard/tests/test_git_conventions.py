@@ -118,6 +118,30 @@ def test_merge_is_clean(config, command):
     assert kind(command) is None
 
 
+# dotfiles #1074: a sub-agent's stacked-branch catch-up, which asked once per retry. The
+# reason names the rebase to run, so the next attempt is not the same merge behind a `cd`.
+STACKED_CATCH_UP = (
+    "git checkout -B m6-a4-cutover-a2-rows-go --track origin/m6-a4-cutover-a2-rows-go 2>&1 "
+    '| tail -2; git log --oneline -3; git merge origin/master -m "Merge origin/master into '
+    "m6-a4-cutover-a2-rows-go\n\n#6668 squash-merged as 51636803a4 while this branch was "
+    "stacked on it.\nMerging master brings the squash into this branch so #6670's deletion\n"
+    'applies cleanly against it." 2>&1 | tail -15'
+)
+
+
+def test_merge_reason_names_the_rebase_onto_the_merged_ref(config):
+    d = run_hook(STACKED_CATCH_UP)
+    assert d["permissionDecision"] == "ask"
+    reason = d["permissionDecisionReason"]
+    assert "`git rebase origin/master`" in reason
+    assert "`git rebase --onto origin/master <old-base>`" in reason
+
+
+def test_merge_reason_falls_back_to_a_placeholder_for_two_refs(config):
+    reason = run_hook("git merge -m 'x' topic other")["permissionDecisionReason"]
+    assert "`git rebase <upstream>`" in reason
+
+
 # --- git pull (#607) -----------------------------------------------------------------------------
 
 

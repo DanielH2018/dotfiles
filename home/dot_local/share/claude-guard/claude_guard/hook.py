@@ -278,7 +278,7 @@ def conventions(command: str, cwd: str) -> Verdict | None:
     return Verdict(v[0], "git-conventions", v[1]) if v else None
 
 
-def _combine(rules: Verdict, conv: Verdict | None) -> Verdict:
+def combine_conventions(rules: Verdict, conv: Verdict | None) -> Verdict:
     """The deny rules' verdict and the conventions', merged the way the harness merged them
     while they were two hooks (#619): a deny from either wins, then an ask from either."""
     if conv is None or rules.kind == "deny":
@@ -317,7 +317,7 @@ def pre_tool_use(stdin_text: str, env: Mapping[str, str]) -> str | None:
         rules = merge(rules, waits.hand_wait(command, run_in_background(stdin_text)))
     except Exception:
         return ASK_JSON
-    verdict = _combine(rules, conventions(command, cwd))
+    verdict = combine_conventions(rules, conventions(command, cwd))
     # A needless dangerouslyDisableSandbox (claude_guard.bypass). Its own failure contract is
     # no decision, so it runs outside the deny rules' fail-closed try above.
     verdict = merge(verdict, bypass_verdict(stdin_text, cwd, env))
