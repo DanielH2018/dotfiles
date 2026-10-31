@@ -77,6 +77,15 @@ test('guard-pre-tool-use.sh is registered as the sandbox PreToolUse deny hook', 
     'the sandbox PreToolUse block no longer registers guard-pre-tool-use.sh');
 });
 
+test('read-nudge.sh is registered on the sandbox Read matcher', () => {
+  // gen-hooks registers the whole-file-read nudge on the host but does not reach this
+  // hand-written list, so nothing else keeps the sandbox entry in step with the host.
+  const entry = (parsed.hooks?.PreToolUse ?? []).find((e) => e.matcher === 'Read');
+  assert.ok(entry, 'the sandbox PreToolUse block has no Read matcher');
+  assert.ok(entry.hooks.some((h) => h.command === '/home/claudebot/.claude/hooks/read-nudge.sh'),
+    'the sandbox Read matcher does not run read-nudge.sh');
+});
+
 test('the sandbox env fails the deny hook closed', () => {
   // The shim's unevaluable-rules path prints `ask`, which the container's
   // --dangerously-skip-permissions skips -- so without this key a container missing uv, the

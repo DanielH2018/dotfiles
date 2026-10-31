@@ -909,6 +909,10 @@ DOCKER_ARGS=(
   -v "$HOME/.claude/hooks/guard-pre-tool-use.sh:/home/claudebot/.claude/hooks/guard-pre-tool-use.sh:ro"
   -v "$HOME/.local/share/claude-guard:/home/claudebot/.local/share/claude-guard:ro"
   -v "$HOME/.claude/hooks/protect-secrets.sh:/home/claudebot/.claude/hooks/protect-secrets.sh:ro"
+  # read-nudge.sh is the second shim over the claude-guard package mounted above: it runs
+  # `claude_guard.cli read-nudge` on a whole-file Read of a file over 20 KB (dotfiles #1085,
+  # #1090). It decides nothing and fails silent, so a missing mount costs only the nudge.
+  -v "$HOME/.claude/hooks/read-nudge.sh:/home/claudebot/.claude/hooks/read-nudge.sh:ro"
   # The libraries the hooks above source from lib/ beside themselves: hook-input.sh (stdin),
   # run-bounded.sh (#660), artifact-state.sh. Hooks are mounted one file at a time, so
   # without this mount every `. .../lib/hook-input.sh` fails, and bash runs the hook on

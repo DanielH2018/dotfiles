@@ -196,6 +196,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/claudebot/.claude/hooks/read-nudge.sh",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUse": [

@@ -189,6 +189,20 @@ test('every hook is mounted read-only at its live ~/.claude/hooks path', () => {
   }
 });
 
+test('every hook the sandbox settings register is mounted at the path they name', () => {
+  // The launcher mounts hooks one file at a time, so a registration with no mount runs
+  // nothing, and a fail-silent shim such as read-nudge.sh gives no sign it is missing.
+  const settings = JSON.parse(fs.readFileSync(path.join(SANDBOX_DIR, 'settings.base.json'), 'utf8'));
+  const mounted = new Set(MOUNTS.map(([t]) => t));
+  const registered = Object.values(settings.hooks ?? {}).flat()
+    .flatMap((e) => e.hooks ?? []).map((h) => h.command)
+    .filter((c) => c.startsWith('/home/claudebot/.claude/hooks/'));
+  assert.ok(registered.includes('/home/claudebot/.claude/hooks/guard-pre-tool-use.sh'),
+    `the census found no registered hooks: ${registered}`);
+  const unmounted = registered.filter((c) => !mounted.has(c));
+  assert.deepStrictEqual(unmounted, [], 'these registered hooks have no mount in the launcher');
+});
+
 test('the claude-guard package is mounted read-only beside the shim that runs it', () => {
   // guard-pre-tool-use.sh is a few lines of bash over this package, so the package holds the
   // deny rules the hook enforces. It sits outside ~/.claude/hooks/, so the floor above does
