@@ -94,8 +94,9 @@ def test_a_cancelled_run_superseded_by_a_green_run_passes():
     assert ci({RUNS: data}).state == "passed"
 
 
-def test_a_check_whose_only_run_was_cancelled_keeps_waiting():
-    data = runs(("prek", "completed", "cancelled"), ("lint", "completed", "success"))
+@pytest.mark.parametrize("conclusion", ["cancelled", "stale"])
+def test_a_check_whose_only_run_gave_no_verdict_keeps_waiting(conclusion):
+    data = runs(("prek", "completed", conclusion), ("lint", "completed", "success"))
     reading = ci({RUNS: data})
     assert (reading.state, reading.detail) == (
         "cancelled",
@@ -104,9 +105,27 @@ def test_a_check_whose_only_run_was_cancelled_keeps_waiting():
     assert reading.state not in github.CiWait("o/r", SHA, None).describe().terminal
 
 
-def test_a_failed_newest_run_fails_though_an_older_run_of_it_was_cancelled():
-    data = numbered((12, "prek", "completed", "failure"), (11, "prek", "completed", "cancelled"))
-    assert ci({RUNS: data}).state == "failed"
+def test_a_cancelled_workflow_run_superseded_by_a_finished_one_passes():
+    data = runs(("prek", "completed", "success"))
+    workflow_runs = {
+        "workflow_runs": [
+            {
+                "id": 11,
+                "workflow_id": 5,
+                "name": "CI",
+                "status": "completed",
+                "conclusion": "cancelled",
+            },
+            {
+                "id": 12,
+                "workflow_id": 5,
+                "name": "CI",
+                "status": "completed",
+                "conclusion": "success",
+            },
+        ]
+    }
+    assert ci({RUNS: data, ACTIONS: workflow_runs}).state == "passed"
 
 
 def test_a_suite_still_running_holds_a_pass_until_its_check_runs_register():
