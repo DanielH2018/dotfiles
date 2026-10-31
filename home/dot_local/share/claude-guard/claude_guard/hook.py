@@ -200,7 +200,7 @@ def nudge_for(command: str, stdin_text: str) -> str | None:
     already seen that rule's nudge. Never raises: a nudge is advice, and a failure in it
     must not reach the deny side's ask."""
     try:
-        found = nudge(command)
+        found = nudge(command, read_cwd(stdin_text))
         if found is None:
             return None
         data = json.loads(stdin_text)

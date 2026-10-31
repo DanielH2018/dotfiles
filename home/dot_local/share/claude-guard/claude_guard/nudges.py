@@ -32,6 +32,17 @@ A sixth points at a better reader, the way python-json does:
      command, and sessions drifted back to raw reads of `owed.jsonl` and `hold_sha`
      (dotfiles #1041).
 
+A seventh reads the filesystem, which no other rule does:
+
+  7. whole-file-cat: `cat` (any flags, `-n` included) of files totalling more than
+     20 KB, with no bounding stage after it. A bounding stage is `head`, `tail`, `wc`,
+     `grep`/`rg`/`ugrep` or `sed -n`. 20 KB is the `big_calls` cut-off `otelq savings
+     bytes` uses, and `cat` produced 46 of the week's 218 calls over it (dotfiles
+     #1076). A relative path resolves against the session cwd and any `cd` earlier in
+     the command; a path that does not resolve to a regular file gets no nudge, and
+     neither does a `cat` whose stdout goes to a redirect. The Read tool's whole-file
+     reads are the other half of that census and are out of reach of a Bash hook.
+
 `nudge()` returns (rule, text) or None. The hook adds the text as additionalContext
 beside whatever the deny rules decided, and only once per session per rule: the text
 carries the tag `[claude-guard:nudge:<rule>]`, the harness records additionalContext in
@@ -39,6 +50,7 @@ the transcript, and a transcript that already holds the tag means the session ha
 it. A command the segmenter cannot read gets no nudge.
 """
 
+import os
 import re
 import shlex
 
@@ -51,6 +63,12 @@ _REV_PATH_EXPANSION = re.compile(r"^[^-$:][^:]*:.*\$")
 _CONTROL_WORDS = frozenset({"do", "then", "else", "{", "!"})
 _GITOPS_DIR = "/var/lib/gitops-deploy/"
 _RAW_READERS = frozenset({"cat", "tail", "head"})
+# Matches otelq's BIG_RESULT_BYTES, the cut-off of its `big_calls` census.
+_BIG_CAT_BYTES = 20_000
+_BOUNDING_READERS = frozenset({"head", "tail", "wc", "grep", "rg", "ugrep"})
+# A word that sends stdout to a file: `>f`, `>>f`, `1>f`, `&>f`, or `a>f` glued to an
+# operand. `2>/dev/null` and `2>&1` leave stdout on the context.
+_STDOUT_REDIRECT = re.compile(r"(?:^1|^|[^0-9])>")
 
 
 def _stages(command: str) -> list[tuple[list[str], str]] | None:
@@ -178,6 +196,67 @@ def _gitops_state(stages, i) -> str | None:
     )
 
 
+def _bounded_by_next(stages, i) -> bool:
+    """Whether stage `i` pipes into a stage that bounds what reaches the context."""
+    if not _piped(stages, i) or i + 1 >= len(stages):
+        return False
+    consumer = stages[i + 1][0]
+    if consumer[0] in _BOUNDING_READERS:
+        return True
+    return consumer[0] == "sed" and "-n" in consumer[1:]
+
+
+def _cwd_at(stages, i, cwd: str) -> str:
+    """The directory stage `i` runs in: the session cwd moved by each earlier `cd`, or
+    "" once a `cd` goes somewhere this cannot follow (`cd -`, bare `cd`, an expansion)."""
+    for words, _ in stages[:i]:
+        if words[0] != "cd":
+            continue
+        args = [w for w in words[1:] if not w.startswith("-")]
+        if len(args) != 1 or "$" in args[0]:
+            return ""
+        target = os.path.expanduser(args[0])
+        if not os.path.isabs(target):
+            if not cwd:
+                return ""
+            target = os.path.join(cwd, target)
+        cwd = target
+    return cwd
+
+
+def _whole_file_cat(stages, i, cwd: str) -> str | None:
+    stage = stages[i][0]
+    while stage and stage[0] in _CONTROL_WORDS:
+        stage = stage[1:]
+    if stage[:1] != ["cat"]:
+        return None
+    if any(_STDOUT_REDIRECT.search(w) for w in stage[1:]):
+        return None
+    if _bounded_by_next(stages, i):
+        return None
+    files = [w for w in stage[1:] if not w.startswith("-") and "<" not in w and ">" not in w]
+    if not files:
+        return None
+    base = _cwd_at(stages, i, cwd)
+    total = 0
+    for name in files:
+        path = os.path.expanduser(name)
+        if not os.path.isabs(path):
+            if not base:
+                return None
+            path = os.path.join(base, path)
+        if not os.path.isfile(path):
+            return None
+        total += os.path.getsize(path)
+    if total <= _BIG_CAT_BYTES:
+        return None
+    return (
+        f"This `cat` puts {total // 1000} KB into the context, where it stays for the rest "
+        "of the session. Read the section you need: `rg -n <pattern> <file>` to find it, "
+        "then `sed -n A,Bp <file>`, or the Read tool with `offset`/`limit`."
+    )
+
+
 _RULES = (
     ("unbounded-log", _unbounded_log),
     ("recursive-ls", _recursive_ls),
@@ -192,11 +271,13 @@ def tag(rule: str) -> str:
     return f"[claude-guard:nudge:{rule}]"
 
 
-def nudge(command: str) -> tuple[str, str] | None:
-    """(rule, tagged text) for the first rule `command` trips, or None."""
+def nudge(command: str, cwd: str = "") -> tuple[str, str] | None:
+    """(rule, tagged text) for the first rule `command` trips, or None. `cwd` is the
+    session's working directory; without it a relative path never trips whole-file-cat."""
     stages = _stages(command) or []
+    rules = (*_RULES, ("whole-file-cat", lambda s, i: _whole_file_cat(s, i, cwd)))
     for i in range(len(stages)):
-        for rule, check in _RULES:
+        for rule, check in rules:
             found = check(stages, i)
             if found:
                 return rule, f"{tag(rule)} {found}"

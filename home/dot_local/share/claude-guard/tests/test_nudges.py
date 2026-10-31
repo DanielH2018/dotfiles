@@ -1,5 +1,5 @@
-"""The context-discipline nudges (dotfiles #586), the show-substitution nudge, and the
-gitops-state nudge (dotfiles #1041).
+"""The context-discipline nudges (dotfiles #586), the show-substitution nudge, the
+gitops-state nudge (dotfiles #1041), and the whole-file-cat nudge (dotfiles #1076).
 
 Each rule has a command it must nudge and a bounded variant it must leave alone. The
 hook-level tests pin that a nudge rides beside a verdict, never on a deny, and only once
@@ -133,3 +133,53 @@ def test_a_subagent_reads_its_own_transcript_for_the_once_rule(tmp_path):
     own.parent.mkdir(parents=True)
     own.write_text(json.dumps({"content": [f"{tag('unbounded-log')} x"]}) + "\n")
     assert nudge_for("git log", stdin) is None
+
+
+@pytest.fixture
+def big_and_small(tmp_path):
+    (tmp_path / "big.j2").write_text("x" * 30_000)
+    (tmp_path / "small.j2").write_text("x" * 1_000)
+    return tmp_path
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat -n {d}/big.j2",
+        "cat -n big.j2",
+        "cd {d}; cat -n big.j2",
+        "cat small.j2 big.j2",
+        "cat -n big.j2 | sort",
+    ],
+)
+def test_an_unbounded_cat_of_a_big_file_is_nudged(big_and_small, command):
+    found = nudge(command.format(d=big_and_small), cwd=str(big_and_small))
+    assert found and found[0] == "whole-file-cat"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat -n small.j2",
+        "cat -n big.j2 | head -50",
+        "cat big.j2 | sed -n 10,40p",
+        "cat big.j2 | rg -n listen",
+        "cat small.j2 big.j2 > joined.j2",
+        "cat big.j2 small.j2>>joined.j2",
+        "cat missing.j2",
+    ],
+)
+def test_a_small_bounded_or_redirected_cat_is_left_alone(big_and_small, command):
+    assert nudge(command, cwd=str(big_and_small)) is None
+
+
+def test_a_relative_cat_without_a_cwd_is_left_alone(big_and_small):
+    assert nudge("cat big.j2") is None
+
+
+def test_the_hook_resolves_cat_against_the_session_cwd(big_and_small):
+    from claude_guard.hook import nudge_for
+
+    stdin = json.dumps({"tool_input": {"command": "cat big.j2"}, "cwd": str(big_and_small)})
+    found = nudge_for("cat big.j2", stdin)
+    assert found and found.startswith(tag("whole-file-cat"))
