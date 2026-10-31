@@ -81,9 +81,32 @@ def test_no_check_runs_yet_is_pending_never_passed():
     assert reading.state == "pending"
 
 
-def test_a_cancelled_run_with_no_failure_is_cancelled():
+def numbered(*quads):
+    """Check runs as (id, name, status, conclusion), for a commit with several runs of a check."""
+    return {
+        "check_runs": [{"id": i, "name": n, "status": s, "conclusion": c} for i, n, s, c in quads]
+    }
+
+
+def test_a_cancelled_run_superseded_by_a_green_run_passes():
+    """Issue #1098: GitHub cancelled a queued CI run; a newer run of the same check passed."""
+    data = numbered((12, "prek", "completed", "success"), (11, "prek", "completed", "cancelled"))
+    assert ci({RUNS: data}).state == "passed"
+
+
+def test_a_check_whose_only_run_was_cancelled_keeps_waiting():
     data = runs(("prek", "completed", "cancelled"), ("lint", "completed", "success"))
-    assert ci({RUNS: data}).state == "cancelled"
+    reading = ci({RUNS: data})
+    assert (reading.state, reading.detail) == (
+        "cancelled",
+        f"{SHA[:8]}: 1 runs gave no verdict: prek",
+    )
+    assert reading.state not in github.CiWait("o/r", SHA, None).describe().terminal
+
+
+def test_a_failed_newest_run_fails_though_an_older_run_of_it_was_cancelled():
+    data = numbered((12, "prek", "completed", "failure"), (11, "prek", "completed", "cancelled"))
+    assert ci({RUNS: data}).state == "failed"
 
 
 def test_a_suite_still_running_holds_a_pass_until_its_check_runs_register():

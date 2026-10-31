@@ -24,6 +24,13 @@ The same list fails the wait on a workflow run that completed with a failed conc
 that fails before it creates a job, such as one for an invalid workflow file, ends
 `startup_failure` and registers no check run, so the check runs alone would read as passed, or
 as pending forever on a commit with no other checks (issue #953).
+
+A commit can carry several runs of one check. GitHub cancels a queued CI run when a newer one for
+the same branch arrives, and the check-runs endpoint returns the cancelled run beside its
+replacement, each from its own check suite. So `gh-ci` judges only the newest run of each check
+name, and the newest workflow run of each workflow. A newest run that ended `cancelled` or
+`stale` gave no verdict on the commit: it holds the wait rather than ending it, until a re-run
+replaces it or the budget elapses (issue #1098).
 """
 
 import json
@@ -42,9 +49,11 @@ GH_TIMEOUT_S = 30
 # How long after a check suite appears before its app has registered its check runs.
 SETTLE_S = 30.0
 
-# A check run that completed with one of these failed. `cancelled` is its own state: the run
-# will not finish, but it did not fail either, and the caller decides what that means.
+# A check run that completed with one of these failed.
 FAILED_CONCLUSIONS = frozenset({"failure", "timed_out", "action_required", "startup_failure"})
+# A run that completed with one of these said nothing about the commit, so it neither fails nor
+# passes the wait. The server repo's `hosts/lib/ci_verdict.py` holds the same rule.
+NO_VERDICT_CONCLUSIONS = frozenset({"cancelled", "stale"})
 
 _GITHUB_REMOTE = re.compile(r"github\.com[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?$")
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -134,7 +143,7 @@ class CiWait:
 
     def describe(self) -> Description:
         return Description(
-            terminal={"passed": 0, "failed": 1, "cancelled": 1},
+            terminal={"passed": 0, "failed": 1},
             interval_s=INTERVAL_S,
             remote=True,
         )
@@ -169,6 +178,7 @@ class CiWait:
         runs = data.get("check_runs") if isinstance(data, dict) else None
         if not isinstance(runs, list):
             raise ReadError(f"no check_runs list for {sha[:8]}")
+        runs = _newest(runs, lambda r: r.get("name"))
         failed = [r for r in runs if r.get("conclusion") in FAILED_CONCLUSIONS]
         if failed:
             names = ", ".join(sorted(str(r.get("name")) for r in failed)[:3])
@@ -190,10 +200,14 @@ class CiWait:
         unsettled = self._unsettled_suites(sha) or _unfinished_workflows(workflow_runs)
         if unsettled:
             return Reading("running", f"{sha[:8]}: {len(runs)} check runs complete; {unsettled}")
-        cancelled = [r for r in runs if r.get("conclusion") == "cancelled"]
-        if cancelled:
-            names = ", ".join(sorted(str(r.get("name")) for r in cancelled)[:3])
-            return Reading("cancelled", f"{sha[:8]}: {len(cancelled)} cancelled: {names}")
+        no_verdict = [
+            r for r in [*runs, *workflow_runs] if r.get("conclusion") in NO_VERDICT_CONCLUSIONS
+        ]
+        if no_verdict:
+            names = ", ".join(sorted({str(r.get("name")) for r in no_verdict})[:3])
+            return Reading(
+                "cancelled", f"{sha[:8]}: {len(no_verdict)} runs gave no verdict: {names}"
+            )
         return Reading("passed", f"{sha[:8]}: {len(runs)} check runs passed")
 
     def _unsettled_suites(self, sha: str) -> str:
@@ -227,7 +241,21 @@ class CiWait:
         workflow_runs = data.get("workflow_runs") if isinstance(data, dict) else None
         if not isinstance(workflow_runs, list):
             raise ReadError(f"no workflow_runs list for {sha[:8]}")
-        return workflow_runs
+        return _newest(workflow_runs, lambda r: r.get("workflow_id") or r.get("name"))
+
+
+def _newest(items: list, key: Callable[[dict], object]) -> list:
+    """The item with the highest `id` among each group of `items` that share `key`."""
+    # GitHub allocates check run and workflow run ids in increasing order, so the highest id is
+    # the run created last. A re-run of the same workflow run keeps its id, and the API already
+    # reports only its latest attempt.
+    newest: dict[object, dict] = {}
+    for item in items:
+        group = key(item)
+        held = newest.get(group)
+        if held is None or (item.get("id") or 0) > (held.get("id") or 0):
+            newest[group] = item
+    return list(newest.values())
 
 
 def _unfinished_workflows(workflow_runs: list) -> str:
