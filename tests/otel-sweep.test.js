@@ -302,6 +302,22 @@ test('hermetic agent-eval transcripts are counted apart, not reported silent', {
   assert.strictEqual(result.eval_sessions_skipped_48h, 1, 'the skipped eval stays visible as a count');
 });
 
+test('empty transcripts are counted apart, not reported silent', { skip }, (t) => {
+  // A 0-byte transcript has no timestamp, so last_activity() fell back to its mtime
+  // and it read as a silent session (dotfiles #1077). The control is a real
+  // candidate beside it, which must still be checked and reported.
+  const { home } = homeWithTranscripts(t, 0);
+  const dir = path.join(home, '.claude', 'projects', 'proj');
+  const stamp = new Date(Date.now() - 60000).toISOString();
+  fs.writeFileSync(path.join(dir, 'empty.jsonl'), '');
+  fs.writeFileSync(path.join(dir, 'real.jsonl'), `{"type":"user","timestamp":"${stamp}"}\n`);
+
+  const result = deepScan(home, true);
+  assert.deepStrictEqual(result.silent_sessions.map((s) => s.session), ['real'],
+    'the real candidate stays silent and the empty file does not');
+  assert.strictEqual(result.empty_transcripts_skipped_48h, 1, 'the skipped empty file stays visible as a count');
+});
+
 test('--rows names the silent count and says when it truncated', () => {
   // The rejecting half: a cap in the compact view is fine, a cap that looks
   // like the whole set is the defect. Both the total and the notice must exist.
@@ -408,7 +424,10 @@ test('transcript activity is read from content, not mtime', { skip }, () => {
   const probe = SRC.slice(SRC.indexOf("PROBE = r'''"));
   assert.ok(probe.includes('last_activity(path, st)'),
     'the candidate cutoff must go through last_activity');
-  assert.ok(!/if st\.st_mtime >= cutoff/.test(probe),
+  // An empty file has no content to read, so its mtime only decides whether it
+  // is counted in empty_transcripts_skipped_48h; it never makes a candidate.
+  const candidateGate = probe.replace(/if st\.st_size == 0:[\s\S]*?continue\n/, '');
+  assert.ok(!/if st\.st_mtime >= cutoff/.test(candidateGate),
     'st_mtime must not be the activity signal');
 
   const out = execFileSync(python, ['-c', `

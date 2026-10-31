@@ -399,6 +399,7 @@ if MODE == "deep":
     silent = []
     candidates = []
     evals = 0
+    empties = 0
     checked = False
     if BASE["loki"]:
         cutoff = time.time() - ACTIVE_HOURS * 3600
@@ -406,6 +407,14 @@ if MODE == "deep":
             try:
                 st = path.stat()
             except OSError:
+                continue
+            # An empty file holds no session, so it cannot be one that exports
+            # nowhere. last_activity() would fall back to its mtime and keep it a
+            # candidate for 48h; on 2026-10-31 such a file was daniel-server's only
+            # silent entry (dotfiles #1077). Counted like an eval, by its mtime.
+            if st.st_size == 0:
+                if st.st_mtime >= cutoff:
+                    empties += 1
                 continue
             if last_activity(path, st) < cutoff:
                 continue
@@ -464,6 +473,7 @@ if MODE == "deep":
     out["silent_checked"] = checked
     out["sessions_on_disk_48h"] = len(candidates)
     out["eval_sessions_skipped_48h"] = evals
+    out["empty_transcripts_skipped_48h"] = empties
 
 print(json.dumps(out))
 '''
@@ -560,6 +570,8 @@ def render_rows(results):
             summary += f" silent={len(silent)}"
             if data.get("eval_sessions_skipped_48h"):
                 summary += f" evals-skipped={data['eval_sessions_skipped_48h']}"
+            if data.get("empty_transcripts_skipped_48h"):
+                summary += f" empty-skipped={data['empty_transcripts_skipped_48h']}"
         print(summary)
         for bad, n in sorted(data.get("errors_24h", {}).items()):
             print(f"         {bad}={n}")
