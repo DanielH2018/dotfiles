@@ -249,6 +249,40 @@ test('the silent-session payload is uncapped', { skip }, (t) => {
     'the payload must carry every silent session, uncapped');
 });
 
+test('the silent-session lookback covers the active window and no more', { skip }, (t) => {
+  // At [720h] one 50-id batch took 14.7 s against get()'s 15 s timeout, so three
+  // sweeps in four reported silent_checked: false (2026-10-31). Too short a range
+  // would instead condemn a session still writing at the window's edge.
+  const { home } = homeWithTranscripts(t, 2);
+  const out = execFileSync(python, ['-c', `
+import importlib.util, io, json, re, sys, urllib.parse, urllib.request
+from importlib.machinery import SourceFileLoader
+loader = SourceFileLoader("sweep", ${JSON.stringify(SWEEP)})
+spec = importlib.util.spec_from_loader("sweep", loader)
+m = importlib.util.module_from_spec(spec)
+loader.exec_module(m)
+
+ranges = []
+def fake_urlopen(url, timeout=None):
+    if url.endswith("/ready"):
+        return io.BytesIO(b"ready")
+    q = urllib.parse.parse_qs(urllib.parse.urlparse(url).query).get("query", [""])[0]
+    if "session_id=~" in q:
+        ranges.extend(int(h) for h in re.findall(r"\\[(\\d+)h\\]", q))
+    return io.BytesIO(json.dumps({"status": "success", "data": {"result": []}}).encode())
+urllib.request.urlopen = fake_urlopen
+sys.argv = ["probe", "deep"]
+exec(compile(m.PROBE, "<probe>", "exec"), {"__name__": "probe"})
+print(json.dumps(ranges))
+`], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home } });
+  const ranges = JSON.parse(out.trim().split('\n').pop());
+  assert.ok(ranges.length > 0, 'the batch query must have run');
+  for (const h of ranges) {
+    assert.ok(h >= 48, `a ${h}h lookback misses sessions active 48h ago`);
+    assert.ok(h <= 72, `a ${h}h lookback scans history no candidate needs`);
+  }
+});
+
 test('hermetic agent-eval transcripts are counted apart, not reported silent', { skip }, (t) => {
   // An eval fan-out on 2026-10-03 left 203 `claude -p --agent` transcripts that skip
   // the user settings carrying the OTEL env, and they read as 203 silent sessions

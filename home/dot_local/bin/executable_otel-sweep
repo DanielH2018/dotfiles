@@ -387,12 +387,21 @@ if MODE == "deep":
     # own; letting it manufacture a second finding per transcript is how one
     # outage becomes a wall of alarms about sessions that are exporting fine.
     # Skip the check instead of reporting all of it.
+    #
+    # A candidate wrote to its transcript within ACTIVE_HOURS, so an exporting
+    # session has events inside that window too; the lookback adds a day of margin
+    # for ingest lag and nothing more. It was 720h until 2026-10-31, which made one
+    # 50-id batch take 14.7 s against get()'s 15 s timeout, so three runs in four
+    # reported `silent_checked: false`. The same batch at 72h took 1.2 s and found
+    # the same 50 sessions.
+    ACTIVE_HOURS = 48
+    LOOKBACK_HOURS = ACTIVE_HOURS + 24
     silent = []
     candidates = []
     evals = 0
     checked = False
     if BASE["loki"]:
-        cutoff = time.time() - 48 * 3600
+        cutoff = time.time() - ACTIVE_HOURS * 3600
         for path in (pathlib.Path.home() / ".claude" / "projects").glob("*/*.jsonl"):
             try:
                 st = path.stat()
@@ -423,7 +432,8 @@ if MODE == "deep":
             try:
                 rows = loki(
                     "sum by (session_id) (count_over_time("
-                    + CC + " | session_id=~`" + ids + "` [720h]))",
+                    + CC + " | session_id=~`" + ids + "` ["
+                    + str(LOOKBACK_HOURS) + "h]))",
                     strict=True,
                 )
             except Exception:
