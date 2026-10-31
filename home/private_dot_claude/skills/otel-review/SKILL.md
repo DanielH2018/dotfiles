@@ -220,6 +220,21 @@ change between releases, so a step that returns nothing gets the enumerate query
    `reduction` and `trend` read local files, so run them on each machine being measured
    rather than over ssh (see *Writing the query*).
 
+   `agent_summary` in the `subagents` rows is fixed overhead, so don't re-investigate it.
+   Claude Code sends these requests to write the progress line that a running background
+   subagent shows in the subagent panel. Each request re-reads the subagent's cached context
+   to write a few dozen tokens, so the cost grows with subagent count, running time and
+   context size. No setting or environment variable turns the summaries off or lengthens
+   their interval. The changelog and the env-vars and settings references were checked for
+   one on 2026-10-31 ([#1075](https://github.com/DanielH2018/dotfiles/issues/1075)). The
+   changelog entries in 2.1.128 bound the cost from inside Claude Code: "Fixed sub-agent
+   summaries firing repeatedly while a sub-agent's transcript is static". The only switch
+   that removes the line is `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, which also removes
+   background subagents and background commands. That trade is not worth $100 a week. The
+   lever that does work is the one in `orchestrating-subagents`: fewer and shorter-lived
+   background subagents with smaller contexts. Report the figure, and flag it only when its
+   share of total spend moves well past the 5% measured in that week.
+
 2. **Spend and cache efficiency.** Cost is a Prometheus counter, labelled by `model`. Tokens
    carry `type` = `input`, `output`, `cacheRead`, `cacheCreation`.
 
