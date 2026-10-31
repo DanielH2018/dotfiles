@@ -53,40 +53,49 @@ elif verb == "resolve":
     reachable = set(json.loads(sys.argv[2]))
     m._accepts = lambda base, timeout: base in reachable
     print(json.dumps(m.resolve_bases()))
+elif verb == "scope":
+    # The resolved Loki base and the addresses that "accept" are the whole input.
+    m.LOKI = sys.argv[2]
+    reachable = set(json.loads(sys.argv[3]))
+    m._accepts = lambda base, timeout: base in reachable
+    print(m.loki_scope())
+elif verb == "failscope":
+    # A failures report as cmd_savings builds it, with the scope loki_scope() returned.
+    print(json.dumps(m.report_failures([], "7d", sys.argv[2])))
 elif verb == "win":
     until = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] != "-" else None
     print(json.dumps(list(m._window(sys.argv[2], float(sys.argv[3]), until))))
 elif verb == "prog":
     print(m.program_of(sys.argv[2]))
 elif verb == "prompts":
-    print(json.dumps(m.report_prompts(json.loads(sys.stdin.read()), "7d")))
+    print(json.dumps(m.report_prompts(json.loads(sys.stdin.read()), "7d", m.SCOPE_LOCAL)))
 elif verb == "srows":
     print(m._savings_rows(json.loads(sys.stdin.read())))
 elif verb == "trend":
     print(json.dumps(m.report_trend(json.loads(sys.stdin.read()), "7d")))
 elif verb == "subst":
     raw = json.loads(sys.stdin.read())
-    print(json.dumps(m.report_subst({k: tuple(v) for k, v in raw.items()}, "7d")))
+    print(json.dumps(m.report_subst({k: tuple(v) for k, v in raw.items()}, "7d", m.SCOPE_LOCAL)))
 elif verb == "failures":
-    print(json.dumps(m.report_failures(json.loads(sys.stdin.read()), "7d")))
+    print(json.dumps(m.report_failures(json.loads(sys.stdin.read()), "7d", m.SCOPE_LOCAL)))
 elif verb == "bytesrep":
     payload = json.loads(sys.stdin.read())
-    print(json.dumps(m.report_bytes(payload["totals"], payload["big"], "7d", 20000)))
+    print(json.dumps(m.report_bytes(payload["totals"], payload["big"], "7d", 20000, m.SCOPE_LOCAL)))
 elif verb == "reduction":
     print(json.dumps(m.report_reduction(json.loads(sys.stdin.read()), "7d")))
 elif verb == "all":
     a = json.loads(sys.stdin.read())
     parts = {
-        "prompts": m.report_prompts(a["decisions"], "1d"),
-        "bytes": m.report_bytes(a["totals"], a["big"], "1d", 20000),
-        "failures": m.report_failures(a["failures"], "1d"),
+        "prompts": m.report_prompts(a["decisions"], "1d", m.SCOPE_LOCAL),
+        "bytes": m.report_bytes(a["totals"], a["big"], "1d", 20000, m.SCOPE_LOCAL),
+        "failures": m.report_failures(a["failures"], "1d", m.SCOPE_LOCAL),
         "reduction": m.report_reduction(a["filters"], "1d"),
     }
     for name in a.get("truncated", []):
         parts[name]["truncated"] = True
     payload = m.report_all(
         1700000000, "1d", parts["prompts"], parts["bytes"], parts["failures"],
-        m.report_subst({k: tuple(v) for k, v in a["subst"].items()}, "1d"),
+        m.report_subst({k: tuple(v) for k, v in a["subst"].items()}, "1d", m.SCOPE_LOCAL),
         parts["reduction"])
     # Serialized exactly as the CLI does, since the rollup matches on the text.
     print(json.dumps(payload, indent=None, ensure_ascii=False))
@@ -439,11 +448,32 @@ test('savings --rows flags a truncated fetch instead of under-reporting', { skip
     'a silently partial count reads as a real one — it has to say so');
 });
 
-test('savings states the window and that it covers one machine only', { skip }, () => {
-  const out = JSON.parse(drive(['prompts'], JSON.stringify([bash('git push')])));
+// Both cluster nodes forward into one Loki, so a count read through the ClusterIP
+// includes the other node's sessions. The label has to say so, or a reader treats a
+// two-machine total as one machine's.
+test('savings scope is the cluster when the Loki ClusterIP answers', { skip }, () => {
+  const [[loopback, clusterIp]] = JSON.parse(drive(['candidates']));
+  // The node holding the Loki pod resolves to loopback and still reads the cluster store.
+  assert.strictEqual(drive(['scope', loopback, JSON.stringify([loopback, clusterIp])]),
+    'cluster (daniel-box + daniel-server)');
+  // The other node resolves to the ClusterIP itself.
+  assert.strictEqual(drive(['scope', clusterIp, JSON.stringify([clusterIp])]),
+    'cluster (daniel-box + daniel-server)');
+});
+
+test('savings scope is this machine when only a local stack answers', { skip }, () => {
+  const [[loopback]] = JSON.parse(drive(['candidates']));
+  assert.strictEqual(drive(['scope', loopback, JSON.stringify([loopback])]),
+    '127.0.0.1 (this machine only)');
+});
+
+test('savings states the window and the scope it was given', { skip }, () => {
+  const out = JSON.parse(drive(['failscope', 'cluster (daniel-box + daniel-server)']));
   assert.strictEqual(out.window, '7d');
-  assert.match(out.scope, /127\.0\.0\.1/,
-    'the stack is loopback-only, so the digest must not read as cross-machine');
+  assert.strictEqual(out.scope, 'cluster (daniel-box + daniel-server)');
+  assert.match(drive(['srows'], JSON.stringify(out)).split('\n')[0],
+    /\(cluster \(daniel-box \+ daniel-server\)\)$/,
+    'the headline carries the scope, so a reader cannot miss it');
 });
 
 test('savings exposes no flag that could redirect the response', { skip }, () => {

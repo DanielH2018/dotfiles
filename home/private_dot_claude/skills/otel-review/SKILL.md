@@ -107,6 +107,10 @@ directly with `/dev/tcp/127.0.0.1/4317`.
 
 Running the sweep **on** one of these machines is normal: `otel-sweep` skips the ssh hop to
 itself and reports it as `local`, so there is no row for the machine you are sitting on.
+The sweep's targets are fixed as this PC (`local`), `box` and `server`, so a sweep from this
+PC reaches all three machines, while a sweep from daniel-box or daniel-server reaches only the
+two cluster nodes and prints no line for the workstation; report any machine the sweep did not
+reach as unknown, never as healthy.
 
 For anything deeper on daniel-box, the authority is
 `~/server/ansible/roles/k8s/claude-otel/CLAUDE.md` **on that host** — read it rather than

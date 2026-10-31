@@ -228,6 +228,37 @@ def resolve_bases(timeout=RESOLVE_TIMEOUT):
     return resolved
 
 
+# What a Loki-backed savings figure covers. On daniel-box and daniel-server the
+# query reaches the cluster Loki, which both nodes' collectors forward into, so a
+# count read from either node includes the other's sessions. On 2026-10-31 a
+# `savings failures` run on daniel-box labelled 1,106 non-zero exits "this
+# machine only" when they came from both nodes.
+SCOPE_CLUSTER = "cluster (daniel-box + daniel-server)"
+SCOPE_LOCAL = "127.0.0.1 (this machine only)"
+# The jsonq counter is a file on this machine, whatever Loki this machine reads.
+SCOPE_FILE = "this machine only (jsonq's counter file)"
+
+_loki_scope = None
+
+
+def loki_scope(timeout=RESOLVE_TIMEOUT):
+    """SCOPE_CLUSTER when the Loki ClusterIP accepts a connection, else SCOPE_LOCAL.
+
+    The test is reachability of the ClusterIP, not which candidate resolve_bases
+    picked, matching otel-sweep's `store` field: the node that holds the Loki pod
+    answers on loopback and still reads the cluster store. A ClusterIP is routed
+    on cluster nodes alone, so a machine that reaches it is on the cluster store.
+
+    Computed once per run, because `savings all` builds four Loki reports.
+    """
+    global _loki_scope
+    if _loki_scope is None:
+        cluster = LOKI_BASES[1]
+        _loki_scope = (SCOPE_CLUSTER if cluster == LOKI or _accepts(cluster, timeout)
+                       else SCOPE_LOCAL)
+    return _loki_scope
+
+
 # A connection that is accepted and then dropped. Docker's port proxy does this while
 # the container behind it is down: the TCP connect succeeds, so urllib never wraps the
 # failure in URLError, and getresponse() raises RemoteDisconnected (an HTTPException
@@ -436,7 +467,7 @@ def _rank_by_program(events):
     return ranked, _ranked(by_tool, "tool")
 
 
-def report_prompts(events, window):
+def report_prompts(events, window, scope):
     """M1 — the interruption ledger.
 
     Every row is a permission prompt that actually fired and stopped the human.
@@ -455,7 +486,7 @@ def report_prompts(events, window):
         "report": "prompts",
         "measures": "prompts that fired — savings still on the table",
         "window": window,
-        "scope": "127.0.0.1 (this machine only)",
+        "scope": scope,
         "prompts_fired": len(prompts),
         "by_program": by_program,
         "by_tool": by_tool,
@@ -463,7 +494,7 @@ def report_prompts(events, window):
     }
 
 
-def report_failures(events, window):
+def report_failures(events, window, scope):
     """M5 — non-zero exits, which are an UPPER BOUND on the failure tax.
 
     This counted `success=false` and called the total a wasted turn each. For
@@ -489,7 +520,7 @@ def report_failures(events, window):
         "measures": "tool calls that exited non-zero — an UPPER BOUND on wasted "
                     "turns, not a count of them",
         "window": window,
-        "scope": "127.0.0.1 (this machine only)",
+        "scope": scope,
         "note": "a non-zero exit is not always a failure: grep with no match, a "
                 "false `[`, and a find with no hits all exit 1 having worked",
         "failures": len(events),
@@ -499,7 +530,7 @@ def report_failures(events, window):
     }
 
 
-def report_bytes(totals, big_events, window, threshold):
+def report_bytes(totals, big_events, window, threshold, scope):
     """M2 — where context actually goes.
 
     Totals come from a Loki aggregation rather than a fetch: `tool_name` is a
@@ -512,7 +543,7 @@ def report_bytes(totals, big_events, window, threshold):
         "report": "bytes",
         "measures": "context returned by tool calls — where output is not bounded",
         "window": window,
-        "scope": "127.0.0.1 (this machine only)",
+        "scope": scope,
         "bytes_total": sum(totals.values()),
         "bytes_by_tool": [{"tool": k, "bytes": v}
                           for k, v in sorted(totals.items(), key=lambda kv: -kv[1])],
@@ -572,7 +603,7 @@ def report_reduction(records, window):
         "report": "reduction",
         "measures": "bytes read vs bytes printed — a ratio, not a savings claim",
         "window": window,
-        "scope": "127.0.0.1 (this machine only)",
+        "scope": SCOPE_FILE,
         "calls": len(records),
         "calls_measured": len(measured),
         "calls_from_stdin": len(records) - len(measured),
@@ -669,7 +700,7 @@ def _count_matching(pattern, since, now, timeout):
     return total
 
 
-def report_subst(counts, window):
+def report_subst(counts, window, scope):
     """M4 — is the rule holding?
 
     Adoption, not savings. It says how often the preferred tool was reached for
@@ -692,7 +723,7 @@ def report_subst(counts, window):
         "measures": "how often the preferred tool was used — an adoption ratio, "
                     "not a savings claim",
         "window": window,
-        "scope": "127.0.0.1 (this machine only)",
+        "scope": scope,
         "note": "a command using both tools counts for both; these are not shares "
                 "of a partition",
         "pairs": pairs,
@@ -710,7 +741,9 @@ def report_all(now, window, prompts, byte_report, failures, subst, reduction):
         "report": "all",
         "generated_at": int(now),
         "window": window,
-        "scope": "127.0.0.1 (this machine only)",
+        "scope": prompts["scope"],
+        # reduction_ratio comes from a file on this machine, not from Loki.
+        "reduction_scope": reduction["scope"],
         "prompts_fired": prompts["prompts_fired"],
         "hook_decisions": {r["decision"]: r["count"]
                            for r in prompts["hook_decisions"]},
@@ -741,7 +774,8 @@ def report_trend(records, window):
         "measures": "the daily rollup as a series — the only view that survives "
                     "Loki's retention",
         "window": window,
-        "scope": "127.0.0.1 (this machine only)",
+        # Each rollup line recorded the scope of the run that wrote it.
+        "scope": "; ".join(sorted({d.get("scope") or "?" for d in days})) or None,
         "days_found": len(days),
         "series": [{
             "generated_at": d.get("generated_at"),
@@ -865,7 +899,7 @@ def cmd_savings(ns, now):
         counts = {name: (_count_matching(preferred, ns.since, now, ns.timeout),
                          _count_matching(replaced, ns.since, now, ns.timeout))
                   for name, preferred, _label, replaced in SUBSTITUTIONS}
-        return report_subst(counts, ns.since)
+        return report_subst(counts, ns.since, loki_scope())
 
     if ns.report == "bytes":
         fetched = _savings_fetch(
@@ -873,13 +907,13 @@ def cmd_savings(ns, now):
             f'| tool_result_size_bytes > {BIG_RESULT_BYTES}',
             ns.since, now, ns.timeout)
         payload = report_bytes(_bytes_by_tool(ns.since, now, ns.timeout),
-                               fetched, ns.since, BIG_RESULT_BYTES)
+                               fetched, ns.since, BIG_RESULT_BYTES, loki_scope())
     elif ns.report == "failures":
         fetched = _savings_fetch(
             '{service_name="claude-code"} | json | event_name="tool_result" '
             '| success="false"',
             ns.since, now, ns.timeout)
-        payload = report_failures(fetched, ns.since)
+        payload = report_failures(fetched, ns.since, loki_scope())
     else:
         # Filter in the selector, not in Python. Fetching every decision and
         # discarding the auto-approved ones blows the entry limit long before
@@ -889,7 +923,7 @@ def cmd_savings(ns, now):
             '{service_name="claude-code"} | json | event_name="tool_decision" '
             '| source=~"user_.*|hook"',
             ns.since, now, ns.timeout)
-        payload = report_prompts(fetched, ns.since)
+        payload = report_prompts(fetched, ns.since, loki_scope())
     payload["truncated"] = len(fetched) >= SAVINGS_LIMIT
     return payload
 
