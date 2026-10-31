@@ -456,8 +456,8 @@ test('savings scope is the cluster when the Loki ClusterIP answers', { skip }, (
   // The node holding the Loki pod resolves to loopback and still reads the cluster store.
   assert.strictEqual(drive(['scope', loopback, JSON.stringify([loopback, clusterIp])]),
     'cluster (daniel-box + daniel-server)');
-  // The other node resolves to the ClusterIP itself.
-  assert.strictEqual(drive(['scope', clusterIp, JSON.stringify([clusterIp])]),
+  // The other node already resolved to the ClusterIP, so no second probe is needed.
+  assert.strictEqual(drive(['scope', clusterIp, '[]']),
     'cluster (daniel-box + daniel-server)');
 });
 
