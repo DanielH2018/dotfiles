@@ -69,6 +69,8 @@ _BOUNDING_READERS = frozenset({"head", "tail", "wc", "grep", "rg", "ugrep"})
 # A word that sends stdout to a file: `>f`, `>>f`, `1>f`, `&>f`, or `a>f` glued to an
 # operand. `2>/dev/null` and `2>&1` leave stdout on the context.
 _STDOUT_REDIRECT = re.compile(r"(?:^1|^|[^0-9])>")
+# A redirect operator standing alone as a word, its target in the next word: `2>`, `<`.
+_REDIRECT_OPERATOR = re.compile(r"^(?:\d*|&)(?:<|>>?)&?$")
 
 
 def _stages(command: str) -> list[tuple[list[str], str]] | None:
@@ -234,7 +236,14 @@ def _whole_file_cat(stages, i, cwd: str) -> str | None:
         return None
     if _bounded_by_next(stages, i):
         return None
-    files = [w for w in stage[1:] if not w.startswith("-") and "<" not in w and ">" not in w]
+    files = []
+    words = iter(stage[1:])
+    for w in words:
+        if _REDIRECT_OPERATOR.match(w):
+            # `2> err.log`: the word after a spaced operator is its target, not an operand.
+            next(words, None)
+        elif not w.startswith("-") and "<" not in w and ">" not in w:
+            files.append(w)
     if not files:
         return None
     base = _cwd_at(stages, i, cwd)

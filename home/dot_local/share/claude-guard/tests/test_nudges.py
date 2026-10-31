@@ -150,6 +150,7 @@ def big_and_small(tmp_path):
         "cd {d}; cat -n big.j2",
         "cat small.j2 big.j2",
         "cat -n big.j2 | sort",
+        "cat big.j2 2> /dev/null",
     ],
 )
 def test_an_unbounded_cat_of_a_big_file_is_nudged(big_and_small, command):
