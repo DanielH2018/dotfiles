@@ -1095,6 +1095,10 @@ def _savings_rows(payload):
                          f"{_example_cell(row)}\t{row['example']}")
     for row in payload["hook_decisions"]:
         lines.append(f"{row['count']}\thook:{row['decision']}\t(no human involved)")
+    # Every command, so a command seen prompting N times can be found with its N.
+    lines.append("-\tby command:")
+    for row in payload.get("by_command", []):
+        lines.append(f"{row['count']}\tcommand\t{row['command']}")
     return "\n".join(_truncation_note(payload) + lines)
 
 

@@ -458,6 +458,8 @@ test('a program row gives its example the command\'s own count, not the program 
     [['git push', 2], ['git checkout -B x', 1]]);
   assert.match(drive(['srows'], JSON.stringify(out)),
     /^3\tgit\t2x, 1 of 2 commands\tgit push$/m);
+  assert.match(drive(['srows'], JSON.stringify(out)), /^1\tcommand\tgit checkout -B x$/m,
+    'a command that is not its program\'s example still shows its own count');
 });
 
 test('a command run bare and behind cd counts as one command', { skip }, () => {

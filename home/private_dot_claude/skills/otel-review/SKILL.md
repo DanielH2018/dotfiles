@@ -154,8 +154,8 @@ past. At `--since 7d` it reported 210 prompts against a true 487. For a count, a
 
 **A `savings prompts` row counts a program, not a command.** In `29  git  1x, 1 of 29
 commands  git checkout …`, the 29 covers every git command that prompted. The checkout is
-the program's most frequent command and prompted once. The JSON's `by_command` gives every
-command its own count. It groups a command run bare with the same command behind `cd X &&`.
+the program's most frequent command and prompted once. The `command` rows after
+`by command:` give every command its own count, as does the JSON's `by_command`. It groups a command run bare with the same command behind `cd X &&`.
 
 ## Reading the result
 
