@@ -119,6 +119,20 @@ test('surfaces test commands and ignores ordinary shell calls', { skip }, () => 
   assert.ok(!msg.includes('ls -la /etc'), 'non-test commands should not be listed');
 });
 
+test("ignores the wire copy of a call in an api-request-blob row", { skip }, () => {
+  const t = transcript([['Bash', 'npm test']]);
+  fs.appendFileSync(t, JSON.stringify({
+    type: 'api-request-blob',
+    message: {
+      role: 'assistant',
+      content: [{ type: 'tool_use', name: 'Bash', input: { command: 'cd /wt && npm test' } }],
+    },
+  }) + '\n');
+  const msg = run({ transcript_path: t }).systemMessage;
+  assert.match(msg, /npm test/);
+  assert.ok(!msg.includes('cd /wt && npm test'), 'the wire copy should not be listed');
+});
+
 test('truncates long test commands so the injection stays cheap', { skip }, () => {
   const long = 'cd /some/very/long/path && ' + 'x'.repeat(300) + ' && npm test';
   const msg = run({ transcript_path: transcript([['Bash', long]]) }).systemMessage;

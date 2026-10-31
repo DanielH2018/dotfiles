@@ -180,6 +180,19 @@ check(
     is None,
 )
 check(
+    "an api-request-blob's copy of the operator prompt does not open a new turn",
+    evaluate(
+        BAD,
+        [
+            user("write the plan"),
+            assistant(BAD),
+            feedback("[stop-checks:artifact-link-last] x"),
+            {"type": "api-request-blob", **user("write the plan")},
+        ],
+    )
+    is None,
+)
+check(
     "an operator prompt that opens with a system reminder still opens a new turn",
     tagged(
         evaluate(

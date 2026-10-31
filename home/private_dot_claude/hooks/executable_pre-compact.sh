@@ -66,9 +66,11 @@ fi
 
 # Transcript-derived state. One pass over the JSONL, tagging each row so files and commands
 # come out of the same scan: F = a file this session edited, B = a shell command it ran.
+# An api-request-blob row repeats an earlier call with its input rewritten for the wire.
 if [ -n "$TRANSCRIPT" ] && [ -r "$TRANSCRIPT" ]; then
   SCAN=$(jq -Rr '
     fromjson?
+    | select(type == "object" and .type != "api-request-blob")
     | (.message.content? // empty)
     | select(type == "array")
     | .[]
