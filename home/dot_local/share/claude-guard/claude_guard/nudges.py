@@ -1,4 +1,4 @@
-"""Bash commands that work but cost context or a prompt: a one-line nudge, never a decision.
+"""Bash commands and Reads that cost context or a prompt: a one-line nudge, never a decision.
 
 Four context-discipline rules are questions about command text. CLAUDE.md stated them
 until the 2026-09-26 scaffolding pass cut the prose and left this module as their only
@@ -40,8 +40,15 @@ A seventh reads the filesystem, which no other rule does:
      bytes` uses, and `cat` produced 46 of the week's 218 calls over it (dotfiles
      #1076). A relative path resolves against the session cwd and any `cd` earlier in
      the command; a path that does not resolve to a regular file gets no nudge, and
-     neither does a `cat` whose stdout goes to a redirect. The Read tool's whole-file
-     reads are the other half of that census and are out of reach of a Bash hook.
+     neither does a `cat` whose stdout goes to a redirect.
+
+The Read tool's whole-file reads are the other half of that census, 70 of the 218 calls
+(dotfiles #1085). A Bash hook never sees them, so `read_nudge()` judges a Read's
+tool_input for the `read-nudge` hook entry instead:
+
+  8. whole-file-read: a Read of a regular file over 20 KB with neither `offset` nor
+     `limit`. An image or a PDF is skipped: the harness does not put its bytes into the
+     context as text.
 
 `nudge()` returns (rule, text) or None. The hook adds the text as additionalContext
 beside whatever the deny rules decided, and only once per session per rule: the text
@@ -74,6 +81,8 @@ _REDIRECT_OPERATOR = re.compile(r"^(?:\d*|&)(?:<|>>?)&?$")
 # Stdin read from a file, which `cat` then prints: `<`, `0<`, or `<f` glued to its target.
 # `<<` and `<<<` are a heredoc and a herestring, not a file.
 _STDIN_FROM = re.compile(r"^0?<(?![<&])(.*)$")
+# Read renders these as images or pages, not as text the size of the file.
+_NON_TEXT_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"})
 
 
 def _stages(command: str) -> list[tuple[list[str], str]] | None:
@@ -300,6 +309,34 @@ def nudge(command: str, cwd: str = "") -> tuple[str, str] | None:
             if found:
                 return rule, f"{tag(rule)} {found}"
     return None
+
+
+def read_nudge(tool_input: dict, cwd: str = "") -> tuple[str, str] | None:
+    """(rule, tagged text) when a Read's `tool_input` reads a big file whole, or None.
+
+    A relative `file_path` resolves against `cwd`, and without one it is left alone.
+    """
+    name = tool_input.get("file_path")
+    if not isinstance(name, str) or not name:
+        return None
+    if tool_input.get("offset") is not None or tool_input.get("limit") is not None:
+        return None
+    path = os.path.expanduser(name)
+    if not os.path.isabs(path):
+        if not cwd:
+            return None
+        path = os.path.join(cwd, path)
+    if os.path.splitext(path)[1].lower() in _NON_TEXT_SUFFIXES or not os.path.isfile(path):
+        return None
+    size = os.path.getsize(path)
+    if size <= _BIG_CAT_BYTES:
+        return None
+    rule = "whole-file-read"
+    return rule, (
+        f"{tag(rule)} This Read puts {size // 1000} KB into the context, where it stays for "
+        "the rest of the session. Find the section first with `rg -n <pattern> <file>`, then "
+        "Read it with `offset` and `limit`."
+    )
 
 
 def seen(transcript_path: str, rule: str) -> bool:

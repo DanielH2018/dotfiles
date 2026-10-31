@@ -1,5 +1,6 @@
 """The context-discipline nudges (dotfiles #586), the show-substitution nudge, the
-gitops-state nudge (dotfiles #1041), and the whole-file-cat nudge (dotfiles #1076).
+gitops-state nudge (dotfiles #1041), the whole-file-cat nudge (dotfiles #1076), and the
+whole-file-read nudge on the Read tool (dotfiles #1085).
 
 Each rule has a command it must nudge and a bounded variant it must leave alone. The
 hook-level tests pin that a nudge rides beside a verdict, never on a deny, and only once
@@ -14,7 +15,7 @@ import pytest
 
 from claude_guard.deny import NONE, Verdict
 from claude_guard.hook import pre_tool_use_json
-from claude_guard.nudges import nudge, seen, tag
+from claude_guard.nudges import nudge, read_nudge, seen, tag
 
 
 def rule(command: str) -> str | None:
@@ -188,3 +189,45 @@ def test_the_hook_resolves_cat_against_the_session_cwd(big_and_small):
     stdin = json.dumps({"tool_input": {"command": "cat big.j2"}, "cwd": str(big_and_small)})
     found = nudge_for("cat big.j2", stdin)
     assert found and found.startswith(tag("whole-file-cat"))
+
+
+@pytest.mark.parametrize("path", ["{d}/big.j2", "big.j2"])
+def test_a_whole_read_of_a_big_file_is_nudged(big_and_small, path):
+    found = read_nudge({"file_path": path.format(d=big_and_small)}, cwd=str(big_and_small))
+    assert found and found[0] == "whole-file-read"
+    assert found[1].startswith(tag("whole-file-read"))
+
+
+@pytest.mark.parametrize(
+    "tool_input",
+    [
+        {"file_path": "big.j2", "offset": 100},
+        {"file_path": "big.j2", "limit": 200},
+        {"file_path": "small.j2"},
+        {"file_path": "missing.j2"},
+        {"file_path": "big.png"},
+    ],
+)
+def test_a_bounded_small_or_non_text_read_is_left_alone(big_and_small, tool_input):
+    (big_and_small / "big.png").write_bytes(b"x" * 30_000)
+    assert read_nudge(tool_input, cwd=str(big_and_small)) is None
+
+
+def test_the_read_hook_nudges_once_per_session(big_and_small, tmp_path):
+    from claude_guard.hook import read_nudge_json
+
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text("{}\n")
+    stdin = json.dumps(
+        {
+            "tool_name": "Read",
+            "tool_input": {"file_path": str(big_and_small / "big.j2")},
+            "transcript_path": str(transcript),
+        }
+    )
+    out = json.loads(read_nudge_json(stdin))["hookSpecificOutput"]
+    assert out["hookEventName"] == "PreToolUse"
+    assert "permissionDecision" not in out
+    assert out["additionalContext"].startswith(tag("whole-file-read"))
+    transcript.write_text(json.dumps({"content": [out["additionalContext"]]}) + "\n")
+    assert read_nudge_json(stdin) is None

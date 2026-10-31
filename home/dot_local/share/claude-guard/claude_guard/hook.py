@@ -26,10 +26,10 @@ from collections.abc import Mapping
 from claude_guard import apply_guard, bypass, prompt_tool, tq_wrap, waits
 from claude_guard.checks import git_conventions, read_only_agents, worktree_escape
 from claude_guard.checks.awk import awk_risk
-from claude_guard.deny import Verdict, deny
+from claude_guard.deny import NONE, Verdict, deny
 from claude_guard.footguns import footgun
 from claude_guard.judge import Decision, judge
-from claude_guard.nudges import nudge, seen
+from claude_guard.nudges import nudge, read_nudge, seen
 from claude_guard.readonly import readonly
 from claude_guard.rules import load_rules
 from claude_guard.segment import parse
@@ -209,6 +209,26 @@ def nudge_for(command: str, stdin_text: str) -> str | None:
         if seen(context_transcript(data), found[0]):
             return None
         return found[1]
+    except Exception:
+        return None
+
+
+def read_nudge_json(stdin_text: str) -> str | None:
+    """The PreToolUse/Read stdout: a whole-file-read nudge as additionalContext, or None.
+
+    None also when the session has already seen that nudge, and on any failure: the Read
+    hook decides nothing, so a failure in it must not stand in the way of the Read.
+    """
+    try:
+        data = json.loads(stdin_text)
+        tool_input = data.get("tool_input") if isinstance(data, dict) else None
+        if not isinstance(tool_input, dict):
+            return None
+        cwd = data.get("cwd")
+        found = read_nudge(tool_input, cwd if isinstance(cwd, str) else "")
+        if found is None or seen(context_transcript(data), found[0]):
+            return None
+        return pre_tool_use_json(NONE, found[1])
     except Exception:
         return None
 

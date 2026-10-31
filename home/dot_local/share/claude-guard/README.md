@@ -89,6 +89,11 @@ PermissionRequest event and is the sole decision for Bash PermissionRequest: it 
 `judge()`'s verdict and allows, or stays silent and the prompt stands. Cannot run or cannot
 parse → it prints nothing and the prompt stands.
 
+`~/.claude/hooks/read-nudge.sh` runs `claude-guard read-nudge` on PreToolUse for the Read
+tool. It decides nothing: a Read with no `offset` or `limit` of a file over 20 KB gets the
+once-per-session `whole-file-read` nudge from `claude_guard/nudges.py` as
+additionalContext. Cannot run → it prints nothing and the Read goes ahead.
+
 The hook is always live and takes no env switch. Slice 3 cut it over from shadow; slice 6
 (2026-09-17, narrowed) retired the `CLAUDE_GUARD_SHADOW` switch itself and the shadow
 apparatus it fed (`BASH_CHAIN`, `bash_chain_allows`, `claude-guard-shadow.jsonl`,
