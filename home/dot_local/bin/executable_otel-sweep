@@ -412,6 +412,16 @@ if MODE == "deep":
             # nowhere. last_activity() would fall back to its mtime and keep it a
             # candidate for 48h; on 2026-10-31 such a file was daniel-server's only
             # silent entry (dotfiles #1077). Counted like an eval, by its mtime.
+            #
+            # Claude Code itself writes these files, and they carry a UUIDv5
+            # name (dotfiles #1082). A process started as a remote session,
+            # with CLAUDE_CODE_REMOTE_SESSION_ID set or resumed from a session
+            # URL, takes uuid5(3ab19d7e-9f35-45c2-926e-75e271cc60b3, <that id>)
+            # as its session id, and 2.1.316 creates the transcript under that
+            # name. A local session gets a random v4 id. On daniel-box every
+            # v5 transcript is empty and sits under the server repo or one of
+            # its bridge-cse-* Remote Control worktrees. The 0-byte state comes
+            # from Claude Code, not from a tool in this repo or the server repo.
             if st.st_size == 0:
                 if st.st_mtime >= cutoff:
                     empties += 1
