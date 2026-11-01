@@ -1621,6 +1621,73 @@ def sops_decrypt(sc: Scan, target: str) -> Verdict | None:
     return None
 
 
+# `sops <file>` hands the decrypted file to $SOPS_EDITOR, $EDITOR or $VISUAL, so a command that
+# sets one of them chooses what reads the plaintext: `EDITOR=cat sops f` prints it. The
+# assignment may sit before the binary, behind `env`, or in an earlier `export`, so any segment
+# that sets one counts once another segment runs sops. The name must stand alone, so
+# `GIT_EDITOR=true` does not count (dotfiles#1109).
+#
+# DECIDED: read the parsed words, not the normalized scan. normalize() strips quotes, which
+# turns `EDITOR='sh -c x' sops f` into a value with spaces that no assignment pattern bounds,
+# and turns `grep "EDITOR=cat sops" notes` into a match. Only an unreadable command falls back
+# to the text, which over-denies — the safe direction for this rule.
+EDITOR_VARS = frozenset({"SOPS_EDITOR", "EDITOR", "VISUAL"})
+SOPS_RUN = rf"{BDB_CMD_AT}(env([[:space:]]+[^[:space:]]+)*[[:space:]]+)?sops\b"
+EDITOR_ASSIGN = r"(^|[^A-Za-z0-9_])(SOPS_EDITOR|EDITOR|VISUAL)="
+
+
+def _sops_and_editor(command: str, depth: int = 0) -> tuple[bool, bool] | None:
+    """(runs sops, sets an editor variable) over every segment, or None if unreadable."""
+    parsed = parse(command)
+    if not parsed.ok:
+        return None
+    runs = sets = False
+    for seg in parsed.segments:
+        try:
+            words = shlex.split(seg.text)
+        except ValueError:
+            return None
+        i = 0
+        while i < len(words):
+            name = words[i].split("=", 1)[0]
+            if "=" in words[i] and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+                sets |= name in EDITOR_VARS
+            elif words[i] == "env" or (words[i].startswith("-") and i and words[i - 1] == "env"):
+                pass
+            else:
+                break
+            i += 1
+        rest = words[i:]
+        if rest[:1] in (["export"], ["declare"], ["typeset"]):
+            sets |= any(w.split("=", 1)[0] in EDITOR_VARS for w in rest[1:] if "=" in w)
+        elif rest and posixpath.basename(rest[0]) == "sops":
+            runs = True
+        elif rest[:1] in (["ssh"], ["hl"]) and len(rest) > 2 and depth < 2:
+            inner = _sops_and_editor(" ".join(rest[2:]), depth + 1)
+            if inner is None:
+                return None
+            runs, sets = runs or inner[0], sets or inner[1]
+    return runs, sets
+
+
+def sops_editor_override(sc: Scan, target: str) -> Verdict | None:
+    found = _sops_and_editor(sc.command)
+    if found is None:
+        subject = f"{sc.scan}\n{sc.lines}"
+        hit = bdb_re(subject, SOPS_RUN) and bdb_re(subject, EDITOR_ASSIGN)
+    else:
+        hit = found[0] and found[1]
+    if hit:
+        return Verdict(
+            "deny",
+            "sops-editor-override",
+            "Blocked: setting the editor for a sops run chooses what reads the decrypted file, "
+            "so it can print plaintext. Use `sops set <file> '[\"key\"]' '\"value\"'` to "
+            "change one value, or ask the user to run the edit.",
+        )
+    return None
+
+
 def git_sops_diff(sc: Scan, target: str) -> Verdict | None:
     """:994-1014. `--stat`, `--name-only`, `--name-status` emit no content and are exempt. An
     exclude pathspec (`:!secrets.yml`, `:^…`, `:(exclude)…`) keeps the file out of the diff,
@@ -3323,6 +3390,7 @@ RULES: tuple[Rule, ...] = (
     secret_interpreter,
     secret_env,
     sops_decrypt,
+    sops_editor_override,
     git_sops_diff,
     systemctl_env,
     docker_inspect,

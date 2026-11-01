@@ -1163,6 +1163,34 @@ DECRYPT_ALLOW = [
 ]
 
 
+SOPS_EDITOR_DENY = [
+    "EDITOR=cat sops ansible/vars/secrets.yml",
+    "SOPS_EDITOR=cat sops edit ansible/vars/secrets.yml",
+    "VISUAL=cat sops ansible/vars/secrets.yml",
+    "env EDITOR=cat sops ansible/vars/secrets.yml",
+    "export EDITOR=cat; sops ansible/vars/secrets.yml",
+    "export VISUAL=less && sops ansible/vars/secrets.yml",
+    "EDITOR='sh -c \"cat $1\" _' sops ansible/vars/secrets.yml",
+    "ssh daniel-server 'EDITOR=cat sops /home/ubuntu/server/ansible/vars/secrets.yml'",
+]
+SOPS_EDITOR_ALLOW = [
+    "sops edit ansible/vars/secrets.yml",
+    "sops set ansible/vars/secrets.yml '[\"k\"]' '\"v\"'",
+    "GIT_EDITOR=true GIT_SEQUENCE_EDITOR='cp todo' git rebase -i origin/main",
+    "EDITOR=vim git commit",
+    "MY_EDITOR=cat sops edit ansible/vars/secrets.yml",
+    'grep -n "EDITOR=cat sops" notes.md',
+]
+
+
+def test_a_sops_run_that_sets_its_editor_is_denied():
+    assert rules(SOPS_EDITOR_DENY) == ["sops-editor-override"] * len(SOPS_EDITOR_DENY)
+
+
+def test_an_editor_override_without_a_sops_run_passes():
+    assert "deny" not in kinds(SOPS_EDITOR_ALLOW)
+
+
 def test_decrypting_a_secret_is_denied():
     assert kinds(DECRYPT_DENY) == ["deny"] * len(DECRYPT_DENY)
     picked = DECRYPT_DENY[0:1] + DECRYPT_DENY[6:7] + DECRYPT_DENY[10:15] + DECRYPT_DENY[16:17]
