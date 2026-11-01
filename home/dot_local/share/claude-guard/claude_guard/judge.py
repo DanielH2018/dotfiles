@@ -34,6 +34,7 @@ from claude_guard.assignments import prefix_ok, split_assignments, standalone_na
 from claude_guard.checks.ansible import ansible_readonly_safe
 from claude_guard.checks.awk import segment_risk
 from claude_guard.checks.curl import curl_safe
+from claude_guard.checks.git_branch import checkout_branch_safe, merge_safe
 from claude_guard.checks.git_reset import clean_reset_safe
 from claude_guard.checks.remote import readonly_remote_safe, trusted_host_safe
 from claude_guard.checks.remote_guards import git_readonly
@@ -1148,6 +1149,16 @@ def judge_segment(
                 return True, "git-read-check"
         except ValueError:
             pass
+        # Branch switching and merging that the reflog recovers, which no prefix rule can
+        # separate from the pathspec, discard and strategy forms (git_branch.py).
+        try:
+            argv = shlex.split(redir)
+        except ValueError:
+            argv = []
+        if checkout_branch_safe(argv, cwd, cwd_changed):
+            return True, "git-checkout-check"
+        if merge_safe(argv, cwd, cwd_changed):
+            return True, "git-merge-check"
 
     # :374-378.
     target = unwrap_wrapper(part)
