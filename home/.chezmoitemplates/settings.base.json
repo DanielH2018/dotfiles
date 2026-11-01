@@ -567,14 +567,19 @@
            redirects, and the variable and isolated shapes failed. runlog resolves its own log
            directory, so this entry exists only to say the wrapper adds nothing to judge.
            claude_guard judges the inner command the same way and re-applies the deny and ask
-           lists to it (claude_guard/runlog.py). */}}
+           lists to it (claude_guard/wrapped.py). */}}
       "`runlog NAME [--tail N] -- COMMAND …` runs exactly COMMAND, as an argv with no shell, so judge it as COMMAND typed bare: it is routine exactly when that command is, and every soft_deny and hard_deny entry that would cover COMMAND covers the runlog call. The one thing runlog adds is a write of COMMAND's output to `NAME.log` in the session's own temporary directory (`$CLAUDE_JOB_DIR/tmp` or `$TMPDIR/claude-runlog/<session id>`), which runlog resolves itself and NAME cannot leave",
+      {{/* 2026-11-02. Sessions built about 210 red proofs a week by hand: git checkout or git show
+           of a base revision over the checkout, a run, then a restore. A crash left the old code
+           in place, and anything else running in the tree saw the swap. claude_guard judges
+           the inner command the same way it judges runlog's (claude_guard/wrapped.py). */}}
+      "`redproof REF PATH … -- COMMAND …` runs exactly COMMAND, as an argv with no shell, so judge it as COMMAND typed bare: it is routine exactly when that command is, and every soft_deny and hard_deny entry that would cover COMMAND covers the redproof call. The one thing redproof adds is a temporary git worktree of HEAD with the checkout's uncommitted changes and the named PATHs put back at REF, which it creates, runs COMMAND in, and removes. It never writes to the checkout itself, never commits, and never pushes",
       {{/* The 2026-11-01 critique: each entry naming a tool clears it by what the file does,
            and the classifier sees only the name. rootq's script is root-owned; the shims in
            ~/.local/bin and the repo scripts are writable by the session. The classifier does
            see an edit, a function or a PATH change in the transcript, so this names those
            rather than moving the tools under root. */}}
-      "Every entry in this list that clears a named tool or repo script (`secretq`, `unitq`, `killown`, `envq`, `rootq`, `ghread`, `gh-rerun-failed`, `runlog`, `claude-guard replay`, `scripts/diagnostics/probe.py`, `scripts/dev/fanout.py`, `scripts/dev/prune_worktrees.py`, `scripts/deploy_tools/owed_run.py`, `scripts/deploy_tools/land.sh`) clears it for what that file does as installed. The clearance does not apply when this session wrote, edited or moved that file or a file it imports, defined a shell function or alias with the tool's name, changed PATH, or ran the tool from a path other than `~/.local/bin/<name>`, `/usr/local/bin/rootq` or the repo's own `scripts/` tree. Such a run is judged as running code the session wrote",
+      "Every entry in this list that clears a named tool or repo script (`secretq`, `unitq`, `killown`, `envq`, `rootq`, `ghread`, `gh-rerun-failed`, `runlog`, `redproof`, `claude-guard replay`, `scripts/diagnostics/probe.py`, `scripts/dev/fanout.py`, `scripts/dev/prune_worktrees.py`, `scripts/deploy_tools/owed_run.py`, `scripts/deploy_tools/land.sh`) clears it for what that file does as installed. The clearance does not apply when this session wrote, edited or moved that file or a file it imports, defined a shell function or alias with the tool's name, changed PATH, or ran the tool from a path other than `~/.local/bin/<name>`, `/usr/local/bin/rootq` or the repo's own `scripts/` tree. Such a run is judged as running code the session wrote",
       {{/* Denied as "External System Writes" on 2026-09-25 while polling a fan-out wave. The
            command reaches two hosts and GitHub, which is what the classifier keyed on, but every
            reach is a read: cmd_status in scripts/dev/fanout_lib/place.py loads the manifest, runs

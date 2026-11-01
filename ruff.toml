@@ -17,6 +17,7 @@ extend-include = [
   "home/dot_local/bin/executable_killown",
   "home/dot_local/bin/executable_otel-sweep",
   "home/dot_local/bin/executable_otelq",
+  "home/dot_local/bin/executable_redproof",
   "home/dot_local/bin/executable_retention-sweep",
   "home/dot_local/bin/executable_runlog",
   "home/dot_local/bin/executable_secretq",

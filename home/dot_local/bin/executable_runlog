@@ -23,7 +23,7 @@ replaces the log.
 
 COMMAND is an argv, never a shell string, so a pipeline or a redirect inside it is
 passed to COMMAND as literal arguments. Read the log afterwards with grep, tail or
-`cc-wait file`. claude_guard.runlog parses the same grammar; its tests run this
+`cc-wait file`. claude_guard.wrapped parses the same grammar; its tests run this
 script to keep the two equal.
 """
 
@@ -52,7 +52,7 @@ def parse(argv: list[str]) -> tuple[str, int, list[str]] | None:
     if rest[:1] != ["--"] or len(rest) < 2:
         return None
     command = rest[1:]
-    if os.path.basename(command[0]) == "runlog":
+    if os.path.basename(command[0]) in ("runlog", "redproof"):
         return None
     return name, tail, command
 

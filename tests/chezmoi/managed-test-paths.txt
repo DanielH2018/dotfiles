@@ -60,7 +60,6 @@
 .local/share/claude-guard/tests/test_readonly.py
 .local/share/claude-guard/tests/test_remote.py
 .local/share/claude-guard/tests/test_rules.py
-.local/share/claude-guard/tests/test_runlog.py
 .local/share/claude-guard/tests/test_scratch.py
 .local/share/claude-guard/tests/test_segment.py
 .local/share/claude-guard/tests/test_secret_table.py
@@ -71,5 +70,6 @@
 .local/share/claude-guard/tests/test_win32_paths.py
 .local/share/claude-guard/tests/test_worktree_escape.py
 .local/share/claude-guard/tests/test_worktree_scratch.py
+.local/share/claude-guard/tests/test_wrapped.py
 .local/share/claude-worktree/tests
 .local/share/claude-worktree/tests/test_readers.py

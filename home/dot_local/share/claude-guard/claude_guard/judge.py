@@ -48,7 +48,8 @@ from claude_guard.checks.worktree_scratch import (
 )
 from claude_guard.gitread import git_read
 from claude_guard.rules import Rules
-from claude_guard.runlog import inner_command as runlog_inner
+from claude_guard.wrapped import TOOLS as WRAPPED_TOOLS
+from claude_guard.wrapped import inner_command as wrapped_inner
 from claude_guard.segment import parse
 from claude_guard.substitution import INERT_COMMANDS, PLACEHOLDER, mask
 from claude_guard.tables import POSIX_SPACE, WS
@@ -1056,13 +1057,13 @@ def judge_segment(
     # sit relative to this hook.
     word = _basename(_first_word(part))
 
-    # `runlog NAME -- COMMAND` runs COMMAND with its output captured to a file runlog names
-    # itself, so it is judged as exactly COMMAND, the way `git -C` is judged as `git`
-    # (claude_guard.runlog). A call that does not parse gets no opinion.
-    if word == "runlog":
-        inner = runlog_inner(part)
+    # `runlog NAME -- COMMAND` and `redproof REF PATH -- COMMAND` run COMMAND and add one
+    # bounded side effect of their own, so each is judged as exactly COMMAND, the way `git -C`
+    # is judged as `git` (claude_guard.wrapped). A call that does not parse gets no opinion.
+    if word in WRAPPED_TOOLS:
+        inner = wrapped_inner(part)
         if inner is None:
-            return False, "runlog-unreadable"
+            return False, f"{word}-unreadable"
         return judge_segment(
             inner, rules, roots, cwd, cwd_changed, project_dir, scratch_ok, job_dir
         )

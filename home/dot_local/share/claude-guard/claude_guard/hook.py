@@ -23,7 +23,7 @@ import json
 import os
 from collections.abc import Mapping
 
-from claude_guard import apply_guard, bypass, prompt_tool, runlog, tq_wrap, waits
+from claude_guard import apply_guard, bypass, prompt_tool, tq_wrap, waits, wrapped
 from claude_guard.checks import git_conventions, read_only_agents, worktree_escape
 from claude_guard.checks.awk import awk_risk
 from claude_guard.deny import NONE, Verdict, deny
@@ -288,10 +288,10 @@ def read_only_agent_verdict(
     return Verdict(v[0], read_only_agents.RULE, v[1]) if v else None
 
 
-def runlog_verdict(command: str, env: Mapping[str, str]) -> Verdict | None:
-    """claude_guard.runlog's deny or ask for a wrapped command, or None. It is a deny rule, so
+def wrapped_verdict(command: str, env: Mapping[str, str]) -> Verdict | None:
+    """claude_guard.wrapped's deny or ask for a wrapped command, or None. It is a deny rule, so
     it runs inside pre_tool_use's fail-closed try."""
-    v = runlog.settings_verdict(command, env)
+    v = wrapped.settings_verdict(command, env)
     return Verdict(*v) if v else None
 
 
@@ -342,7 +342,7 @@ def pre_tool_use(stdin_text: str, env: Mapping[str, str]) -> str | None:
         rules = merge(rules, escape_verdict(command, cwd))
         rules = merge(rules, read_only_agent_verdict(stdin_text, command, env))
         rules = merge(rules, waits.hand_wait(command, run_in_background(stdin_text)))
-        rules = merge(rules, runlog_verdict(command, env))
+        rules = merge(rules, wrapped_verdict(command, env))
     except Exception:
         return ASK_JSON
     verdict = combine_conventions(rules, conventions(command, cwd))

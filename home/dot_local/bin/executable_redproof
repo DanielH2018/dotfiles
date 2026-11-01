@@ -1,0 +1,128 @@
+#!/usr/bin/python3 -I
+"""redproof — show that a command fails when some files are put back at an older revision.
+
+  redproof REF PATH... -- COMMAND [ARG...]
+
+The repos here require a new check to ship with proof it can go red: its tests run
+against the code before the change and fail. redproof makes that run without touching
+the checkout. It copies HEAD into a temporary worktree, applies the checkout's
+uncommitted changes and copies its untracked files, then puts each PATH back at REF (or
+deletes it, where REF has no such path). It runs COMMAND there, from the same
+subdirectory the caller is in, with stdin from /dev/null and its output passed through,
+and removes the copy.
+
+Exit codes: 0 when COMMAND failed, which is the red proof; 1 when COMMAND passed, so the
+named paths at REF do not make it fail; 2 on a usage error; 3 when the copy could not be
+set up. The last line names the outcome, for a PR body to quote.
+
+A top-level `.venv` or `node_modules` in the checkout is symlinked into the copy, so a
+test runner does not rebuild it. claude_guard.wrapped parses the same grammar; its tests
+run this script to keep the two equal.
+"""
+
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+USAGE = "usage: redproof REF PATH... -- COMMAND [ARG...]"
+LINKED = (".venv", "node_modules")
+
+
+def parse(argv: list[str]) -> tuple[str, list[str], list[str]] | None:
+    """(ref, paths, command) from redproof's own argv, or None on a usage error."""
+    if "--" not in argv:
+        return None
+    split = argv.index("--")
+    head, command = argv[:split], argv[split + 1 :]
+    if len(head) < 2 or not command or any(w.startswith("-") for w in head):
+        return None
+    if os.path.basename(command[0]) in ("runlog", "redproof"):
+        return None
+    return head[0], head[1:], command
+
+
+def git(cwd: Path, *args: str, stdin: bytes | None = None) -> bytes:
+    return subprocess.run(
+        ["git", "-C", str(cwd), *args], input=stdin, capture_output=True, check=True
+    ).stdout
+
+
+def setup(top: Path, copy: Path, ref: str, paths: list[str], sub: Path) -> None:
+    """Build the copy: HEAD, plus uncommitted and untracked changes, with PATHs at REF."""
+    git(top, "worktree", "add", "--detach", "--quiet", str(copy), "HEAD")
+    diff = git(top, "diff", "--binary", "HEAD")
+    if diff:
+        git(copy, "apply", "--binary", "--whitespace=nowarn", stdin=diff)
+    untracked = git(top, "ls-files", "--others", "--exclude-standard", "-z")
+    for rel in filter(None, untracked.decode().split("\0")):
+        dest = copy / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(top / rel, dest, follow_symlinks=False)
+    for name in LINKED:
+        if (top / name).exists() and not (copy / name).exists():
+            (copy / name).symlink_to(top / name)
+    for path in paths:
+        rel = os.path.relpath(os.path.realpath(sub / path), os.path.realpath(top))
+        if rel.startswith(".."):
+            raise ValueError(f"{path} is outside the repository")
+        exists = subprocess.run(
+            ["git", "-C", str(top), "cat-file", "-e", f"{ref}:{rel}"], capture_output=True
+        ).returncode == 0
+        if exists:
+            git(copy, "checkout", ref, "--", rel)
+        else:
+            target = copy / rel
+            if target.is_dir() and not target.is_symlink():
+                shutil.rmtree(target)
+            elif target.exists() or target.is_symlink():
+                target.unlink()
+
+
+def main() -> int:
+    parsed = parse(sys.argv[1:])
+    if parsed is None:
+        print(USAGE, file=sys.stderr)
+        return 2
+    ref, paths, command = parsed
+    here = Path.cwd()
+    try:
+        top = Path(git(here, "rev-parse", "--show-toplevel").decode().strip())
+        git(top, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+    except subprocess.CalledProcessError:
+        print(f"redproof: {ref} is not a commit in a git repository here", file=sys.stderr)
+        return 3
+    sub = Path(os.path.relpath(os.path.realpath(here), os.path.realpath(top)))
+    copy = Path(tempfile.mkdtemp(prefix="redproof-")) / "tree"
+    try:
+        try:
+            setup(top, copy, ref, paths, top / sub)
+        except (subprocess.CalledProcessError, OSError, ValueError) as exc:
+            detail = getattr(exc, "stderr", b"") or str(exc).encode()
+            print(f"redproof: could not build the copy: {detail.decode().strip()}", file=sys.stderr)
+            return 3
+        run_in = copy / sub
+        print(f"redproof: running in a copy with {', '.join(paths)} at {ref}", flush=True)
+        try:
+            code = subprocess.run(command, cwd=run_in, stdin=subprocess.DEVNULL).returncode
+        except OSError as exc:
+            print(f"redproof: {command[0]}: {exc.strerror}", file=sys.stderr)
+            return 3
+    finally:
+        subprocess.run(
+            ["git", "-C", str(top), "worktree", "remove", "--force", str(copy)],
+            capture_output=True,
+        )
+        shutil.rmtree(copy.parent, ignore_errors=True)
+        subprocess.run(["git", "-C", str(top), "worktree", "prune"], capture_output=True)
+    if code == 0:
+        print(f"redproof: NOT RED: the command passed with {', '.join(paths)} at {ref}")
+        return 1
+    print(f"redproof: RED: the command exited {code} with {', '.join(paths)} at {ref}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
