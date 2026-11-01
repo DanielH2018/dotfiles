@@ -566,6 +566,18 @@ def _bare_command(part: str) -> str:
 # Any word `stash`, `stash@{n}` included: a segment that can read or change the stash stack.
 _STASH_WORD = re.compile(r"(?<![\w-])stash(?![\w-])")
 
+# Any word `lock`, `unlock` or `locked`: a command that can write a worktree's git lock,
+# through `git worktree lock` or straight to `.git/worktrees/<name>/locked`.
+_LOCK_WORD = re.compile(r"(?<![\w-])(?:un)?lock(?:ed)?(?![\w-])")
+_WORKTREE_GRANTS = frozenset(
+    {
+        "worktree-rm-check",
+        "worktree-restore-check",
+        "worktree-clean-check",
+        "worktree-stash-drop-check",
+    }
+)
+
 # `git -C <path> <rest>`: git runs `<rest>` as if started in `<path>`.
 _GIT_DASH_C = re.compile(rf"^git[{WS}]+-C[{WS}]+(?P<path>[^{WS}]+)[{WS}]+(?P<rest>.+)$")
 
@@ -1322,6 +1334,9 @@ def judge(
     # other segment names `stash`, and no loop can run the drop twice (dotfiles #1023).
     stash_segments = sum(_STASH_WORD.search(seg.text) is not None for seg in parsed.segments)
     looped = any(_loop_command(_trim(seg.text), roots, scratch_ok)[1] for seg in parsed.segments)
+    # `session_root` can take ownership from the worktree's git lock, which the agent can
+    # write, so no worktree cleanup grant holds in a command that can write it first.
+    names_lock = _LOCK_WORD.search(command) is not None
 
     # Names a standalone assignment or a `for` loop set from a substitution. A later `$NAME`
     # carries the substitution's output as surely as the placeholder does, so it is held
@@ -1394,6 +1409,8 @@ def judge(
         )
         if reason == "worktree-stash-drop-check" and (stash_segments > 1 or looped):
             ok, reason = False, "worktree-stash-drop:stack-changes"
+        if reason in _WORKTREE_GRANTS and names_lock:
+            ok, reason = False, "worktree:lock-named"
         reasons.append(reason)
         if not ok:
             return Decision(False, f"segment:{i}:{reason}", tuple(reasons))

@@ -410,3 +410,68 @@ def test_a_drop_is_refused_when_the_command_can_change_the_stack_first(repo, tmp
         "while true; do git stash drop stash@{1}; done",
     ]:
         assert not judge(command, rules, roots, wt, wt).allow, command
+
+
+# The lock-ownership signal reads /proc, so its allow and its pid-matching refusals hold
+# only where /proc exists.
+only_proc = pytest.mark.skipif(
+    not os.path.exists("/proc/self/stat"), reason="lock ownership reads /proc/<pid>/stat"
+)
+
+
+def _start_time(pid: int) -> int:
+    with open(f"/proc/{pid}/stat") as fh:
+        return int(fh.read().rpartition(")")[2].split()[19])
+
+
+def _lock(main, wt, pid: int, start: int, name: str = "fanout-1") -> None:
+    reason = f"claude session {name} (pid {pid} start {start})"
+    _sh(main, "git", "worktree", "lock", "--reason", reason, wt)
+
+
+@only_posix_allow
+@only_proc
+def test_cleanup_is_allowed_where_the_worktree_lock_names_this_process(repo, tmp_path):
+    # An `EnterWorktree` session keeps the primary checkout as its project dir, so only
+    # the lock Claude Code wrote, naming the hook's ancestor, shows it owns the worktree.
+    main, wt = repo
+    _lock(main, wt, os.getpid(), _start_time(os.getpid()))
+    assert worktree_rm_safe("rm .git-pr-body.md", wt, cwd_changed=False, project_dir=main)
+    assert worktree_restore_safe("git restore src/app.py", wt, False, project_dir=main)
+    rules, roots = _ask_rules(tmp_path)
+    assert judge("rm -r scratch && git clean -f .git-pr-body.md", rules, roots, wt, main).allow
+
+
+@only_proc
+def test_a_lock_naming_another_process_a_reused_pid_or_no_session_is_refused(repo):
+    main, wt = repo
+    child = subprocess.Popen(["sleep", "30"])
+    try:
+        for pid, start, name in [
+            # A live process outside this one's ancestry: a sibling session.
+            (child.pid, _start_time(child.pid), "fanout-1"),
+            # This pid, started at another time: the owner died and its pid was reused.
+            (os.getpid(), _start_time(os.getpid()) + 1, "fanout-1"),
+        ]:
+            _lock(main, wt, pid, start, name)
+            assert not worktree_rm_safe("rm .git-pr-body.md", wt, False, project_dir=main)
+            _sh(main, "git", "worktree", "unlock", wt)
+    finally:
+        child.kill()
+        child.wait()
+    # A lock in another format, such as a fan-out launcher's, names no session.
+    _sh(main, "git", "worktree", "lock", "--reason", f"fanout batch pid {os.getpid()}", wt)
+    assert not worktree_rm_safe("rm .git-pr-body.md", wt, False, project_dir=main)
+
+
+@only_proc
+def test_no_worktree_grant_holds_in_a_command_that_names_a_lock(repo, tmp_path):
+    main, wt = repo
+    _lock(main, wt, os.getpid(), _start_time(os.getpid()))
+    rules, roots = _ask_rules(tmp_path, ("Bash(git worktree:*)", "Bash(cat:*)"))
+    for command in [
+        f"git worktree unlock {wt} && rm .git-pr-body.md",
+        "cat .git/worktrees/fanout-1/locked; rm .git-pr-body.md",
+    ]:
+        d = judge(command, rules, roots, wt, wt)
+        assert not d.allow and d.reasons[-1] == "worktree:lock-named", command

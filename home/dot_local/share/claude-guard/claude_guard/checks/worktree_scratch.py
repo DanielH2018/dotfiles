@@ -8,10 +8,17 @@ that ask for the one place a session owns outright, a worktree under `.claude/wo
 
 What bounds them:
 
-  - The cwd's git toplevel must be `<repo>/.claude/worktrees/<name>`, and the session's
-    project dir (CLAUDE_PROJECT_DIR, passed in as `project_dir`) must sit in that same
-    worktree. A session that moved into a sibling's worktree, a primary checkout, or any
-    other directory gets no opinion.
+  - The cwd's git toplevel must be `<repo>/.claude/worktrees/<name>`, and the session must
+    own that worktree. Either of two signals shows ownership. The first is that the
+    session's project dir (CLAUDE_PROJECT_DIR, passed in as `project_dir`) sits in the
+    worktree, which holds for a session launched there, such as a fan-out batch. The second
+    is that the worktree's git lock names a process that is an ancestor of this one. Claude
+    Code writes `claude session <name> (pid <pid> start <starttime>)` when a session runs
+    `EnterWorktree`, and the hook runs as a child of that session. CLAUDE_PROJECT_DIR keeps
+    the launch directory after `EnterWorktree`, so without the lock such a session got no
+    opinion in its own worktree. A session that moved into a sibling's worktree, a primary
+    checkout, or any other directory still gets no opinion: a sibling's lock names a
+    process outside this hook's ancestry.
   - Every operand resolves (realpath, so a symlink is followed) strictly below that
     toplevel, and never into its `.git` file.
   - `rm` refuses any operand git tracks, so it only deletes untracked files. A tracked file
@@ -49,6 +56,10 @@ from claude_guard.checks.git_reset import _git
 from claude_guard.checks.scratch import BOOL_SHORT, LONG_OK, tokenize
 
 _SESSION_WORKTREE = re.compile(r"/\.claude/worktrees/[^/]+$")
+# The lock reason Claude Code writes when a session enters a worktree.
+_CLAUDE_LOCK = re.compile(r"claude session \S+ \(pid (\d+) start (\d+)\)")
+# The hook sits a few processes below its session; the bound only stops a malformed chain.
+_ANCESTOR_LIMIT = 64
 # Ignore rules that match every root entry: they cover scratch as well as state.
 _CATCH_ALL = frozenset({"/*", "*", "/*/", "*/"})
 # A name that marks state or a secret: a dotenv file, a virtualenv, a dependency tree, a
@@ -75,12 +86,67 @@ def _worktree_root(cwd: str) -> str | None:
     return root if _SESSION_WORKTREE.search(root) else None
 
 
-def session_root(cwd: str, project_dir: str) -> str | None:
-    """The worktree root `cwd` sits in, when `project_dir` sits in the same one."""
-    root = _worktree_root(cwd)
-    if root is None or not project_dir:
+def _ppid_and_start(pid: int) -> tuple[int, int] | None:
+    """(parent pid, start time in clock ticks) from /proc/<pid>/stat, else None."""
+    try:
+        with open(f"/proc/{pid}/stat") as fh:
+            stat = fh.read()
+    except OSError:
         return None
-    return root if _worktree_root(project_dir) == root else None
+    # The command name sits in parentheses and may itself hold spaces or `)`, so the
+    # fields are counted from the last `)`: field 4 (ppid) and field 22 (starttime).
+    fields = stat.rpartition(")")[2].split()
+    try:
+        return int(fields[1]), int(fields[19])
+    except IndexError, ValueError:
+        return None
+
+
+def _locked_by_ancestor(root: str) -> bool:
+    """True when `root`'s git lock is a Claude session lock naming a process that is this
+    process or one of its ancestors, matched on pid and start time so a reused pid fails.
+
+    DECIDED: the lock file is agent-writable, so `judge()` refuses these grants in any
+    command that names a worktree lock. A lock rewritten by one command and relied on by a
+    later one is not closed. Rewriting a live sibling's lock takes a `git worktree unlock`
+    of a tree another session holds, followed by a `lock` naming this session, and both
+    commands are visible in the transcript. Closing it would mean tracking lock writes
+    across commands, which the guard has no state for.
+    """
+    gitdir = _git(root, "rev-parse", "--absolute-git-dir")
+    if gitdir is None:
+        return False
+    try:
+        with open(os.path.join(gitdir.strip(), "locked")) as fh:
+            reason = fh.read().strip()
+    except OSError:
+        return False
+    match = _CLAUDE_LOCK.fullmatch(reason)
+    if match is None:
+        return False
+    owner = (int(match.group(1)), int(match.group(2)))
+    pid = os.getpid()
+    for _ in range(_ANCESTOR_LIMIT):
+        if pid <= 1:
+            return False
+        stat = _ppid_and_start(pid)
+        if stat is None:
+            return False
+        if (pid, stat[1]) == owner:
+            return True
+        pid = stat[0]
+    return False
+
+
+def session_root(cwd: str, project_dir: str) -> str | None:
+    """The worktree root `cwd` sits in, when this session owns it: `project_dir` sits in
+    the same worktree, or the worktree's lock names an ancestor of this process."""
+    root = _worktree_root(cwd)
+    if root is None:
+        return None
+    if project_dir and _worktree_root(project_dir) == root:
+        return root
+    return root if _locked_by_ancestor(root) else None
 
 
 def _confined(path: str, root: str, cwd: str, cwd_changed: bool) -> str | None:
