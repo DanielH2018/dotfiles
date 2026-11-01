@@ -46,6 +46,7 @@
 .local/share/claude-guard/tests/test_deny.py
 .local/share/claude-guard/tests/test_deny_normalization.py
 .local/share/claude-guard/tests/test_footguns.py
+.local/share/claude-guard/tests/test_git_branch.py
 .local/share/claude-guard/tests/test_git_conventions.py
 .local/share/claude-guard/tests/test_gitread.py
 .local/share/claude-guard/tests/test_git_reset.py
