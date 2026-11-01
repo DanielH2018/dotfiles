@@ -577,16 +577,17 @@
            sops-editor-override and sops-decrypt rules deny those forms before the classifier
            runs; this keeps the prose from contradicting them. */}}
       "Changing ansible/vars/secrets.yml with `sops set <file> '[\"key\"]' '\"value\"'`, or with a plain `sops <file>` or `sops edit <file>` that sets none of SOPS_EDITOR, EDITOR or VISUAL, is routine: it is the sanctioned way to change a secret, and the file stays encrypted at rest. This entry does NOT cover a sops run that sets one of those variables, which chooses what reads the decrypted file, or one that decrypts (`-d`, `decrypt`, `--output`, `--extract`, `exec-env`, `exec-file`)",
-      {{/* The operator granted both on 2026-10-24 after a permission audit. The listing flags
+      {{/* The operator granted this on 2026-10-24 after a permission audit. The listing flags
            were 22 prompts on k3s-bringup.yml alone in a week of migration work, plus about 11
            classifier refusals. `--check` is left out on purpose: the server repo has tasks
            marked `check_mode: false`, which run for real under it.
 
-           The DEPLOY_HOLD entry pairs with server#6102. That PR makes the server repo's
-           block-footguns hook pass a hold set and ASK the operator before a clear or a
-           PROD_DIGEST write. This entry stops the classifier refusing the set the hook passes. */}}
+           DECIDED: no auto-mode clearance for `gh variable set DEPLOY_HOLD`. The same 2026-10-24
+           grant carried one, routine "only while it reads `none`", but the classifier never sees
+           the `gh variable get` that would show it, and a set over a standing hold replaces the
+           SHA the promote's settle job and revert rule read. Sets ran about once a week, so the
+           operator chose a prompt per set over a wrapper (server#6880, 2026-11-01). */}}
       "`uv run ansible-playbook <playbook> … --list-tasks`, `--list-tags`, `--list-hosts` or `--syntax-check` in ~/server and its worktrees is routine and read-only, piped or redirected or not. These flags make ansible parse the playbook and print what it would run without executing a single task, so they change nothing on any host. This entry does NOT cover `--check`: the repo has tasks marked `check_mode: false` that run for real under `--check`, so a `--check` run stays under the ansible-playbook soft_deny entry",
-      "`gh variable set DEPLOY_HOLD --body <reason> -R DanielH2018/server` with a literal reason other than `none` is routine. The operator granted it on 2026-10-24. A hold only stops the promote workflow moving the cluster's `prod` tag, which is the safe direction. Read the variable first with `gh variable get DEPLOY_HOLD`, and set it only while it reads `none`: a set over a standing hold replaces the SHA and names that promote's settle job and the revert rule read. Clearing the hold (`--body none`, a delete) and any PROD_DIGEST write get no clearance from this entry. The server repo's hook raises a permission prompt for those, so the operator approves each one",
       {{/* Sessions here manage their own worktrees end to end; the permission tiers cover the
            tool calls, this covers the shell half so the classifier doesn't hesitate on cleanup.
            Naming `-D` was not enough on its own: on 2026-08-21 it was still denied, five days

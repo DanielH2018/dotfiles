@@ -39,3 +39,9 @@ test('the deploy soft deny covers --check and exempts only --dry-run', { skip },
 test('no environment entry calls the live hosts non-production', { skip }, () => {
   assert.ok(!autoMode().environment.some((e) => e.includes('non-production')));
 });
+
+// server#6880: the classifier cannot see the read that says no hold is standing, so a
+// DEPLOY_HOLD set prompts instead of riding an allow entry.
+test('no auto-mode allow entry clears a DEPLOY_HOLD set', { skip }, () => {
+  assert.ok(!autoMode().allow.some((e) => e.includes('gh variable set DEPLOY_HOLD')));
+});
