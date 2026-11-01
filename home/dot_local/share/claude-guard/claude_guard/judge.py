@@ -48,12 +48,12 @@ from claude_guard.checks.worktree_scratch import (
 )
 from claude_guard.gitread import git_read
 from claude_guard.rules import Rules
-from claude_guard.wrapped import TOOLS as WRAPPED_TOOLS
-from claude_guard.wrapped import inner_command as wrapped_inner
 from claude_guard.segment import parse
 from claude_guard.substitution import INERT_COMMANDS, PLACEHOLDER, mask
 from claude_guard.tables import POSIX_SPACE, WS
 from claude_guard.winpath import DRIVE_ROOT, is_drive_abs, opaque_component
+from claude_guard.wrapped import TOOLS as WRAPPED_TOOLS
+from claude_guard.wrapped import inner_command as wrapped_inner
 
 # :191. Wrapper commands take another command as an ARGUMENT and exec it.
 WRAPPERS = frozenset({"timeout", "env", "nice", "nohup", "setsid", "stdbuf", "xargs"})

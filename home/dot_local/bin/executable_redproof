@@ -1,5 +1,5 @@
 #!/usr/bin/python3 -I
-"""redproof — show that a command fails when some files are put back at an older revision.
+"""redproof — show that a command fails with some files put back at an older revision.
 
   redproof REF PATH... -- COMMAND [ARG...]
 
@@ -51,7 +51,7 @@ def git(cwd: Path, *args: str, stdin: bytes | None = None) -> bytes:
 
 
 def setup(top: Path, copy: Path, ref: str, paths: list[str], sub: Path) -> None:
-    """Build the copy: HEAD, plus uncommitted and untracked changes, with PATHs at REF."""
+    """Build the copy: HEAD plus uncommitted and untracked changes, PATHs at REF."""
     git(top, "worktree", "add", "--detach", "--quiet", str(copy), "HEAD")
     diff = git(top, "diff", "--binary", "HEAD")
     if diff:
@@ -68,9 +68,13 @@ def setup(top: Path, copy: Path, ref: str, paths: list[str], sub: Path) -> None:
         rel = os.path.relpath(os.path.realpath(sub / path), os.path.realpath(top))
         if rel.startswith(".."):
             raise ValueError(f"{path} is outside the repository")
-        exists = subprocess.run(
-            ["git", "-C", str(top), "cat-file", "-e", f"{ref}:{rel}"], capture_output=True
-        ).returncode == 0
+        exists = (
+            subprocess.run(
+                ["git", "-C", str(top), "cat-file", "-e", f"{ref}:{rel}"],
+                capture_output=True,
+            ).returncode
+            == 0
+        )
         if exists:
             git(copy, "checkout", ref, "--", rel)
         else:
@@ -92,7 +96,9 @@ def main() -> int:
         top = Path(git(here, "rev-parse", "--show-toplevel").decode().strip())
         git(top, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
     except subprocess.CalledProcessError:
-        print(f"redproof: {ref} is not a commit in a git repository here", file=sys.stderr)
+        print(
+            f"redproof: {ref} is not a commit in a git repository here", file=sys.stderr
+        )
         return 3
     sub = Path(os.path.relpath(os.path.realpath(here), os.path.realpath(top)))
     copy = Path(tempfile.mkdtemp(prefix="redproof-")) / "tree"
@@ -101,12 +107,19 @@ def main() -> int:
             setup(top, copy, ref, paths, top / sub)
         except (subprocess.CalledProcessError, OSError, ValueError) as exc:
             detail = getattr(exc, "stderr", b"") or str(exc).encode()
-            print(f"redproof: could not build the copy: {detail.decode().strip()}", file=sys.stderr)
+            print(
+                f"redproof: could not build the copy: {detail.decode().strip()}",
+                file=sys.stderr,
+            )
             return 3
         run_in = copy / sub
-        print(f"redproof: running in a copy with {', '.join(paths)} at {ref}", flush=True)
+        print(
+            f"redproof: running in a copy with {', '.join(paths)} at {ref}", flush=True
+        )
         try:
-            code = subprocess.run(command, cwd=run_in, stdin=subprocess.DEVNULL).returncode
+            code = subprocess.run(
+                command, cwd=run_in, stdin=subprocess.DEVNULL
+            ).returncode
         except OSError as exc:
             print(f"redproof: {command[0]}: {exc.strerror}", file=sys.stderr)
             return 3
@@ -116,7 +129,9 @@ def main() -> int:
             capture_output=True,
         )
         shutil.rmtree(copy.parent, ignore_errors=True)
-        subprocess.run(["git", "-C", str(top), "worktree", "prune"], capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(top), "worktree", "prune"], capture_output=True
+        )
     if code == 0:
         print(f"redproof: NOT RED: the command passed with {', '.join(paths)} at {ref}")
         return 1
