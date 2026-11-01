@@ -1,0 +1,112 @@
+#!/usr/bin/python3 -I
+"""runlog — run a command with its output captured to this session's log directory.
+
+  runlog NAME [--tail N] -- COMMAND [ARG...]
+
+Runs COMMAND with stdout and stderr merged into `<dir>/NAME.log`, stdin from /dev/null, and
+then prints three things: `log: <path>`, the log's last N lines (default 20), and
+`exit: <code>`. It exits with COMMAND's own exit code, or 128 plus the signal that killed it.
+
+Sessions captured output with hand-written redirects into seven-plus places, and two shapes
+failed outright: a variable target, which worktree isolation and headless claude-guard refuse,
+and an ansible run, which refuses the non-blocking stdio the Bash tool hands it. runlog
+resolves the directory itself, so the command text is literal words, and the child gets a
+regular file and /dev/null, both blocking.
+
+`<dir>` is `$CLAUDE_JOB_DIR/tmp` when CLAUDE_JOB_DIR resolves under ~/.claude/jobs, else
+`<tmp>/claude-runlog/<session id>`, where `<tmp>` is TMPDIR when it resolves under /tmp, else
+/tmp, and the session id is CLAUDE_CODE_SESSION_ID. Neither variable can point the log
+anywhere else. NAME is one word of letters, digits, `.`, `_` and `-`, so it cannot leave the
+directory either. A second run with the same NAME replaces the log.
+
+COMMAND is an argv, never a shell string, so a pipeline or a redirect inside it is passed to
+COMMAND as literal arguments. Read the log afterwards with grep, tail or `cc-wait file`.
+claude_guard.runlog parses the same grammar; its tests run this script to keep the two equal.
+"""
+
+import collections
+import os
+import re
+import signal
+import subprocess
+import sys
+from pathlib import Path
+
+USAGE = "usage: runlog NAME [--tail N] -- COMMAND [ARG...]"
+NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+SESSION = re.compile(r"[A-Za-z0-9-]{1,64}")
+
+
+def parse(argv: list[str]) -> tuple[str, int, list[str]] | None:
+    """(name, tail lines, command) from runlog's own argv, or None on a usage error."""
+    if not argv or not NAME.fullmatch(argv[0]):
+        return None
+    name, rest, tail = argv[0], argv[1:], 20
+    if rest[:1] == ["--tail"]:
+        if len(rest) < 2 or not rest[1].isdigit():
+            return None
+        tail, rest = int(rest[1]), rest[2:]
+    if rest[:1] != ["--"] or len(rest) < 2:
+        return None
+    command = rest[1:]
+    if os.path.basename(command[0]) == "runlog":
+        return None
+    return name, tail, command
+
+
+def _under(path: str, root: Path) -> bool:
+    real = Path(os.path.realpath(path))
+    return real == root or root in real.parents
+
+
+def log_dir(env: dict[str, str]) -> Path:
+    """The directory this session's logs go to, from variables vetted against fixed roots."""
+    jobs = Path(os.path.realpath(Path.home() / ".claude" / "jobs"))
+    job_dir = env.get("CLAUDE_JOB_DIR", "")
+    if job_dir and _under(job_dir, jobs) and Path(job_dir).is_dir():
+        return Path(os.path.realpath(job_dir)) / "tmp"
+    tmpdir = env.get("TMPDIR", "")
+    base = Path(os.path.realpath(tmpdir)) if tmpdir and _under(tmpdir, Path("/tmp")) else Path("/tmp")
+    session = env.get("CLAUDE_CODE_SESSION_ID", "")
+    return base / "claude-runlog" / (session if SESSION.fullmatch(session) else "no-session")
+
+
+def last_lines(path: Path, n: int) -> list[str]:
+    if n == 0:
+        return []
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        return list(collections.deque(fh, maxlen=n))
+
+
+def main() -> int:
+    parsed = parse(sys.argv[1:])
+    if parsed is None:
+        print(USAGE, file=sys.stderr)
+        return 2
+    name, tail, command = parsed
+    directory = log_dir(dict(os.environ))
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    log = directory / f"{name}.log"
+    with open(log, "wb") as out:
+        try:
+            child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT)
+        except OSError as exc:
+            out.write(f"runlog: {command[0]}: {exc.strerror}\n".encode())
+            code = 127
+        else:
+            try:
+                code = child.wait()
+            except KeyboardInterrupt:
+                child.send_signal(signal.SIGINT)
+                code = child.wait()
+    if code < 0:
+        code = 128 - code
+    print(f"log: {log}")
+    for line in last_lines(log, tail):
+        sys.stdout.write(line if line.endswith("\n") else line + "\n")
+    print(f"exit: {code}")
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

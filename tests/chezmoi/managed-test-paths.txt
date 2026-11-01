@@ -60,6 +60,7 @@
 .local/share/claude-guard/tests/test_readonly.py
 .local/share/claude-guard/tests/test_remote.py
 .local/share/claude-guard/tests/test_rules.py
+.local/share/claude-guard/tests/test_runlog.py
 .local/share/claude-guard/tests/test_scratch.py
 .local/share/claude-guard/tests/test_segment.py
 .local/share/claude-guard/tests/test_secret_table.py
