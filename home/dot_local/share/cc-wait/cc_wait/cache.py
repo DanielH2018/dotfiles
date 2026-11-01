@@ -7,6 +7,11 @@ so two waiters cannot both decide the cache is stale and both call the API.
 
 A failed read is never cached: the next waiter tries for itself, and the loop's own retry
 count is what gives up.
+
+A caller can refuse a cached result with `accept`, and then reads for itself. The loop refuses
+a cached terminal state, because the waiter's own action since that read may have undone it:
+a `room` reading written just before the caller filled the slot ended its next wait at once
+(DanielH2018/dotfiles#1105).
 """
 
 import hashlib
@@ -58,8 +63,12 @@ def cached_read(
     read: Callable[[], Reading],
     directory: Path,
     clock: Callable[[], float] = time.time,
+    accept: Callable[[Reading], bool] = lambda _reading: True,
 ) -> Reading:
-    """`read()`'s result, or a result another waiter on `key` got less than `max_age_s` ago."""
+    """`read()`'s result, or one another waiter on `key` got less than `max_age_s` ago.
+
+    A cached result `accept` refuses is read again, and the fresh result replaces it.
+    """
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{hashlib.sha256(key.encode()).hexdigest()[:32]}.json"
 
@@ -68,7 +77,8 @@ def cached_read(
             age = clock() - path.stat().st_mtime
         except OSError:
             return None
-        return _load(path) if age < max_age_s else None
+        hit = _load(path) if age < max_age_s else None
+        return hit if hit and accept(hit) else None
 
     hit = fresh()
     if hit:

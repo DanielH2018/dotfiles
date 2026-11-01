@@ -66,9 +66,13 @@ def run(
     read = bound.read
     if desc.remote and cache is not None:
         # Keyed on the bound source's repr, which names the source and its arguments. A little
-        # under the interval, so a waiter's next read is never its own previous write.
+        # under the interval, so a waiter's next read is never its own previous write. Only a
+        # fresh read ends a wait: the caller's own action may have undone a cached terminal state.
         key, max_age = repr(bound), desc.interval_s * 0.9
-        read = lambda: cached_read(key, max_age, bound.read, cache)  # noqa: E731
+        not_terminal = lambda reading: reading.state not in desc.terminal  # noqa: E731
+        read = lambda: cached_read(  # noqa: E731
+            key, max_age, bound.read, cache, accept=not_terminal
+        )
     deadline = clock() + budget_s
     last: Reading | None = None
     failures = 0

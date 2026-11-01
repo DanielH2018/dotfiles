@@ -46,6 +46,15 @@ def test_a_failed_read_is_not_cached(tmp_path):
     assert cached_read("k", 27, read, tmp_path) == Reading("passed", "ok")
 
 
+def test_a_cached_result_the_caller_refuses_is_read_again(tmp_path):
+    cached_read("k", 27, Counter(Reading("merged")), tmp_path)
+    read = Counter(Reading("open"))
+    refuse = lambda reading: reading.state != "merged"  # noqa: E731
+    assert cached_read("k", 27, read, tmp_path, accept=refuse) == Reading("open")
+    assert read.calls == 1
+    assert cached_read("k", 27, Counter(), tmp_path) == Reading("open")
+
+
 def test_two_keys_do_not_share_a_result(tmp_path):
     cached_read("pr 1", 27, Counter(Reading("open")), tmp_path)
     assert cached_read("pr 2", 27, Counter(Reading("merged")), tmp_path).state == "merged"

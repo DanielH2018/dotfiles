@@ -77,10 +77,29 @@ class Remote(Script):
 
 def test_two_waits_on_one_remote_source_share_a_read(tmp_path):
     """The second waiter inside the interval reads the first one's result, not the API."""
-    first, second = Remote([Reading("done", "ok")]), Remote([Reading("done", "ok")])
+    first, second = Remote([Reading("running")]), Remote([Reading("running")])
     for bound in (first, second):
-        assert loop.run(bound, 100, "r", out=io.StringIO(), cache=tmp_path) == 0
+        assert loop.run(bound, 0, "r", out=io.StringIO(), cache=tmp_path) == 75
     assert (first.reads, second.reads) == (1, 0)
+
+
+def _wait_after_a_cached_done(tmp_path, second):
+    """Run `second` after another waiter's `done` reading went into the cache."""
+    assert loop.run(Remote([Reading("done")]), 0, "r", out=io.StringIO(), cache=tmp_path) == 0
+    return loop.run(second, 0, "r", out=io.StringIO(), cache=tmp_path)
+
+
+def test_a_cached_terminal_reading_a_fresh_read_confirms_is_clean(tmp_path):
+    second = Remote([Reading("done")])
+    assert _wait_after_a_cached_done(tmp_path, second) == 0
+    assert second.reads == 1
+
+
+def test_a_cached_terminal_reading_the_caller_undid_is_flagged(tmp_path):
+    """dotfiles#1105: a `room` the caller has since filled must not end its next wait."""
+    second = Remote([Reading("running")])
+    assert _wait_after_a_cached_done(tmp_path, second) == 75
+    assert second.reads == 1
 
 
 def test_a_local_source_never_reads_through_the_cache(tmp_path):
