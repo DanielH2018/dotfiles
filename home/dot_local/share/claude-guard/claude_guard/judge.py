@@ -1063,7 +1063,9 @@ def judge_segment(
         inner = runlog_inner(part)
         if inner is None:
             return False, "runlog-unreadable"
-        return judge_segment(inner, rules, roots, cwd, cwd_changed, project_dir, scratch_ok, job_dir)
+        return judge_segment(
+            inner, rules, roots, cwd, cwd_changed, project_dir, scratch_ok, job_dir
+        )
 
     # `git -C <path> <rest>` is `git <rest>` run in `<path>`, so it is judged as exactly
     # that: every check below, the deny and ask rules included, sees `git <rest>`, and the

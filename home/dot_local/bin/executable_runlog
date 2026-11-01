@@ -3,25 +3,28 @@
 
   runlog NAME [--tail N] -- COMMAND [ARG...]
 
-Runs COMMAND with stdout and stderr merged into `<dir>/NAME.log`, stdin from /dev/null, and
-then prints three things: `log: <path>`, the log's last N lines (default 20), and
-`exit: <code>`. It exits with COMMAND's own exit code, or 128 plus the signal that killed it.
+Runs COMMAND with stdout and stderr merged into `<dir>/NAME.log` and stdin from
+/dev/null, then prints three things: `log: <path>`, the log's last N lines (default
+20), and `exit: <code>`. It exits with COMMAND's own exit code, or 128 plus the
+signal that killed it.
 
-Sessions captured output with hand-written redirects into seven-plus places, and two shapes
-failed outright: a variable target, which worktree isolation and headless claude-guard refuse,
-and an ansible run, which refuses the non-blocking stdio the Bash tool hands it. runlog
-resolves the directory itself, so the command text is literal words, and the child gets a
-regular file and /dev/null, both blocking.
+Sessions captured output with hand-written redirects into seven-plus places, and two
+shapes failed outright: a variable target, which worktree isolation and headless
+claude-guard refuse, and an ansible run, which refuses the non-blocking stdio the
+Bash tool hands it. runlog resolves the directory itself, so the command text is
+literal words, and the child gets a regular file and /dev/null, both blocking.
 
-`<dir>` is `$CLAUDE_JOB_DIR/tmp` when CLAUDE_JOB_DIR resolves under ~/.claude/jobs, else
-`<tmp>/claude-runlog/<session id>`, where `<tmp>` is TMPDIR when it resolves under /tmp, else
-/tmp, and the session id is CLAUDE_CODE_SESSION_ID. Neither variable can point the log
-anywhere else. NAME is one word of letters, digits, `.`, `_` and `-`, so it cannot leave the
-directory either. A second run with the same NAME replaces the log.
+`<dir>` is `$CLAUDE_JOB_DIR/tmp` when CLAUDE_JOB_DIR resolves under ~/.claude/jobs,
+else `<tmp>/claude-runlog/<session id>`, where `<tmp>` is TMPDIR when it resolves
+under /tmp, else /tmp, and the session id is CLAUDE_CODE_SESSION_ID. Neither variable
+can point the log anywhere else. NAME is one word of letters, digits, `.`, `_` and
+`-`, so it cannot leave the directory either. A second run with the same NAME
+replaces the log.
 
-COMMAND is an argv, never a shell string, so a pipeline or a redirect inside it is passed to
-COMMAND as literal arguments. Read the log afterwards with grep, tail or `cc-wait file`.
-claude_guard.runlog parses the same grammar; its tests run this script to keep the two equal.
+COMMAND is an argv, never a shell string, so a pipeline or a redirect inside it is
+passed to COMMAND as literal arguments. Read the log afterwards with grep, tail or
+`cc-wait file`. claude_guard.runlog parses the same grammar; its tests run this
+script to keep the two equal.
 """
 
 import collections
@@ -60,15 +63,20 @@ def _under(path: str, root: Path) -> bool:
 
 
 def log_dir(env: dict[str, str]) -> Path:
-    """The directory this session's logs go to, from variables vetted against fixed roots."""
+    """This session's log directory, from variables vetted against fixed roots."""
     jobs = Path(os.path.realpath(Path.home() / ".claude" / "jobs"))
     job_dir = env.get("CLAUDE_JOB_DIR", "")
     if job_dir and _under(job_dir, jobs) and Path(job_dir).is_dir():
         return Path(os.path.realpath(job_dir)) / "tmp"
     tmpdir = env.get("TMPDIR", "")
-    base = Path(os.path.realpath(tmpdir)) if tmpdir and _under(tmpdir, Path("/tmp")) else Path("/tmp")
+    if tmpdir and _under(tmpdir, Path("/tmp")):
+        base = Path(os.path.realpath(tmpdir))
+    else:
+        base = Path("/tmp")
     session = env.get("CLAUDE_CODE_SESSION_ID", "")
-    return base / "claude-runlog" / (session if SESSION.fullmatch(session) else "no-session")
+    if not SESSION.fullmatch(session):
+        session = "no-session"
+    return base / "claude-runlog" / session
 
 
 def last_lines(path: Path, n: int) -> list[str]:
@@ -89,7 +97,9 @@ def main() -> int:
     log = directory / f"{name}.log"
     with open(log, "wb") as out:
         try:
-            child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT)
+            child = subprocess.Popen(
+                command, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT
+            )
         except OSError as exc:
             out.write(f"runlog: {command[0]}: {exc.strerror}\n".encode())
             code = 127

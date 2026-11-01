@@ -59,7 +59,12 @@ def test_the_judge_grants_runlog_exactly_when_it_grants_the_inner_command(home, 
 
 
 def _pre(command: str, home: Path) -> str | None:
-    env = {**os.environ, "HOME": str(home), "CLAUDE_GUARD_SETTINGS_HOME": str(home), "CLAUDE_PROJECT_DIR": ""}
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "CLAUDE_GUARD_SETTINGS_HOME": str(home),
+        "CLAUDE_PROJECT_DIR": "",
+    }
     out = pre_tool_use(json.dumps({"tool_name": "Bash", "tool_input": {"command": command}}), env)
     return json.loads(out)["hookSpecificOutput"].get("permissionDecision") if out else None
 
