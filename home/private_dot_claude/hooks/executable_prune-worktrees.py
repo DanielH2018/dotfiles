@@ -172,6 +172,7 @@ import os
 import select
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from datetime import datetime, timezone
@@ -390,15 +391,33 @@ def is_contained(repo: str, branch: str, target: str) -> bool:
     a git older than 2.38, which lacks `--write-tree`. The REVIEW verdict this feeds is
     report-only, so a false negative here costs a line of output and a false positive
     costs a person's attention; neither costs work.
+
+    `merge-tree` writes every tree and merged blob of its result as a loose object. The
+    merge therefore runs against a scratch object directory, with the repository's own
+    store as an alternate for reading, and the scratch directory is deleted afterwards.
+    Left in the store, each unlanded branch's result is unreachable and inside gc's
+    prune window, so one per branch per SessionStart piles up until `git gc --auto`
+    writes `gc.log` and stops running.
     """
     target_tree = _git(["rev-parse", f"{target}^{{tree}}"], cwd=repo)
-    result = subprocess.run(
-        ["git", "merge-tree", "--write-tree", target, branch],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=False,
+    common_dir = _git(
+        ["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=repo
     )
+    if not common_dir:
+        return False
+    with tempfile.TemporaryDirectory(prefix="merge-tree-") as scratch:
+        result = subprocess.run(
+            ["git", "merge-tree", "--write-tree", target, branch],
+            cwd=repo,
+            env=os.environ
+            | {
+                "GIT_OBJECT_DIRECTORY": scratch,
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(Path(common_dir) / "objects"),
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+        )
     if result.returncode != 0:
         return False
     return merge_tree_says_contained(result.stdout, target_tree)

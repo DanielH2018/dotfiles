@@ -761,6 +761,20 @@ with tempfile.TemporaryDirectory() as tmp:
         "is_contained sees a two-commit squash",
         mod.is_contained(str(repo), "worktree-collapsed", "origin/main"),
     )
+
+    # An unlanded branch's merge result is a tree the store has never seen, so a
+    # merge-tree run against the real store would add loose objects here. This must be
+    # the first merge of that branch: a second run would find the tree already written.
+    def loose_objects():
+        counts = git(["count-objects", "-v"], repo).stdout
+        return next(ln for ln in counts.splitlines() if ln.startswith("count:"))
+
+    before = loose_objects()
+    mod.is_contained(str(repo), "worktree-orphan-live", "origin/main")
+    check(
+        "is_contained writes no loose objects into the repository",
+        loose_objects() == before,
+    )
     check(
         "is_contained rejects a branch with unlanded work",
         not mod.is_contained(str(repo), "worktree-orphan-live", "origin/main"),
