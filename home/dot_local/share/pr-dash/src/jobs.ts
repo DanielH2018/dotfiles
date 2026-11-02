@@ -24,7 +24,8 @@ export type RunJobstat = (args: string[]) => Promise<{ stdout: string }>;
 /**
  * One job as `GET /api/jobs` serves it. `failed` is jobstat's own decision, catch-up
  * replays included, so nothing here re-derives it. `logAt` is the job's newest log's
- * modification time in epoch seconds, or null when it has none.
+ * modification time in epoch seconds, and `log` its path with $HOME as `~`; both are null
+ * when it has none. jobstat never sends the log's content.
  */
 export type JobStatus = {
   label: string;
@@ -32,6 +33,7 @@ export type JobStatus = {
   status: string;
   failed: boolean;
   logAt: number | null;
+  log: string | null;
 };
 
 /** One `/api/jobs` answer: every job, or the reason jobstat could not be read. */
@@ -61,11 +63,13 @@ function failureMessage(err: unknown): string {
 // An entry missing a field is dropped rather than passed on half-formed.
 function toJob(raw: unknown): JobStatus | undefined {
   if (!isRecord(raw)) return undefined;
-  const { label, schedule, status, failed, logAt } = raw;
+  const { label, schedule, status, failed, logAt, log = null } = raw;
   if (typeof label !== 'string' || typeof schedule !== 'string' || typeof status !== 'string') return undefined;
   if (typeof failed !== 'boolean') return undefined;
   if (logAt !== null && (typeof logAt !== 'number' || !Number.isFinite(logAt))) return undefined;
-  return { label, schedule, status, failed, logAt };
+  // Defaulted rather than required, so a jobstat from before the field still answers.
+  if (log !== null && typeof log !== 'string') return undefined;
+  return { label, schedule, status, failed, logAt, log };
 }
 
 /**

@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import { createLoadJobs, type RunJobstat } from '../src/jobs.ts';
 
 // Synthetic labels only: this repo is public, and the real jobs belong to a private repo.
-const JOB = { label: 'com.example.digest', schedule: 'Mon-Fri 08:34', status: 'not running, last exit 1', failed: true, logAt: 1761137640 };
+const JOB = { label: 'com.example.digest', schedule: 'Mon-Fri 08:34', status: 'not running, last exit 1', failed: true, logAt: 1761137640, log: '~/logs/digest.log' };
 
 function fakeRun(...answers: (() => string)[]): RunJobstat & { calls: string[][] } {
   const calls: string[][] = [];
@@ -20,6 +20,12 @@ test('runs jobstat --json and drops entries missing a field', async () => {
   const run = fakeRun(() => JSON.stringify([JOB, { ...JOB, failed: 'yes' }, { ...JOB, logAt: null }]));
   assert.deepStrictEqual(await createLoadJobs(run)(), { jobs: [JOB, { ...JOB, logAt: null }] });
   assert.deepStrictEqual(run.calls, [['--json']]);
+});
+
+test('passes the log path through, and reads an entry without one as having no log', async () => {
+  const { log: _, ...noLog } = JOB;
+  const run = fakeRun(() => JSON.stringify([JOB, noLog, { ...JOB, log: 7 }]));
+  assert.deepStrictEqual(await createLoadJobs(run)(), { jobs: [JOB, { ...JOB, log: null }] });
 });
 
 test('output that is not a JSON list is an error', async () => {

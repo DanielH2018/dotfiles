@@ -761,7 +761,7 @@ test('/api/planka answers 502 with a reason when the server has no Planka loader
 });
 
 test('an allowlisted extension origin reads /api/jobs, answered with CORS headers naming that exact origin', async () => {
-  const jobs = [{ label: 'com.example.job', schedule: 'Mon-Fri 08:15', status: 'not running', failed: true, logAt: 1 }];
+  const jobs = [{ label: 'com.example.job', schedule: 'Mon-Fri 08:15', status: 'not running', failed: true, logAt: 1, log: '~/logs/job.log' }];
   await withExtensionServer(
     [EXTENSION],
     async (base) => {

@@ -495,7 +495,7 @@ a.section-name:hover { color: var(--blue); text-decoration: underline; }
 
 /* ---- vulnerabilities page ---------------------------------------------- */
 
-/* The link between the two pages, sitting before each page's own h1. */
+/* The links between the pages, sitting beside each page's own h1. */
 .page-nav a {
   color: var(--blue);
   font-size: 13px;
@@ -557,4 +557,35 @@ span.empty { display: block; }
 
 @media (max-width: 860px) {
   .vuln-manifest { display: none; }
+}
+
+/* ---- jobs page --------------------------------------------------------- */
+
+.job-name {
+  flex: none;
+  min-width: 140px;
+  font-weight: 600;
+}
+
+/* A failed job's status is the reason to open this page, so it wraps rather than truncates. */
+.job-status {
+  white-space: normal;
+  color: var(--subtext0);
+}
+
+.job-log {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--overlay0);
+}
+
+/* The row the new tab's Jobs panel linked to. */
+.job-row.linked { background: var(--surface0); box-shadow: inset 3px 0 0 var(--red); }
+
+@media (max-width: 860px) {
+  .job-log { display: none; }
 }
