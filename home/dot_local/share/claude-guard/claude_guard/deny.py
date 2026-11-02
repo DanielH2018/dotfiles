@@ -1153,10 +1153,11 @@ def _first_read(text: str) -> str | None:
 
 
 _WRITE_REDIRECT = re.compile(r"[0-9]*(>|>>|>\||&>|&>>)")
-# One sed `s` command and nothing else: a delimiter, a pattern, a replacement and only the
-# flags that read and write no file (`w` writes one, `e` runs the pattern space, `r` is a
-# separate command this shape cannot hold).
+# One sed `s` command and nothing else: an optional line-number address (`1`, `5,$`), a
+# delimiter, a pattern, a replacement and only the flags that read and write no file (`w`
+# writes one, `e` runs the pattern space, `r` is a separate command this shape cannot hold).
 _SED_SUBST = re.compile(
+    r"((\d+|\$)(,(\d+|\$))?)?"
     r"s(?P<d>[^\\\n])(\\.|(?!(?P=d)).)*(?P=d)(\\.|(?!(?P=d)).)*(?P=d)[gpiIM0-9]*"
 )
 # A sed script that only prints the lines an address selects: `/re/p`, `5p`, `1,/re/p`. It
@@ -1931,7 +1932,9 @@ def _sed_writes_target(text: str, depth: int = 0) -> bool:
                 operands, _ = _edit_operands(args, "eflI", "ef", "i", "iI")
                 # One `s` command whose flags hold no `w` writes no file, whatever its text.
                 scripts = (
-                    a for k, a in enumerate(args) if k not in operands and not _SED_SUBST.fullmatch(a)
+                    a
+                    for k, a in enumerate(args)
+                    if k not in operands and not _SED_SUBST.fullmatch(a)
                 )
                 if any(bdb_re(a, _SED_WRITE) for a in scripts):
                     return True

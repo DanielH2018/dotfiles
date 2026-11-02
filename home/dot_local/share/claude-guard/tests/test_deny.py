@@ -1276,6 +1276,7 @@ WRITE_DENY = [
     "sed -n 'w ansible/vars/secrets.yml' docs/a.md",
     "sed -n '/x/w ~/.zshrc' docs/a.md",
     "sed 's/a/b/gw ~/.bashrc' docs/a.md",
+    "sed '1,$s/a/b/w ~/.bashrc' docs/a.md",
     "sed -n -e p -e '1W ansible/vars/secrets.yml' docs/a.md",
     "cat docs/a.md | sed -n 'p;w ~/.zshrc'",
     "bash -c \"sed -n 'w ~/.zshrc' docs/a.md\"",
@@ -1291,6 +1292,7 @@ WRITE_ALLOW = [
     # non-letter before a target name, as `-webhook.env` does (2026-11-02)
     "sed -i 's|old|/etc/claude-rc/alert-webhook.env|' docs/x.md",
     "sed -i -e 's#a#$home/.ssh/authorized_keys#' tests/test_x.py",
+    "sed -i '1s|^old|see /etc/claude-rc/alert-webhook.env|' docs/x.md",
     # a sed that reads a target, or writes an ordinary file, writes no target (#1037)
     "sed -n 1p ~/work/.zshrc",
     "sed -n 'w out.txt' ~/.zshrc",
