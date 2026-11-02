@@ -663,6 +663,14 @@ SECRET_DENY = [
     "cat ~/.ssh/id_rsa > /tmp/x",
     # a quoted separator in a file name does not split the read (#1004)
     'cat "a|b" ~/.ssh/id_rsa',
+    # git grep's pattern is blanked, never a path it searches or a -f pattern file (2026-11-02)
+    "git grep -n token -- ~/.ssh/id_rsa",
+    "git grep -n -e token -- config/.env",
+    "git grep -n token config/.env",
+    "git grep -f ~/.ssh/id_rsa -- src",
+    # a sed print script is blanked, never the file it prints or a script that reads one
+    "sed -n '/x/p' ~/.ssh/id_rsa",
+    "sed -n '1r ~/.ssh/id_rsa' notes.md",
 ]
 SECRET_ALLOW = [
     # a source directory named secrets holds code, not secrets (2026-10-24)
@@ -689,6 +697,12 @@ SECRET_ALLOW = [
     "grep -r TODO src/",
     "grep TODO src/app.js",
     "sed -n 1p CHANGELOG.md",
+    # git grep's pattern and a sed print script name no file they read (2026-11-02)
+    'git grep -n -E "kuma-push\\.env|live-drift-check\\.env" -- ansible',
+    "git grep -nIiE 'live_drift_push_token|kuma-push\\.env' -- . ':(exclude)docs'",
+    "git -C /home/u/server grep -n -e 'alert-webhook\\.env' -- ansible",
+    "sed -n '/cluster-vars.sops.env/p' docs/landing.md",
+    "sed -n '1,/kuma-push.env/p' docs/landing.md",
     'echo "{}" | jq ".key"',
     'cat data.json | jq ".pem"',
     "jq -r 'to_entries[] | \"\\(.key): \\(.value|length)\"' report.json",
@@ -1273,6 +1287,10 @@ WRITE_DENY = [
     "bash -c \"s''ed -n 'w ~/.zshrc' docs/a.md\"",
 ]
 WRITE_ALLOW = [
+    # one `s` command with no `w` flag writes no file, though its text holds a `w` after a
+    # non-letter before a target name, as `-webhook.env` does (2026-11-02)
+    "sed -i 's|old|/etc/claude-rc/alert-webhook.env|' docs/x.md",
+    "sed -i -e 's#a#$home/.ssh/authorized_keys#' tests/test_x.py",
     # a sed that reads a target, or writes an ordinary file, writes no target (#1037)
     "sed -n 1p ~/work/.zshrc",
     "sed -n 'w out.txt' ~/.zshrc",

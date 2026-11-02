@@ -1159,6 +1159,36 @@ _WRITE_REDIRECT = re.compile(r"[0-9]*(>|>>|>\||&>|&>>)")
 _SED_SUBST = re.compile(
     r"s(?P<d>[^\\\n])(\\.|(?!(?P=d)).)*(?P=d)(\\.|(?!(?P=d)).)*(?P=d)[gpiIM0-9]*"
 )
+# A sed script that only prints the lines an address selects: `/re/p`, `5p`, `1,/re/p`. It
+# reads only sed's own operands, so a path inside the address is pattern text.
+_SED_ADDR = r"(\d+|\$|/(\\.|[^/\\\n])*/)"
+_SED_PRINT = re.compile(rf"{_SED_ADDR}(,{_SED_ADDR})?!?p")
+# git grep options that take the next word as a value. `-f` reads its patterns from a file, so
+# its value stays a path rather than being blanked as a pattern.
+_GIT_GREP_VALUE_OPTS = frozenset({"-A", "-B", "-C", "-m", "--max-count", "--max-depth", "-O"})
+
+
+def _blank_git_grep_pattern(args: list[str]) -> list[str]:
+    """`args` after a `git grep` with its pattern words blanked to `_`: every `-e` value, or the
+    first operand when no `-e` is given. Words after `--` are paths and stay."""
+    out = list(args)
+    has_e = "-e" in out[: out.index("--")] if "--" in out else "-e" in out
+    i = 0
+    while i < len(out):
+        w = out[i]
+        if w == "--":
+            break
+        if w == "-e" and i + 1 < len(out):
+            out[i + 1] = "_"
+            i += 2
+        elif w in _GIT_GREP_VALUE_OPTS or w == "-f":
+            i += 2
+        elif not w.startswith("-") and not has_e:
+            out[i] = "_"
+            break
+        else:
+            i += 1
+    return out
 
 
 def _read_head(text: str) -> str:
@@ -1191,7 +1221,10 @@ def _read_head(text: str) -> str:
             if j is not None:
                 args[j] = "_"
         elif head == "sed":
-            args = ["_" if _SED_SUBST.fullmatch(w) else w for w in args]
+            args = ["_" if _SED_SUBST.fullmatch(w) or _SED_PRINT.fullmatch(w) else w for w in args]
+        elif head == "git" and "grep" in args:
+            k = args.index("grep")
+            args = [*args[: k + 1], *_blank_git_grep_pattern(args[k + 1 :])]
         kept = [*kept[: len(kept) - len(cmd)], cmd[0], *args]
     return " ".join(re.sub(r"[;&|]", " ", w) for w in kept)
 
@@ -1896,7 +1929,11 @@ def _sed_writes_target(text: str, depth: int = 0) -> bool:
             if posixpath.basename(w) == "sed":
                 args = words[i + 1 :]
                 operands, _ = _edit_operands(args, "eflI", "ef", "i", "iI")
-                if any(bdb_re(a, _SED_WRITE) for k, a in enumerate(args) if k not in operands):
+                # One `s` command whose flags hold no `w` writes no file, whatever its text.
+                scripts = (
+                    a for k, a in enumerate(args) if k not in operands and not _SED_SUBST.fullmatch(a)
+                )
+                if any(bdb_re(a, _SED_WRITE) for a in scripts):
                     return True
             elif any(c.isspace() for c in w) and _sed_writes_target(w, depth + 1):
                 return True
