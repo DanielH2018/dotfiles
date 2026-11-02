@@ -252,7 +252,7 @@ curlie = { repo = "rs/curlie", tag = "v1.8.2" }
 # renovate: datasource=github-releases depName=chmln/sd
 sd = { repo = "chmln/sd", tag = "v1.1.0" }
 # renovate: datasource=github-releases depName=starship/starship
-starship = { repo = "starship/starship", tag = "v1.26.0" }
+starship = { repo = "starship/starship", tag = "v1.27.0" }
 # renovate: datasource=github-releases depName=junegunn/fzf
 fzf = { repo = "junegunn/fzf", tag = "v0.74.5" }
 # renovate: datasource=github-releases depName=ajeetdsouza/zoxide
