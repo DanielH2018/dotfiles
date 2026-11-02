@@ -77,6 +77,20 @@ elif verb == "wired":
 elif verb == "win":
     until = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] != "-" else None
     print(json.dumps(list(m._window(sys.argv[2], float(sys.argv[3]), until))))
+elif verb == "logslimit":
+    # cmd_logs --stream with only _get stubbed: Loki returns ENTRIES entries in two streams.
+    import argparse, contextlib, io
+    entries, limit = int(sys.argv[2]), int(sys.argv[3])
+    half = entries // 2
+    values = lambda n: [[str(i), "x"] for i in range(n)]
+    result = {"data": {"result": [{"values": values(half)}, {"values": values(entries - half)}]}}
+    m._get = lambda *a, **k: result
+    ns = argparse.Namespace(stream=True, since="1h", until=None, query="q", limit=limit,
+                            direction="backward", timeout=1)
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        m.cmd_logs(ns, 1700000000)
+    print(err.getvalue(), end="")
 elif verb == "prog":
     print(m.program_of(sys.argv[2]))
 elif verb == "prompts":
@@ -259,6 +273,15 @@ test('--until moves the window back without changing its width', { skip }, () =>
   const [s1, e1] = JSON.parse(drive(['win', '1h', '10000', '2h']));
   assert.strictEqual(e1, 10000 - 7200, 'the end moves back by --until');
   assert.strictEqual(e1 - s1, e0 - s0, 'and the width is still --since');
+});
+
+// Loki stops at --limit without saying so, and a 250-entry query once read as the whole week.
+test('a range query that fills --limit warns that the window may hold more', { skip }, () => {
+  assert.match(drive(['logslimit', '250', '250']), /returned 250 entries, the --limit; .*--until/);
+});
+
+test('a range query below --limit prints no warning', { skip }, () => {
+  assert.strictEqual(drive(['logslimit', '249', '250']), '');
 });
 
 test('consecutive slices abut without gap or overlap', { skip }, () => {

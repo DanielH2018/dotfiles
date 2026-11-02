@@ -321,6 +321,20 @@ def _window(since, now, until=None):
     return end - parse_duration(since), end
 
 
+def limit_warning(result, limit):
+    """The warning for a range query that returned `limit` entries, else None.
+    Loki stops at the limit and says nothing, so a full page reads like the
+    whole window: a 250-entry query once hid 1,502 of 1,752 hook runs."""
+    streams = (result.get("data") or {}).get("result") or []
+    entries = sum(len(s.get("values") or []) for s in streams if isinstance(s, dict))
+    if entries < limit:
+        return None
+    return (
+        f"returned {entries} entries, the --limit; the window may hold more. "
+        "Raise --limit (Loki allows 5000), narrow the query, or page back with --until."
+    )
+
+
 def cmd_logs(ns, now):
     """Loki. Instant by default because that is what an aggregation wants;
     --stream switches to query_range, which is what returns raw log lines."""
@@ -333,7 +347,11 @@ def cmd_logs(ns, now):
             "limit": str(ns.limit),
             "direction": ns.direction,
         }
-        return _get(LOKI, "/loki/api/v1/query_range", params, ns.timeout)
+        result = _get(LOKI, "/loki/api/v1/query_range", params, ns.timeout)
+        warning = limit_warning(result, ns.limit)
+        if warning:
+            print(f"{PROG}: {warning}", file=sys.stderr)
+        return result
     return _get(LOKI, "/loki/api/v1/query",
                 {"query": ns.query, "time": str(int(now))}, ns.timeout)
 
