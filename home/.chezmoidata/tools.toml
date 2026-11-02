@@ -289,7 +289,7 @@ uv = "0.13.5"
 # renovate: datasource=github-releases depName=twpayne/chezmoi
 chezmoi = "2.71.1"
 # renovate: datasource=npm depName=oxlint
-oxlint = "1.85.0"
+oxlint = "1.90.0"
 # The two language runtimes .github/workflows/ci.yml sets up, three-part: a two-part request
 # leaves the patch level to resolve at run time, so two runs of one commit can use different
 # interpreters. The machines take node from fnm, so no template renders that one. Python is
