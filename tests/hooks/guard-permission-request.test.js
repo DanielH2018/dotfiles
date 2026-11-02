@@ -26,7 +26,7 @@ const SHARE = path.join(DIR, 'share');
 fs.mkdirSync(BIN);
 fs.mkdirSync(path.join(SHARE, 'claude_guard'), { recursive: true });
 fs.writeFileSync(path.join(SHARE, 'claude_guard', 'cli.py'), '');
-const PY = path.join(DIR, 'python3.14');
+const PY = path.join(DIR, 'python3.15');
 const ALLOW = '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}';
 // The stub judge echoes a fixed allow after reading its stdin, or hangs, or fails after
 // printing the allow, as STUB_PY says.

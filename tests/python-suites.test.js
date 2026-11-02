@@ -233,13 +233,13 @@ const PYTEST_PROJECTS = [
   // embedder, so pulling ~200MB of onnxruntime in would buy nothing. It sets no
   // pythonpath of its own, hence PYTHONPATH here.
   { root: VAULT_TOOLING, dir: 'vault-index', deps: ['pytest>=8.0', 'duckdb>=1.1.0'], env: { PYTHONPATH: '.' } },
-  // claude-guard is 3.14-only by design (spec: docs/specs/2026-09-06-claude-guard-design.md),
-  // so it names its interpreter; uv fetches a managed 3.14 on a cold machine.
-  { root: SHARE, dir: 'claude-guard', deps: ['pytest>=8.0'], env: { PYTHONPATH: '.' }, python: '3.14' },
-  // cc-wait runs under the same managed 3.14 (spec: docs/specs/2026-10-04-cc-wait-design.md).
-  { root: SHARE, dir: 'cc-wait', deps: ['pytest>=8.0'], env: { PYTHONPATH: '.' }, python: '3.14' },
+  // claude-guard is 3.15-only by design (spec: docs/specs/2026-09-06-claude-guard-design.md),
+  // so it names its interpreter; uv fetches a managed 3.15 on a cold machine.
+  { root: SHARE, dir: 'claude-guard', deps: ['pytest>=8.0'], env: { PYTHONPATH: '.' }, python: '3.15' },
+  // cc-wait runs under the same managed 3.15 (spec: docs/specs/2026-10-04-cc-wait-design.md).
+  { root: SHARE, dir: 'cc-wait', deps: ['pytest>=8.0'], env: { PYTHONPATH: '.' }, python: '3.15' },
   // claude-worktree names no interpreter. The prune-worktrees.py hook runs it under the
-  // managed 3.14 (hooks/lib/run-python.sh), but falls back to the system python3 on a host
+  // managed 3.15 (hooks/lib/run-python.sh), but falls back to the system python3 on a host
   // without one, so its floor stays 3.10, not the root's 3.9.
   { root: SHARE, dir: 'claude-worktree', deps: ['pytest>=8.0'], env: { PYTHONPATH: '.' } },
 ];

@@ -22,19 +22,19 @@ const PRE = srcPath('private_dot_claude', 'hooks', 'executable_guard-pre-tool-us
 const POST = srcPath('private_dot_claude', 'hooks', 'executable_bash-write-fanout.sh');
 const GUARD = srcPath('dot_local', 'share', 'claude-guard');
 
-// The guard needs the interpreter the shims resolve: a uv-MANAGED 3.14, which is not the one
+// The guard needs the interpreter the shims resolve: a uv-MANAGED 3.15, which is not the one
 // actions/setup-python provides. Without it the pre shim asks on every command, and these
 // assertions would fail for a reason that is not a regression.
 const managedPython = (() => {
   try {
     const r = execFileSync(
-      'uv', ['python', 'find', '--no-project', '--managed-python', '--system', '3.14'],
+      'uv', ['python', 'find', '--no-project', '--managed-python', '--system', '3.15'],
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
     ).trim();
     return fs.existsSync(r);
   } catch { return false; }
 })();
-const skip = skipUnless('bash', 'jq') || (managedPython ? false : 'no uv-managed 3.14');
+const skip = skipUnless('bash', 'jq') || (managedPython ? false : 'no uv-managed 3.15');
 
 const BIN = scratch(os.tmpdir(), 'czag-bin-');
 fs.writeFileSync(path.join(BIN, 'chezmoi'), `#!/bin/bash

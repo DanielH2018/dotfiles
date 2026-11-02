@@ -19,7 +19,7 @@
 #
 # Failure contract (spec docs/specs/2026-09-06-claude-guard-design.md, "Failure contracts",
 # allow path): cannot run or cannot parse → emit NOTHING, exit 0, and the prompt stands. So
-# a missing uv, a missing managed 3.14, a missing package, or a Python error all end here
+# a missing uv, a missing managed 3.15, a missing package, or a Python error all end here
 # silently; this is an allow-only hook and silence is its safe state.
 #
 # Live (spec "Rollout" row 3, slice 3): the Python side's verdict decides -- allow or silence,

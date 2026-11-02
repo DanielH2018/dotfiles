@@ -5,8 +5,8 @@
 # contracts (spec: docs/specs/2026-09-06-claude-guard-design.md). This one is for a human or
 # a test, so a missing interpreter is an error, not a silent no-decision.
 #
-# The package is 3.14-only and runs under uv's managed interpreter. `--no-project` stops uv
-# reading a pyproject in cwd (on the server repo that answers with a different 3.14 and a
+# The package is 3.15-only and runs under uv's managed interpreter. `--no-project` stops uv
+# reading a pyproject in cwd (on the server repo that answers with a different 3.15 and a
 # different sys.path); `--system` stops it answering with a valid, version-matching virtualenv
 # it finds by walking up from cwd instead — measured returning such a worktree's own
 # `.venv/bin/python3` in place of the managed interpreter. (A dangling or wrong-version cwd
@@ -15,8 +15,8 @@
 # site-packages; the package needs only the stdlib and PYTHONPATH still applies without site.
 set -eu
 SHARE="${CLAUDE_GUARD_HOME:-$HOME/.local/share/claude-guard}"
-if ! PY=$(uv python find --no-project --managed-python --system 3.14 2>/dev/null); then
-  echo "claude-guard: no uv-managed Python 3.14 found; run: uv python install 3.14" >&2
+if ! PY=$(uv python find --no-project --managed-python --system 3.15 2>/dev/null); then
+  echo "claude-guard: no uv-managed Python 3.15 found; run: uv python install 3.15" >&2
   exit 2
 fi
 PYTHONPATH="$SHARE" exec "$PY" -S -m claude_guard.cli "$@"

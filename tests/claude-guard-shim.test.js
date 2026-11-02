@@ -1,5 +1,5 @@
-// The claude-guard bin shim: resolves uv's managed 3.14 and execs the package CLI.
-// Pins the two properties the spec's failure contract rests on: no uv-managed 3.14
+// The claude-guard bin shim: resolves uv's managed 3.15 and execs the package CLI.
+// Pins the two properties the spec's failure contract rests on: no uv-managed 3.15
 // means a clear error on stderr and exit 2 (never a silent exit 0), and a present
 // one runs the real CLI out of the source tree via CLAUDE_GUARD_HOME.
 const { test } = require('node:test');
@@ -51,9 +51,9 @@ test('the shim\'s own lookup ignores a real cwd venv only because of --system',
 
     const cwd = scratch(os.tmpdir(), 'claude-guard-real-venv-', t);
     const venv = path.join(cwd, '.venv');
-    const created = spawnSync('uv', ['venv', '--python', '3.14', venv], { encoding: 'utf8' });
+    const created = spawnSync('uv', ['venv', '--python', '3.15', venv], { encoding: 'utf8' });
     if (created.status !== 0) {
-      t.skip(`uv venv --python 3.14 unavailable: ${created.stderr}`);
+      t.skip(`uv venv --python 3.15 unavailable: ${created.stderr}`);
       return;
     }
 
@@ -81,7 +81,7 @@ test('the shim\'s own lookup ignores a real cwd venv only because of --system',
     assert.ok(found2.startsWith(cwd));
   });
 
-test('shim fails closed with a message when no managed 3.14 is available', () => {
+test('shim fails closed with a message when no managed 3.15 is available', () => {
   // spawnSync's env replaces process.env wholesale, and bash itself would normally need to
   // be resolved through that same PATH. Using an argv[0] with a slash (`/bin/bash`) bypasses
   // Node's PATH lookup for bash, so an empty PATH is free to make the bare `uv` the shim
@@ -90,6 +90,6 @@ test('shim fails closed with a message when no managed 3.14 is available', () =>
     encoding: 'utf8', env: { PATH: '', HOME: process.env.HOME, CLAUDE_GUARD_HOME: SHARE },
   });
   assert.strictEqual(r.status, 2);
-  assert.match(r.stderr, /uv python install 3\.14/);
+  assert.match(r.stderr, /uv python install 3\.15/);
   assert.strictEqual(r.stdout, '');
 });

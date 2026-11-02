@@ -89,7 +89,7 @@ test('read-nudge.sh is registered on the sandbox Read matcher', () => {
 test('the sandbox env fails the deny hook closed', () => {
   // The shim's unevaluable-rules path prints `ask`, which the container's
   // --dangerously-skip-permissions skips -- so without this key a container missing uv, the
-  // managed 3.14 or the package runs with no deny check and says nothing. The launcher passes
+  // managed 3.15 or the package runs with no deny check and says nothing. The launcher passes
   // the same value as a docker env var; this is the second place, and both must agree.
   assert.strictEqual(parsed.env?.CLAUDE_GUARD_FAIL_CLOSED, '1',
     'CLAUDE_GUARD_FAIL_CLOSED=1 is what makes the sandbox deny rather than ask');

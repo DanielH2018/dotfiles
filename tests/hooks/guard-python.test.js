@@ -2,7 +2,7 @@
 // The cache sits in a directory the Bash sandbox can write, while the deny hook execs what it
 // names outside the sandbox, so the tests that matter are the ones where the cache is NOT
 // believed. A stub `uv` counts its calls, and a scratch UV_PYTHON_INSTALL_DIR holds a fake
-// managed 3.14, so no real uv or Python is needed.
+// managed 3.15, so no real uv or Python is needed.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { spawnSync } = require('node:child_process');
@@ -19,7 +19,7 @@ const skip = skipUnless('bash', 'timeout');
 
 const ROOT = scratch(os.tmpdir(), 'guard-python-');
 const MANAGED = path.join(ROOT, 'uv-python');
-const PY = path.join(MANAGED, 'cpython-3.14-macos-aarch64-none', 'bin', 'python3.14');
+const PY = path.join(MANAGED, 'cpython-3.15-macos-aarch64-none', 'bin', 'python3.15');
 fs.mkdirSync(path.dirname(PY), { recursive: true });
 fs.writeFileSync(PY, '#!/bin/sh\n', { mode: 0o755 });
 const BIN = path.join(ROOT, 'bin');
@@ -51,20 +51,20 @@ function reset() {
   fs.rmSync(CACHE_HOME, { recursive: true, force: true });
 }
 
-test('a managed 3.14 is looked up once, then read from the cache', { skip }, () => {
+test('a managed 3.15 is looked up once, then read from the cache', { skip }, () => {
   reset();
   assert.deepStrictEqual(lookup(), { rc: 0, py: PY, status: 'ok', calls: 1 });
   assert.deepStrictEqual(lookup(), { rc: 0, py: PY, status: 'ok', calls: 1 });
 });
 
 test('a cache naming anything outside the managed install is ignored and replaced', { skip }, () => {
-  const forged = path.join(ROOT, 'evil', 'cpython-3.14-x', 'bin', 'python3.14');
+  const forged = path.join(ROOT, 'evil', 'cpython-3.15-x', 'bin', 'python3.15');
   fs.mkdirSync(path.dirname(forged), { recursive: true });
   fs.writeFileSync(forged, '#!/bin/sh\n', { mode: 0o755 });
-  const nested = path.join(MANAGED, 'cpython-3.14-x', 'extra', 'bin', 'python3.14');
+  const nested = path.join(MANAGED, 'cpython-3.15-x', 'extra', 'bin', 'python3.15');
   fs.mkdirSync(path.dirname(nested), { recursive: true });
   fs.writeFileSync(nested, '#!/bin/sh\n', { mode: 0o755 });
-  for (const bad of [forged, `${MANAGED}/cpython-3.14-x/../../evil/cpython-3.14-x/bin/python3.14`, nested]) {
+  for (const bad of [forged, `${MANAGED}/cpython-3.15-x/../../evil/cpython-3.15-x/bin/python3.15`, nested]) {
     reset();
     fs.mkdirSync(path.dirname(CACHE), { recursive: true });
     fs.writeFileSync(CACHE, `${bad}\n`);

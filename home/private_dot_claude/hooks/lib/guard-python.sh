@@ -11,24 +11,24 @@
 # guard-pre-tool-use.sh gives.
 #
 # The answer is cached, because `uv python find` costs about as much as starting Python
-# (26.8 ms against 26.2 ms for `python3.14 -S -P -c pass`, measured 2026-10-22 in the Bash
+# (26.8 ms against 26.2 ms for `python3.15 -S -P -c pass`, measured 2026-10-22 in the Bash
 # sandbox), and three hooks paid it around every Bash call.
 #
 # The cache is a trust boundary. The deny hook execs whatever path it holds, outside the
 # sandbox, and the cache directory is one the sandbox can write. So a cached path is used only
-# when it names `bin/python3.14` inside a `cpython-3.14` install under uv's managed-Python
+# when it names `bin/python3.15` inside a `cpython-3.15` install under uv's managed-Python
 # directory, which the sandbox cannot write, and is executable. Anything else is ignored and
-# looked up afresh. The worst a forged cache can then do is pick another uv-managed 3.14, which
+# looked up afresh. The worst a forged cache can then do is pick another uv-managed 3.15, which
 # is what the lookup itself may answer. A stale entry (an uninstalled interpreter) fails the
 # executable test and is replaced the same way. uv names the minor-version install
-# `cpython-3.14-<platform>` and repoints it on a patch upgrade, so the cached path follows
+# `cpython-3.15-<platform>` and repoints it on a patch upgrade, so the cached path follows
 # upgrades without a refresh.
 #
 # Knobs: GUARD_PYTHON_CACHE=0 turns the cache off. UV_PYTHON_INSTALL_DIR moves the managed
 # directory, as it does for uv.
 
 #######################################
-# Resolves the managed 3.14 interpreter.
+# Resolves the managed 3.15 interpreter.
 # Globals:
 #   GUARD_PY         set to the interpreter path on success, "" otherwise.
 #   GUARD_PY_STATUS  set to `ok`, `none` (uv answered, but with no usable interpreter), or
@@ -55,7 +55,7 @@ guard_python() {
 
   # </dev/null: a hook's payload is on stdin, and the lookup must not read it.
   run_bounded "$bound" 4096 -- \
-    bash -c 'exec uv python find --no-project --managed-python --system 3.14 2>/dev/null' </dev/null
+    bash -c 'exec uv python find --no-project --managed-python --system 3.15 2>/dev/null' </dev/null
   GUARD_PY_STATUS=$RB_STATUS
   [ "$RB_STATUS" = ok ] || return 1
   GUARD_PY_STATUS=none
@@ -73,7 +73,7 @@ guard_python() {
 }
 
 #######################################
-# Whether a path is a uv-managed 3.14 interpreter under the managed directory.
+# Whether a path is a uv-managed 3.15 interpreter under the managed directory.
 # Arguments:
 #   The candidate path, then uv's managed-Python directory.
 # Returns:
@@ -83,12 +83,12 @@ _guard_python_trusted() {
   local py=$1 root=$2
   case "$py" in
     ''|*'/../'*|*'/./'*) return 1 ;;
-    "$root"/cpython-3.14[.-]*/bin/python3.14) ;;
+    "$root"/cpython-3.15[.-]*/bin/python3.15) ;;
     *) return 1 ;;
   esac
   # One directory level between root and bin/: the glob's `*` would also cross a `/`.
   local rest=${py#"$root"/}
-  rest=${rest%/bin/python3.14}
+  rest=${rest%/bin/python3.15}
   case "$rest" in */*) return 1 ;; esac
   [ -x "$py" ] && [ ! -d "$py" ]
 }

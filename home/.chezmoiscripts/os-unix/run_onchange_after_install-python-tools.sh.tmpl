@@ -104,13 +104,13 @@ fi
 # 2. Managed CPython 3.12 (mirrors the same step in the Windows installer). uv resolves an
 #    interpreter per project, but the vault-tooling projects target >=3.11 and 3.12 has the
 #    widest wheel coverage for vault-index's fastembed/duckdb deps — a distro python3 that has
-#    moved on to 3.13/3.14 has none of them. Idempotent: uv skips a version it already has.
-#    (~/dev/server pins >=3.14 and keeps resolving to the system interpreter.)
+#    moved on to 3.13/3.15 has none of them. Idempotent: uv skips a version it already has.
+#    (~/dev/server pins >=3.15 and keeps resolving to the system interpreter.)
 {{ if not $agent -}}
 uv python install 3.12 || { echo "install-python-tools: 'uv python install 3.12' failed" >&2; failed=1; }
 {{ end -}}
-# claude-guard (~/.local/share/claude-guard) is 3.14-only; its shims resolve this interpreter
-# at call time with `uv python find --no-project --managed-python --system 3.14`. The exact
+# claude-guard (~/.local/share/claude-guard) is 3.15-only; its shims resolve this interpreter
+# at call time with `uv python find --no-project --managed-python --system 3.15`. The exact
 # patch version, because the server repo's `host_python_version` runs its hooks under it; an
 # exact install still answers the shims' two-part request, as the CI step explains. uv installs
 # nothing and prints nothing for a version it already has.

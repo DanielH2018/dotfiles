@@ -18,10 +18,10 @@ const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_guard-pre-tool-u
 const TQ = srcPath('dot_local', 'bin', 'executable_tq');
 
 const PY314 = spawnSync(
-  'uv', ['python', 'find', '--no-project', '--managed-python', '--system', '3.14'], { encoding: 'utf8' },
+  'uv', ['python', 'find', '--no-project', '--managed-python', '--system', '3.15'], { encoding: 'utf8' },
 ).stdout?.trim();
 const UV = spawnSync('bash', ['-c', 'command -v uv'], { encoding: 'utf8' }).stdout.trim();
-const skip = skipUnless('bash', 'python3') || (PY314 ? false : 'no uv-managed Python 3.14');
+const skip = skipUnless('bash', 'python3') || (PY314 ? false : 'no uv-managed Python 3.15');
 
 // The hook only rewrites when `tq` resolves on PATH, because that is the word it
 // emits. The repo's copy is named executable_tq, so give it a resolvable alias

@@ -121,19 +121,19 @@ skip_no_uv = pytest.mark.skipif(not shutil.which("uv"), reason="uv unavailable")
 
 def _has_managed_python() -> bool:
     r = subprocess.run(
-        ["uv", "python", "find", "--no-project", "--managed-python", "--system", "3.14"],
+        ["uv", "python", "find", "--no-project", "--managed-python", "--system", "3.15"],
         capture_output=True,
         check=False,
     )
     return r.returncode == 0
 
 
-# The shims resolve only a uv-managed 3.14 and stay silent without one. A Windows host that has
-# a system 3.14 but never ran `uv python install 3.14` is that case; POSIX never takes this
+# The shims resolve only a uv-managed 3.15 and stay silent without one. A Windows host that has
+# a system 3.15 but never ran `uv python install 3.15` is that case; POSIX never takes this
 # skip, so a runner missing the interpreter still fails there.
 skip_no_managed_python_on_windows = pytest.mark.skipif(
     sys.platform == "win32" and shutil.which("uv") is not None and not _has_managed_python(),
-    reason="no uv-managed Python 3.14 on this Windows host; run `uv python install 3.14`",
+    reason="no uv-managed Python 3.15 on this Windows host; run `uv python install 3.15`",
 )
 
 
@@ -167,7 +167,7 @@ def shim_env(home: Path, **extra: str) -> dict[str, str]:
     # XDG_DATA_HOME is here for the shim's uv lookup, not for the test: `uv python find`
     # derives its search path from $HOME (or $XDG_DATA_HOME) at call time, so the fake HOME
     # above -- needed so permission_request() reads an isolated settings.json -- would
-    # otherwise hide the managed 3.14 toolchain, and every shim test would measure the
+    # otherwise hide the managed 3.15 toolchain, and every shim test would measure the
     # no-interpreter path instead of the behaviour it names.
     #
     # It used to be the operator's REAL ~/.local/share, which pointed every run of this suite
@@ -251,12 +251,12 @@ def test_the_shims_lookup_ignores_a_real_cwd_venv_only_because_of_system(tmp_pat
 
     venv = tmp_path / ".venv"
     created = subprocess.run(
-        ["uv", "venv", "--python", "3.14", str(venv)], capture_output=True, text=True
+        ["uv", "venv", "--python", "3.15", str(venv)], capture_output=True, text=True
     )
     if created.returncode != 0:
-        pytest.skip(f"uv venv --python 3.14 unavailable: {created.stderr}")
+        pytest.skip(f"uv venv --python 3.15 unavailable: {created.stderr}")
 
-    # This test file itself runs under `uv run --no-project --python 3.14 ...`, which sets
+    # This test file itself runs under `uv run --no-project --python 3.15 ...`, which sets
     # VIRTUAL_ENV to ITS OWN ephemeral build env -- an explicit activation that would outrank
     # cwd discovery either way and mask what we're testing. The real hook shim never runs
     # inside a `uv run` wrapper, so strip it to match that ambient reality.

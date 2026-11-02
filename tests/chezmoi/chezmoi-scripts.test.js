@@ -321,7 +321,7 @@ test('install-docker-engine adds its apt repo via the shared helper', { skip }, 
     // the hook runner whose verdict decides whether a push is clean.
     assert.match(log, /uv tool install ruff==\d+\.\d+\.\d+/, `ruff should be installed at its pin:\n${log}`);
     assert.match(log, /uv tool install --force prek==\d+\.\d+\.\d+/, `prek should be installed at its pin:\n${log}`);
-    // The exact patch version the server repo pins as host_python_version, not `3.14`.
+    // The exact patch version the server repo pins as host_python_version, not `3.15`.
     assert.match(log, /uv python install 3\.\d+\.\d+\n/, `the pinned interpreter should be provisioned:\n${log}`);
   });
 

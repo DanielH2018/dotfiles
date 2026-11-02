@@ -57,7 +57,7 @@ function scratch(root, prefix, t) {
 //   `dir` comes from a scratch() call at the call site, for the sweep reason above.
 //
 //   Why links are skipped (dotfiles #637): chmod follows a symlink. A `uv run` inside the
-//   claude-guard source leaves a .venv whose bin/python3.14 links to the SHARED uv-managed
+//   claude-guard source leaves a .venv whose bin/python3.15 links to the SHARED uv-managed
 //   interpreter, so hardening the copy set that interpreter to 644 and broke every hook
 //   that runs Python on the host, four times on 2026-09-24. `.venv` is also left out
 //   because it is local build output, never part of the code under test.

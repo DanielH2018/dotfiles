@@ -75,9 +75,9 @@ test('the language and uv versions come from tools.toml, three-part', () => {
 });
 
 test("CI's managed python is the pinned version, not a two-part request", () => {
-  // `uv python install 3.14` resolved a patch level on the day the run happened. An exact
+  // `uv python install 3.15` resolved a patch level on the day the run happened. An exact
   // install still answers the claude-guard shims' two-part request, because uv creates the
-  // `cpython-3.14-*` alias beside `cpython-3.14.6-*`.
+  // `cpython-3.15-*` alias beside `cpython-3.15.2-*`.
   assert.match(ci, /uv python install "\$\{TOOLCHAIN_PYTHON\}"/);
   assert.doesNotMatch(ci, /^\s*uv python install \d+\.\d+$/m);
 });

@@ -105,14 +105,14 @@ jobs:
           npm install -g "oxlint@${TOOLCHAIN_OXLINT}"
           uv tool install "prek==${TOOLCHAIN_PREK}"
           # The claude-guard shims resolve their interpreter with
-          # `uv python find --no-project --managed-python --system 3.14`, and
+          # `uv python find --no-project --managed-python --system 3.15`, and
           # `--managed-python` excludes the hostedtoolcache build actions/setup-python
-          # provides. Without a uv-MANAGED 3.14 the shims take their
+          # provides. Without a uv-MANAGED 3.15 the shims take their
           # interpreter-unavailable fallback, and their tests assert the live path.
           #
-          # The exact version, not `3.14`, which resolved a patch level at run time. An exact
-          # install still answers the shims' two-part request: uv creates the `cpython-3.14-*`
-          # alias alongside `cpython-3.14.6-*`, and `find 3.14` matches it.
+          # The exact version, not `3.15`, which resolved a patch level at run time. An exact
+          # install still answers the shims' two-part request: uv creates the `cpython-3.15-*`
+          # alias alongside `cpython-3.15.2-*`, and `find 3.15` matches it.
           uv python install "${TOOLCHAIN_PYTHON}"
           # The pinned, checksum-verified chezmoi release rather than the vendor's installer
           # script: that script installs whatever is current on the day the run happens, and

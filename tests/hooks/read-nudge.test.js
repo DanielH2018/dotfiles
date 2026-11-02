@@ -21,7 +21,7 @@ const SHARE = path.join(DIR, 'share');
 fs.mkdirSync(BIN);
 fs.mkdirSync(path.join(SHARE, 'claude_guard'), { recursive: true });
 fs.writeFileSync(path.join(SHARE, 'claude_guard', 'cli.py'), '');
-const PY = path.join(DIR, 'python3.14');
+const PY = path.join(DIR, 'python3.15');
 const NUDGE = '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"x"}}';
 // The stub judge checks it was asked for read-nudge, then prints the nudge, or fails after
 // printing it, as STUB_PY says.

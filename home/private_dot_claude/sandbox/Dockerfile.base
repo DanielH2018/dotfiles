@@ -96,9 +96,9 @@ RUN set -eux; \
     chezmoi --version
 
 # uv
-# Resolves and runs the managed Python 3.14 that claude-guard's PreToolUse deny hook needs:
+# Resolves and runs the managed Python 3.15 that claude-guard's PreToolUse deny hook needs:
 # hooks/executable_guard-pre-tool-use.sh finds its interpreter with
-# `uv python find --no-project --managed-python --system 3.14`. Pinned + checksum-verified,
+# `uv python find --no-project --managed-python --system 3.15`. Pinned + checksum-verified,
 # the same shape as chezmoi above. This is the only uv in the image: the per-repo Python layer
 # in executable_sandbox-image.sh used to install an unpinned one ahead of it on PATH, and no
 # longer does.
@@ -145,10 +145,10 @@ RUN mkdir -p /home/claudebot/.claude-defaults/hooks \
 # in /root, the lookup fails, and every Bash call in the container denies — the fail-closed
 # contract working as designed, on a build mistake.
 #
-# Requested as `3.14`, matching the hook's own request, so the patch level floats to whatever
+# Requested as `3.15`, matching the hook's own request, so the patch level floats to whatever
 # is current at build time. The package is stdlib-only, so any 3.14.x serves; the in-container
 # replay gate is what confirms the interpreter a given image resolved.
-RUN uv python install 3.14
+RUN uv python install 3.15
 
 # --- vault-index semantic search tooling (shared layer) ---
 # Used when a sandbox mounts a curated read-only vault subset: the host builds a

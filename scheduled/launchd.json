@@ -176,7 +176,7 @@
       "log_path": "{{ .chezmoi.homeDir }}/.claude/logs/scheduled/retention-sweep.launchd.log",
       "notes": {
         "ProgramArguments": [
-          "Started through run-python.sh, under the uv-managed Python 3.14 the hooks use.",
+          "Started through run-python.sh, under the uv-managed Python 3.15 the hooks use.",
           "The sweeper's own #!/usr/bin/env python3 resolves to Apple's /usr/bin/python3 on",
           "launchd's PATH, which is 3.9 and lacks os.path.realpath(strict=), so every",
           "containment check would raise."

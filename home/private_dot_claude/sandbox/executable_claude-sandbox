@@ -938,7 +938,7 @@ DOCKER_ARGS=(
   # Turns guard-pre-tool-use.sh's unevaluable-rules path from `ask` into `deny` + exit 2.
   # Required here and not on the host: the container launches with
   # --dangerously-skip-permissions, under which an ask is skipped, so the shim's host
-  # posture is a silent fail-open in a container missing uv, the managed 3.14 or the package.
+  # posture is a silent fail-open in a container missing uv, the managed 3.15 or the package.
   # Set as a docker env var rather than only in settings.base.json's `env` block, because
   # nothing measured shows a settings `env` value reaching a hook subprocess — and the whole
   # point of this switch is the case where the guard cannot run. settings.base.json carries

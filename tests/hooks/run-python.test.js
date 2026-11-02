@@ -1,4 +1,4 @@
-// lib/run-python.sh: every Python hook starts under the managed 3.14 the claude_guard shims
+// lib/run-python.sh: every Python hook starts under the managed 3.15 the claude_guard shims
 // resolve, with -S -P, and under python3 only when there is none. Stub `uv` and stub
 // interpreters print how they were started, so no real uv or Python is needed.
 const { test } = require('node:test');
@@ -16,7 +16,7 @@ const skip = skipUnless('bash', 'timeout');
 
 const ROOT = scratch(os.tmpdir(), 'run-python-');
 const MANAGED = path.join(ROOT, 'uv-python');
-const PY = path.join(MANAGED, 'cpython-3.14-macos-aarch64-none', 'bin', 'python3.14');
+const PY = path.join(MANAGED, 'cpython-3.15-macos-aarch64-none', 'bin', 'python3.15');
 fs.mkdirSync(path.dirname(PY), { recursive: true });
 fs.writeFileSync(PY, '#!/bin/sh\necho "managed $*"\n', { mode: 0o755 });
 const BIN = path.join(ROOT, 'bin');
@@ -34,7 +34,7 @@ function launch(env) {
   });
 }
 
-test('a hook runs under the managed 3.14 with -S -P and its own arguments', { skip }, () => {
+test('a hook runs under the managed 3.15 with -S -P and its own arguments', { skip }, () => {
   const r = launch({ UV_ANSWER: PY });
   assert.strictEqual(r.stdout.trim(), 'managed -S -P /hooks/stop-checks.py --prune');
   assert.strictEqual(r.stderr, '');
@@ -48,10 +48,10 @@ test('a hook named without a path resolves in the hooks directory', { skip }, ()
   assert.strictEqual(r.stdout.trim(), `managed -S -P ${path.dirname(LAUNCHER)}/../stop-checks.py`);
 });
 
-test('with no managed 3.14 the hook still runs, under python3, and says so', { skip }, () => {
+test('with no managed 3.15 the hook still runs, under python3, and says so', { skip }, () => {
   const r = launch({ UV_ANSWER: '' });
   assert.strictEqual(r.stdout.trim(), 'python3 /hooks/stop-checks.py --prune');
-  assert.match(r.stderr, /no uv-managed Python 3\.14, so \/hooks\/stop-checks\.py runs under python3/);
+  assert.match(r.stderr, /no uv-managed Python 3\.15, so \/hooks\/stop-checks\.py runs under python3/);
 });
 
 test('every registered Python hook starts through run-python.sh', () => {

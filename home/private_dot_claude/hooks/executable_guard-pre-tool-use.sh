@@ -24,7 +24,7 @@
 # claude-guard deny path): cannot run → this shim emits `ask` ITSELF, without Python. That was
 # the posture block-dangerous-bash.sh took on a missing jq, and the rule it encodes survives
 # the bash: a deny list that cannot be evaluated must not fail open, and denying every Bash
-# call would be indistinguishable from a hang. So a missing uv, a missing managed 3.14, a
+# call would be indistinguishable from a hang. So a missing uv, a missing managed 3.15, a
 # missing package, or a Python process that exits non-zero all print the ask line below and
 # exit 0. hook.py owns the other half: an exception INSIDE Python prints the same ask from
 # there.
@@ -41,7 +41,7 @@
 # sandbox/settings.base.json) replaces the ask above with a deny and exit 2. The ask is
 # fail-closed on the host, where it stops the call and waits for a human. It is NOT
 # fail-closed in the sandbox: that CMD is `claude --dangerously-skip-permissions`, which
-# skips an ask, so a container missing uv, the managed 3.14 or the package would run with no
+# skips an ask, so a container missing uv, the managed 3.15 or the package would run with no
 # deny check and nothing would say so. Exit 2 is what closes it -- hooks.md, "Exit code 2
 # behavior per event": exit 2 blocks whether or not you print JSON, and even a JSON
 # permissionDecision of "allow" cannot override it. The JSON is still printed because
@@ -51,7 +51,7 @@
 # PYTHON's stderr, where a traceback could quote the command text. This reason is a fixed
 # string containing no command text.
 #
-# The interpreter is lib/guard-python.sh's: uv's managed 3.14, its lookup flags, and the
+# The interpreter is lib/guard-python.sh's: uv's managed 3.15, its lookup flags, and the
 # cache that saves a `uv python find` per call. `-S` skips site-packages;
 # the package is stdlib-only. `-P` stops Python prepending cwd (as `''`) to sys.path for `-m`
 # — measured `sys.path[:3] == ['', PYTHONPATH-dir, ...]` without it, so a Claude session

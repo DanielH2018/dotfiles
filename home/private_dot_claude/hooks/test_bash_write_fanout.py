@@ -41,7 +41,7 @@ if not GUARD_SRC.is_dir():  # deployed copy: the source tree is not beside the h
 def _have_parser():
     """Whether the hook's parsed path can actually run here.
 
-    It needs the package AND the uv-MANAGED 3.14 the claude-guard shims resolve,
+    It needs the package AND the uv-MANAGED 3.15 the claude-guard shims resolve,
     which is not the interpreter actions/setup-python provides. Where it cannot run
     the hook falls back by design, so the two checks below state the fallback's
     answer instead of being skipped: this suite's `OK N` line is asserted against
@@ -59,7 +59,7 @@ def _have_parser():
                 "--no-project",
                 "--managed-python",
                 "--system",
-                "3.14",
+                "3.15",
             ],
             capture_output=True,
             text=True,

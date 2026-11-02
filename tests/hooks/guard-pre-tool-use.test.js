@@ -5,7 +5,7 @@
 // `claude --dangerously-skip-permissions` and an ask is skipped under that flag. So the
 // sandbox sets CLAUDE_GUARD_FAIL_CLOSED=1 and the same shim denies with exit 2 instead.
 // Nothing else in the tree pins either branch, and both are reached only when uv, the managed
-// 3.14 or the package is missing -- a path no ordinary run exercises, so a regression here
+// 3.15 or the package is missing -- a path no ordinary run exercises, so a regression here
 // would be invisible until the day it mattered.
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -19,7 +19,7 @@ const { srcPath } = require('../lib/paths');
 const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_guard-pre-tool-use.sh');
 
 // An empty CLAUDE_GUARD_HOME reaches `fail()` at the shim's first check (no claude_guard/cli.py)
-// without depending on whether this machine has uv or a managed 3.14 installed.
+// without depending on whether this machine has uv or a managed 3.15 installed.
 function missingPackageDir() {
   const dir = scratch(os.tmpdir(), 'guard-pre-tool-use-');
   return dir;
@@ -72,8 +72,8 @@ test('a stale CLAUDE_GUARD_DENY_SHADOW in the env changes nothing', () => {
 // with jq, so these pin what that change could break: a missing library is a "cannot run" like
 // a missing interpreter, and the payload reaches Python unchanged with no jq available.
 const UV = spawnSync('bash', ['-c', 'command -v uv'], { encoding: 'utf8' }).stdout.trim();
-const PY314 = UV && spawnSync(UV, ['python', 'find', '--no-project', '--managed-python', '--system', '3.14']).status === 0;
-const needsPy = { skip: PY314 ? false : 'no uv-managed Python 3.14' };
+const PY314 = UV && spawnSync(UV, ['python', 'find', '--no-project', '--managed-python', '--system', '3.15']).status === 0;
+const needsPy = { skip: PY314 ? false : 'no uv-managed Python 3.15' };
 
 // A stand-in claude_guard package whose cli answers `decision`, with its stdin as the reason.
 function echoPackage(decision) {
@@ -128,7 +128,7 @@ test('the payload reaches the Python side byte-for-byte, with no jq on PATH', ne
 const STUB = scratch(os.tmpdir(), 'guard-pre-tool-use-stub-');
 const STUB_BIN = path.join(STUB, 'bin');
 const STUB_SHARE = path.join(STUB, 'share');
-const STUB_PY = path.join(STUB, 'python3.14');
+const STUB_PY = path.join(STUB, 'python3.15');
 fs.mkdirSync(STUB_BIN);
 fs.mkdirSync(path.join(STUB_SHARE, 'claude_guard'), { recursive: true });
 fs.writeFileSync(path.join(STUB_SHARE, 'claude_guard', 'cli.py'), '');
