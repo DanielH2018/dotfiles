@@ -71,10 +71,8 @@ def log_dir(env: dict[str, str]) -> Path:
     if job_dir and _under(job_dir, jobs) and Path(job_dir).is_dir():
         return Path(os.path.realpath(job_dir)) / "tmp"
     tmpdir = env.get("TMPDIR", "")
-    if tmpdir and _under(tmpdir, Path("/tmp")):
-        base = Path(os.path.realpath(tmpdir))
-    else:
-        base = Path("/tmp")
+    tmp = Path(os.path.realpath("/tmp"))  # /private/tmp on macOS
+    base = Path(os.path.realpath(tmpdir)) if tmpdir and _under(tmpdir, tmp) else tmp
     session = env.get("CLAUDE_CODE_SESSION_ID", "")
     if not SESSION.fullmatch(session):
         session = "no-session"

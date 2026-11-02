@@ -19,7 +19,9 @@ const skip = skipUnless('python3');
 
 function run(t, args, { env = {}, input } = {}) {
   const home = scratch(os.tmpdir(), 'runlog-home-', t);
-  const tmp = scratch(os.tmpdir(), 'runlog-tmp-', t);
+  // Under /tmp, not os.tmpdir(): runlog only honours a TMPDIR under /tmp, and macOS's
+  // os.tmpdir() is /var/folders/... outside a sandbox.
+  const tmp = scratch('/tmp', 'runlog-tmp-', t);
   const r = spawnSync('python3', ['-I', TOOL, ...args], {
     encoding: 'utf8',
     input,
