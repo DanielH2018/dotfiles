@@ -96,6 +96,16 @@
       "extractVersion": "^v?(?<version>\\d.*)$"
     },
     {
+      "description": "actions/setup-node's `node-version` is read from actions/node-versions, whose release tags carry the build's run ID (`24.22.2-40806817314`). setup-node resolves versions from that repo's versions-manifest.json, which lists the bare `24.22.2`, so a pin written as the full tag fails with `Unable to find Node version` (#1134). The rule above keeps the suffix, so this one, which comes later and therefore wins, extracts only the version. The canary workflow is the only setup-node pin written as a literal, and it runs on no PR that touches only it, so a green bump PR proves nothing here.",
+      "matchDatasources": [
+        "github-releases"
+      ],
+      "matchPackageNames": [
+        "actions/node-versions"
+      ],
+      "extractVersion": "^(?<version>\\d+\\.\\d+\\.\\d+)-\\d+$"
+    },
+    {
       "description": "The sandbox's NODE_VERSION is a NodeSource channel (a bare major, `22`), paired with NODE_PKG_VERSION, which no datasource serves and which is bumped by hand. Renovate can move the channel but not its partner, so the PR it opens is half the change. The group name says so, the same convention the homelab repo uses for a manual half.",
       "matchFileNames": [
         "home/private_dot_claude/sandbox/Dockerfile.base"

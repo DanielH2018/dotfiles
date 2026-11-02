@@ -193,3 +193,40 @@ test('the sandbox base image is digest-pinned and Renovate reads it', () => {
     'enabledManagers is a closed list, so without dockerfile the digest never moves');
   assert.ok(config.dockerfile.managerFilePatterns.some((p) => filePattern(p).test(file)));
 });
+
+// --- The canary's setup-node pin -------------------------------------------------------------
+//
+// Renovate reads setup-node's `node-version` from actions/node-versions, whose tags carry a build
+// run ID. The pin must be the bare version setup-node's manifest lists (#1134). The canary only
+// runs when renovate.json changes, so a bad bump to it passes its own PR.
+
+// The extractVersion Renovate applies to one dependency: the last matching rule's wins. Only the
+// matchers these rules use are evaluated, and a rule with any other matcher is treated as not
+// matching, so an unknown matcher cannot widen a rule.
+const EVALUATED = new Set(['matchDatasources', 'matchPackageNames', 'matchCurrentValue']);
+function extractVersionFor(dep) {
+  let found = null;
+  for (const rule of config.packageRules) {
+    const keys = Object.keys(rule).filter((k) => k.startsWith('match'));
+    if (keys.some((k) => !EVALUATED.has(k))) continue;
+    if (rule.matchDatasources && !rule.matchDatasources.includes(dep.datasource)) continue;
+    if (rule.matchPackageNames && !rule.matchPackageNames.includes(dep.packageName)) continue;
+    if (rule.matchCurrentValue && !filePattern(rule.matchCurrentValue).test(dep.currentValue)) continue;
+    if (rule.extractVersion) found = rule.extractVersion;
+  }
+  return found;
+}
+const versionOf = (dep, tag) => new RegExp(extractVersionFor(dep)).exec(tag)?.groups.version ?? null;
+
+test('a node-versions tag is pinned as the bare version, and a v-tag still loses its v', () => {
+  const node = { datasource: 'github-releases', packageName: 'actions/node-versions', currentValue: '24.22.2' };
+  assert.strictEqual(versionOf(node, '24.22.2-40806817314'), '24.22.2');
+  const uv = { datasource: 'github-releases', packageName: 'astral-sh/uv', currentValue: '0.13.5' };
+  assert.strictEqual(versionOf(uv, 'v0.13.6'), '0.13.6');
+});
+
+test("the canary's node-version is a version setup-node can resolve", () => {
+  const pins = [...read('.github/workflows/renovate-config-canary.yml').matchAll(/node-version: "([^"]*)"/g)];
+  assert.ok(pins.length > 0, 'the canary no longer pins node-version in the shape this test reads');
+  for (const [, v] of pins) assert.match(v, /^\d+\.\d+\.\d+$/, `node-version "${v}" is not in setup-node's manifest`);
+});
