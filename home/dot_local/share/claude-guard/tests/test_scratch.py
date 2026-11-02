@@ -11,13 +11,20 @@ from claude_guard.tables import scratch_roots
 
 ROOTS = scratch_roots("/home/testuser")
 
+# `_real_roots` drops a root that resolves through a link, as the fabricated home does on a Mac
+# whose /home links to /System/Volumes/Data/home. Ubuntu CI keeps /home real and runs these.
+needs_unlinked_home = pytest.mark.skipif(
+    os.path.realpath("/home/testuser") != "/home/testuser",
+    reason="/home resolves through a link here, so the fabricated home's roots are dropped",
+)
+
 ALLOW = [
     "rm -rf /tmp/scratch",
     "rm -f /tmp/claude-1000/session/x.json",
     "rm /tmp/a/b/c.txt",
     "rm -rf /var/tmp/build",
-    "rm -rf /home/testuser/.claude/jobs/abc123/tmp",
-    "rm -rf /home/testuser/.cache/claude/x",
+    pytest.param("rm -rf /home/testuser/.claude/jobs/abc123/tmp", marks=needs_unlinked_home),
+    pytest.param("rm -rf /home/testuser/.cache/claude/x", marks=needs_unlinked_home),
     "rm -rfv /tmp/a /tmp/b",
     "rm --recursive --force /tmp/a",
     "rm -rf -- /tmp/a",
@@ -264,6 +271,7 @@ JOB = "/home/testuser/.claude/jobs/abc123"
         'rm -f "${CLAUDE_JOB_DIR}"/tmp/fail*.txt',
     ],
 )
+@needs_unlinked_home
 def test_the_job_dir_variable_expands_to_the_hooks_value(command):
     assert rm_confined(command, ROOTS, JOB, globs=True) is True
 

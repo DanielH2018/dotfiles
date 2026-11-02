@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 from test_git_reset import _make_repo
+from test_scratch import needs_unlinked_home
 
 from claude_guard import judge as judge_mod
 from claude_guard.judge import Decision, _first_word, _under_session_cwd, judge, unwrap_wrapper
@@ -566,6 +567,7 @@ def test_the_real_template_allows_the_rootq_shim_by_either_name(real, command):
     assert allowed(command, real)
 
 
+@needs_unlinked_home
 def test_the_real_template_leaves_an_rm_below_root_or_home_to_the_rm_rules(real):
     # `rm -rf /*` extracted to the plain prefix `rm -rf /`, which never matched a deeper
     # path here; the over-match was Claude Code's own matcher. So the cleanup below pins
@@ -1535,6 +1537,7 @@ def test_the_real_template_does_not_approve_a_global_config_write(real, command)
     assert not allowed(command, real)
 
 
+@needs_unlinked_home
 def test_the_real_template_approves_scratch_cleanup_a_background_job_writes(real):
     # dotfiles #956: the job dir is read off the hook's environment, and a glob may sit in
     # the last component. Without the job dir the variable is unreadable and refuses.
