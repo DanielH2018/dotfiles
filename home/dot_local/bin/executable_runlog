@@ -27,6 +27,8 @@ passed to COMMAND as literal arguments. Read the log afterwards with grep, tail 
 script to keep the two equal.
 """
 
+from __future__ import annotations
+
 import collections
 import os
 import re
