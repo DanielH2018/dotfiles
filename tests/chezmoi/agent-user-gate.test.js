@@ -12,6 +12,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const { renderFile, renderTemplate, chezmoiAvailable, SOURCE, dataConfig } = require('../lib/render');
 const { srcPath } = require('../lib/paths');
+const { HOMELAB_CANDIDATES, homelabFile } = require('../lib/homelab');
 
 const skip = chezmoiAvailable ? false : 'chezmoi unavailable';
 const IGNORE = srcPath('.chezmoiignore');
@@ -190,13 +191,48 @@ test("the agent on a host outside the server's dev_tooling_hosts gets nothing fr
   assert.notStrictEqual(onHost(PYTHON_TOOLS, false, 'daniel-desktop', 'workstation').trim(), '');
 });
 
-test('the tools.toml pins are the values the server repo installs', { skip }, () => {
-  // Both installers write ~/.local/bin/uv and the prek tool, so a different value makes each
-  // apply of one undo the other. Values from the server repo as of 2026-10-29:
-  // initial_setup_uv_version, the `prek==` loop in initial_setup's host-basics.yml and
-  // host_python_version. Moving one here means moving the server's too (H7.38).
-  const { uv, prek, python } = pins();
-  assert.deepStrictEqual({ uv, prek, python }, { uv: '0.13.5', prek: '0.5.5', python: '3.14.6' });
+// Both installers write ~/.local/bin/uv and the prek tool, so a different value makes each apply
+// of one undo the other (H7.38). The oracle is the server repo's own files, read through
+// tests/lib/homelab.js, never a literal copied here: a dated literal kept passing while the
+// server moved prek to 0.5.7 (#1129). A pattern that finds nothing reads as a disagreement, so
+// the server deleting these tasks (H7.39) fails here rather than passing on nothing.
+const SERVER_PINS = {
+  uv: ['ansible/roles/setup/initial_setup/defaults/main.yml', /^initial_setup_uv_version: "([^"]+)"$/m],
+  prek: ['ansible/roles/setup/initial_setup/tasks/host-basics.yml', /^\s*- prek==(\S+)$/m],
+  python: ['ansible/inventory/group_vars/all.yml', /^host_python_version: "([^"]+)"$/m],
+};
+
+// Why our pins and the server's files disagree, one line per tool, or [] when they agree.
+function serverPinProblems(ours, serverText) {
+  return Object.entries(SERVER_PINS).flatMap(([tool, [file, re]]) => {
+    const theirs = re.exec(serverText[file])?.[1];
+    if (!theirs) return [`the server's ${file} no longer pins ${tool} in the shape this test reads`];
+    return ours[tool] === theirs ? [] : [`${tool} is ${ours[tool]} here and ${theirs} in the server's ${file}`];
+  });
+}
+
+test('the server-pin check accepts equal pins and reports a different or missing one', () => {
+  const text = (uv, prek, python) => ({
+    [SERVER_PINS.uv[0]]: `initial_setup_uv_version: "${uv}"\n`,
+    [SERVER_PINS.prek[0]]: `    loop:\n    - prek==${prek}\n`,
+    [SERVER_PINS.python[0]]: `host_python_version: "${python}"\n`,
+  });
+  const ours = { uv: '0.13.5', prek: '0.5.7', python: '3.14.6' };
+  assert.deepStrictEqual(serverPinProblems(ours, text('0.13.5', '0.5.7', '3.14.6')), []);
+  assert.deepStrictEqual(serverPinProblems(ours, text('0.13.5', '0.5.9', '3.14.6')),
+    [`prek is 0.5.7 here and 0.5.9 in the server's ${SERVER_PINS.prek[0]}`]);
+  assert.match(serverPinProblems(ours, { ...text('0.13.5', '0.5.7', '3.14.6'), [SERVER_PINS.uv[0]]: '' })[0],
+    /no longer pins uv/);
+});
+
+test('the tools.toml pins are the values the server repo installs', { skip }, async (t) => {
+  const serverText = {};
+  for (const [file] of Object.values(SERVER_PINS)) {
+    const src = await homelabFile(file, HOMELAB_CANDIDATES, fetch);
+    if (src.skip) return t.skip(src.skip);
+    serverText[file] = src.text;
+  }
+  assert.deepStrictEqual(serverPinProblems(pins(), serverText), [], 'move the one that is behind');
 });
 
 test('claude_guard and claude_worktree deploy to the agent from this repo, with Claude Code', { skip }, () => {

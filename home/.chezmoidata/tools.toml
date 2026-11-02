@@ -281,7 +281,7 @@ nerd-fonts = { repo = "ryanoasis/nerd-fonts", tag = "v3.5.1" }
 # 0.5.3 and 3.14.7, and were moved to the server's values (H7.38).
 [toolchain]
 # renovate: datasource=pypi depName=prek
-prek = "0.5.5"
+prek = "0.5.7"
 # renovate: datasource=pypi depName=ruff
 ruff = "0.16.1"
 # renovate: datasource=github-releases depName=astral-sh/uv

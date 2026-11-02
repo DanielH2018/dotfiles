@@ -135,6 +135,19 @@
       ]
     },
     {
+      "description": "tools.toml's uv, prek and python are the pins the homelab repo's Ansible installs on its hosts (initial_setup_uv_version, the `prek==` loop in host-basics.yml, host_python_version). Both installers write the same ~/.local/bin and uv tool directory, so the two must stay equal. tests/chezmoi/agent-user-gate.test.js compares them against the homelab files, the same way the gitleaks test does. Without this rule, Renovate raised each bump on the day of release, a week before the homelab repo's 7-day catch-all let its copy move, and every such PR failed gate (#1129). The soak and schedule match that catch-all, as the gitleaks rule's do. The homelab python bump is a manual Monday group there, so a python PR here can still open before its partner lands. The group name tells the reviewer to land it after the homelab one.",
+      "matchPackageNames": [
+        "astral-sh/uv",
+        "prek",
+        "python"
+      ],
+      "groupName": "{{depName}} (lockstep — land after the homelab repo's matching host pin)",
+      "minimumReleaseAge": "7 days",
+      "schedule": [
+        "before 6am"
+      ]
+    },
+    {
       "description": "tmux publishes release candidates as `3.8-rc2`, which the install-tmux manager's deb versioning ranks as a stable version. Only the release shape, digits plus an optional letter, is offered.",
       "matchPackageNames": [
         "tmux/tmux"
