@@ -12,6 +12,9 @@ package = false
 # Python hooks, config-map) run under each machine's system `python3`, 3.12 on the Ubuntu
 # hosts, and ruff's py314 rewrites crash there (issue #568 has the per-file table).
 target-version = "py39"
+# claude-worktree's floor is 3.10 (tests/python-suites.test.js says why), where a PEP 604
+# union runs without `from __future__ import annotations`, so FA102 does not apply to it.
+per-file-target-version = { "home/dot_local/share/claude-worktree/**" = "py310" }
 # `extend-include` (the extensionless Python scripts) lives in ruff.toml, which ruff
 # discovers first and which `extend`s this file. bin/gen-lint-files renders it from the
 # tree; a copy here drifted to 1 name of 11 before it moved.
@@ -19,7 +22,9 @@ target-version = "py39"
 [tool.ruff.lint]
 # PTH (pathlib) intentionally left out of select: os.path is load-bearing
 # throughout scope.py's diff-path matching and converting it is a separate task.
-select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+# FA: a PEP 604 union (`str | None`) in an annotation raises TypeError at import under
+# the py39 target unless the file has `from __future__ import annotations`.
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "FA"]
 
 [tool.ruff.lint.per-file-ignores]
 # sys.path.insert() before the import it enables, same as executable_tq's own

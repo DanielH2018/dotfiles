@@ -20,6 +20,8 @@ test runner does not rebuild it. claude_guard.wrapped parses the same grammar; i
 run this script to keep the two equal.
 """
 
+from __future__ import annotations
+
 import os
 import shutil
 import subprocess
