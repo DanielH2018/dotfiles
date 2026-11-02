@@ -10,8 +10,11 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { renderFile, renderTemplate, chezmoiAvailable, SOURCE, dataConfig } = require('../lib/render');
 const { srcPath } = require('../lib/paths');
+const { scratch } = require('../lib/tmp');
 const { HOMELAB_CANDIDATES, homelabFile } = require('../lib/homelab');
 
 const skip = chezmoiAvailable ? false : 'chezmoi unavailable';
@@ -53,8 +56,6 @@ const parse = (text) =>
   new Set(text.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')));
 const ignored = (agent) => parse(renderTemplate(BOX + fs.readFileSync(IGNORE, 'utf8'),
   { data: { agent, profile: 'server', work: false } }));
-// As `chezmoi managed` sees this host, unpinned.
-const ignoredHere = () => parse(renderFile(IGNORE, { data: { agent: false, profile: 'server', work: false } }));
 
 // Pinned to daniel-box like the renders above: the telemetry env the owner check reads is off
 // on darwin, so an unpinned render on the work Mac has no OTEL_RESOURCE_ATTRIBUTES to find.
@@ -86,16 +87,21 @@ test('a host whose chezmoi.toml predates the key renders as the operator', { ski
   assert.strictEqual(renderTemplate('{{ includeTemplate "is-agent" . }}', { data: { agent: true, work: false, profile: 'server' } }), 'true');
 });
 
-test('every agent-ignored path names a target the operator deploys', { skip }, () => {
+test('every agent-ignored path names a target the operator deploys', { skip }, (t) => {
   // An ignore rule with no target is silent, so a renamed tool would quietly reach the agent.
+  // `managed` cannot pin the hostname or the OS, and on macOS it ignores all of .config/systemd,
+  // so it is run against a copy of the source whose .chezmoiignore holds the patterns the
+  // daniel-box operator renders. Every host then gets the same target list, and chezmoi still
+  // does the glob and ancestor matching. Patterns only: a rendered comment can carry a literal
+  // `{{`, which chezmoi would parse as a template.
+  const copy = scratch(os.tmpdir(), 'agent-gate-src-', t);
+  fs.cpSync(srcPath(), copy, { recursive: true });
+  fs.writeFileSync(path.join(copy, '.chezmoiignore'), [...ignored(false)].join('\n'));
   const config = dataConfig({ agent: false, profile: 'server', work: false });
-  const managed = execFileSync('chezmoi', ['--config', config, '--source', SOURCE, '--destination', '/nonexistent-home',
+  const managed = execFileSync('chezmoi', ['--config', config, '--source', copy, '--destination', '/nonexistent-home',
     'managed', '--include', 'files,dirs'], { encoding: 'utf8' }).split('\n');
-  // `managed` cannot pin the hostname, so a path this host already ignores for its own reason
-  // (the sudo shim deploys to the homelab hosts only) is checked on those hosts instead.
-  const here = ignoredHere();
   for (const p of AGENT_IGNORED) {
-    if (p === '.ssh' || here.has(p)) continue;
+    if (p === '.ssh') continue;
     const prefix = p.replace(/\*$/, '');
     assert.ok(managed.some((m) => m.startsWith(prefix)), `${p} matches no managed target`);
   }
