@@ -94,11 +94,11 @@ test('every agent-ignored path names a target the operator deploys', { skip }, (
   // daniel-box operator renders. Every host then gets the same target list, and chezmoi still
   // does the glob and ancestor matching. Patterns only: a rendered comment can carry a literal
   // `{{`, which chezmoi would parse as a template.
-  const copy = scratch(os.tmpdir(), 'agent-gate-src-', t);
-  fs.cpSync(srcPath(), copy, { recursive: true });
-  fs.writeFileSync(path.join(copy, '.chezmoiignore'), [...ignored(false)].join('\n'));
+  const sourceCopy = scratch(os.tmpdir(), 'agent-gate-src-', t);
+  fs.cpSync(srcPath(), sourceCopy, { recursive: true });
+  fs.writeFileSync(path.join(sourceCopy, '.chezmoiignore'), [...ignored(false)].join('\n'));
   const config = dataConfig({ agent: false, profile: 'server', work: false });
-  const managed = execFileSync('chezmoi', ['--config', config, '--source', copy, '--destination', '/nonexistent-home',
+  const managed = execFileSync('chezmoi', ['--config', config, '--source', sourceCopy, '--destination', '/nonexistent-home',
     'managed', '--include', 'files,dirs'], { encoding: 'utf8' }).split('\n');
   for (const p of AGENT_IGNORED) {
     if (p === '.ssh') continue;
