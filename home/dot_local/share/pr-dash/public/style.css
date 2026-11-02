@@ -325,6 +325,7 @@ a.section-name:hover { color: var(--blue); text-decoration: underline; }
 .state-chip.warn { color: var(--yellow); }
 .summary-chip.good,
 .state-chip.good { color: var(--green); }
+.state-chip.muted { color: var(--overlay0); }
 
 /* ---- rows -------------------------------------------------------------- */
 

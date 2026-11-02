@@ -31,6 +31,7 @@ import {
   REFRESH_POLL_TIMEOUT_MS,
   ciChip,
   reviewChip,
+  draftChip,
   stackIndentPx,
   STACK_INDENT_CAP,
   STACK_INDENT_STEP,
@@ -1267,6 +1268,11 @@ test('reviewChip renders an absent review state as nothing, and every present on
   assert.deepStrictEqual(reviewChip('changes_requested'), { label: 'changes', tone: 'bad' });
   assert.deepStrictEqual(reviewChip('review_required'), { label: 'waiting', tone: 'warn' });
   assert.strictEqual(reviewChip('none'), null);
+});
+
+test('draftChip marks a draft PR with a muted chip, and a ready one with nothing', () => {
+  assert.deepStrictEqual(draftChip(true), { label: 'draft', tone: 'muted' });
+  assert.strictEqual(draftChip(false), null);
 });
 
 test('a row chip and the header chip for the same state read the same word', () => {

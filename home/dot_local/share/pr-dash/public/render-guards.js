@@ -729,6 +729,19 @@ export function reviewChip(review) {
   return null;
 }
 
+/**
+ * The chip a row shows for a draft PR, or `null` for one that is ready for review.
+ *
+ * Muted rather than toned: a draft is not a problem to fix or a success to notice. It says
+ * the CI and review chips beside it describe work the author has not yet asked anyone to
+ * look at.
+ * @param {boolean} isDraft
+ * @returns {SummaryChip | null}
+ */
+export function draftChip(isDraft) {
+  return isDraft ? { label: 'draft', tone: 'muted' } : null;
+}
+
 /** The pixels of indent one level of stack depth adds, until the cap. */
 export const STACK_INDENT_STEP = 18;
 

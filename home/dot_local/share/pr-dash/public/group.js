@@ -257,7 +257,7 @@ export function groupSummary(records) {
  * One chip to show on a collapsed section header.
  * @typedef {object} SummaryChip
  * @property {string} label
- * @property {'bad' | 'warn' | 'good'} tone
+ * @property {'bad' | 'warn' | 'good' | 'muted'} tone
  */
 
 /**

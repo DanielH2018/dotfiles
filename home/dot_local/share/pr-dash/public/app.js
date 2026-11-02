@@ -31,6 +31,7 @@ import {
   isStaleResponse,
   ciChip,
   reviewChip,
+  draftChip,
   stackIndentPx,
 } from './render-guards.js';
 
@@ -303,7 +304,7 @@ function renderRow(pr) {
   // Spans, not buttons. `.row` is an `<a>`, and a nested `<button>` is invalid there: a
   // `preventDefault` on click does not stop a middle-click, which dispatches `auxclick` and
   // opens the PR anyway. Nothing in the row is interactive except the row itself.
-  for (const chip of [ciChip(pr.ci), reviewChip(pr.review)]) {
+  for (const chip of [draftChip(pr.isDraft), ciChip(pr.ci), reviewChip(pr.review)]) {
     if (chip === null) continue;
     const el = document.createElement('span');
     el.className = `state-chip ${chip.tone}`;
