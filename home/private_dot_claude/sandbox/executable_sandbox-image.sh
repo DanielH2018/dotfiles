@@ -36,7 +36,7 @@
 # chezmoi template: the launcher sources it from ~/.claude/sandbox at run time, with no render
 # step in between.
 # renovate: datasource=github-releases depName=rust-lang/rust
-RUST_TOOLCHAIN="1.98.1"
+RUST_TOOLCHAIN="1.99.1"
 
 detect_docker_need() {
   # Check for docker-compose files (depth 2 catches monorepo layouts)
