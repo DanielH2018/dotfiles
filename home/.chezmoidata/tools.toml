@@ -246,7 +246,7 @@ dnf = "util-linux-script"
 # renovate: datasource=github-releases depName=eza-community/eza
 eza = { repo = "eza-community/eza", tag = "v0.23.5" }
 # renovate: datasource=github-releases depName=fastfetch-cli/fastfetch
-fastfetch = { repo = "fastfetch-cli/fastfetch", tag = "2.68.1" }
+fastfetch = { repo = "fastfetch-cli/fastfetch", tag = "2.70.0" }
 # renovate: datasource=github-releases depName=rs/curlie
 curlie = { repo = "rs/curlie", tag = "v1.8.2" }
 # renovate: datasource=github-releases depName=chmln/sd
