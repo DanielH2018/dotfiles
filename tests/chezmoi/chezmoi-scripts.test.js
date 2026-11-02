@@ -237,10 +237,12 @@ test('install-docker-engine adds its apt repo via the shared helper', { skip }, 
   // `--version` answers TEST_UV_VERSION, because the script reinstalls uv when the version on
   // PATH differs from the pin — the half that decides whether an already-provisioned machine
   // ever moves. It is logged like everything else, so a probe is visible in the log.
+  // UV_FAIL_CMD fails one subcommand (`python install`) and leaves the rest working.
   const UV_STUB = [
     '#!/bin/sh',
     'echo "uv $*" >> "$STUB_LOG"',
     'if [ "$1" = "--version" ]; then echo "uv ${TEST_UV_VERSION:-0.0.0}"; exit 0; fi',
+    '[ "$1 $2" = "${UV_FAIL_CMD:-}" ] && exit 1',
     'if [ "$1" = "tool" ] && [ "$2" = "install" ]; then',
     '  for last; do :; done',
     '  name="${last%%==*}"',
@@ -353,6 +355,34 @@ test('install-docker-engine adds its apt repo via the shared helper', { skip }, 
     const { status } = runSh(scriptFile, env);
     assert.strictEqual(status, 1);
     assert.strictEqual(readLog(logFile), '');
+  });
+
+  // chezmoi records a script that exits 0 as done, so a failed step that only printed an error
+  // was never retried.
+  test('install-python-tools.sh.tmpl: a failed step -> later steps still run, then exit 1', { skip }, () => {
+    const { scriptFile, env, logFile } = ptSandbox({ uvPresent: true });
+    env.UV_FAIL_CMD = 'python install';
+    const { status, stderr } = runSh(scriptFile, env);
+    assert.strictEqual(status, 1);
+    assert.match(readLog(logFile), /uv tool install --force prek==/, 'steps after the failure should still run');
+    assert.match(stderr, /'uv python install 3\.\d+\.\d+' failed/);
+  });
+
+  // A pipx uv left in ~/.local/bin shadowed Homebrew's, and its download list predated the
+  // Python pin. The path is what tells that apart from a Homebrew uv that lags the pin.
+  test('install-python-tools.sh.tmpl: non-Linux uv off the pin -> warns with its path, installs nothing', { skip }, () => {
+    const { scriptFile, env, logFile, dir } = ptSandbox({ uvPresent: true, unameS: 'Darwin', uvVersion: '0.11.7' });
+    const { status, stderr } = runSh(scriptFile, env);
+    assert.strictEqual(status, 0);
+    assert.ok(stderr.includes(`${path.join(dir, 'uv')} is uv 0.11.7, not the pinned ${pinnedUv()}`), stderr);
+    assert.ok(!readLog(logFile).includes('curl '), 'uv on macOS is the Brewfile\'s to install');
+  });
+
+  test('install-python-tools.sh.tmpl: non-Linux uv at the pin -> no warning', { skip }, () => {
+    const { scriptFile, env } = ptSandbox({ uvPresent: true, unameS: 'Darwin' });
+    const { status, stderr } = runSh(scriptFile, env);
+    assert.strictEqual(status, 0);
+    assert.doesNotMatch(stderr, /warning/);
   });
 
   test('install-python-tools.sh.tmpl: installer download fails -> exit 1 without touching uv', { skip }, () => {

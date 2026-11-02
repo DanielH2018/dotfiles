@@ -37,14 +37,17 @@
 #
 # run_onchange_after_: runs AFTER file targets, so a failure here (no network, brew not bundled
 # yet) fails loudly WITHOUT blocking dotfile deployment — chezmoi does not record the state of a
-# script that failed, so the next `chezmoi apply` retries. Gated off profile=minimal alongside
-# the rest of the heavy tooling.
+# script that failed, so the next `chezmoi apply` retries. A failed step therefore sets `failed`
+# rather than exiting: the steps after it still run, and the script exits 1 at the end. A bare
+# `|| echo` would exit 0, and chezmoi would record a half-done install as done. Gated off
+# profile=minimal alongside the rest of the heavy tooling.
 #
 # _onchange_ rather than _once_, now that the versions below are pins rendered from
 # .chezmoidata/tools.toml: a bump changes this script's text, so the bump is what re-runs it.
 # Under _once_ a pinned version would have installed on a fresh machine and then never moved,
 # which is the failure the hand-bumped `python-tools-bump` marker was there to work around.
 set -u
+failed=0
 
 BIN_DIR="$HOME/.local/bin"   # already on PATH via dot_config/shell/common.sh, but chezmoi
 PATH="$BIN_DIR:$PATH"        # runs scripts non-interactively, so re-add it before probing.
@@ -77,9 +80,10 @@ if [ "$(uname -s)" = "Linux" ] && { ! command -v uv >/dev/null 2>&1 || [ "$(uv_v
     # it appending a PATH line to .bashrc/.zshenv — common.sh already puts BIN_DIR on PATH,
     # and those files are chezmoi-managed, so an edit there would be reverted next apply.
     UV_INSTALL_DIR="$BIN_DIR" INSTALLER_NO_MODIFY_PATH=1 sh "$tmp/uv-install.sh" \
-      || echo "install-python-tools: uv installer failed" >&2
+      || { echo "install-python-tools: uv installer failed" >&2; failed=1; }
   else
     echo "install-python-tools: failed to fetch the uv {{ .toolchain.uv }} installer" >&2
+    failed=1
   fi
   rm -rf "$tmp"
 fi
@@ -90,20 +94,27 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 1
 fi
 
+# The uv elsewhere is Homebrew's or winget's, so it can differ from the pin. Warn rather than
+# fail, naming the path: a leftover ~/.local/bin/uv (a pipx install, say) shadows Homebrew's,
+# and an old uv has no download for a recent Python pin.
+if [ "$(uname -s)" != "Linux" ] && [ "$(uv_version)" != "$UV_WANT" ]; then
+  echo "install-python-tools: warning: $(command -v uv) is uv $(uv_version), not the pinned $UV_WANT" >&2
+fi
+
 # 2. Managed CPython 3.12 (mirrors the same step in the Windows installer). uv resolves an
 #    interpreter per project, but the vault-tooling projects target >=3.11 and 3.12 has the
 #    widest wheel coverage for vault-index's fastembed/duckdb deps — a distro python3 that has
 #    moved on to 3.13/3.14 has none of them. Idempotent: uv skips a version it already has.
 #    (~/dev/server pins >=3.14 and keeps resolving to the system interpreter.)
 {{ if not $agent -}}
-uv python install 3.12 || echo "install-python-tools: 'uv python install 3.12' failed" >&2
+uv python install 3.12 || { echo "install-python-tools: 'uv python install 3.12' failed" >&2; failed=1; }
 {{ end -}}
 # claude-guard (~/.local/share/claude-guard) is 3.14-only; its shims resolve this interpreter
 # at call time with `uv python find --no-project --managed-python --system 3.14`. The exact
 # patch version, because the server repo's `host_python_version` runs its hooks under it; an
 # exact install still answers the shims' two-part request, as the CI step explains. uv installs
 # nothing and prints nothing for a version it already has.
-uv python install '{{ .toolchain.python }}' || echo "install-python-tools: 'uv python install {{ .toolchain.python }}' failed" >&2
+uv python install '{{ .toolchain.python }}' || { echo "install-python-tools: 'uv python install {{ .toolchain.python }}' failed" >&2; failed=1; }
 
 # 3. Global CLIs, at the versions .chezmoidata/tools.toml pins. A `pkg==X.Y.Z` argument
 #    replaces an install at a different version rather than erroring, so a bump reinstalls in
@@ -118,7 +129,7 @@ uv python install '{{ .toolchain.python }}' || echo "install-python-tools: 'uv p
 #    line that installs it, to a reader and to a grep asking whether anything here is still
 #    unpinned.
 {{ if not $agent -}}
-uv tool install 'ruff=={{ .toolchain.ruff }}' || echo "install-python-tools: installing ruff failed" >&2
+uv tool install 'ruff=={{ .toolchain.ruff }}' || { echo "install-python-tools: installing ruff failed" >&2; failed=1; }
 {{ end -}}
 # `--force` takes over a ~/.local/bin/prek that is not uv's own shim, such as the copy Ansible
 # placed there. The version test keeps it from reinstalling a prek that is already right.
@@ -129,7 +140,7 @@ prek_version() {
   printf '%s' "${v%% *}"
 }
 if [ "$(prek_version)" != "$PREK_WANT" ]; then
-  uv tool install --force 'prek=={{ .toolchain.prek }}' || echo "install-python-tools: installing prek failed" >&2
+  uv tool install --force 'prek=={{ .toolchain.prek }}' || { echo "install-python-tools: installing prek failed" >&2; failed=1; }
 fi
 
 # Fail loudly (and retry next apply) if anything is still missing.
@@ -139,6 +150,10 @@ for c in uv {{ if not $agent }}ruff {{ end }}prek; do
 done
 if [ -n "$missing" ]; then
   echo "install-python-tools: still missing:$missing — re-run 'chezmoi apply'." >&2
+  exit 1
+fi
+if [ "$failed" != 0 ]; then
+  echo "install-python-tools: a step above failed — fix it, then re-run 'chezmoi apply'." >&2
   exit 1
 fi
 {{ end -}}

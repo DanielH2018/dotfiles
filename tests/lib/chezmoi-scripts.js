@@ -3,7 +3,7 @@
 // on. The behavior tests drive RENDERED scripts with PATH fully REPLACED by a temp dir of stub
 // executables that log their argv and exit 0/controllable, so no real chsh/sudo/systemctl call
 // reaches the system whatever branch a test takes.
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -98,11 +98,14 @@ function readLog(logFile) {
 // Runs an already-rendered script file under `env` (which fully replaces process.env).
 // tty:true routes it through `script` so `[ -t 0 ]` reads true (the interactive chsh path);
 // tty:false leaves stdin a plain pipe so `[ -t 0 ]` reads false (the headless defer path).
+// `stderr` is captured only without a tty; under `script` it is merged into `stdout`.
 function runSh(scriptFile, env, { tty = false } = {}) {
+  if (!tty) {
+    const r = spawnSync(realBin('sh'), [scriptFile], { env, encoding: 'utf8', input: '' });
+    return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
+  }
   try {
-    const stdout = tty
-      ? execFileSync(realBin('script'), ['-qec', `${realBin('sh')} ${scriptFile}`, '/dev/null'], { env, encoding: 'utf8' })
-      : execFileSync(realBin('sh'), [scriptFile], { env, encoding: 'utf8', input: '' });
+    const stdout = execFileSync(realBin('script'), ['-qec', `${realBin('sh')} ${scriptFile}`, '/dev/null'], { env, encoding: 'utf8' });
     return { status: 0, stdout };
   } catch (e) {
     return { status: e.status, stdout: e.stdout || '' };
