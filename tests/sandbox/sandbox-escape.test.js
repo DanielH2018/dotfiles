@@ -116,7 +116,8 @@ test('leaves the read side of a copy alone', () => {
   // A guard that flagged the fix would just push people back to writing in place.
   const good = [
     "const SOURCE = path.join(__dirname, '..', '..', 'home');",
-    "const copy = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'x-')), 'home');",
+    // Split so bin/sweep-test-tmp's grep does not read this snippet as a declared prefix.
+    "const copy = path.join(fs.mkdtempSync(path.join(os.tmpdir(), " + "'x-')), 'home');",
     'fs.cpSync(SOURCE, copy, { recursive: true });',
     "fs.writeFileSync(path.join(copy, 'probe.sh'), '');",
   ].join('\n');

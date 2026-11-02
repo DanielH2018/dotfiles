@@ -56,9 +56,11 @@ const run = (repo, tmp, args = []) => {
   return { out: r.stdout || '', err: r.stderr || '', status: r.status };
 };
 
+// The short prefix is interpolated so this file's own text never declares it: the real sweep
+// greps every test file, and would report this fixture on every gate run.
 const SOURCE = `
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'sweepable-'));
-  const e = fs.mkdtempSync(path.join(os.tmpdir(), 'x-'));
+  const e = fs.mkdtempSync(path.join(os.tmpdir(), ${"'x-'"}));
 `;
 
 test('sweeps a declared prefix once it is past the age threshold', () => {
@@ -164,6 +166,17 @@ test('every suite that makes scratch in $TMPDIR also removes it', () => {
     'these suites leave scratch in $TMPDIR on every clean run; remove it on exit rather '
     + 'than leaving it to bin/sweep-test-tmp, which only collects it six hours later',
   );
+});
+
+// A short-prefix report that fires on every run hides the one that names a real prefix.
+test('this repo declares no prefix too short to sweep', () => {
+  const tmp = scratch(os.tmpdir(), 'sweep-self-');
+  const r = require('node:child_process').spawnSync(
+    repoPath('bin', 'sweep-test-tmp'), ['--dry-run'],
+    { cwd: repoPath(), encoding: 'utf8', env: { ...process.env, TMPDIR: tmp } },
+  );
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stderr, /prefix too short/);
 });
 
 test('bin/gate runs the sweep without letting it fail the gate', () => {
