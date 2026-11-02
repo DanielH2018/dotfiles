@@ -45,7 +45,7 @@ jobs:
       # toolchain: tools.toml pins node 22 for the suite, which Renovate refuses to run on.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: "24.21.0"
+          node-version: "24.22.2-40806817314"
 
       # npm's `latest` tag names a new Renovate a few minutes before its tarball reaches every
       # CDN edge, and the fetch 404s in that window. The homelab repo measured it (issue #1269
