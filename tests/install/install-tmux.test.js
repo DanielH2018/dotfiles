@@ -40,7 +40,7 @@ test('script is gated to Linux', { skip }, () => {
 //    build cases below build from it, which is where a stale copy went green testing the
 //    wrong branch; that one derives.
 test('the pinned tmux version', () => {
-  assert.strictEqual(TMUX_VERSION, '3.7b');
+  assert.strictEqual(TMUX_VERSION, '3.8');
 });
 
 // 3. The profile half of the gate (the os half is test 1): a minimal profile renders nothing.

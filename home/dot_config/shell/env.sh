@@ -8,7 +8,7 @@
 # plain sh/dash login shells and some display managers, not just zsh/bash.
 # shellcheck shell=sh
 
-# ~/.local/bin (tmux 3.7b, agentview, cts…) and go/bin must resolve for NON-interactive
+# ~/.local/bin (source-built tmux, agentview, cts…) and go/bin must resolve for NON-interactive
 # shells too — cron, systemd --user, `ssh host cmd` — not just the interactive shells that
 # source common.sh via .zshrc/.bashrc. Idempotent prepend: safe when more than one of
 # .zshenv/.bash_profile/.profile sources this file in the same session.
