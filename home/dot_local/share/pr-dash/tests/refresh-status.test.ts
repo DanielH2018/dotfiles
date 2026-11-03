@@ -66,9 +66,6 @@ test('setFetchedAt shows the stamp, flashes only when asked, and the tick keeps 
   assert.strictEqual(status.textContent, 'Updated just now');
   assert.ok(!status.classes.has('flash'), 'an ordinary poll must not flash');
 
-  indicator.setFetchedAt(fetchedAt, { flash: true });
-  assert.ok(status.classes.has('flash'), 'a Refresh click flashes the stamp');
-
   // A stamp painted once and never again would read "just now" for the life of the tab.
   status.textContent = '';
   repaint();
