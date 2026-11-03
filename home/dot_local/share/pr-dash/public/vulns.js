@@ -1,4 +1,5 @@
 // @ts-check
+import { createRefreshIndicator } from './refresh-status.js';
 import { isSafeUrl } from './render-guards.js';
 import {
   SEVERITIES,
@@ -34,6 +35,11 @@ let current = null;
 /** @type {Set<string>} */
 const collapsed = new Set();
 let requestGeneration = 0;
+const refreshButton = document.getElementById('refresh');
+const indicator = createRefreshIndicator(
+  refreshButton instanceof HTMLButtonElement ? refreshButton : null,
+  document.getElementById('refresh-status'),
+);
 
 /**
  * @param {string} fieldsetId
@@ -287,6 +293,7 @@ function render() {
 async function refresh(force = false) {
   requestGeneration += 1;
   const generation = requestGeneration;
+  if (force) indicator.setBusy(true);
   try {
     const res = await fetch(force ? '/api/vulns?refresh=1' : '/api/vulns');
     if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
@@ -296,9 +303,12 @@ async function refresh(force = false) {
     current = data;
     render();
     setBanner(vulnsBanner(data));
+    indicator.setFetchedAt(data.fetchedAt, { flash: force });
+    indicator.setBusy(false);
   } catch (err) {
     if (generation !== requestGeneration) return;
     setBanner(`Could not load alerts: ${String(err)}`);
+    indicator.setBusy(false);
   }
 }
 

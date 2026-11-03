@@ -34,6 +34,7 @@ import {
   draftChip,
   stackIndentPx,
 } from './render-guards.js';
+import { createRefreshIndicator } from './refresh-status.js';
 
 /** @typedef {import('../src/types.ts').PrRecord} PrRecord */
 /** @typedef {import('../src/types.ts').StackNode} StackNode */
@@ -618,6 +619,11 @@ let pollTimer = null;
  * request has already started is discarded instead of applied.
  */
 let requestGeneration = 0;
+const refreshButton = document.getElementById('refresh');
+const indicator = createRefreshIndicator(
+  refreshButton instanceof HTMLButtonElement ? refreshButton : null,
+  document.getElementById('refresh-status'),
+);
 
 /**
  * Arms or clears the timer that asks `/api/prs` again, per `nextPollState`'s decision.
@@ -663,6 +669,7 @@ async function refresh(force = false) {
   // only when a give-up banner happens to be showing: whatever was on screen is about to
   // be replaced by this request's own outcome either way.
   if (force) hideBanner();
+  if (force) indicator.setBusy(true);
   requestGeneration += 1;
   const generation = requestGeneration;
   try {
@@ -684,6 +691,10 @@ async function refresh(force = false) {
     // `data.refreshing` check here can't tell "still within budget" from "budget just
     // spent", since the server reports the same `refreshing: true` either way.
     const gaveUp = schedulePoll(data);
+    indicator.setFetchedAt(data.fetchedAt, { flash: force });
+    // Still busy while the server reports a fetch behind the payload and the page keeps
+    // asking for it; settled once the fresh rows land or the poll gives up.
+    indicator.setBusy(data.refreshing && !gaveUp);
     // A stale response is still a 200: the server retained the last good payload
     // instead of failing the request, so it never reaches the catch below. Whether
     // to show a banner, and what it says, is staleBanner's call, not a `data.stale`
@@ -710,6 +721,7 @@ async function refresh(force = false) {
     const status = errorStatus(err);
     const permanent = isPermanentFailure(status);
     const gaveUp = permanent ? false : schedulePoll({ refreshing: true });
+    indicator.setBusy(!permanent && !gaveUp);
     showBanner(
       gaveUp
         ? `Could not refresh: ${String(err)}. Refreshing timed out — click Refresh to try again.`
