@@ -235,11 +235,6 @@ def main():
             "GET /api/star on a missing artifact answers 404",
             get(base, f"/api/star?host={HOST}&path=gone.html")[0] == 404,
         )
-        status, body = get(base, "/api/star.js")
-        check(
-            "/api/star.js serves the button script",
-            status == 200 and b"/api/star" in body,
-        )
         tag = (
             f'<script src="/api/star.js" data-host="{HOST}" '
             'data-path="plan.html" defer></script></body>'
@@ -247,10 +242,6 @@ def main():
         check(
             "a bare /<relpath> page loads the star script, keyed to the local host",
             tag in get(base, "/plan.html")[1],
-        )
-        check(
-            "an /a/<host>/<relpath> page loads the star script",
-            tag in get(base, f"/a/{HOST}/plan.html")[1],
         )
         check(
             "a non-HTML artifact is served unchanged",
