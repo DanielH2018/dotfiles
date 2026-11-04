@@ -7,8 +7,9 @@ Upstream (DanielH2018/Server) tests the index, metadata and /a/<host>/ routing.
 This covers only what the local copy adds: the bare /<relpath> route that keeps
 link-artifact.sh's URLs working, a root laid out the way serve-artifacts.sh lays
 it out (one symlink per host), the loopback default bind, the Host/Origin guard
-on a live server, and the star list's read-only mode. One star round trip also
-runs here, because the port to 3.9 is local and upstream's tests never execute it.
+on a live server, the star list's read-only mode, and the star button added to
+served HTML pages. One star round trip also runs here, because the port to 3.9 is
+local and upstream's tests never execute it.
 """
 
 import http.client
@@ -25,6 +26,7 @@ from _testkit import check, finish
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOST = "testhost"
+PLAN_HTML = "<html><head><title>A plan</title></head><body>plan</body></html>"
 
 
 def get(base, path):
@@ -75,7 +77,7 @@ def main():
     os.makedirs(root)
     os.symlink(tree, os.path.join(root, HOST))
     with open(os.path.join(tree, "plan.html"), "w") as f:
-        f.write("<html><head><title>A plan</title></head><body>plan</body></html>")
+        f.write(PLAN_HTML)
     with open(os.path.join(tree, "sub", "notes.md"), "w", newline="\n") as f:
         f.write("# Notes\n")
     with open(os.path.join(tmp, "secret.txt"), "w") as f:
@@ -123,6 +125,14 @@ def main():
         check(
             "a bare /<relpath> serves the local host's file",
             status == 200 and b"plan" in body,
+        )
+        check(
+            "with no star list, served HTML is the file byte for byte",
+            body == PLAN_HTML.encode(),
+        )
+        check(
+            "with no star list, GET /api/star answers 404",
+            get(base, f"/api/star?host={HOST}&path=plan.html")[0] == 404,
         )
 
         status, body = get(base, "/sub/notes.md")
@@ -215,6 +225,43 @@ def main():
             for a in json.loads(get(base, "/api/index.json")[1])["artifacts"]
         }
         check("the index shows the star", by_name["plan.html"]["starred"] is True)
+
+        status, body = get(base, f"/api/star?host={HOST}&path=plan.html")
+        check(
+            "GET /api/star reports the star and that it can change",
+            status == 200 and json.loads(body) == {"starred": True, "writable": True},
+        )
+        check(
+            "GET /api/star on a missing artifact answers 404",
+            get(base, f"/api/star?host={HOST}&path=gone.html")[0] == 404,
+        )
+        status, body = get(base, "/api/star.js")
+        check(
+            "/api/star.js serves the button script",
+            status == 200 and b"/api/star" in body,
+        )
+        tag = (
+            f'<script src="/api/star.js" data-host="{HOST}" '
+            'data-path="plan.html" defer></script></body>'
+        ).encode()
+        check(
+            "a bare /<relpath> page loads the star script, keyed to the local host",
+            tag in get(base, "/plan.html")[1],
+        )
+        check(
+            "an /a/<host>/<relpath> page loads the star script",
+            tag in get(base, f"/a/{HOST}/plan.html")[1],
+        )
+        check(
+            "a non-HTML artifact is served unchanged",
+            get(base, "/sub/notes.md")[1] == b"# Notes\n",
+        )
+        check(
+            "the tag escapes the path and goes at the end when there is no </body>",
+            artifact_server.add_star_tag(b"<p>x", "h", 'a"b.html')
+            == b'<p>x<script src="/api/star.js" data-host="h" '
+            b'data-path="a&quot;b.html" defer></script>',
+        )
         check(
             "a text/plain star is refused",
             post_star(base, {**star, "starred": False}, ctype="text/plain") == 415,
@@ -237,6 +284,11 @@ def main():
         check(
             "a read-only store still shows the star, without a toggle",
             by_name["plan.html"]["starred"] is True and index["star_writable"] is False,
+        )
+        status, body = get(base, f"/api/star?host={HOST}&path=plan.html")
+        check(
+            "GET /api/star tells the page button a read-only star cannot change",
+            json.loads(body) == {"starred": True, "writable": False},
         )
     finally:
         server.shutdown()
