@@ -32,7 +32,7 @@ taxonomy and the metadata parsers, and `_gui_html.py` holds the page served at `
 Local copy: vendored from DanielH2018/Server ansible/roles/k8s/artifacts/files/ at 977d9bf3ab41
 and started by serve-artifacts.sh on each workstation. The star list (StarStore, POST
 /api/star) was ported from upstream later, in DanielH2018/Server#4430. It differs from upstream
-in six places:
+in seven places:
 
 - It binds ARTIFACTS_BIND, default 127.0.0.1. Upstream binds 0.0.0.0 inside a pod; a laptop
   must never serve these documents to the LAN.
