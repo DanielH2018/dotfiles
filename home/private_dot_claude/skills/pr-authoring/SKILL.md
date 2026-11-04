@@ -179,10 +179,10 @@ Both flags are advisory, and the user confirms before any rewrite.
   7. Push with `git push --force-with-lease` after the user confirms. Never plain
      `--force`, never `--no-verify`.
 
-Once the draft PR is open, run a `pr-curator` agent if one is installed. It posts
-numbered reading-order review comments. Without one, skip the step. Tell it to skip its
-"Add Code Comments" step: that step adds comments that summarise what each block does,
-which `rules/comments.md` forbids. Reading-order notes belong in the review comments.
+Don't run the `lpt-pr-curator` plugin on a PR you open. Its "Add Code Comments" step
+commits comments that summarise each block for the reviewer, which `rules/comments.md`
+forbids, so the work overlay disables the plugin. Anything a reviewer needs to follow the
+diff goes in the PR body or in a review comment on the line, never in a code comment.
 
 ## Handing the body to `gh`
 
