@@ -18,6 +18,8 @@ Adapted from sections 4.8.6 and 7 of Google's Java style guide
 section of Google's Kotlin style guide
 (<https://developer.android.com/kotlin/style-guide#documentation>). The shared rules are in
 `comments.md`.
+A rule below that requires a doc comment or a header applies only where the repo already
+carries one; otherwise match the neighbouring files.
 
 - **Javadoc or KDoc is required on every public class or type,** every public member (and
   `protected` members in Kotlin), and every record component. Two exceptions: a

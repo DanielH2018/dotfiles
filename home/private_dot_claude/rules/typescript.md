@@ -21,6 +21,8 @@ Adapted from the *Comments and documentation* section of Google's TypeScript sty
 sections 4.8 and 7 of Google's JavaScript style guide
 (<https://google.github.io/styleguide/jsguide.html#jsdoc>). The shared rules are in
 `comments.md`. The two guides agree except where marked *JS only* or *TS only*.
+A rule below that requires a doc comment or a header applies only where the repo already
+carries one; otherwise match the neighbouring files.
 
 - **`/** JSDoc */` for users of the code, `//` for the code itself.** Tools read JSDoc;
   only people read `//`. Never write an implementation note in `/** */`.

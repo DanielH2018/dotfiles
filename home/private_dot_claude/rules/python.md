@@ -13,6 +13,8 @@ paths:
 Adapted from section 3.8 of Google's Python style guide
 (<https://google.github.io/styleguide/pyguide.html#s3.8-comments-and-docstrings>). The
 shared rules are in `comments.md`.
+A rule below that requires a doc comment or a header applies only where the repo already
+carries one; otherwise match the neighbouring files.
 
 - **Every docstring is `"""` triple-double-quoted:** a summary line (one line, ends with a
   period, question mark or exclamation mark), a blank line, then the rest at the same indent
@@ -40,6 +42,4 @@ shared rules are in `comments.md`.
   non-obvious line. An inline comment starts at least two spaces after the code, then `#`,
   then one space. Comment only what a later maintainer would get wrong without it, and
   never narrate the code.
-- **Write comments as prose,** with capitalisation and punctuation. A complete sentence is
-  more readable than a fragment.
 - **TODO:** `# TODO: <link> - <explanation>`.

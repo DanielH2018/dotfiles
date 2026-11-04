@@ -15,6 +15,8 @@ paths:
 Adapted from the *Comments* section of Google's shell style guide
 (<https://google.github.io/styleguide/shellguide.html#s4-comments>). The shared rules are in
 `comments.md`.
+A rule below that requires a doc comment or a header applies only where the repo already
+carries one; otherwise match the neighbouring files.
 
 - **Every file opens with a header comment** after the shebang giving a brief overview of
   what it does. Copyright and author lines are optional.

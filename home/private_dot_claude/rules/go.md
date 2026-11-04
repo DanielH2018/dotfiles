@@ -14,6 +14,8 @@ Adapted from Google's Go style guide, the *Commentary* decisions
 (<https://google.github.io/styleguide/go/decisions#commentary>) and the *Documentation*
 best practices (<https://google.github.io/styleguide/go/best-practices#documentation>).
 The shared rules are in `comments.md`.
+A rule below that requires a doc comment or a header applies only where the repo already
+carries one; otherwise match the neighbouring files.
 
 - **Every exported top-level name has a doc comment,** and so does an unexported type or
   function whose behaviour or meaning is not obvious. Write unexported doc comments in the

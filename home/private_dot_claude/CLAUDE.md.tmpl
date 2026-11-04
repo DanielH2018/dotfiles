@@ -94,6 +94,10 @@ Don't dispatch a review subagent on your own initiative to double-check work you
 
 **Evidence before claims.** Say tests pass, the linter is clean or a bug is fixed only when you ran that command in this session and read its output; otherwise say the status is unverified.
 
+## Code comments
+
+The default is no implementation comment. Add one only when a maintainer who has the code, but not the PR or this conversation, would get something wrong without it. Write it for that maintainer, not the reviewer: what changed and why goes in the commit message or the PR, never in the code. One line is the budget. `rules/comments.md` carries the full rules, and these three hold even before it loads.
+
 ## Code review
 
 Ask review agents for **everything** they find, each finding carrying a confidence or severity score; filtering is a separate pass.

@@ -17,10 +17,12 @@ paths:
 
 Google publishes no SQL style guide. These rules apply `comments.md` to migrations and
 queries.
+A rule below that requires a doc comment or a header applies only where the repo already
+carries one; otherwise match the neighbouring files.
 
-- **A migration file opens with a header comment** stating the intent in one sentence, the
-  ticket or PR it belongs to, and whether it is reversible. A destructive step names the
-  expand → migrate → contract phase it is.
+- **A migration file opens with a header comment** stating the intent in one sentence and
+  whether it is reversible. A destructive step names the expand → migrate → contract
+  phase it is.
 - **Comment the choice, not the statement.** `-- CREATE INDEX CONCURRENTLY` restates the
   DDL; `-- CONCURRENTLY: orders is written every second, an ordinary build would block for
   ~40s` is the comment. The same for a lock, a batch size, a `NOT VALID` constraint, or a
