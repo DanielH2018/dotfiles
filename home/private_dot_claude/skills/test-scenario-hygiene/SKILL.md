@@ -47,7 +47,10 @@ tests and has no stake in keeping them. Give it the test names and this rubric.
 - Tests that exercise only a stub, a language built-in, or a library's own behaviour.
 - Assertions on private state, or on how often a stubbed callable ran, rather than on the
   effect. (See *Anti-patterns* below.)
-- Coverage a stronger integration test in the same change already provides.
+- Coverage that an existing test, or a stronger integration test in the same change, already
+  provides. Search the suite for the behaviour, not only the diff.
+- A variant per flag alias, boolean spelling or unrelated option combination, unless the change
+  is specific to that variant.
 - Scaffolding added to drive out one line of implementation.
 - `skip` or `xfail` markers with no explanation.
 
