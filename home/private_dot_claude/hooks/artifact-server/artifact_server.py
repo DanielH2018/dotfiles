@@ -14,12 +14,15 @@ that wrote the file:
     /api/star               POST: star or unstar one artifact (see StarStore)
                             GET ?host=&path=: that artifact's star, and whether it can change
     /api/star.js            the star button each served HTML artifact loads
+    /api/trash              POST: move one local artifact into its tree's .trash/ (see Trash)
+    /api/restore            POST: move one trashed artifact back where it was
     /a/<host>/<relpath>     one artifact, served from ROOT/<host>/<relpath>
     /healthz                liveness
 
-The star list is the one thing the server writes. Every artifact tree stays mounted read-only;
+Upstream writes only the star list, and every artifact tree stays mounted read-only there;
 the list lives in its own file, ARTIFACTS_STARS_FILE, which retention-sweep on each host
-reads so that a starred artifact is never aged out.
+reads so that a starred artifact is never aged out. The local copy also writes the local
+host's own tree when ARTIFACTS_TRASH=1, and only to move a file into `.trash/` or back.
 
 The index is built ON REQUEST and cached against a signature of (path, mtime, size) for
 every file under ROOT. It is not built on a timer: retention-sweep deletes artifacts after
@@ -32,7 +35,7 @@ taxonomy and the metadata parsers, and `_gui_html.py` holds the page served at `
 Local copy: vendored from DanielH2018/Server ansible/roles/k8s/artifacts/files/ at 977d9bf3ab41
 and started by serve-artifacts.sh on each workstation. The star list (StarStore, POST
 /api/star) was ported from upstream later, in DanielH2018/Server#4430. It differs from upstream
-in seven places:
+in eight places:
 
 - It binds ARTIFACTS_BIND, default 127.0.0.1. Upstream binds 0.0.0.0 inside a pod; a laptop
   must never serve these documents to the LAN.
@@ -52,6 +55,8 @@ in seven places:
 - Each HTML artifact is served with one added `<script src="/api/star.js">` tag, so the page
   can be starred where it is read. The file on disk is never changed, so a copied artifact
   carries no button. The tag is added only when a star list is configured.
+- ARTIFACTS_TRASH=1 lets the GUI move a LOCAL_HOST artifact into `<tree>/.trash/` and back
+  (Trash). A file under `.trash/` is indexed with `trashed: true` and its original path.
 """
 
 from __future__ import annotations
@@ -91,13 +96,17 @@ LOCAL_HOST = os.environ.get("ARTIFACTS_LOCAL_HOST", "")
 REPOS_FILE = os.environ.get("ARTIFACTS_REPOS_FILE", "")
 STARS_FILE = os.environ.get("ARTIFACTS_STARS_FILE", "")
 STARS_READONLY = os.environ.get("ARTIFACTS_STARS_READONLY", "") == "1"
+TRASH_ENABLED = os.environ.get("ARTIFACTS_TRASH", "") == "1"
+# Inside each host's tree, so retention-sweep's `~/.claude/artifacts/**/*` row ages trashed
+# files out like any other. Trash touches the mtime, which gives each one 30 days to restore.
+TRASH_DIR = ".trash"
 # Comma-separated origins whose Host and Origin this server answers to (host_guard.py).
 # Behind a reverse proxy, list every name the proxy forwards with its Host intact.
 ALLOWED_ORIGINS = os.environ.get(
     "ARTIFACTS_ALLOWED_ORIGINS", f"http://127.0.0.1:{PORT}"
 )
-# A star request carries one host and one relpath, so anything larger is not one.
-MAX_STAR_BODY = 4096
+# A star or trash request carries one host and one relpath, so anything larger is not one.
+MAX_JSON_BODY = 4096
 
 
 def load_repos(path: str = REPOS_FILE) -> dict[str, str]:
@@ -247,11 +256,82 @@ class StarStore:
                 raise
 
 
+class Trash:
+    """Moves artifacts of one host's tree into `<tree>/.trash/<relpath>` and back.
+
+    A trashed `.html` takes the `.md` of the same stem with it, because the GUI shows the two
+    as one document. Trashing over an earlier trashed copy replaces it; restoring onto a
+    path that holds a file again is refused, so a restore never overwrites.
+
+    Attributes:
+        host: The ROOT/<host> label whose tree this changes; every other host is refused.
+        tree: That tree's real directory.
+    """
+
+    def __init__(self, host: str, tree: Path) -> None:
+        self.host = host
+        self.tree = tree
+        self._bin = tree / TRASH_DIR
+        # Two moves of the same file racing would each see the other's source vanish.
+        self._lock = threading.Lock()
+
+    def _place(self, rel: str, trashed: bool) -> Path:
+        return self._bin / rel if trashed else self.tree / rel
+
+    def with_companion(self, rel: str, trashed: bool) -> list[str]:
+        """`rel`, plus the `.md` beside it when `rel` is an `.html` that has one."""
+        rels = [rel]
+        stem, ext = posixpath.splitext(rel)
+        if ext.lower() in (".html", ".htm"):
+            md = self._place(stem + ".md", trashed)
+            if md.is_file() and not md.is_symlink():
+                rels.append(stem + ".md")
+        return rels
+
+    def move(self, rels: list[str], restore: bool) -> None:
+        """Moves every relpath in `rels` into the trash, or out of it when `restore`.
+
+        Raises:
+            FileExistsError: `restore` is set and a file already sits at a target.
+            OSError: A move failed, or a target directory resolves outside the tree.
+        """
+        with self._lock:
+            pairs = [
+                (self._place(r, restore), self._place(r, not restore)) for r in rels
+            ]
+            if restore:
+                for _, dst in pairs:
+                    if dst.exists() or dst.is_symlink():
+                        raise FileExistsError(f"{dst} already exists")
+            for src, dst in pairs:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                # A `.trash` symlinked out of the tree would carry the file off with it.
+                parent = os.path.realpath(dst.parent)
+                if not (parent + os.sep).startswith(str(self.tree) + os.sep):
+                    raise OSError(f"{dst.parent} resolves outside {self.tree}")
+                os.replace(src, dst)
+                if not restore:
+                    os.utime(dst)
+            if restore:
+                for src, _ in pairs:
+                    self._prune(src.parent)
+
+    def _prune(self, directory: Path) -> None:
+        """Removes the empty directories a restore leaves under the trash."""
+        while directory != self._bin and self._bin in directory.parents:
+            try:
+                directory.rmdir()
+            except OSError:
+                return
+            directory = directory.parent
+
+
 def build_index(
     root: Path,
     known_services: list[str] | None = None,
     repos: dict[str, str] | None = None,
     stars: StarStore | None = None,
+    trash_host: str = "",
 ) -> dict:
     """Scans `root` and builds the searchable index of every artifact under it.
 
@@ -267,27 +347,32 @@ def build_index(
             load_repos() when None.
         stars: The star list each entry's `starred` flag reads; None stars nothing and
             reports starring as unavailable.
+        trash_host: The host whose artifacts the GUI may trash; empty turns trash off.
 
     Returns:
         The index dict, with keys `generated`, `count`, `hosts`, `repos`, `categories`,
-        `statuses`, `star_writable` and `artifacts`.
+        `statuses`, `star_writable`, `trash_host` and `artifacts`. An artifact under a
+        host's `.trash/` carries `trashed: true` and the relpath it is restored to.
     """
     known = load_known_services() if known_services is None else known_services
     repos = load_repos() if repos is None else repos
     starred = stars.load() if stars else set()
     entries = []
     for host, path, st in scan(root):
-        rel = path.relative_to(root / host).as_posix()
+        stored = path.relative_to(root / host).as_posix()
+        trashed = stored.startswith(TRASH_DIR + "/")
+        rel = stored[len(TRASH_DIR) + 1 :] if trashed else stored
         suffix = path.suffix.lower()
         entry = {
             "host": host,
             "name": path.name,
             "path": rel,
-            "url": f"/a/{host}/{rel}",
+            "url": f"/a/{host}/{stored}",
             "kind": suffix.lstrip("."),
             "size": st.st_size,
             "mtime": datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat(),
-            "starred": f"{host}/{rel}" in starred,
+            "starred": not trashed and f"{host}/{rel}" in starred,
+            "trashed": trashed,
         }
         if host == LOCAL_HOST and rel in repos:
             entry["repo"] = repos[rel]
@@ -318,6 +403,7 @@ def build_index(
         "categories": sorted({e["category"] for e in entries if e.get("category")}),
         "statuses": sorted({e["status"] for e in entries if e.get("status")}),
         "star_writable": bool(stars and stars.writable),
+        "trash_host": trash_host,
         "artifacts": entries,
     }
 
@@ -325,9 +411,12 @@ def build_index(
 class IndexCache:
     """Rebuilds only when a file under root, or the star list, was added, removed, or changed."""
 
-    def __init__(self, root: Path, stars: StarStore | None = None) -> None:
+    def __init__(
+        self, root: Path, stars: StarStore | None = None, trash_host: str = ""
+    ) -> None:
         self.root = root
         self.stars = stars
+        self.trash_host = trash_host
         self._signature: tuple | None = None
         self._index: dict | None = None
 
@@ -349,7 +438,9 @@ class IndexCache:
     def get(self) -> dict:
         sig = self.signature()
         if sig != self._signature or self._index is None:
-            self._index = build_index(self.root, stars=self.stars)
+            self._index = build_index(
+                self.root, stars=self.stars, trash_host=self.trash_host
+            )
             self._signature = sig
         return self._index
 
@@ -402,6 +493,7 @@ class Handler(BaseHTTPRequestHandler):
     Attributes:
         cache: The shared IndexCache instance serving /api/index.json.
         stars: The star list POST /api/star changes; None turns starring off.
+        trash: The tree POST /api/trash and /api/restore change; None turns trash off.
         allowed_origins: The origins every request's Host and Origin must match; empty
             refuses every request.
     """
@@ -409,6 +501,7 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "artifacts/1.0"
     cache: IndexCache = None  # type: ignore[assignment]
     stars: StarStore | None = None
+    trash: Trash | None = None
     allowed_origins: tuple[Allowed, ...] = ()
 
     # `format` shadows the builtin, and is the parameter name BaseHTTPRequestHandler.log_message
@@ -479,39 +572,56 @@ class Handler(BaseHTTPRequestHandler):
         self._send(404, b"not found\n", "text/plain; charset=utf-8")
 
     def do_POST(self) -> None:
-        """Stars or unstars one artifact from a `{"host", "path", "starred"}` JSON body.
+        """Routes a POST to the star toggle or to trash and restore."""
+        route = unquote(urlparse(self.path).path)
+        if route == "/api/star":
+            self._post_star()
+        elif route in ("/api/trash", "/api/restore"):
+            self._post_trash(restore=route == "/api/restore")
+        else:
+            self._send(404, b"not found\n", "text/plain; charset=utf-8")
 
-        Answers 200 with the stored state, 403 when starring is off, 415 for a non-JSON
-        body, 400 for a malformed one, and 404 when host/path names no artifact.
-        """
+    def _read_json(self) -> dict | None:
+        """Reads a JSON object body, or answers 415/400 and returns None."""
         text = "text/plain; charset=utf-8"
-        if unquote(urlparse(self.path).path) != "/api/star":
-            self._send(404, b"not found\n", text)
-            return
-        stars = self.stars
-        if stars is None or not stars.writable:
-            self._send(403, b"starring is not enabled on this server\n", text)
-            return
         # The JSON content type is the CSRF defence. Another origin can POST a form or
         # text/plain without asking, but a JSON body needs a CORS preflight, which this
         # server never answers, so the browser never sends the request.
         ctype = self.headers.get("Content-Type", "").split(";")[0].strip().lower()
         if ctype != "application/json":
             self._send(415, b"send application/json\n", text)
-            return
+            return None
         try:
             length = int(self.headers.get("Content-Length", ""))
         except ValueError:
             length = 0
-        if not 0 < length <= MAX_STAR_BODY:
+        if not 0 < length <= MAX_JSON_BODY:
             self._send(400, b"bad Content-Length\n", text)
-            return
+            return None
         try:
             payload = json.loads(self.rfile.read(length))
-            host, rel, starred = payload["host"], payload["path"], payload["starred"]
-        except (ValueError, KeyError, TypeError):
-            self._send(400, b"expected {host, path, starred}\n", text)
+        except ValueError:
+            payload = None
+        if not isinstance(payload, dict):
+            self._send(400, b"expected a JSON object\n", text)
+            return None
+        return payload
+
+    def _post_star(self) -> None:
+        """Stars or unstars one artifact from a `{"host", "path", "starred"}` JSON body.
+
+        Answers 200 with the stored state, 403 when starring is off, 415 for a non-JSON
+        body, 400 for a malformed one, and 404 when host/path names no artifact.
+        """
+        text = "text/plain; charset=utf-8"
+        stars = self.stars
+        if stars is None or not stars.writable:
+            self._send(403, b"starring is not enabled on this server\n", text)
             return
+        payload = self._read_json()
+        if payload is None:
+            return
+        host, rel, starred = (payload.get(k) for k in ("host", "path", "starred"))
         if not (
             isinstance(host, str) and isinstance(rel, str) and isinstance(starred, bool)
         ):
@@ -529,11 +639,85 @@ class Handler(BaseHTTPRequestHandler):
         body = json.dumps({"host": host, "path": rel, "starred": starred})
         self._send(200, body.encode("utf-8"), "application/json")
 
+    def _post_trash(self, restore: bool) -> None:
+        """Trashes or restores one artifact, and its `.md` companion, from `{"host", "path"}`.
+
+        `path` is always the artifact's live relpath, never its `.trash/` one. Answers 200
+        with the relpaths moved, 403 when trash is off, 404 when the pair names no artifact
+        that may move, 409 for a starred artifact or a restore onto an existing file, and
+        415/400 for a bad body.
+        """
+        text = "text/plain; charset=utf-8"
+        trash = self.trash
+        if trash is None:
+            self._send(403, b"trash is not enabled on this server\n", text)
+            return
+        payload = self._read_json()
+        if payload is None:
+            return
+        host, rel = payload.get("host"), payload.get("path")
+        if not (isinstance(host, str) and isinstance(rel, str)):
+            self._send(400, b"expected {host, path}\n", text)
+            return
+        rel = self._trash_rel(trash, host, rel, trashed=restore)
+        if rel is None:
+            self._send(404, b"no such artifact\n", text)
+            return
+        rels = trash.with_companion(rel, trashed=restore)
+        if not restore and self.stars is not None:
+            try:
+                starred = self.stars.load(strict=True)
+            except OSError as err:
+                self._send(500, f"could not read the star list: {err}\n".encode(), text)
+                return
+            if any(f"{host}/{r}" in starred for r in rels):
+                self._send(409, b"starred: unstar it before trashing it\n", text)
+                return
+        try:
+            trash.move(rels, restore)
+        except FileExistsError:
+            self._send(409, b"a file already exists where it would be restored\n", text)
+            return
+        except OSError as err:
+            self._send(500, f"could not move the artifact: {err}\n".encode(), text)
+            return
+        body = json.dumps(
+            {"host": host, "path": rel, "trashed": not restore, "moved": rels}
+        )
+        self._send(200, body.encode("utf-8"), "application/json")
+
     def _star_rel(self, host: str, rel: str) -> str | None:
         """Normalises an artifact's relpath for the star list, or None when it names none."""
         rel = posixpath.normpath(rel).lstrip("/")
-        # A newline would split one key into two lines of the star file.
-        if "\n" in rel or "\r" in rel or safe_path(self.cache.root, host, rel) is None:
+        # A newline would split one key into two lines of the star file. A trashed file is
+        # not starrable, or the star would keep it past the sweep that should empty it.
+        if (
+            "\n" in rel
+            or "\r" in rel
+            or rel.split("/")[0] == TRASH_DIR
+            or safe_path(self.cache.root, host, rel) is None
+        ):
+            return None
+        return rel
+
+    def _trash_rel(
+        self, trash: Trash, host: str, rel: str, trashed: bool
+    ) -> str | None:
+        """Normalises a live relpath that may be trashed (or restored), or returns None."""
+        rel = posixpath.normpath(rel).lstrip("/")
+        if host != trash.host or "\n" in rel or "\r" in rel:
+            return None
+        if rel.split("/")[0] in (TRASH_DIR, ".", ".."):
+            return None
+        # Executables and anything else outside the index are kept on purpose.
+        if posixpath.splitext(rel)[1].lower() not in INDEXABLE:
+            return None
+        stored = f"{TRASH_DIR}/{rel}" if trashed else rel
+        # safe_path follows a symlink to its target, and moving the target would leave the
+        # link dangling, so a link is refused before it resolves.
+        if os.path.islink(os.path.join(self.cache.root, host, stored)):
+            return None
+        if safe_path(self.cache.root, host, stored) is None:
             return None
         return rel
 
@@ -590,7 +774,12 @@ def main() -> None:
         raise SystemExit(f"ARTIFACTS_ALLOWED_ORIGINS: {err}") from err
     if STARS_FILE:
         Handler.stars = StarStore(Path(STARS_FILE), writable=not STARS_READONLY)
-    Handler.cache = IndexCache(ROOT, Handler.stars)
+    trash_host = ""
+    if TRASH_ENABLED and LOCAL_HOST:
+        tree = Path(os.path.realpath(ROOT / LOCAL_HOST))
+        Handler.trash = Trash(LOCAL_HOST, tree)
+        trash_host = LOCAL_HOST
+    Handler.cache = IndexCache(ROOT, Handler.stars, trash_host)
     server = ThreadingHTTPServer((BIND, PORT), Handler)
     print(
         f"serving {ROOT} on :{PORT} at {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True

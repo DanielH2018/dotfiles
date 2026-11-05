@@ -9,7 +9,8 @@ link-artifact.sh's URLs working, a root laid out the way serve-artifacts.sh lays
 it out (one symlink per host), the loopback default bind, the Host/Origin guard
 on a live server, the star list's read-only mode, and the star button added to
 served HTML pages. One star round trip also runs here, because the port to 3.9 is
-local and upstream's tests never execute it.
+local and upstream's tests never execute it. So do trash and restore, which only the
+local copy has.
 """
 
 import http.client
@@ -54,19 +55,24 @@ def status_with(port, method, path, headers):
         conn.close()
 
 
-def post_star(base, payload, ctype="application/json"):
-    """Return the status of a POST /api/star, without raising on an HTTP error."""
+def post(base, route, payload, ctype="application/json"):
+    """Return (status, JSON body or None) for a POST, without raising on HTTP errors."""
     req = urllib.request.Request(
-        base + "/api/star",
+        base + route,
         data=json.dumps(payload).encode(),
         headers={"Content-Type": ctype},
         method="POST",
     )
     try:
         with urllib.request.urlopen(req) as resp:
-            return resp.status
+            return resp.status, json.loads(resp.read())
     except urllib.error.HTTPError as err:
-        return err.code
+        return err.code, None
+
+
+def post_star(base, payload, ctype="application/json"):
+    """Return the status of a POST /api/star, without raising on an HTTP error."""
+    return post(base, "/api/star", payload, ctype)[0]
 
 
 def main():
@@ -280,6 +286,107 @@ def main():
         check(
             "GET /api/star tells the page button a read-only star cannot change",
             json.loads(body) == {"starred": True, "writable": False},
+        )
+
+        old = {"host": HOST, "path": "sub/old.html"}
+        for name in ("sub/old.html", "sub/old.md"):
+            with open(os.path.join(tree, name), "w") as f:
+                f.write("<p>old</p>")
+        os.symlink(os.path.join(tree, "plan.html"), os.path.join(tree, "link.html"))
+        check(
+            "with trash off, POST /api/trash answers 403",
+            post(base, "/api/trash", old)[0] == 403,
+        )
+        artifact_server.Handler.trash = artifact_server.Trash(
+            HOST, artifact_server.Path(os.path.realpath(tree))
+        )
+        artifact_server.Handler.cache = artifact_server.IndexCache(
+            artifact_server.ROOT, artifact_server.Handler.stars, HOST
+        )
+        check(
+            "the index names the host whose artifacts can be trashed",
+            json.loads(get(base, "/api/index.json")[1])["trash_host"] == HOST,
+        )
+        check(
+            "a text/plain trash is refused",
+            post(base, "/api/trash", old, ctype="text/plain")[0] == 415,
+        )
+        check(
+            "a rebound hostname cannot reach the trash endpoint",
+            status_with(port, "POST", "/api/trash", {"Host": f"evil.example:{port}"})
+            == 403,
+        )
+        refused = {
+            "a starred artifact": ({"host": HOST, "path": "plan.html"}, 409),
+            "another host's artifact": ({"host": "other", "path": "sub/old.html"}, 404),
+            "a path out of the tree": ({"host": HOST, "path": "../secret.txt"}, 404),
+            "a symlink": ({"host": HOST, "path": "link.html"}, 404),
+            "a path already in the trash": ({"host": HOST, "path": ".trash/x"}, 404),
+        }
+        for what, (payload, want) in refused.items():
+            check(
+                f"trashing {what} answers {want}",
+                post(base, "/api/trash", payload)[0] == want,
+            )
+        check(
+            "the starred artifact is still in place",
+            os.path.isfile(os.path.join(tree, "plan.html")),
+        )
+
+        os.utime(os.path.join(tree, "sub/old.html"), (0, 0))
+        status, body = post(base, "/api/trash", old)
+        check(
+            "trashing restarts the file's retention clock",
+            os.path.getmtime(os.path.join(tree, ".trash", "sub/old.html")) > 0,
+        )
+        check(
+            "trashing an .html moves its .md companion with it",
+            status == 200 and body["moved"] == ["sub/old.html", "sub/old.md"],
+        )
+        check(
+            "the trashed files sit under .trash/ and no longer in place",
+            all(
+                os.path.isfile(os.path.join(tree, ".trash", n))
+                for n in ("sub/old.html", "sub/old.md")
+            )
+            and not os.path.exists(os.path.join(tree, "sub/old.html")),
+        )
+        by_url = {
+            a["url"]: a
+            for a in json.loads(get(base, "/api/index.json")[1])["artifacts"]
+        }
+        entry = by_url.get(f"/a/{HOST}/.trash/sub/old.html", {})
+        check(
+            "the index lists a trashed artifact with the path it restores to",
+            entry.get("trashed") is True and entry.get("path") == "sub/old.html",
+        )
+        check(
+            "a trashed artifact cannot be starred",
+            get(base, f"/api/star?host={HOST}&path=.trash/sub/old.html")[0] == 404,
+        )
+
+        with open(os.path.join(tree, "sub/old.html"), "w") as f:
+            f.write("<p>new</p>")
+        check(
+            "restoring onto a file written since answers 409",
+            post(base, "/api/restore", old)[0] == 409,
+        )
+        with open(os.path.join(tree, "sub/old.html")) as f:
+            check(
+                "the refused restore leaves the new file alone",
+                f.read() == "<p>new</p>",
+            )
+        os.remove(os.path.join(tree, "sub/old.html"))
+        status, body = post(base, "/api/restore", old)
+        check(
+            "restore moves both files back",
+            status == 200
+            and body["moved"] == ["sub/old.html", "sub/old.md"]
+            and os.path.isfile(os.path.join(tree, "sub/old.md")),
+        )
+        check(
+            "restore leaves no empty directory under the trash",
+            os.listdir(os.path.join(tree, ".trash")) == [],
         )
     finally:
         server.shutdown()

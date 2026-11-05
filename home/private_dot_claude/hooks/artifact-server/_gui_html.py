@@ -53,6 +53,15 @@ color:var(--crust)}
 .star{position:absolute;top:10px;right:10px;background:none;border:0;padding:4px 6px;
 font-size:18px;line-height:1;color:var(--overlay0);cursor:pointer}
 button.star:hover,.star.on{color:var(--yellow)}span.star{cursor:default}
+.trash{position:absolute;top:40px;right:10px;background:none;border:0;padding:4px 6px;
+line-height:0;color:var(--overlay0);cursor:pointer}
+.trash:hover{color:var(--red)}.trash svg{width:16px;height:16px}
+.restore{position:absolute;top:10px;right:10px;background:var(--crust);color:var(--text);
+border:1px solid var(--surface1);border-radius:6px;padding:4px 9px;font-size:12px;cursor:pointer}
+.restore:hover{border-color:var(--green);color:var(--green)}
+.row.trashed .card{border-left-color:var(--red);opacity:.75}.row.trashed .card{padding-right:96px}
+footer button{background:none;border:0;color:var(--blue);cursor:pointer;font:inherit;
+text-decoration:underline;padding:0 0 0 6px}
 mark{background:var(--yellow);color:var(--crust);border-radius:2px}
 .empty{color:var(--overlay0);padding:40px 0;text-align:center}
 footer{color:var(--overlay0);font-size:12px;padding:0 24px 30px;max-width:1100px;margin:0 auto}
@@ -74,6 +83,8 @@ footer{color:var(--overlay0);font-size:12px;padding:0 24px 30px;max-width:1100px
     </select>
     <label class="chk"><input type="checkbox" id="starred"> starred only</label>
     <label class="chk"><input type="checkbox" id="dupes"> show .md duplicates</label>
+    <label class="chk" id="trashbox" hidden><input type="checkbox" id="trashed"> trash
+      <span id="trashcount"></span></label>
   </div>
 </header>
 <main><div id="list"></div></main>
@@ -122,7 +133,10 @@ function render() {
   const sort = $("sort").value;
   const dupes = $("dupes").checked;
   const starredOnly = $("starred").checked;
-  let items = DATA.artifacts.filter(a =>
+  const trashView = $("trashed").checked;
+  const live = DATA.artifacts.filter(a => !a.trashed);
+  $("trashcount").textContent = "(" + (DATA.artifacts.length - live.length) + ")";
+  let items = DATA.artifacts.filter(a => !!a.trashed === trashView &&
     (!host || a.host === host) && (!repo || a.repo === repo) &&
     (!category || a.category === category) &&
     (!status || a.status === status) && (!starredOnly || a.starred) &&
@@ -131,7 +145,8 @@ function render() {
            : sort === "repo" ? ((x.repo || "\uffff") + x.title).localeCompare((y.repo || "\uffff") + y.title)
            : sort === "host" ? (x.host + x.title).localeCompare(y.host + y.title)
            : y.mtime.localeCompare(x.mtime));
-  $("count").textContent = items.length + " of " + DATA.artifacts.length + " artifacts";
+  $("count").textContent = items.length + " of " + (trashView
+    ? (DATA.artifacts.length - live.length) + " trashed artifacts" : live.length + " artifacts");
   $("list").innerHTML = items.length ? items.map(a => {
     const slices = a.slices ? ["done", "active", "planned"].filter(k => a.slices[k])
       .map(k => `<span class="chip chip-${k}">${a.slices[k]} ${k}</span>`).join(" ") : "";
@@ -155,7 +170,18 @@ function render() {
            title="${a.starred ? "Starred: never pruned. Click to unstar." : "Star to keep it from being pruned"}"
            >${a.starred ? "★" : "☆"}</button>`
       : a.starred ? `<span class="star on" title="Starred: never pruned">★</span>` : "";
-    return `<div class="row"><a class="card" href="${esc(a.url)}" target="_blank" rel="noopener">
+    // Only this host's own tree can be trashed, and a starred artifact is kept on purpose.
+    const canTrash = DATA.trash_host && a.host === DATA.trash_host;
+    const ids = `data-host="${esc(a.host)}" data-path="${esc(a.path)}"`;
+    const bin = !canTrash ? ""
+      : a.trashed ? `<button type="button" class="restore" ${ids}
+           title="Move it back to ${esc(a.path)}">Restore</button>`
+      : a.starred ? ""
+      : `<button type="button" class="trash" ${ids} aria-label="Move to trash"
+           title="Move to trash: restorable for 30 days"><svg viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+           aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg></button>`;
+    return `<div class="row${a.trashed ? " trashed" : ""}"><a class="card" href="${esc(a.url)}" target="_blank" rel="noopener">
       <h2>${highlight(a.title, terms)}</h2>
       ${a.summary ? `<p>${highlight(a.summary, terms)}</p>` : ""}
       <div class="meta">
@@ -167,7 +193,7 @@ function render() {
         <span>${fmtSize(a.size)}</span>
         ${slices}
       </div>
-      ${svcs || tags ? `<div class="meta tagrow">${svcs} ${tags}</div>` : ""}</a>${star}</div>`;
+      ${svcs || tags ? `<div class="meta tagrow">${svcs} ${tags}</div>` : ""}</a>${a.trashed ? "" : star}${bin}</div>`;
   }).join("") : `<div class="empty">No artifact matches that search.</div>`;
 }
 async function toggleStar(btn) {
@@ -186,26 +212,65 @@ async function toggleStar(btn) {
     $("foot").textContent = "Could not change the star on " + a.name + ": " + err.message;
   }
 }
+// Trash and restore change paths and URLs, so both reload the index rather than patch it.
+async function move(host, path, restore) {
+  const res = await fetch(restore ? "/api/restore" : "/api/trash", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({host, path})});
+  if (!res.ok) throw new Error(res.status + " " + (await res.text()).trim());
+  return res.json();
+}
+async function trashOrRestore(btn, restore) {
+  const {host, path} = btn.dataset;
+  btn.disabled = true;
+  try {
+    const done = await move(host, path, restore);
+    await load();
+    const foot = $("foot");
+    foot.textContent = (restore ? "Restored " : "Moved to trash: ") + done.moved.join(", ") + ".";
+    if (!restore) {
+      const undo = document.createElement("button");
+      undo.type = "button";
+      undo.textContent = "Undo";
+      undo.addEventListener("click", async () => {
+        undo.disabled = true;
+        try { await move(host, path, true); await load(); }
+        catch (err) { foot.textContent = "Could not restore " + path + ": " + err.message; }
+      });
+      foot.append(undo);
+    }
+  } catch (err) {
+    btn.disabled = false;
+    $("foot").textContent = "Could not " + (restore ? "restore " : "trash ") + path + ": " + err.message;
+  }
+}
 async function load() {
   const res = await fetch("/api/index.json", {cache: "no-store"});
   DATA = await res.json();
+  // Keeps the chosen filter across a reload, unless the reload dropped its last artifact.
   const fill = (id, label, values) => {
+    const keep = $(id).value;
     $(id).innerHTML = `<option value="">${label}</option>` +
       (values || []).map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join("");
+    if ((values || []).includes(keep)) $(id).value = keep;
   };
   fill("host", "All hosts", DATA.hosts);
   fill("repo", "All repositories", DATA.repos);
   fill("category", "All categories", DATA.categories);
   fill("status", "Any status", DATA.statuses);
+  $("trashbox").hidden = !DATA.trash_host;
   $("foot").textContent = "Indexed " + fmtDate(DATA.generated) +
-    " - starred artifacts are kept; the rest are pruned 30 days after their last update.";
+    " - starred artifacts are kept; the rest are pruned 30 days after their last update," +
+    " and trashed ones 30 days after they were trashed.";
   render();
 }
-["q", "host", "repo", "category", "status", "sort", "starred", "dupes"].forEach(
+["q", "host", "repo", "category", "status", "sort", "starred", "dupes", "trashed"].forEach(
   id => $(id).addEventListener("input", render));
 $("list").addEventListener("click", e => {
-  const btn = e.target.closest("button.star");
-  if (btn) toggleStar(btn);
+  const btn = e.target.closest("button.star, button.trash, button.restore");
+  if (!btn) return;
+  if (btn.classList.contains("star")) toggleStar(btn);
+  else trashOrRestore(btn, btn.classList.contains("restore"));
 });
 load();
 </script>
