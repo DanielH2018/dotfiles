@@ -137,6 +137,27 @@ test('pr comments reads review or issue comments through the REST path', { skip 
     ['api', '--paginate', '--', 'repos/{owner}/{repo}/issues/7/comments']);
 });
 
+test('run logs and run view pass --attempt through to gh run view', { skip }, () => {
+  assert.deepStrictEqual(
+    argvOf(['run', 'logs', '42', '-R', 'o/r', '--attempt', '1', '--failed']),
+    ['run', 'view', '--repo=o/r', '--attempt=1', '--log-failed', '--', '42']);
+  assert.deepStrictEqual(
+    argvOf(['run', 'logs', '42', '--job', '7', '-a', '2']),
+    ['run', 'view', '--job=7', '--attempt=2', '--log', '--', '42']);
+  assert.deepStrictEqual(
+    argvOf(['run', 'view', '42', '--attempt', '1', '--json', 'attempt']),
+    ['run', 'view', '--attempt=1', '--json=attempt', '--', '42']);
+});
+
+test('run logs refuses an --attempt that is not a positive number without starting gh', { skip }, () => {
+  for (const attempt of ['0', '1x', '--web']) {
+    const r = ghread(['run', 'logs', '42', `--attempt=${attempt}`]);
+    assert.strictEqual(r.code, 2, `${attempt}: ${r.stderr}`);
+    assert.match(r.stderr, /refusing --attempt/, attempt);
+    assert.strictEqual(r.stdout, '', `${attempt} reached gh`);
+  }
+});
+
 test('refuses writes, graphql and flag injection without starting gh', { skip }, () => {
   const refused = [
     ['api', 'repos/o/r/issues', '-X', 'POST'],

@@ -36,6 +36,7 @@ constants and validated values:
   ghread pr view 123 -R owner/repo --json title,state
   ghread pr comments 123 -R owner/repo --kind issue
   ghread run logs 4567 --failed --out /tmp/run.log
+  ghread run logs 4567 --attempt 1 --failed
   ghread api repos/owner/repo/pulls --paginate --jq '.[].number'
   ghread api -X GET search/issues -f q='repo:owner/repo is:open' -f per_page=10
   ghread graphql -f query='{ repository(owner:"o", name:"r") { stargazerCount } }'
@@ -78,6 +79,8 @@ _SELECTOR = re.compile(
     r"|https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(?:pull|issues)/[0-9]+)$"
 )
 _NUMBER = re.compile(r"^[0-9]+$")
+# gh reads `--attempt=0` as "the latest attempt", the opposite of naming one.
+_ATTEMPT = re.compile(r"^[1-9][0-9]*$")
 _REPO = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-]+$")
 _FIELDS = re.compile(r"^[A-Za-z]+(?:,[A-Za-z]+)*$")
 # An api path: relative or rooted, gh's {owner}/{repo}/{branch} placeholders,
@@ -290,6 +293,8 @@ def build_run(ns) -> list[str]:
     argv = ["run", "view"] + _repo_flag(ns)
     if ns.job:
         argv.append(f"--job={_check(_NUMBER, ns.job, '--job')}")
+    if ns.attempt is not None:
+        argv.append(f"--attempt={_check(_ATTEMPT, ns.attempt, '--attempt')}")
     if ns.verb == "logs":
         argv.append("--log-failed" if ns.failed else "--log")
     else:
@@ -479,9 +484,11 @@ def _parser() -> argparse.ArgumentParser:
     p = run.add_parser("view", parents=[common, repo, json_])
     p.add_argument("run_id")
     p.add_argument("--job")
+    p.add_argument("-a", "--attempt", help="an attempt number (default: the latest)")
     p = run.add_parser("logs", parents=[common, repo], help="gh run view --log")
     p.add_argument("run_id")
     p.add_argument("--job")
+    p.add_argument("-a", "--attempt", help="an attempt number (default: the latest)")
     p.add_argument("--failed", action="store_true", help="only the failed steps")
 
     p = top.add_parser("api", parents=[common], help="GET one REST path")
