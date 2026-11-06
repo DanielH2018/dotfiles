@@ -52,9 +52,6 @@ in eight places:
   DNS-rebound page cannot read a loopback server (host_guard.py). The default is
   http://127.0.0.1:<ARTIFACTS_PORT>, which `localhost` also matches. The pod would need
   its public and LAN names listed there, and its probes a matching Host header.
-- Each HTML artifact is served with one added `<script src="/api/star.js">` tag, so the page
-  can be starred where it is read. The file on disk is never changed, so a copied artifact
-  carries no button. The tag is added only when a star list is configured.
 - ARTIFACTS_TRASH=1 lets the GUI move a LOCAL_HOST artifact into `<tree>/.trash/` and back
   (Trash). A file under `.trash/` is indexed with `trashed: true` and its original path.
 """
@@ -460,8 +457,8 @@ def safe_path(root: Path, host: str, rel: str) -> Path | None:
     """
     if not host or "/" in host or host in (".", ".."):
         return None
-    base = os.path.realpath(os.path.join(root, host))
     try:
+        base = os.path.realpath(os.path.join(root, host))
         resolved = os.path.realpath(os.path.join(base, rel))
     except (OSError, ValueError):
         return None

@@ -241,6 +241,14 @@ def main():
             "GET /api/star on a missing artifact answers 404",
             get(base, f"/api/star?host={HOST}&path=gone.html")[0] == 404,
         )
+        check(
+            "GET /api/star with a NUL in the host answers 404",
+            get(base, "/api/star?host=a%00b&path=x.html")[0] == 404,
+        )
+        check(
+            "a NUL host on the /a/ route answers 404",
+            get(base, "/a/%00/x")[0] == 404,
+        )
         tag = (
             f'<script src="/api/star.js" data-host="{HOST}" '
             'data-path="plan.html" defer></script></body>'
