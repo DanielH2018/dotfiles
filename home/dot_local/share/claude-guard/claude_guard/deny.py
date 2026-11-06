@@ -874,8 +874,10 @@ def _runs_disk_tool(command: str) -> bool:
 # DECIDED (2026-10-20, approved): the committed templates `.env.example`, `.env.sample` and
 # `.env.template` hold placeholder keys, so the second lookahead exempts exactly those
 # words. It applies only when no further path character follows, so `.env.example.local`,
-# `.env.examples` and `.env.example/x` are still refused. A symlink named like a template
-# is not resolved here; the sandbox resolves it and refuses a read that lands on a `.env`.
+# `.env.examples` and `.env.example/x` are still refused. The exemption is exact-case, as in
+# protect-secrets.sh, so `.env.EXAMPLE` is refused like any other `.env.*`. A symlink
+# named like a template is not resolved here; the sandbox resolves it and refuses a read that
+# lands on a `.env`.
 # DECIDED (2026-10-24, approved): a Jinja template named `<name>.env.j2` is tracked source
 # that renders to an env file at deploy, so the third lookahead exempts it. The Read tool
 # already allows it, since its globs only match a basename that starts with `.env`. A bare

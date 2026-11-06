@@ -48,9 +48,13 @@ def load() -> list[dict]:
 
 
 def deny_pattern(entries: list[dict] | None = None) -> str:
-    """Every entry's `bash_re` fragments as one alternation group, for `deny.SECRET_PATHS`."""
+    """Every entry's `bash_re` fragments as one case-insensitive group, for `deny.SECRET_PATHS`.
+
+    APFS is case-insensitive, so `~/.AWS/credentials` opens the same file as its lowercase
+    form. A fragment that must keep exact case scopes it with `(?-i:…)`.
+    """
     entries = load() if entries is None else entries
-    return "(" + "|".join(f for e in entries for f in e["bash_re"]) + ")"
+    return "(?i:" + "|".join(f for e in entries for f in e["bash_re"]) + ")"
 
 
 def hook_block(entries: list[dict]) -> str:

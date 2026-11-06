@@ -839,6 +839,9 @@ READS_A_REAL_ENV = [
     "cat .env.template-prod",
     "head .env.example .env",
     "cat .env.example .env.local",
+    # the template exemption is exact-case, as in protect-secrets.sh
+    "cat .env.EXAMPLE",
+    "cat docker/.env.Sample",
 ]
 
 
@@ -848,6 +851,21 @@ def test_reading_a_committed_env_template_is_allowed():
 
 def test_reading_any_other_env_file_is_still_refused():
     assert kinds(READS_A_REAL_ENV) == ["deny"] * len(READS_A_REAL_ENV)
+
+
+# APFS is case-insensitive, so each of these opens the same file as its lowercase form.
+READS_A_CASE_VARIANT = [
+    "cat ~/.AWS/credentials",
+    "cat proj/.ENV",
+    "cat server.PEM",
+    "head ~/.SSH/ID_RSA",
+    "cat ~/.Kube/Config",
+    "grep token ~/.Claude.json",
+]
+
+
+def test_reading_a_case_variant_of_a_secret_path_is_refused():
+    assert rules(READS_A_CASE_VARIANT) == ["secret-read"] * len(READS_A_CASE_VARIANT)
 
 
 def test_naming_the_environment_alone_is_not_a_secret_read():
