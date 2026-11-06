@@ -41,6 +41,8 @@ function fixtureHome() {
   fs.mkdirSync(path.join(home, 'elsewhere-git'));
   fs.mkdirSync(path.join(repos, 'symlinked'));
   fs.symlinkSync(path.join(home, 'elsewhere-git'), path.join(repos, 'symlinked', '.git'));
+  // The vault, which the scheduled jobs commit to from outside ~/Repositories.
+  fs.mkdirSync(path.join(home, 'Documents', 'My_Vault', '.git'), { recursive: true });
   return home;
 }
 
@@ -75,6 +77,10 @@ test('allowWrite lists a repo whose .git is a directory', { skip }, () => {
   assert.ok(filesystem().allowWrite.includes(path.join(home, 'Repositories', 'plain', '.git')));
 });
 
+test('allowWrite lists the vault .git', { skip }, () => {
+  assert.ok(filesystem().allowWrite.includes(path.join(home, 'Documents', 'My_Vault', '.git')));
+});
+
 test('allowWrite skips a .git pointer file and a symlinked .git', { skip }, () => {
   // A writable pointer file can be aimed at a planted git dir that carries its own hooks.
   const listed = filesystem().allowWrite.filter((p) => p.startsWith(path.join(home, 'Repositories')));
@@ -92,6 +98,7 @@ test('hooks, config and the files git reads as config are denied in each writabl
     path.join(home, 'Repositories', 'plain', '.git'),
     path.join(home, '.local', 'share', 'chezmoi', '.git'),
     path.join(home, 'work-laptop-config', '.git'),
+    path.join(home, 'Documents', 'My_Vault', '.git'),
   ];
   const targets = [
     'hooks/pre-commit',

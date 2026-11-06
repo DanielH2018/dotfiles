@@ -1154,8 +1154,10 @@
 
              Granting a git dir is only safe with the denyWrite entries below: they stop a
              sandboxed process from planting a hook or a config line that git then runs
-             outside the sandbox. */}}
-        {{- range $git := glob (joinPath .chezmoi.homeDir "Repositories/*/.git") }}
+             outside the sandbox.
+
+             The vault path is run-skill.sh's CLAUDE_VAULT_DIR default; its scheduled jobs commit there. */}}
+        {{- range $git := concat (glob (joinPath .chezmoi.homeDir "Repositories/*/.git")) (glob (joinPath .chezmoi.homeDir "Documents/My_Vault/.git")) }}
         {{-   if eq (lstat $git).type "dir" }}
         {{ $git | toJson }},
         {{-   end }}
@@ -1203,7 +1205,7 @@
              points a worktree at a planted git dir; the cost is that `git worktree add` in
              these repos stays a sandbox bypass (27 runs in all transcripts). Submodules are
              covered one level deep under .git/modules, not nested. */}}
-        {{- range $root := list "~/Repositories/*" "~/.local/share/chezmoi" "~/work-laptop-config" }}
+        {{- range $root := list "~/Repositories/*" "~/.local/share/chezmoi" "~/work-laptop-config" "~/Documents/My_Vault" }}
         {{-   range $p := list "config*" "hooks*" "info/attributes" "worktrees/*/config*" "worktrees/*/commondir" "modules/*/config*" "modules/*/hooks*" "modules/*/info/attributes" }}
         "{{ $root }}/.git/{{ $p }}",
         {{-   end }}
