@@ -7,8 +7,9 @@ pass had no evidence to weigh a removal against. executable_skill-usage-log.py (
 PostToolUse hook on Skill|Agent|Task) writes one JSONL line per invocation to
 ~/.claude/logs/skill-usage.jsonl; this reads that log back into a table.
 
-Enumeration mirrors vault-tooling/config-map/config_map/scan.py's scan_skills /
-scan_agents / scan_plugins, so the two report the same installed set: skills are
+Enumeration follows vault-tooling/config-map/config_map/scan.py's scan_skills /
+scan_agents / scan_plugins, and adds the deployed ~/.claude copies and commands (see
+enumerate_items): skills are
 directories under skills/ with a SKILL.md, agents are *.md files under agents/, and
 plugins are the keys of ~/.claude/plugins/installed_plugins.json that
 ~/.claude/settings.json's enabledPlugins marks `true` (disabled/unlisted plugins are
@@ -28,7 +29,10 @@ Env overrides (all seams for the test suite; defaults are the real thing):
   SKILL_USAGE_ROOT           repo root to walk for skills/agents (default: git toplevel)
   SKILL_USAGE_LOG            the JSONL log to read
                               (default: ~/.claude/logs/skill-usage.jsonl)
-  SKILL_USAGE_CLAUDE_DIR     where plugins/ and settings.json live (default: ~/.claude)
+  SKILL_USAGE_CLAUDE_DIR     where plugins/, settings.json and the deployed skills/,
+                              agents/ and commands/ live (default: ~/.claude)
+  SKILL_USAGE_VAULT_DIR      the vault whose .claude/commands/ are counted
+                              (default: $CLAUDE_VAULT_DIR, else ~/Documents/My_Vault)
   SKILL_USAGE_WINDOW_DAYS    the fire-count window (default: 30)
   SKILL_USAGE_NOW_EPOCH      "now", as unix seconds (default: the clock) -- fixes the
                               window's cutoff for a deterministic test
@@ -76,20 +80,39 @@ def repo_root() -> str | None:
     return out.stdout.rstrip("\n")
 
 
-def enumerate_items(root: str) -> list[dict]:
-    """Skills, then agents, each in glob order: the order equal rows tie-break in."""
-    items = []
-    skills = Path(root, "home", "private_dot_claude", "skills")
-    agents = Path(root, "home", "private_dot_claude", "agents")
-    if skills.is_dir():
-        # bash's `*/`: no hidden entries, and directories or links to them only.
-        for d in sorted(p for p in skills.iterdir() if not p.name.startswith(".")):
-            if d.is_dir() and (d / "SKILL.md").is_file():
-                items.append({"kind": "skill", "name": d.name})
-    if agents.is_dir():
-        for f in sorted(p for p in agents.iterdir() if not p.name.startswith(".")):
-            if f.name.endswith(".md") and f.is_file():
-                items.append({"kind": "agent", "name": f.name[: -len(".md")]})
+def enumerate_items(root: str, claude_dir: str, vault_dir: str) -> list[dict]:
+    """Skills, then agents, then commands, each in glob order: the order equal rows
+    tie-break in.
+
+    The deployed claude_dir is walked as well as the repo source, because the work
+    overlay symlinks its own skills and agents in there; a source-only walk listed every
+    one of them as "not installed". Commands come from claude_dir and the vault, and
+    fire as Skill calls under their bare name.
+    """
+    src = Path(root, "home", "private_dot_claude")
+    dirs = {
+        "skill": [src / "skills", Path(claude_dir, "skills")],
+        "agent": [src / "agents", Path(claude_dir, "agents")],
+        "command": [
+            Path(claude_dir, "commands"),
+            Path(vault_dir, ".claude", "commands"),
+        ],
+    }
+    items, seen = [], set()
+    for kind, roots in dirs.items():
+        for base in roots:
+            if not base.is_dir():
+                continue
+            # bash's `*/`: no hidden entries; is_dir/is_file follow links.
+            for p in sorted(q for q in base.iterdir() if not q.name.startswith(".")):
+                if kind == "skill":
+                    ok, name = p.is_dir() and (p / "SKILL.md").is_file(), p.name
+                else:
+                    ok = p.name.endswith(".md") and p.is_file()
+                    name = p.name[: -len(".md")]
+                if ok and (kind, name) not in seen:
+                    seen.add((kind, name))
+                    items.append({"kind": kind, "name": name})
     return items
 
 
@@ -211,7 +234,8 @@ def aggregate(items, plugins, entries, now, window_days) -> dict:
     cutoff = now - window_days * 86400
 
     def is_item(e, it):
-        return e["kind"] == it["kind"] and e["name"] == it["name"]
+        kind = "skill" if it["kind"] == "command" else it["kind"]
+        return e["kind"] == kind and e["name"] == it["name"]
 
     def is_plugin(e, p):
         return e["name"].startswith(p + ":")
@@ -294,13 +318,18 @@ def main() -> int:
     default_log = home / ".claude/logs/skill-usage.jsonl"
     log_file = os.environ.get("SKILL_USAGE_LOG") or str(default_log)
     claude_dir = os.environ.get("SKILL_USAGE_CLAUDE_DIR") or str(home / ".claude")
+    vault_dir = (
+        os.environ.get("SKILL_USAGE_VAULT_DIR")
+        or os.environ.get("CLAUDE_VAULT_DIR")
+        or str(home / "Documents" / "My_Vault")
+    )
     window_label, window_days = env_number("SKILL_USAGE_WINDOW_DAYS", "30")
     _, now = env_number("SKILL_USAGE_NOW_EPOCH", str(int(time.time())))
     if window_days is None or now is None:
         return fail("SKILL_USAGE_WINDOW_DAYS and SKILL_USAGE_NOW_EPOCH must be numbers")
 
     log, raw_lines, valid_lines = read_log(log_file)
-    items = enumerate_items(root)
+    items = enumerate_items(root, claude_dir, vault_dir)
     plugins = enabled_plugins(claude_dir)
     result = aggregate(items, plugins, entries_from(log), now, window_days)
 
