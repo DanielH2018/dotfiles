@@ -16,7 +16,7 @@ def _check_readable(path):
     a symlink pointing at ~/.ssh/id_rsa can't launder the name."""
     expanded = os.path.expanduser(path)
     for candidate in (expanded, os.path.realpath(expanded)):
-        if re.search(SECRET_PATHS, candidate):
+        if re.search(SECRET_PATHS, candidate, re.IGNORECASE):
             raise JsonqError(f"refusing to read {path}: matches a secret-path pattern")
     return expanded
 

@@ -568,6 +568,11 @@ test('refuses to read a secret path', { skip }, () => {
   const r2 = jsonq(['d', path.join(DIR, 'nope', '.aws', 'credentials')]);
   assert.strictEqual(r2.code, 2);
   assert.match(r2.err, /secret-path pattern/);
+
+  // APFS is case-insensitive, so this opens the same file as .aws/credentials.
+  const r3 = jsonq(['d', path.join(DIR, 'nope', '.AWS', 'Credentials')]);
+  assert.strictEqual(r3.code, 2);
+  assert.match(r3.err, /secret-path pattern/);
 });
 
 test('refuses a symlink that launders a secret path', { skip }, () => {
