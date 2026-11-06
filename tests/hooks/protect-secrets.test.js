@@ -131,6 +131,22 @@ test('ordinary source files are allowed', { skip }, () => {
   for (const p of ALLOW) assert.notStrictEqual(decision(runHook(p)), 'deny', `should not deny: ${p}`);
 });
 
+// macOS's APFS is case-insensitive, so each of these opens the same file as its lowercase form.
+test('a case variant of a secret path is denied', { skip }, () => {
+  for (const p of ['/Users/u/.AWS/credentials', '/Users/u/proj/.ENV', '/opt/app/server.PEM',
+    '/Users/u/.SSH/config', '/Users/u/.Claude.json', '/Users/u/.Kube/config']) {
+    assert.strictEqual(decision(runHook(p)), 'deny', `should deny case variant: ${p}`);
+  }
+});
+
+test('a write to a case variant of a git hook is denied', { skip }, () => {
+  const out = execFileSync('bash', [HOOK], {
+    input: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: '/r/.GIT/hooks/pre-commit' } }),
+    encoding: 'utf8',
+  });
+  assert.strictEqual(decision(out), 'deny');
+});
+
 // Only the .env arm carried a bare form. `.aws/credentials` from a cwd of $HOME is the
 // same file as /home/u/.aws/credentials, but a relative path has no separator for the
 // */-prefixed patterns to match.

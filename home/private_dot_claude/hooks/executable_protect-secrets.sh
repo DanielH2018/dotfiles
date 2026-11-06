@@ -33,11 +33,17 @@ deny() {
   exit 0
 }
 
+# Exact-case match even under the nocasematch below: the exception names three files, and
+# .env.EXAMPLE is not one of them.
 is_env_template_name() {
+  local rc=1 nocase=0
+  shopt -q nocasematch && nocase=1
+  shopt -u nocasematch
   case "${1##*/}" in
-    .env.example|.env.sample|.env.template) return 0 ;;
+    .env.example|.env.sample|.env.template) rc=0 ;;
   esac
-  return 1
+  ((nocase)) && shopt -s nocasematch
+  return "$rc"
 }
 
 # The committed templates `.env.example`, `.env.sample` and `.env.template` hold placeholder
@@ -66,6 +72,8 @@ is_env_template_read() {
 # a secrets/ directory is refused by an earlier arm before the template exception is ever
 # considered. Each arm carries the bare form as well as the */-prefixed one where a relative
 # path can name the file: `.aws/credentials` from a cwd of $HOME is /home/u/.aws/credentials.
+# APFS is case-insensitive, so ~/.AWS/credentials opens the real file.
+shopt -s nocasematch
 case "$FILE_PATH" in
   # BEGIN secret arms, generated from claude_guard/secret_paths.json
   # Edit the table and re-run claude_guard.secret_table, not these arms.
