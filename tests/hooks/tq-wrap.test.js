@@ -27,10 +27,17 @@ const skip = skipUnless('bash', 'python3') || (PY314 ? false : 'no uv-managed Py
 // emits. The repo's copy is named executable_tq, so give it a resolvable alias
 // and point TQ_BIN at it: this exercises the checkout rather than whatever
 // `chezmoi apply` last deployed.
+// The hook also leaves alone a runner PATH cannot find, so each runner a case expects
+// rewritten gets a stub here; pytest gets none, for the not-on-PATH cases below.
+const RUNNER_STUBS = ['node', 'go', 'ruff', 'mypy', 'eslint', 'tsc', 'shellcheck', 'uv', 'cargo',
+  'gradle', 'mvn', 'prek'];
 let binDir = '';
 if (have('python3')) {
   binDir = scratch(os.tmpdir(), 'tq-hook-bin-');
   fs.symlinkSync(TQ, path.join(binDir, 'tq'));
+  for (const name of RUNNER_STUBS) {
+    fs.writeFileSync(path.join(binDir, name), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  }
 }
 
 // load_detect() in the hook refuses a TQ_LIB that is writable by group or other — a real
@@ -259,6 +266,29 @@ test('the rewrite is skipped when tq cannot be resolved by name', { skip }, () =
   fs.symlinkSync(UV, path.join(uvDir, 'uv'));
   assert.strictEqual(rewritten('node --test', { env: { PATH: `${uvDir}${path.delimiter}${reduced}` } }), null);
   assert.strictEqual(rewritten('node --test'), 'tq node --test');
+});
+
+// A repo hook may rewrite a bare `pytest` to `uv run pytest` on the same call, and Claude Code
+// keeps only one rewrite, so the tq rewrite has to carry the `uv run` itself.
+function withoutPytest() {
+  const rest = (process.env.PATH || '').split(path.delimiter)
+    .filter((dir) => dir && !fs.existsSync(path.join(dir, 'pytest')));
+  return [binDir, ...rest].join(path.delimiter);
+}
+
+test('a runner only a uv project provides is routed through tq uv run', { skip }, () => {
+  const project = scratch(os.tmpdir(), 'tq-hook-uvproj-');
+  fs.writeFileSync(path.join(project, 'uv.lock'), '');
+  fs.mkdirSync(path.join(project, 'sub'));
+  assert.strictEqual(
+    rewritten('pytest -q', { cwd: path.join(project, 'sub'), env: { PATH: withoutPytest() } }),
+    'tq uv run pytest -q',
+  );
+});
+
+test('a runner PATH cannot find outside a uv project is left alone', { skip }, () => {
+  const plain = scratch(os.tmpdir(), 'tq-hook-plain-');
+  assert.strictEqual(rewritten('pytest -q', { cwd: plain, env: { PATH: withoutPytest() } }), null);
 });
 
 // TQ_LIB is derived from $TQ_HOME when that is set, and this hook runs in front of every

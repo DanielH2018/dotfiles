@@ -112,6 +112,14 @@ test('a write to a git config or hook file is denied', { skip }, () => {
   }
 });
 
+test('a NotebookEdit naming a secret by notebook_path is denied', { skip }, () => {
+  const out = execFileSync('bash', [HOOK], {
+    input: JSON.stringify({ tool_name: 'NotebookEdit', tool_input: { notebook_path: '/home/u/.ssh/id_ed25519' } }),
+    encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  assert.strictEqual(decision(out), 'deny');
+});
+
 test('reading a git config or hook file, or writing a neighbour, is allowed', { skip }, () => {
   for (const p of GIT_CONFIG_FILES) {
     assert.strictEqual(decision(runHookAs('Read', p)), null, `Read should allow: ${p}`);

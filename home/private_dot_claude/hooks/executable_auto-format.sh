@@ -19,7 +19,7 @@ set -u
 . "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/lib/hook-input.sh}"
 hook_read_input
 
-FILE_PATH=$(hook_field '.tool_input.file_path // empty')
+FILE_PATH=$(hook_file_path)
 
 # Skip if no file path (some edit variants don't include it) or file doesn't exist.
 [ -z "$FILE_PATH" ] && exit 0

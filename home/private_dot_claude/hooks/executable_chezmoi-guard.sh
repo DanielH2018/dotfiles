@@ -65,7 +65,7 @@ hook_read_input
 [ "$MODE" = pre ] && [ "${CHEZMOI_EDIT_GUARD:-}" = "off" ] && exit 0
 hook_require_jq noop || exit 0
 
-FILE=$(hook_field '.tool_input.file_path // .tool_input.notebook_path // empty')
+FILE=$(hook_file_path)
 [ -n "$FILE" ] || exit 0
 
 # Windows: Claude Code passes paths as C:/Users/... but $HOME is the MSYS form

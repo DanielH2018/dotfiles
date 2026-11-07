@@ -62,6 +62,13 @@ hook_field() {
   printf '%s' "$_HOOK_INPUT_RAW" | jq -r "$1" 2>/dev/null
 }
 
+# hook_file_path
+#   The file an Edit, Write or NotebookEdit call names, or empty. NotebookEdit sends
+#   `notebook_path`, so a hook registered for it that reads only `file_path` misses it.
+hook_file_path() {
+  hook_field '.tool_input.file_path // .tool_input.notebook_path // empty'
+}
+
 # hook_require_jq <mode> [reason]
 #   The one explicit jq-presence guard. Returns 0 if jq is on PATH — the caller
 #   proceeds normally. Returns 1 if not, having already printed the caller's chosen

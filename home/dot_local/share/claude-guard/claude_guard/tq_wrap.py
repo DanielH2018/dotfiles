@@ -85,6 +85,18 @@ def in_isolated_worktree(cwd: str) -> bool:
     return f"{os.sep}.claude{os.sep}worktrees{os.sep}" in os.path.join(cwd, "")
 
 
+def in_uv_project(cwd: str) -> bool:
+    """Whether `cwd` or a directory above it holds a `uv.lock`."""
+    directory = os.path.abspath(cwd or ".")
+    while True:
+        if os.path.isfile(os.path.join(directory, "uv.lock")):
+            return True
+        parent = os.path.dirname(directory)
+        if parent == directory:
+            return False
+        directory = parent
+
+
 def rewrite(command: str, cwd: str, env: Mapping[str, str]) -> str | None:
     """The command to run instead, or None to leave this one alone.
 
@@ -119,4 +131,8 @@ def rewrite(command: str, cwd: str, env: Mapping[str, str]) -> str | None:
     detect = import_private(tq_lib, "detect.py", "detect")
     if os.path.basename(argv[0]) not in detect.CANDIDATES or detect.detect(argv) is None:
         return None
+    # A runner that exists only inside a uv project's venv: a repo hook may also rewrite this
+    # call to `uv run ...`, and only one rewrite survives, so carry both here.
+    if os.sep not in argv[0] and not which(argv[0], path=env.get("PATH", "")):
+        return f"tq uv run {command}" if in_uv_project(cwd) else None
     return f"tq {command}"

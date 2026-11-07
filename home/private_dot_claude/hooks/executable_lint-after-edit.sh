@@ -92,11 +92,12 @@ fi
 # oc_mark never fails its caller by contract; a no-op stub preserves that if the
 # lib didn't source — telemetry is lost, the check itself still runs either way.
 command -v oc_mark >/dev/null 2>&1 || oc_mark() { :; }
-# hook_field stub mirrors this file's OLD bare `jq -r` (reads stdin directly) if
-# hook-input.sh didn't source — same degraded-but-running behaviour as the two above.
-command -v hook_field >/dev/null 2>&1 || hook_field() { jq -r "$1" 2>/dev/null; }
+# If hook-input.sh didn't source, read stdin directly, the same degraded-but-running
+# behaviour as the stub above.
+command -v hook_file_path >/dev/null 2>&1 ||
+  hook_file_path() { jq -r '.tool_input.file_path // .tool_input.notebook_path // empty' 2>/dev/null; }
 
-FILE_PATH=$(hook_field '.tool_input.file_path // empty')
+FILE_PATH=$(hook_file_path)
 [ -z "$FILE_PATH" ] && exit 0
 [ ! -f "$FILE_PATH" ] && exit 0
 

@@ -25,7 +25,7 @@ set -u
 hook_read_input
 hook_require_jq ask "protect-secrets: jq is unavailable, so the secret-file rules could not be evaluated. Check the path yourself before allowing." || exit 0
 
-FILE_PATH=$(hook_field '.tool_input.file_path // empty')
+FILE_PATH=$(hook_file_path)
 [ -z "$FILE_PATH" ] && exit 0
 
 deny() {

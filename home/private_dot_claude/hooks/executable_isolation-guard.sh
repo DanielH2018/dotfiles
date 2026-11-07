@@ -41,7 +41,7 @@ set -u
 hook_read_input
 hook_require_jq ask "isolation-guard: jq is unavailable, so isolation could not be verified. Confirm this session is in a .claude/worktrees/ checkout before allowing." || exit 0
 
-FILE=$(hook_field '.tool_input.file_path // empty')
+FILE=$(hook_file_path)
 [ -n "$FILE" ] || exit 0
 
 # Already isolated: a session inside .claude/worktrees/ is already isolated (CLAUDE.md),

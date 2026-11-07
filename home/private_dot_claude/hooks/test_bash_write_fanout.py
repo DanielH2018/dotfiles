@@ -17,6 +17,7 @@ large share of this config's read commands, so it gets its own case.
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -422,5 +423,38 @@ with tempfile.TemporaryDirectory() as tmp:
         "cannot load"
         in fanned(tmp, {"RUN_BOUNDED_LIB": str(root / "nope.sh")}).get("reason", ""),
     )
+
+
+def post_edit_hooks(hook_dir):
+    """Deployed names of hooks whose gen-hooks header registers PostToolUse on Write."""
+    names = set()
+    for path in sorted(hook_dir.glob("executable_*")):
+        block = None
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines()[
+            :40
+        ]:
+            if line.strip() == "# gen-hooks: register":
+                block = {}
+            elif block is not None and re.match(r"#\s{3}\w+:", line):
+                key, _, value = line.lstrip("# ").partition(":")
+                block[key] = value.strip()
+                if block.get("event") == "PostToolUse" and "Write" in block.get(
+                    "matcher", ""
+                ):
+                    names.add(path.name.removeprefix("executable_"))
+            else:
+                block = None
+    return names
+
+
+downstream = re.search(
+    r"^DOWNSTREAM=\(([^)]*)\)", HOOK.read_text(encoding="utf-8"), re.M
+)
+registered = post_edit_hooks(HERE)
+check("the census finds lint-after-edit.sh", "lint-after-edit.sh" in registered)
+check(
+    "DOWNSTREAM names every PostToolUse Write hook, so a Bash write reaches each one",
+    downstream is not None and set(downstream.group(1).split()) == registered,
+)
 
 finish()
