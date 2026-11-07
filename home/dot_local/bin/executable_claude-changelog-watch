@@ -96,6 +96,23 @@ ARTIFACT="$HOME/.claude/artifacts/changelog-watch_$(date +%F).html"
 mkdir -p "$(dirname "$ARTIFACT")"
 export CLAUDE_CHANGELOG_ARTIFACT="$ARTIFACT"
 
+# A lapsed claude.ai sign-in fails the session below, and claude -p's own warning about it goes
+# only to this unit's log. Warn on the desktop while `claude auth login` still has time to run.
+# The check never stops the run: an unreadable status means no warning, not a skip.
+LOGIN_WARN_DAYS=10
+expires="$(claude auth status 2>/dev/null | sed -n 's/.*"loginExpiresAt": *"\([^"]*\)".*/\1/p' | head -n1 || true)"
+if [ -n "$expires" ] && expires_s="$(date -d "$expires" +%s 2>/dev/null ||
+  date -j -u -f '%Y-%m-%dT%H:%M:%S' "${expires%%.*}" +%s 2>/dev/null)"; then
+  days_left=$(( (expires_s - $(date +%s)) / 86400 ))
+  if [ "$days_left" -lt "$LOGIN_WARN_DAYS" ]; then
+    log "claude.ai login expires $expires ($days_left days left)"
+    if command -v notify-send >/dev/null 2>&1; then
+      notify-send -a "Claude Code" "Claude login expires in $days_left days" \
+        "Run claude auth login before $expires" || true
+    fi
+  fi
+fi
+
 log "running /changelog-watch against $VAULT"
 claude --dangerously-skip-permissions -p "/changelog-watch"
 

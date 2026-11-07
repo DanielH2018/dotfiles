@@ -152,6 +152,19 @@ machine being measured; every other `savings` subcommand goes where Loki is.
 past. At `--since 7d` it reported 210 prompts against a true 487. For a count, aggregate
 `tool_decision` by `source`; keep `savings prompts` for composition, at `--since 24h`.
 
+**In auto mode, `source=config` merges two outcomes.** It covers both a matched allow rule and
+a classifier allow, and only `classifier_verdict` separates them. Group by all three fields:
+
+```
+sum by (permission_mode, source, classifier_verdict) (count_over_time({service_name="claude-code"} | event_name="tool_decision" [24h]))
+```
+
+A `config` row with `classifier_verdict=allow` is a call that no allow rule matched. Those
+calls are the input `/audit-permissions` needs to tune the allowlist. On 2026-11-07 they were
+5688 of the 7124 auto-mode `config` rows. A `classifier_verdict=block` event usually carries
+`classifier_category`, because `OTEL_LOG_TOOL_DETAILS` is `1`. On 2026-11-07, 4 of 5 blocks
+named one (`production_deploy`, `modify_shared_resources`).
+
 **A `savings prompts` row counts a program, not a command.** In `29  git  1x, 1 of 29
 commands  git checkout …`, the 29 covers every git command that prompted. The checkout is
 the program's most frequent command and prompted once. The `command` rows after
@@ -254,6 +267,18 @@ change between releases, so a step that returns nothing gets the enumerate query
 
    Report the cache-read share, `cacheRead / (cacheRead + cacheCreation + input)`. A falling
    share means sessions are re-paying for their prefix. Name the model that dominates spend.
+
+   The counter does not split `cacheCreation` by lifetime, and a 1h write costs more than a
+   5m write. The `api_request` event does split it. Run the query twice, once per field:
+
+   ```
+   sum (sum_over_time({service_name="claude-code"} | event_name="api_request" | unwrap cache_creation_1h_tokens [7d]))
+   sum (sum_over_time({service_name="claude-code"} | event_name="api_request" | unwrap cache_creation_5m_tokens [7d]))
+   ```
+
+   Report the 1h share of cache writes. On 2026-11-07 it was 77% (124M of 160M tokens). A
+   rising share means more context pays the 1h price, which is the cost idle compaction trades
+   against.
 
 3. **API errors.** Count `api_error`, `api_retries_exhausted` and `internal_error` against
    `api_request` in the event enumeration. Report the rate, not the count. For a non-zero

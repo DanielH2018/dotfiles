@@ -52,7 +52,7 @@ function mkdtemp(prefix) {
 // `claudeWrites` simulates the command having prepended a proposals section: the runner decides
 // whether to notify by hashing the note either side of the session, not by reading its output.
 // `claudeRenders` simulates STEP 6 writing the HTML to the path the runner exported.
-function makeStubs({ ghOk, claudeWrites, claudeRenders }) {
+function makeStubs({ ghOk, claudeWrites, claudeRenders, loginExpiresAt }) {
   const bin = mkdtemp('cw-bin-');
   const marks = mkdtemp('cw-marks-');
   const log = path.join(marks, 'calls');
@@ -64,6 +64,10 @@ exit ${ghOk ? 0 : 1}
 
   fs.writeFileSync(path.join(bin, 'claude'), `#!/bin/bash
 printf 'claude %s\\n' "$*" >> "${log}"
+if [ "$1" = auth ]; then
+  printf '{\\n  "loginExpiresAt": "%s"\\n}\\n' "${loginExpiresAt || ''}"
+  exit 0
+fi
 if [ -n "\${CW_NOTE:-}" ] && [ "${claudeWrites ? 1 : 0}" = 1 ]; then
   printf '### 2026-08-05 — reviewed 2.1.220..2.1.222\\n' >> "$CW_NOTE"
 fi
@@ -86,8 +90,14 @@ exit 0
   return { bin, log };
 }
 
-function run({ ghOk = true, claudeWrites = false, claudeRenders = false, vaultDir = null } = {}) {
-  const { bin, log } = makeStubs({ ghOk, claudeWrites, claudeRenders });
+function run({
+  ghOk = true,
+  claudeWrites = false,
+  claudeRenders = false,
+  vaultDir = null,
+  loginExpiresAt = null,
+} = {}) {
+  const { bin, log } = makeStubs({ ghOk, claudeWrites, claudeRenders, loginExpiresAt });
   const home = mkdtemp('cw-home-');
   const state = mkdtemp('cw-state-');
   const runtime = mkdtemp('cw-run-');
@@ -164,6 +174,20 @@ test('unauthenticated gh skips before a session is spent', { skip }, () => {
   assert.strictEqual(status, 0);
   assert.match(out, /gh not authenticated/);
   assert.doesNotMatch(calls, /^claude /m, 'the probe exists to not burn a session on a locked keyring');
+});
+
+const inDays = (n) => new Date(Date.now() + n * 86400e3).toISOString();
+
+test('a login expiring within 10 days notifies and still runs the session', { skip }, () => {
+  const { status, calls } = run({ loginExpiresAt: inDays(3.5) });
+  assert.strictEqual(status, 0);
+  assert.match(calls, /notify-send .*Claude login expires in 3 days.*claude auth login/);
+  assert.match(calls, /^claude .*\/changelog-watch/m, 'the warning must not stop the review');
+});
+
+test('a login with more than 10 days left raises no warning', { skip }, () => {
+  const { calls } = run({ loginExpiresAt: inDays(30) });
+  assert.doesNotMatch(calls, /notify-send/);
 });
 
 test('an unchanged note reports no new entries and stays silent', { skip }, () => {

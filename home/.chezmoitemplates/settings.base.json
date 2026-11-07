@@ -171,6 +171,11 @@
          153000 as before. That same clamp is why this only bites on a client that
          resolves 1e6 for the session model — see "model" below. */}}
     "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "726000",
+    {{/* Idle compaction (2.1.299; the Desktop Code tab since 2.1.314) compacts a conversation
+         of 200K tokens or more after about 54 idle minutes, which undercuts the ~600K
+         auto-compaction point derived above. This floor keeps the two thresholds equal.
+         `"idleCompaction": false` is the off switch if the floor proves not enough. */}}
+    "CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS": "600000",
     "CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE": "true",
     {{/* The model a subagent runs on when neither the Agent call nor the agent's own
          frontmatter names one. Without it an unpinned agent inherits the session model, so
@@ -431,8 +436,8 @@
        and first so enforceAvailableModels snaps to it), claude-opus-5 (the previous
        main, kept for `/model`), "opus" alias (eval judge +
        migration-reviewer/root-cause/deep-review agents), "sonnet"
-       (implementer/ops-investigator agents), claude-sonnet-5
-       (fallbackModel), "haiku" (Claude Code's internal/auxiliary calls, e.g. the eval
+       (implementer/ops-investigator agents) and claude-sonnet-5-5, the model it resolves
+       to since 2.1.284, claude-sonnet-5 (fallbackModel), "haiku" (Claude Code's internal/auxiliary calls, e.g. the eval
        judge's helper call, and the chore agent), and "fable"/claude-fable-5
        (Fable 5, opted in for manual `/model fable` selection).
        Aliases and full IDs are both listed on purpose. enforceAvailableModels snaps the
@@ -447,6 +452,7 @@
     "claude-opus-5",
     "opus",
     "sonnet",
+    "claude-sonnet-5-5",
     "claude-sonnet-5",
     "haiku",
     "fable",

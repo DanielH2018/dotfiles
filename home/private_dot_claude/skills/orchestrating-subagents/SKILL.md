@@ -26,7 +26,8 @@ scale the count to the work: 2–3 for a standard question, 3–5 for distinct s
 `medium`, which is the Opus 5.5 default. Use `effort: 'low'` on the inherited model for a gather stage,
 rather than a downgrade: Anthropic's Opus 5.5 guide measured `low` close to `medium` on several coding
 evaluations. Set `xhigh` only on a stage where a measured gain over `high` exists. The Agent tool
-has no effort knob, so there tier is the only lever: `model: 'sonnet'` for bulk context-reading with no
+takes `effort`, but its description allows it only when the user or a skill explicitly names one,
+so for a plain Agent call tier is the lever: `model: 'sonnet'` for bulk context-reading with no
 judgment in it, top tier (Opus/Fable) reserved for your own synthesis. Bump a single subagent up only when
 its subtask genuinely needs the stronger reasoning.
 

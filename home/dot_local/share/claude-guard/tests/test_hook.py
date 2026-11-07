@@ -346,6 +346,30 @@ def test_live_mode_denies_a_foreground_sleep(tmp_path):
     assert "cc-wait" in out["hookSpecificOutput"]["permissionDecisionReason"]
 
 
+def monitor_call(command: str) -> str:
+    tool_input = {"command": command, "description": "d", "timeout_ms": 1000}
+    return json.dumps({"tool_name": "Monitor", "tool_input": tool_input})
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "tail -f /tmp/app.log | grep --line-buffered ERROR",
+        "while true; do gh pr checks 1; sleep 30; done",
+        "kubectl get pods --watch",
+    ],
+)
+def test_a_monitor_stream_is_not_denied_as_a_hand_written_wait(tmp_path, command):
+    out = pre_tool_use(monitor_call(command), denv(home_with(tmp_path)))
+    decision = json.loads(out)["hookSpecificOutput"].get("permissionDecision") if out else None
+    assert decision != "deny"
+
+
+def test_a_monitor_command_still_meets_the_deny_rules(tmp_path):
+    out = json.loads(pre_tool_use(monitor_call("rm -rf /"), denv(home_with(tmp_path))))
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
 # --- live mode ---------------------------------------------------------------------------------
 
 
