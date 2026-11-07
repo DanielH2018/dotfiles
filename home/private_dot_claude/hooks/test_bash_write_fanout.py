@@ -24,6 +24,10 @@ from pathlib import Path
 
 from _testkit import check, finish
 
+# Every fixture lives under tempfile's directory, which the hook skips as command
+# output by default. Only the temp-root cases below point the skip at a fixture.
+os.environ["CLAUDE_BASH_WRITE_FANOUT_TEMP_ROOTS"] = "/nonexistent-temp-root"
+
 HERE = Path(__file__).resolve().parent
 HOOK = HERE / "executable_bash-write-fanout.sh"
 if not HOOK.exists():  # deployed copy drops chezmoi's mode prefix
@@ -211,6 +215,16 @@ with tempfile.TemporaryDirectory() as tmp:
     check(
         "fd duplication is not a file",
         extracted("make 2>&1 | grep -c error", root) == [],
+    )
+
+    temp_root = {"CLAUDE_BASH_WRITE_FANOUT_TEMP_ROOTS": str(root)}
+    check(
+        "command output saved under a temp root is not linted",
+        extracted("gh api repos/x/y > a.txt", root, temp_root) == [],
+    )
+    check(
+        "a heredoc written under a temp root is still linted",
+        extracted("cat > a.txt <<'EOF'\nbody\nEOF", root, temp_root) == ["a.txt"],
     )
 
     # ── heredoc bodies are content, not shell ────────────────────────────────────────

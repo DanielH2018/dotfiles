@@ -406,6 +406,21 @@ if [ "${#CANDIDATES[@]}" -eq 0 ]; then finish; fi
 # create. Over-collecting above and filtering here is deliberate — the alternative is a
 # precise shell parser, and a missed write costs more than a wasted `chezmoi source-path`.
 
+# Command output saved under a temp dir (`gh api ... > /tmp/changelog.md`) is data, and the
+# prose lint blocked on upstream text in it every run. A heredoc there is authored, so it is
+# still checked.
+case "$CMD" in *'<<'*) HAS_HEREDOC=1 ;; *) HAS_HEREDOC=0 ;; esac
+TEMP_ROOTS=${CLAUDE_BASH_WRITE_FANOUT_TEMP_ROOTS:-/tmp:/var/tmp:${TMPDIR:-/tmp}}
+under_temp_root() {
+  local root resolved IFS=:
+  for root in $TEMP_ROOTS; do
+    [ -n "$root" ] || continue
+    resolved=$(cd "$root" 2>/dev/null && pwd -P) || continue
+    case $1 in "$resolved"/*) return 0 ;; esac
+  done
+  return 1
+}
+
 declare -a PATHS=()
 seen=''
 for c in "${CANDIDATES[@]}"; do
@@ -420,6 +435,7 @@ for c in "${CANDIDATES[@]}"; do
   # Physical path, so two spellings of the same file fan out once.
   d=$(cd "$(dirname "$p")" 2>/dev/null && pwd -P) || continue
   p="$d/$(basename "$p")"
+  if [ "$HAS_HEREDOC" = 0 ] && under_temp_root "$p"; then continue; fi
   case "$seen" in *"|$p|"*) continue ;; esac
   seen="$seen|$p|"
   PATHS+=("$p")
