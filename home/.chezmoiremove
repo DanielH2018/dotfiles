@@ -233,3 +233,8 @@ Scripts/wslhost-interop-reaper/wslhost-interop-reaper-hidden.vbs
 .local/bin/reap-backgrounded-origins-sweep
 .config/systemd/user/reap-backgrounded-origins.service
 .config/systemd/user/reap-backgrounded-origins.timer
+
+# 2026-11-07: outcome-lib.sh's marker store. lint-after-edit.sh was its only writer and
+# nothing read it; the hook reports a could-not-evaluate check in its block reason.
+.claude/hooks/lib/outcome-lib.sh
+.local/state/claude/unevaluated

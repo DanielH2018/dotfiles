@@ -1,8 +1,7 @@
 // run_bounded (M10): no child process a hook invokes may run, buffer, or allocate
 // without an explicit ceiling on wall-clock time and output bytes, and hitting a
 // ceiling must report as could-not-evaluate, never as pass or as an ordinary fail.
-// These exercise the fixtures from M10-bounded-execution.md §5, plus the mapping
-// onto outcome-lib.sh's (M06) could-not-evaluate exit code.
+// These exercise the fixtures from M10-bounded-execution.md §5.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { spawnSync } = require('node:child_process');
@@ -14,7 +13,6 @@ const { scratch } = require('../lib/tmp');
 const { srcPath } = require('../lib/paths');
 
 const LIB = srcPath('private_dot_claude', 'hooks', 'lib', 'run-bounded.sh');
-const OUTCOME_LIB = srcPath('private_dot_claude', 'hooks', 'lib', 'outcome-lib.sh');
 
 const skip = skipUnless('bash', 'timeout');
 
@@ -48,12 +46,10 @@ const skipSignal = skip
   || (signalStatusOk ? false
     : 'no GNU timeout(1) on this host — install coreutils (macOS) or gnu-coreutils (Ubuntu) so signal deaths can be classified');
 
-// Run a snippet with run_bounded (and optionally outcome-lib) sourced, then print
-// the RB_* out-params as a parseable line so the test can assert on them.
-function sh(snippet, { withOutcomeLib = false, timeoutMs = 15000 } = {}) {
-  const src = withOutcomeLib
-    ? `. ${JSON.stringify(LIB)}; . ${JSON.stringify(OUTCOME_LIB)}; ${snippet}`
-    : `. ${JSON.stringify(LIB)}; ${snippet}`;
+// Run a snippet with run_bounded sourced, then print the RB_* out-params as a
+// parseable line so the test can assert on them.
+function sh(snippet, { timeoutMs = 15000 } = {}) {
+  const src = `. ${JSON.stringify(LIB)}; ${snippet}`;
   const r = spawnSync('bash', ['-c', src], { encoding: 'utf8', timeout: timeoutMs });
   return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '', error: r.error };
 }
@@ -129,32 +125,6 @@ test('killed by its own signal is distinct from a timeout kill', { skip: skipSig
   assert.strictEqual(out.STATUS, 'killed', 'a self-inflicted signal must not be misread as a timeout');
   assert.strictEqual(out.SIGNAL, '1', 'SIGHUP is signal 1');
   assert.strictEqual(out.EXIT, '129', '128 + 1');
-});
-
-test('the could-not-evaluate mapping onto outcome-lib: any non-ok status feeds oc_cannot to exit 3', { skip }, () => {
-  // Reference mapping for consumers that want a hard could-not-evaluate exit
-  // (distinct from lint-after-edit.sh's own choice — see its run_check comment
-  // — which uses oc_mark instead so a timeout doesn't abort before the hook's
-  // JSON block reason is emitted). This proves the contract: run_bounded's
-  // non-ok statuses are exactly M06's could-not-evaluate bucket.
-  const r = sh(
-    `run_bounded 1 4096 -- sleep 999
-     [ "$RB_STATUS" = ok ] || oc_cannot lint-x "run_bounded: $RB_STATUS"`,
-    { withOutcomeLib: true },
-  );
-  assert.strictEqual(r.status, 3, 'could-not-evaluate must reach the M06 exit-3 convention, not 0/1');
-  assert.match(r.stderr, /CANNOT-EVALUATE \[lint-x\]/);
-});
-
-test('a genuinely passing run never reaches could-not-evaluate', { skip }, () => {
-  const r = sh(
-    `run_bounded 5 4096 -- true
-     [ "$RB_STATUS" = ok ] || oc_cannot lint-x "run_bounded: $RB_STATUS"
-     printf 'reached\\n'`,
-    { withOutcomeLib: true },
-  );
-  assert.strictEqual(r.status, 0);
-  assert.match(r.stdout, /reached/);
 });
 
 // #581: where no timeout(1) resolves at all, the command must not run -- unbounded is what M10

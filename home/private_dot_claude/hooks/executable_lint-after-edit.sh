@@ -73,9 +73,9 @@ LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" >/dev/null 2>&1 && pwd)/lib"
 # unbounded run_bounded() and run every linter with no ceiling -- the very thing M10 exists to
 # forbid, and a second copy of the primitive that drifted from the real one (#581). A missing
 # library now blocks with a not-evaluated reason instead: the edit is reported as unchecked,
-# never as checked-and-clean. The other two libraries keep their stubs because what they carry
-# is telemetry and input parsing, not a bound. RUN_BOUNDED_LIB/OUTCOME_LIB/HOOK_INPUT_LIB are
-# seams for tests to force the missing-library path without touching the real files.
+# never as checked-and-clean. hook-input.sh keeps a stub because what it carries is input
+# parsing, not a bound. RUN_BOUNDED_LIB/HOOK_INPUT_LIB are seams for tests to force the
+# missing-library path without touching the real files.
 RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-$LIB_DIR/run-bounded.sh}"
 # shellcheck disable=SC1090,SC1091
 if ! . "$RUN_BOUNDED_PATH" 2>/dev/null || ! command -v run_bounded >/dev/null 2>&1; then
@@ -85,15 +85,9 @@ if ! . "$RUN_BOUNDED_PATH" 2>/dev/null || ! command -v run_bounded >/dev/null 2>
   exit 0
 fi
 # shellcheck disable=SC1090,SC1091
-. "${OUTCOME_LIB:-$LIB_DIR/outcome-lib.sh}" 2>/dev/null || true
-# shellcheck disable=SC1090,SC1091
 . "${HOOK_INPUT_LIB:-$LIB_DIR/hook-input.sh}" 2>/dev/null || true
 
-# oc_mark never fails its caller by contract; a no-op stub preserves that if the
-# lib didn't source — telemetry is lost, the check itself still runs either way.
-command -v oc_mark >/dev/null 2>&1 || oc_mark() { :; }
-# If hook-input.sh didn't source, read stdin directly, the same degraded-but-running
-# behaviour as the stub above.
+# If hook-input.sh didn't source, read stdin directly: the check still runs.
 command -v hook_file_path >/dev/null 2>&1 ||
   hook_file_path() { jq -r '.tool_input.file_path // .tool_input.notebook_path // empty' 2>/dev/null; }
 
@@ -126,18 +120,11 @@ CANNOT=0
 CANNOT_REASON=""
 
 # run_check <id> <timeout_s> <cap_bytes> cmd args...
-#   <id> names the check for the outcome-lib marker (oc_mark), not the shell
-#   command itself — a path like $DIR/gradlew isn't a safe marker filename.
+#   <id> names the check in the not-evaluated reason.
 #
-#   RB_STATUS=ok, non-zero exit: a real lint/type failure — existing behaviour.
-#   RB_STATUS!=ok (timeout/truncated/killed/error): could-not-evaluate. This
-#   records via oc_mark (the marker/counter primitive), NOT oc_cannot: oc_cannot
-#   calls `exit 3` on the whole process, which here would abort before the JSON
-#   `decision:"block"` is ever emitted — PostToolUse hooks in this repo surface
-#   text to Claude through that JSON on stdout, not through the exit code, so
-#   oc_cannot's hard exit would silence the very "not evaluated" message this
-#   slice exists to add. oc_mark gives the same M06 "cannot" bucket/counter
-#   without that side effect.
+#   RB_STATUS=ok, non-zero exit: a real lint/type failure.
+#   RB_STATUS!=ok (timeout/truncated/killed/error): could-not-evaluate, reported
+#   through the JSON block reason, never as a pass.
 run_check() {
   local id="$1" timeout_s="$2" cap="$3"
   shift 3
@@ -150,7 +137,6 @@ run_check() {
       fi
       ;;
     *)
-      oc_mark "lint-$id" cannot "run_bounded status=$RB_STATUS timeout=${timeout_s}s exit=${RB_EXIT:-?}"
       CANNOT_REASON="$id timed out or could not be evaluated after ${timeout_s}s (${RB_STATUS}) — not evaluated, re-run manually"
       CANNOT=1
       ;;

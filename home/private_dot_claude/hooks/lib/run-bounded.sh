@@ -5,10 +5,8 @@
 # ordinary fail. See ~/.claude/specs/env-modules/M10-bounded-execution.md §2/§9.
 #
 # Self-contained on purpose: this file sets RB_STATUS/RB_EXIT/RB_SIGNAL/RB_OUT and
-# never calls exit and never sources outcome-lib.sh. Mapping RB_STATUS onto M06's
-# could-not-evaluate bucket (oc_mark/oc_cannot) is the caller's decision — see
-# lint-after-edit.sh for the reference wiring, and its comment on why it calls
-# oc_mark rather than oc_cannot.
+# never calls exit. What a non-ok RB_STATUS means to the hook is the caller's
+# decision; lint-after-edit.sh's run_check is the reference wiring.
 #
 # RB_STATUS after a call:
 #   ok        - ran to completion inside both bounds; RB_EXIT is the command's own

@@ -133,13 +133,13 @@ test("extractBinaryDeps ignores \"which\" appearing mid-sentence in a quoted mes
 });
 
 test("extractBinaryDeps skips names a scanned file defines as a shell function (E1a)", () => {
-  // run_bounded/hook_field/oc_mark are each guarded at their call site with the same
+  // run_bounded/hook_field/claude_guard_call are each guarded at their call site with the same
   // command -v/which idioms a real binary dependency uses, but each is a shell function
   // defined in a library under home/private_dot_claude/hooks/lib/ -- never a PATH lookup.
   const files = [
     { path: "hooks/lib/run-bounded.sh", text: "run_bounded() {\n  :\n}\n" },
     { path: "hooks/lib/hook-input.sh", text: "hook_field() {\n  :\n}\n" },
-    { path: "hooks/lib/outcome-lib.sh", text: "function oc_mark() {\n  :\n}\n" },
+    { path: "hooks/lib/claude-guard-call.sh", text: "function claude_guard_call() {\n  :\n}\n" },
     {
       path: "hooks/auto-format.sh",
       text: 'if ! command -v run_bounded >/dev/null 2>&1; then exit 1; fi',
@@ -148,12 +148,12 @@ test("extractBinaryDeps skips names a scanned file defines as a shell function (
       path: "hooks/skill-usage-log.sh",
       text: 'command -v hook_field >/dev/null 2>&1 || hook_field() { jq -r "$1"; }',
     },
-    { path: "hooks/some-consumer.sh", text: "which oc_mark >/dev/null 2>&1 && oc_mark ok" },
+    { path: "hooks/some-consumer.sh", text: "which claude_guard_call >/dev/null 2>&1 && claude_guard_call x 1 1" },
   ];
   assert.deepStrictEqual(m.extractBinaryDeps(files), []);
   assert.deepStrictEqual(
     [...m.extractShellFunctionNames(files)].sort(),
-    ["hook_field", "oc_mark", "run_bounded"],
+    ["claude_guard_call", "hook_field", "run_bounded"],
   );
 });
 
