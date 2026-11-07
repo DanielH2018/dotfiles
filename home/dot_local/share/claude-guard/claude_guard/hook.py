@@ -186,16 +186,13 @@ def apply_guard_verdict(command: str, env: Mapping[str, str]) -> Verdict | None:
 
 
 def run_in_background(stdin_text: str) -> bool:
-    """Whether this call runs in the background: a Bash call that asked to, or any Monitor
-    call. Since 2.1.314 Bash hooks also see Monitor's commands, which always run detached and
-    carry no run_in_background key, so `tail -f` there is a stream, not a hand-written wait."""
+    """Whether the caller asked for this Bash call to run in the background.
+
+    A Monitor command cannot be exempted here: on 2.1.319 it reaches this hook as
+    tool_name "Bash" with only command and description, the same as a foreground call."""
     try:
         data = json.loads(stdin_text)
-        if not isinstance(data, dict):
-            return False
-        if data.get("tool_name") == "Monitor":
-            return True
-        tool_input = data.get("tool_input")
+        tool_input = data.get("tool_input") if isinstance(data, dict) else None
         return bool(isinstance(tool_input, dict) and tool_input.get("run_in_background"))
     except ValueError:
         return False
