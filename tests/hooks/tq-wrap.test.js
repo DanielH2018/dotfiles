@@ -30,7 +30,7 @@ const skip = skipUnless('bash', 'python3') || (PY314 ? false : 'no uv-managed Py
 // The hook also leaves alone a runner PATH cannot find, so each runner a case expects
 // rewritten gets a stub here; pytest gets none, for the not-on-PATH cases below.
 const RUNNER_STUBS = ['node', 'go', 'ruff', 'mypy', 'eslint', 'tsc', 'shellcheck', 'uv', 'cargo',
-  'gradle', 'mvn', 'prek'];
+  'gradle', 'mvn', 'prek', 'rg'];
 let binDir = '';
 if (have('python3')) {
   binDir = scratch(os.tmpdir(), 'tq-hook-bin-');
