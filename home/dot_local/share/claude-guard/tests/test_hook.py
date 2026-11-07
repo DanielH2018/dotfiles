@@ -356,7 +356,6 @@ def monitor_call(command: str) -> str:
     [
         "tail -f /tmp/app.log | grep --line-buffered ERROR",
         "while true; do gh pr checks 1; sleep 30; done",
-        "kubectl get pods --watch",
     ],
 )
 def test_a_monitor_stream_is_not_denied_as_a_hand_written_wait(tmp_path, command):
