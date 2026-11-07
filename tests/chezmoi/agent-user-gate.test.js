@@ -197,14 +197,13 @@ test("the agent on a host outside the server's dev_tooling_hosts gets nothing fr
   assert.notStrictEqual(onHost(PYTHON_TOOLS, false, 'daniel-desktop', 'workstation').trim(), '');
 });
 
-// Both installers write ~/.local/bin/uv and the prek tool, so a different value makes each apply
-// of one undo the other (H7.38). The oracle is the server repo's own files, read through
-// tests/lib/homelab.js, never a literal copied here: a dated literal kept passing while the
-// server moved prek to 0.5.7 (#1129). A pattern that finds nothing reads as a disagreement, so
-// the server deleting these tasks (H7.39) fails here rather than passing on nothing.
+// The server's units run uv with --no-python-downloads against the Python this repo installs, so
+// the two must name the same version. Since the server's H7.62 this repo is the only installer of
+// the per-user uv and prek, and only Python is still shared. The oracle is the server repo's own
+// file, read through tests/lib/homelab.js, never a literal copied here: a dated literal kept
+// passing while the server moved (#1129). A pattern that finds nothing reads as a disagreement,
+// so the server moving the pin fails here rather than passing on nothing.
 const SERVER_PINS = {
-  uv: ['ansible/roles/setup/initial_setup/defaults/main.yml', /^initial_setup_uv_version: "([^"]+)"$/m],
-  prek: ['ansible/roles/setup/initial_setup/tasks/host-basics.yml', /^\s*- prek==(\S+)$/m],
   python: ['ansible/inventory/group_vars/all.yml', /^host_python_version: "([^"]+)"$/m],
 };
 
@@ -218,17 +217,12 @@ function serverPinProblems(ours, serverText) {
 }
 
 test('the server-pin check accepts equal pins and reports a different or missing one', () => {
-  const text = (uv, prek, python) => ({
-    [SERVER_PINS.uv[0]]: `initial_setup_uv_version: "${uv}"\n`,
-    [SERVER_PINS.prek[0]]: `    loop:\n    - prek==${prek}\n`,
-    [SERVER_PINS.python[0]]: `host_python_version: "${python}"\n`,
-  });
-  const ours = { uv: '0.13.5', prek: '0.5.7', python: '3.14.6' };
-  assert.deepStrictEqual(serverPinProblems(ours, text('0.13.5', '0.5.7', '3.14.6')), []);
-  assert.deepStrictEqual(serverPinProblems(ours, text('0.13.5', '0.5.9', '3.14.6')),
-    [`prek is 0.5.7 here and 0.5.9 in the server's ${SERVER_PINS.prek[0]}`]);
-  assert.match(serverPinProblems(ours, { ...text('0.13.5', '0.5.7', '3.14.6'), [SERVER_PINS.uv[0]]: '' })[0],
-    /no longer pins uv/);
+  const text = (python) => ({ [SERVER_PINS.python[0]]: `host_python_version: "${python}"\n` });
+  const ours = { python: '3.14.6' };
+  assert.deepStrictEqual(serverPinProblems(ours, text('3.14.6')), []);
+  assert.deepStrictEqual(serverPinProblems(ours, text('3.14.7')),
+    [`python is 3.14.6 here and 3.14.7 in the server's ${SERVER_PINS.python[0]}`]);
+  assert.match(serverPinProblems(ours, { [SERVER_PINS.python[0]]: '' })[0], /no longer pins python/);
 });
 
 test('the tools.toml pins are the values the server repo installs', { skip }, async (t) => {

@@ -273,11 +273,11 @@ nerd-fonts = { repo = "ryanoasis/nerd-fonts", tag = "v3.5.1" }
 # AND in `.github/workflows/ci.yml` — so CI and a laptop ran different builds of the hook runner
 # that decides whether a push is clean. CI reads these same values out of this file.
 #
-# uv, prek and python are also the pins DanielH2018/server's Ansible installs on its hosts
-# (`initial_setup_uv_version`, the `prek==` loop in initial_setup's host-basics.yml, and
-# `host_python_version`). Both installers write the same ~/.local/bin and uv tool directory, so
-# a value that differs here makes each apply of one undo the other. Move all three in the same
-# change as the server repo until its tasks are deleted (H7.39). 2026-10-24: these were 0.12.14,
+# python must equal DanielH2018/server's `host_python_version`: the server's units run uv with
+# --no-python-downloads against the Python this repo installs, so bump it here first. Since the
+# server's H7.62 (2026-11-07) this repo is the only installer of the per-user uv and prek, and
+# their pins are this file's alone. Before H7.62 the server pinned all three, and a value that
+# differed made each apply undo the other. 2026-10-24: these were 0.12.14,
 # 0.5.3 and 3.14.7, and were moved to the server's values (H7.38).
 [toolchain]
 # renovate: datasource=pypi depName=prek
