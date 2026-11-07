@@ -1078,13 +1078,9 @@
     "skins@hellosverre-mods": true
 {{- end }}
 {{- if eq .chezmoi.hostname "daniel-box" }},
-    {{/* Two-week trial on daniel-box only (dotfiles #794): /flow draws the session's
-         subagents as a live tree. The marketplace below reads a copy that .chezmoiexternal
-         pins to one audited commit. If the pane is unused two weeks after install, end the
-         trial: set this to false, drop the marketplace entry and the external, and list
-         .local/share/claude-agent-flow in .chezmoiremove, because chezmoi leaves a
-         dropped external's files in place. */}}
-    "agent-flow@claude-agent-flow": true
+    {{/* The /flow trial (dotfiles #794) ended unused on 2026-11-07. False rather than
+         absent, because the plugin cache still lists it as installed on daniel-box. */}}
+    "agent-flow@claude-agent-flow": false
 {{- end }}
   },
   "extraKnownMarketplaces": {
@@ -1101,16 +1097,6 @@
       "source": {
         "source": "github",
         "repo": "hellosverre/claude-skins"
-      }
-    }
-{{- end }}
-{{- if eq .chezmoi.hostname "daniel-box" }},
-    {{/* A local directory, not a github source: a github marketplace follows a branch,
-         and the trial's condition (dotfiles #794) is a pin to the audited commit. */}}
-    "claude-agent-flow": {
-      "source": {
-        "source": "directory",
-        "path": "{{ .chezmoi.homeDir }}/.local/share/claude-agent-flow"
       }
     }
 {{- end }}

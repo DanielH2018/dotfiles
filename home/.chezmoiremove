@@ -215,3 +215,7 @@ Scripts/wslhost-interop-reaper/wslhost-interop-reaper-hidden.vbs
 # #733: the SessionStart artifact sweep moved into retention-sweep as manifest rows G20 and
 # G21, which run hourly from a timer instead of once per session.
 .claude/hooks/prune-artifacts.sh
+
+# #794: the agent-flow trial ended unused on 2026-11-07. Its archive external is gone, and
+# chezmoi leaves a dropped external's files in place.
+.local/share/claude-agent-flow

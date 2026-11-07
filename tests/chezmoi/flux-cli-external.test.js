@@ -1,6 +1,6 @@
 // The Flux CLI external (#857): daniel-box only, pinned to the server repo's flux_version.
-// Rendered under a named hostname for the reason tests/settings/agent-flow-trial.test.js gives;
-// that file also checks that every other host renders the externals file empty.
+// Rendered under a named hostname, because the suite runs on whichever machine pushes and the
+// host gate's polarity has to be checked from every one of them.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
@@ -11,11 +11,15 @@ const { SOURCE, srcPath } = require('../lib/paths');
 
 const skip = skipUnless('chezmoi');
 
-test('daniel-box installs the flux binary from a pinned release', { skip }, () => {
-  const toml = execFileSync('chezmoi', [
+function renderExternalsAs(hostname) {
+  return execFileSync('chezmoi', [
     '--source', SOURCE, 'execute-template',
-    '--override-data', JSON.stringify({ chezmoi: { hostname: 'daniel-box' } }),
+    '--override-data', JSON.stringify({ chezmoi: { hostname } }),
   ], { input: fs.readFileSync(srcPath('.chezmoiexternal.toml.tmpl'), 'utf8'), encoding: 'utf8' });
+}
+
+test('daniel-box installs the flux binary from a pinned release', { skip }, () => {
+  const toml = renderExternalsAs('daniel-box');
   const entry = toml.split(/^\["\.local\/bin\/flux"\]$/m)[1];
   assert.ok(entry, 'the daniel-box render has no .local/bin/flux external');
   const body = entry.split(/^\[/m)[0];
@@ -24,6 +28,12 @@ test('daniel-box installs the flux binary from a pinned release', { skip }, () =
   assert.match(body, /^\s*checksum\.sha256 = "[0-9a-f]{64}"$/m);
   assert.match(body, /^\s*path = "flux"$/m);
   assert.match(body, /^\s*executable = true$/m);
+});
+
+test('no other host renders any external', { skip }, () => {
+  for (const host of ['daniel-server', 'work-laptop']) {
+    assert.strictEqual(renderExternalsAs(host).trim(), '', host);
+  }
 });
 
 // --- Lockstep with the server's flux_version ---------------------------------------------------
