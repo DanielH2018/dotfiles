@@ -125,6 +125,7 @@ JVM_TIMEOUT_S="${JVM_TIMEOUT_S:-10}"
 
 OUTPUT=""
 FAILED=0
+ADVISORY=0
 CANNOT=0
 CANNOT_REASON=""
 
@@ -176,7 +177,16 @@ find_up() {
 
 case "$FILE_PATH" in
   *.py)
-    command -v ruff >/dev/null && run_check ruff "$LINT_TIMEOUT_S" "$LINT_CAP_BYTES" ruff check "$FILE_PATH"
+    if command -v ruff >/dev/null; then
+      run_check ruff "$LINT_TIMEOUT_S" "$LINT_CAP_BYTES" ruff check "$FILE_PATH"
+      # An import one edit ahead of its use (F401), or a use one edit ahead of its import
+      # (F821), is a half-finished edit as often as a defect, and prek still rejects both at
+      # commit. When they are the only findings, report them without blocking.
+      if [ "$FAILED" -eq 1 ]; then
+        run_bounded "$LINT_TIMEOUT_S" "$LINT_CAP_BYTES" -- ruff check --extend-ignore F401,F821 "$FILE_PATH"
+        [ "$RB_STATUS" = ok ] && [ "$RB_EXIT" -eq 0 ] && ADVISORY=1
+      fi
+    fi
     ;;
   *.ts|*.tsx)
     # Per-file syntax check only — full tsc --noEmit -p . is too slow for a per-edit hook.
@@ -265,6 +275,12 @@ if [ "$FAILED" -eq 1 ]; then
     OUTPUT="$(printf '%s\n' "$OUTPUT" | head -n "$MAX_LINES")
 
 [$((TOTAL - MAX_LINES)) more line(s) truncated — re-run the checker for the full output]"
+  fi
+  if [ "$ADVISORY" -eq 1 ]; then
+    jq -n --arg ctx "Lint after edit (not blocking): ruff reports only unused imports (F401) or undefined names (F821). If your next edit adds the missing use or import, this resolves itself; otherwise fix it, because prek rejects both at commit.
+
+$OUTPUT" '{hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: $ctx}}'
+    exit 0
   fi
   jq -n --arg reason "Lint/typecheck failed after edit:
 

@@ -64,6 +64,28 @@ test('shell script with a lint violation: block decision surfaces the output', {
   assert.match(out, /SC2086/);
 });
 
+const skipRuff = !have('ruff') ? 'ruff not installed' : skipUnless('bash', 'jq', 'timeout');
+
+test('a Python file whose only findings are F401 and F821 is reported, not blocked', { skip: skipRuff }, () => {
+  const dir = scratch(os.tmpdir(), 'lint-after-edit-');
+  const f = path.join(dir, 'half_edit.py');
+  fs.writeFileSync(f, 'import os\n\n\ndef main():\n    return helper()\n');
+  const out = runHook(JSON.stringify({ tool_input: { file_path: f } }));
+  assert.notStrictEqual(decision(out), 'block');
+  const ctx = JSON.parse(out).hookSpecificOutput.additionalContext;
+  assert.match(ctx, /F401/);
+  assert.match(ctx, /F821/);
+});
+
+test('a Python file with any other finding still blocks', { skip: skipRuff }, () => {
+  const dir = scratch(os.tmpdir(), 'lint-after-edit-');
+  const f = path.join(dir, 'real_defect.py');
+  fs.writeFileSync(f, 'import os\n\n\ndef main():\n    unused = 1\n');
+  const out = runHook(JSON.stringify({ tool_input: { file_path: f } }));
+  assert.strictEqual(decision(out), 'block');
+  assert.match(out, /F841/);
+});
+
 // The whole linter output went into the block reason, i.e. into the model's context, for
 // one edit. A failing tsc on a real project emits thousands of lines; the head carries the
 // first actual error, so cap it and say what was dropped instead of truncating silently.
