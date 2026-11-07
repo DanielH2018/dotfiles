@@ -62,31 +62,19 @@ not_evaluated() {
   printf 'guard-permission-request: %s -- not evaluated; the permission prompt stands\n' "$1" >&2
   exit 0
 }
-SHARE="${CLAUDE_GUARD_HOME:-${HOME:-}/.local/share/claude-guard}"
-[ -f "$SHARE/claude_guard/cli.py" ] || exit 0
-RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/lib/run-bounded.sh}"
+HOOK_LIB=${BASH_SOURCE[0]%/*}/lib
 # shellcheck source=/dev/null
-if ! . "$RUN_BOUNDED_PATH" 2>/dev/null || ! command -v run_bounded >/dev/null 2>&1; then
-  not_evaluated "cannot load $RUN_BOUNDED_PATH"
-fi
+. "${HOOK_INPUT_LIB:-$HOOK_LIB/hook-input.sh}" 2>/dev/null \
+  || not_evaluated "cannot load hook-input.sh"
+hook_read_input
 # shellcheck source=/dev/null
-. "${BASH_SOURCE[0]%/*}/lib/guard-python.sh" 2>/dev/null \
-  || not_evaluated "cannot load ${BASH_SOURCE[0]%/*}/lib/guard-python.sh"
-T_FIND=${CLAUDE_GUARD_TIMEOUT_S:-2}
-T_JUDGE=${CLAUDE_GUARD_TIMEOUT_S:-6}
-
-# lib/guard-python.sh keeps the payload on stdin for the judge. A uv that answers with no
-# interpreter is a host without the toolchain, not a failed check, so it stays silent.
-if ! guard_python "$T_FIND"; then
-  [ "$GUARD_PY_STATUS" = none ] && exit 0
-  not_evaluated "uv python find did not finish within ${T_FIND}s ($GUARD_PY_STATUS)"
+. "$HOOK_LIB/claude-guard-call.sh" 2>/dev/null \
+  || not_evaluated "cannot load $HOOK_LIB/claude-guard-call.sh"
+# A missing package, or a uv that answers with no interpreter, is a host without the
+# toolchain rather than a failed check, so both stay silent.
+if ! claude_guard_call permission-request "${CLAUDE_GUARD_TIMEOUT_S:-6}" 65536; then
+  [ "$CG_FAIL" = absent ] || [ "${GUARD_PY_STATUS:-}" = none ] && exit 0
+  not_evaluated "$CG_FAIL"
 fi
-PY=$GUARD_PY
-
-# shellcheck disable=SC2016  # $1/$2 belong to the inner bash
-run_bounded "$T_JUDGE" 65536 -- \
-  bash -c 'PYTHONPATH="$1" exec "$2" -S -P -m claude_guard.cli permission-request 2>/dev/null' _ "$SHARE" "$PY"
-[ "$RB_STATUS" = ok ] || not_evaluated "claude_guard did not finish within ${T_JUDGE}s ($RB_STATUS)"
-[ "$RB_EXIT" -eq 0 ] || not_evaluated "claude_guard failed (exit $RB_EXIT)"
 [ -z "$RB_OUT" ] || printf '%s\n' "$RB_OUT"
 exit 0

@@ -3,11 +3,10 @@
 
 Run: python3 test_hook_input.py
 
-read_event() and emit_decision() touch the real stdin and stdout, so those cases run a
+read_event() touches the real stdin, so those cases run a
 child interpreter with lib/ on sys.path, the way a hook imports the module.
 """
 
-import json
 import os
 import subprocess
 import sys
@@ -64,33 +63,5 @@ for value in [None, "ls", ["ls"]]:
         hook_input.tool_input({"tool_input": value}) == {},
     )
 check("tool_input of an event without one is {}", hook_input.tool_input({}) == {})
-
-# A reason carrying a quote and a newline must survive as one JSON string.
-p = child('hook_input.emit_decision("deny", \'no "x"\\nhere\')')
-out = json.loads(p.stdout)["hookSpecificOutput"]
-check(
-    "emit_decision writes a PreToolUse deny with its reason",
-    out
-    == {
-        "hookEventName": "PreToolUse",
-        "permissionDecision": "deny",
-        "permissionDecisionReason": 'no "x"\nhere',
-    },
-)
-p = child('hook_input.emit_decision("ask", "check this")')
-check(
-    "emit_decision writes an ask",
-    json.loads(p.stdout)["hookSpecificOutput"]["permissionDecision"] == "ask",
-)
-p = child('hook_input.emit_decision("allow")')
-check(
-    "emit_decision omits an empty reason",
-    "permissionDecisionReason" not in json.loads(p.stdout)["hookSpecificOutput"],
-)
-p = child('hook_input.emit_decision("block", "x")')
-check(
-    "emit_decision refuses an unknown decision and prints nothing",
-    p.returncode != 0 and p.stdout == "" and "ValueError" in p.stderr,
-)
 
 finish()

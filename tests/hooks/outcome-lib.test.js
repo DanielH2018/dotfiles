@@ -1,6 +1,6 @@
 // outcome-lib.sh: could-not-evaluate has to be a state of its own, recorded and
-// visible, never collapsed into a pass. These assert the three exits, the marker
-// accumulating per id, the jq-free recorder, and the UNEVAL_GATE=warn rollback.
+// visible, never collapsed into a pass. These assert the could-not-evaluate exit, the
+// marker accumulating per id, the jq-free recorder, and the UNEVAL_GATE=warn rollback.
 //
 // No consumer is wired to this library yet — that is deliberate, so shipping it cannot
 // change any existing gate's behaviour.
@@ -35,20 +35,6 @@ function sh(dir, snippet, env = {}) {
 }
 
 const marker = (dir, id) => JSON.parse(fs.readFileSync(path.join(dir, `${id}.json`), 'utf8'));
-
-test('oc_pass exits 0 and records nothing', { skip }, () => {
-  const d = markerDir();
-  assert.strictEqual(sh(d, 'oc_pass').status, 0);
-  assert.deepStrictEqual(fs.readdirSync(d), []);
-});
-
-test('oc_fail exits 1 — a verdict was reached and it was negative', { skip }, () => {
-  const d = markerDir();
-  const r = sh(d, 'oc_fail sig-check "two unsigned commits"');
-  assert.strictEqual(r.status, 1);
-  assert.match(r.stderr, /^FAIL \[sig-check\]/m);
-  assert.strictEqual(marker(d, 'sig-check').state, 'fail');
-});
 
 test('oc_cannot exits 3 — distinct from both pass and fail', { skip }, () => {
   const d = markerDir();
@@ -92,38 +78,6 @@ test('UNEVAL_GATE=warn demotes the block but keeps the marker', { skip }, () => 
   assert.match(r.stdout, /continued/);
   assert.match(r.stderr, /CANNOT-EVALUATE/, 'demoted, not silenced');
   assert.strictEqual(marker(d, 'shim-missing').n, 1);
-});
-
-test('oc_need reports a missing tool instead of shrugging', { skip }, () => {
-  const d = markerDir();
-  assert.strictEqual(sh(d, 'oc_need bash have-bash').status, 0);
-  const r = sh(d, 'oc_need definitely-not-a-real-binary need-x');
-  assert.strictEqual(r.status, 3);
-  assert.match(marker(d, 'need-x').reason, /not on PATH/);
-});
-
-test('oc_json separates an empty answer from a broken jq', { skip }, () => {
-  const d = markerDir();
-  const empty = sh(d, `printf '{}' | oc_json '.missing // ""' jq-a`);
-  assert.strictEqual(empty.status, 0, 'an empty result is a real answer');
-  assert.strictEqual(empty.stdout, '');
-  const broken = sh(d, `printf 'not json' | oc_json '.x' jq-b`);
-  assert.strictEqual(broken.status, 3, 'a parse failure is could-not-evaluate, not an empty answer');
-});
-
-test('oc_run turns a failed prerequisite into could-not-evaluate', { skip }, () => {
-  const d = markerDir();
-  assert.strictEqual(sh(d, 'oc_run r1 "probe failed" -- true').status, 0);
-  assert.strictEqual(sh(d, 'oc_run r2 "probe failed" -- false').status, 3);
-});
-
-test('uneval counts, lists and acks', { skip }, () => {
-  const d = markerDir();
-  sh(d, 'oc_mark a cannot x; oc_mark b cannot y');
-  assert.strictEqual(sh(d, 'uneval count').stdout.trim(), '2');
-  assert.match(sh(d, 'uneval list').stdout, /"id":"a"/);
-  sh(d, 'uneval ack a');
-  assert.strictEqual(sh(d, 'uneval count').stdout.trim(), '1');
 });
 
 test('an id that is not filename-safe is refused, not written', { skip }, () => {

@@ -98,26 +98,8 @@ fail() {
 # shellcheck source=/dev/null
 . "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/lib/hook-input.sh}" 2>/dev/null || fail
 hook_read_input
-SHARE="${CLAUDE_GUARD_HOME:-${HOME:-}/.local/share/claude-guard}"
-[ -f "$SHARE/claude_guard/cli.py" ] || fail
 # shellcheck source=/dev/null
-. "${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/lib/run-bounded.sh}" 2>/dev/null || fail
-command -v run_bounded >/dev/null 2>&1 || fail
-# shellcheck source=/dev/null
-. "${BASH_SOURCE[0]%/*}/lib/guard-python.sh" 2>/dev/null || fail
-T_FIND=${CLAUDE_GUARD_TIMEOUT_S:-2}
-T_JUDGE=${CLAUDE_GUARD_TIMEOUT_S:-7}
-
-guard_python "$T_FIND" || fail
-PY=$GUARD_PY
-
-# The payload goes in through process substitution. A pipe would run run_bounded in a
-# subshell and lose RB_*, and a here-string appends a newline the payload never had.
-# stderr is dropped inside the child, because run_bounded merges it into the verdict.
-# shellcheck disable=SC2016  # $1/$2 belong to the inner bash
-run_bounded "$T_JUDGE" 65536 -- \
-  bash -c 'PYTHONPATH="$1" exec "$2" -S -P -m claude_guard.cli pre-tool-use 2>/dev/null' _ "$SHARE" "$PY" \
-  < <(printf '%s' "$_HOOK_INPUT_RAW")
-[ "$RB_STATUS" = ok ] && [ "$RB_EXIT" -eq 0 ] || fail
+. "${BASH_SOURCE[0]%/*}/lib/claude-guard-call.sh" 2>/dev/null || fail
+claude_guard_call pre-tool-use "${CLAUDE_GUARD_TIMEOUT_S:-7}" 65536 || fail
 [ -n "$RB_OUT" ] && printf '%s\n' "$RB_OUT"
 exit 0

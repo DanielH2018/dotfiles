@@ -69,6 +69,25 @@ hook_file_path() {
   hook_field '.tool_input.file_path // .tool_input.notebook_path // empty'
 }
 
+# hook_under_temp_root <path> [roots]
+#   Whether <path> is under a temp root, so a hook can treat the file as a throwaway.
+#   `roots` is colon-separated and defaults to $TMPDIR:/tmp:/var/tmp:/private/tmp; an
+#   empty `roots` matches nothing, which is how a test turns the exemption off. Both sides
+#   are compared resolved, because on macOS /tmp links to /private/tmp and $TMPDIR sits
+#   under /var, which links to /private/var. `pwd -P`, since BSD readlink has no -f.
+hook_under_temp_root() {
+  local dir root
+  local -a roots
+  dir=$(cd "$(dirname "$1")" 2>/dev/null && pwd -P) || return 1
+  IFS=: read -r -a roots <<<"${2-${TMPDIR:-}:/tmp:/var/tmp:/private/tmp}"
+  for root in "${roots[@]}"; do
+    [ -n "$root" ] || continue
+    root=$(cd "$root" 2>/dev/null && pwd -P) || continue
+    case "$dir/" in "${root%/}/"*) return 0 ;; esac
+  done
+  return 1
+}
+
 # hook_require_jq <mode> [reason]
 #   The one explicit jq-presence guard. Returns 0 if jq is on PATH — the caller
 #   proceeds normally. Returns 1 if not, having already printed the caller's chosen

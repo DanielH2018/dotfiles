@@ -95,15 +95,6 @@ oc_mark() {
   return 0
 }
 
-oc_pass() { return 0; }
-
-# oc_fail <id> <reason> — an actual verdict, reached and negative.
-oc_fail() {
-  oc_mark "${1:-}" fail "${2:-}"
-  printf 'FAIL [%s] %s\n' "${1:-?}" "${2:-}" >&2
-  exit 1
-}
-
 # oc_cannot <id> <reason> — no verdict was reachable. Never a pass.
 oc_cannot() {
   oc_mark "${1:-}" cannot "${2:-}"
@@ -111,71 +102,3 @@ oc_cannot() {
   [[ "${UNEVAL_GATE:-}" == "warn" ]] && return 0
   exit 3
 }
-
-# oc_need <bin> <id> — a missing tool is a condition to report, not to shrug at.
-oc_need() {
-  command -v "${1:-}" >/dev/null 2>&1 ||
-    oc_cannot "${2:-missing-$1}" "required command not on PATH: ${1:-}"
-}
-
-# oc_json <jq-filter> <id> [file]
-#   jq with its exit status checked. An empty result is a real answer and is returned as
-#   an empty string; a parse or invocation failure is could-not-evaluate. Ten hooks
-#   currently silence jq entirely and degrade to no-ops when it breaks.
-oc_json() {
-  local filter="${1:-.}" id="${2:-jq}" file="${3:-}" out
-  command -v jq >/dev/null 2>&1 || oc_cannot "$id" "jq is not available"
-  if [[ -n "$file" ]]; then
-    out=$(jq -r "$filter" "$file" 2>/dev/null) || oc_cannot "$id" "jq failed on $file"
-  else
-    out=$(jq -r "$filter" 2>/dev/null) || oc_cannot "$id" "jq failed on stdin"
-  fi
-  printf '%s' "$out"
-}
-
-# oc_run <id> <reason> -- cmd...
-#   Run a command whose failure means the caller could not evaluate, rather than that
-#   the thing under test is bad.
-oc_run() {
-  local id="${1:-}" reason="${2:-}"
-  shift 2
-  [[ "${1:-}" == "--" ]] && shift
-  "$@" || oc_cannot "$id" "$reason"
-}
-
-# uneval count|list|ack [id] — read the marker store. Verbs, so a statusline or a gate
-# can ask "is anything unevaluated?" without parsing files itself.
-uneval() {
-  local dir
-  dir=$(_oc_marker_dir)
-  case "${1:-count}" in
-    count)
-      local n=0 f
-      shopt -s nullglob
-      for f in "$dir"/*.json; do n=$((n + 1)); done
-      shopt -u nullglob
-      printf '%s\n' "$n"
-      ;;
-    list)
-      shopt -s nullglob
-      local f
-      for f in "$dir"/*.json; do cat "$f"; done
-      shopt -u nullglob
-      ;;
-    ack)
-      local id
-      id=$(_oc_safe_id "${2:-}") || return 1
-      rm -f "$dir/$id.json" 2>/dev/null
-      ;;
-    *)
-      printf 'usage: uneval count|list|ack <id>\n' >&2
-      return 1
-      ;;
-  esac
-}
-
-# Executed rather than sourced: expose the read verbs so a statusline can call this file
-# directly instead of sourcing a library into an unrelated shell.
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-  uneval "$@"
-fi

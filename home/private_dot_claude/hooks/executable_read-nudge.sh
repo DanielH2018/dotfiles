@@ -25,25 +25,12 @@ skip() {
 . "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/lib/hook-input.sh}" 2>/dev/null \
   || skip "cannot load hook-input.sh"
 hook_read_input
-SHARE="${CLAUDE_GUARD_HOME:-${HOME:-}/.local/share/claude-guard}"
-[[ -f "$SHARE/claude_guard/cli.py" ]] || exit 0
 # shellcheck source=/dev/null
-. "${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/lib/run-bounded.sh}" 2>/dev/null \
-  || skip "cannot load run-bounded.sh"
-command -v run_bounded >/dev/null 2>&1 || skip "run_bounded is not defined"
-# shellcheck source=/dev/null
-. "${BASH_SOURCE[0]%/*}/lib/guard-python.sh" 2>/dev/null || skip "cannot load guard-python.sh"
-T_FIND=${CLAUDE_GUARD_TIMEOUT_S:-2}
-T_JUDGE=${CLAUDE_GUARD_TIMEOUT_S:-2}
-
-guard_python "$T_FIND" || skip "no interpreter (${GUARD_PY_STATUS:-unknown})"
-PY=$GUARD_PY
-
-# shellcheck disable=SC2016  # $1/$2 belong to the inner bash
-run_bounded "$T_JUDGE" 65536 -- \
-  bash -c 'PYTHONPATH="$1" exec "$2" -S -P -m claude_guard.cli read-nudge 2>/dev/null' _ "$SHARE" "$PY" \
-  < <(printf '%s' "$_HOOK_INPUT_RAW")
-[[ "$RB_STATUS" = ok ]] || skip "claude_guard did not finish within ${T_JUDGE}s ($RB_STATUS)"
-[[ "$RB_EXIT" -eq 0 ]] || skip "claude_guard failed (exit $RB_EXIT)"
+. "${BASH_SOURCE[0]%/*}/lib/claude-guard-call.sh" 2>/dev/null \
+  || skip "cannot load claude-guard-call.sh"
+if ! claude_guard_call read-nudge "${CLAUDE_GUARD_TIMEOUT_S:-2}" 65536; then
+  [[ "$CG_FAIL" = absent ]] && exit 0
+  skip "$CG_FAIL"
+fi
 [[ -z "$RB_OUT" ]] || printf '%s\n' "$RB_OUT"
 exit 0

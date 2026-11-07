@@ -103,18 +103,13 @@ FILE_PATH=$(hook_file_path)
 
 # A file under a temp root is a throwaway: a session scratchpad lives at
 # /private/tmp/claude-<uid>/<project>/<session>/scratchpad/, and blocking on a style
-# finding there costs a turn and protects nothing. Both sides are compared resolved,
-# because on macOS /tmp is a symlink to /private/tmp and $TMPDIR is under /var, itself a
-# symlink to /private/var. `pwd -P` rather than `readlink -f`, which BSD readlink lacks.
-# LINT_SKIP_ROOTS (colon-separated) is a seam: the tests write their fixtures under
-# os.tmpdir() and set it empty, which turns the exemption off.
-FILE_DIR=$(cd "$(dirname "$FILE_PATH")" 2>/dev/null && pwd -P) || FILE_DIR=""
-IFS=: read -r -a SKIP_ROOTS <<<"${LINT_SKIP_ROOTS-${TMPDIR:-}:/tmp:/private/tmp}"
-for root in "${SKIP_ROOTS[@]}"; do
-  [[ -n "$root" && -n "$FILE_DIR" ]] || continue
-  root=$(cd "$root" 2>/dev/null && pwd -P) || continue
-  [[ "$FILE_DIR/" == "${root%/}/"* ]] && exit 0
-done
+# finding there costs a turn and protects nothing. LINT_SKIP_ROOTS (colon-separated)
+# replaces the root list: the tests write their fixtures under os.tmpdir() and set it
+# empty, which turns the exemption off. Without hook-input.sh there is no exemption.
+if command -v hook_under_temp_root >/dev/null 2>&1 &&
+  hook_under_temp_root "$FILE_PATH" ${LINT_SKIP_ROOTS+"$LINT_SKIP_ROOTS"}; then
+  exit 0
+fi
 
 # Per-check bound. 8s/4MB for the interpreted/native checks; 10s for the JVM
 # checks (gradle daemon warm-up headroom — see the *.java/*.kt case). These are

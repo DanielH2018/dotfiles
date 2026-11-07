@@ -119,25 +119,15 @@ BACKSLASH=$'\x5c'
 # for the call, which holds the apply guard's 10s `chezmoi diff`. One that does not finish
 # counts as no interpreter. The library is sourced here, ahead of its first use; a missing
 # one is reported as a block further down, before any downstream hook runs.
-GUARD_SHARE="${CLAUDE_GUARD_HOME:-${HOME:-}/.local/share/claude-guard}"
 RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-$HOOK_DIR/lib/run-bounded.sh}"
 # shellcheck source=/dev/null
 . "$RUN_BOUNDED_PATH" 2>/dev/null
 
 POST_JSON=''
 claude_guard_post() {
-  command -v run_bounded >/dev/null 2>&1 || return 1
-  [ -f "$GUARD_SHARE/claude_guard/cli.py" ] || return 1
   # shellcheck source=/dev/null
-  . "$HOOK_DIR/lib/guard-python.sh" 2>/dev/null || return 1
-  guard_python 2 || return 1
-  # The payload goes in through process substitution, so run_bounded keeps its RB_* here.
-  # stderr is dropped inside the child: run_bounded merges it into the text returned.
-  # shellcheck disable=SC2016  # $1/$2 belong to the inner bash
-  run_bounded 14 1048576 -- \
-    bash -c 'PYTHONPATH="$1" exec "$2" -S -P -m claude_guard.cli post-tool-use 2>/dev/null' \
-    _ "$GUARD_SHARE" "$GUARD_PY" < <(printf '%s' "$_HOOK_INPUT_RAW")
-  [ "$RB_STATUS" = ok ] && [ "$RB_EXIT" -eq 0 ] || return 1
+  . "$HOOK_DIR/lib/claude-guard-call.sh" 2>/dev/null || return 1
+  claude_guard_call post-tool-use 14 1048576 || return 1
   printf '%s' "$RB_OUT" | jq -e 'type == "object"' >/dev/null 2>&1 || return 1
   POST_JSON=$RB_OUT
 }
@@ -410,15 +400,8 @@ if [ "${#CANDIDATES[@]}" -eq 0 ]; then finish; fi
 # prose lint blocked on upstream text in it every run. A heredoc there is authored, so it is
 # still checked.
 case "$CMD" in *'<<'*) HAS_HEREDOC=1 ;; *) HAS_HEREDOC=0 ;; esac
-TEMP_ROOTS=${CLAUDE_BASH_WRITE_FANOUT_TEMP_ROOTS:-/tmp:/var/tmp:${TMPDIR:-/tmp}}
 under_temp_root() {
-  local root resolved IFS=:
-  for root in $TEMP_ROOTS; do
-    [ -n "$root" ] || continue
-    resolved=$(cd "$root" 2>/dev/null && pwd -P) || continue
-    case $1 in "$resolved"/*) return 0 ;; esac
-  done
-  return 1
+  hook_under_temp_root "$1" ${CLAUDE_BASH_WRITE_FANOUT_TEMP_ROOTS:+"$CLAUDE_BASH_WRITE_FANOUT_TEMP_ROOTS"}
 }
 
 declare -a PATHS=()

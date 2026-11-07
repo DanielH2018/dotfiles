@@ -29,8 +29,9 @@ fs.writeFileSync(path.join(SHARE, 'claude_guard', 'cli.py'), '');
 const PY = path.join(DIR, 'python3.15');
 const ALLOW = '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}';
 // The stub judge echoes a fixed allow after reading its stdin, or hangs, or fails after
-// printing the allow, as STUB_PY says.
+// printing the allow, or echoes its stdin back, as STUB_PY says.
 fs.writeFileSync(PY, `#!/bin/bash
+[ "\${STUB_PY:-}" = echo ] && exec cat
 cat >/dev/null
 case "\${STUB_PY:-}" in
   slow) sleep 30 ;;
@@ -64,6 +65,12 @@ test('a judge that answers has its verdict passed through', { skip }, () => {
   const r = run({ CLAUDE_GUARD_TIMEOUT_S: '10' });
   assert.strictEqual(r.status, 0);
   assert.strictEqual(r.stdout.trim(), ALLOW, `stderr: ${r.stderr}`);
+});
+
+test('the judge reads the payload the harness sent', { skip }, () => {
+  const r = run({ STUB_PY: 'echo', CLAUDE_GUARD_TIMEOUT_S: '10' });
+  assert.deepStrictEqual(JSON.parse(r.stdout), { tool_name: 'Bash', tool_input: { command: 'ls' } },
+    `stderr: ${r.stderr}`);
 });
 
 test('a hung uv python find is cut off, prints nothing, and says why', { skip }, () => {

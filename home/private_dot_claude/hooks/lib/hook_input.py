@@ -20,16 +20,12 @@ Typical usage example:
   if event is None:
       return 0
   command = tool_input(event).get("command") or ""
-  ...
-  emit_decision("deny", reason)
 """
 
 from __future__ import annotations
 
 import json
 import sys
-
-DECISIONS = ("allow", "deny", "ask")
 
 
 def parse_event(text: str) -> dict | None:
@@ -62,24 +58,3 @@ def tool_input(event: dict) -> dict:
     """Return the event's `tool_input` object, or {} when absent or not an object."""
     value = event.get("tool_input")
     return value if isinstance(value, dict) else {}
-
-
-def emit_decision(decision: str, reason: str = "") -> None:
-    """Write a PreToolUse permission decision to stdout.
-
-    Args:
-      decision: One of "allow", "deny" or "ask".
-      reason: The permissionDecisionReason. Omitted from the output when empty, which
-        is the usual form for "allow".
-
-    Raises:
-      ValueError: decision is not one of DECISIONS. A typo must not print a decision
-        the harness silently ignores.
-    """
-    if decision not in DECISIONS:
-        raise ValueError(f"unknown permission decision: {decision!r}")
-    output = {"hookEventName": "PreToolUse", "permissionDecision": decision}
-    if reason:
-        output["permissionDecisionReason"] = reason
-    json.dump({"hookSpecificOutput": output}, sys.stdout)
-    sys.stdout.write("\n")
