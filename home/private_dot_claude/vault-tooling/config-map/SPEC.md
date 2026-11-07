@@ -80,6 +80,7 @@ Purpose text is **sourced deterministically**: skills/agents/commands from front
 - Provenance shown as colored chips (`chezmoi` / `generated` / `work` / `project` / `unmanaged`).
 - **Deterministic ordering** (sorted) everywhere → stable diffs.
 - Companion `Meta/Claude_Setup_Map.md` (frontmatter + summary + link + "generated, do not hand-edit") so it's an index-able vault page.
+- Copy at `~/.claude/artifacts/claude-setup-map.html` on every run, when that directory exists, for the artifact server. The generator never creates the directory.
 
 ## 7. Files to create
 

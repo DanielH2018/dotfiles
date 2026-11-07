@@ -60,6 +60,8 @@ PROJECT_CLAUDE_MD = VAULT_ROOT / "CLAUDE.md"
 
 OUTPUT_HTML = VAULT_ROOT / "Meta/Claude_Setup_Map.html"
 OUTPUT_HASH = Path(__file__).resolve().parents[1] / ".semantic_hash"
+# Stable name so the artifact server's URL survives regeneration.
+ARTIFACT_HTML = CLAUDE_DIR / "artifacts/claude-setup-map.html"
 
 # Templating prefixes that mark a chezmoi source as generating its deployed
 # file rather than deploying it verbatim (SPEC.md §4 provenance rule #2).

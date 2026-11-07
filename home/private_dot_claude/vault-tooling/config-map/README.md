@@ -4,6 +4,10 @@ Deterministic generator for the **Claude Setup Map** — scans your Claude
 Code config surface and emits one self-contained, collapsible HTML page at
 `$CLAUDE_VAULT_DIR/Meta/Claude_Setup_Map.html`. Full design: [`SPEC.md`](SPEC.md).
 
+Each run also copies that page to `~/.claude/artifacts/claude-setup-map.html`
+when the directory exists, so the artifact server serves it. The copy happens on
+an unchanged hash too, which keeps the artifact prune from deleting it.
+
 Vault-optional: if `$CLAUDE_VAULT_DIR` is unset or its target is missing, the
 project-layer section is skipped and no HTML is written — see
 [`config_map/sources.py`](config_map/sources.py) and `generate.py`'s

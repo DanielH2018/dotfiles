@@ -38,6 +38,16 @@ def test_vault_present_true_when_target_exists(tmp_path, monkeypatch):
     assert s.VAULT_PRESENT is True
 
 
+def _load_generate(monkeypatch, vault, artifact_html):
+    monkeypatch.setenv("CLAUDE_VAULT_DIR", str(vault))
+    _reload_sources()
+    import generate
+
+    importlib.reload(generate)
+    monkeypatch.setattr(generate, "ARTIFACT_HTML", artifact_html)
+    return generate
+
+
 def test_generate_skips_cleanly_when_no_vault(tmp_path, monkeypatch):
     missing = tmp_path / "no-vault-here"
     monkeypatch.setenv("CLAUDE_VAULT_DIR", str(missing))
@@ -57,13 +67,33 @@ def test_generate_writes_html_when_vault_present(tmp_path, monkeypatch):
     # at $CLAUDE_VAULT_DIR, generate.main() writes the HTML there, full stop.
     vault = tmp_path / "vault"
     vault.mkdir()
-    monkeypatch.setenv("CLAUDE_VAULT_DIR", str(vault))
-    _reload_sources()
-    import generate
-
-    importlib.reload(generate)
+    no_artifacts = tmp_path / "no-artifacts"
+    generate = _load_generate(monkeypatch, vault, no_artifacts / "map.html")
     rc = generate.main()
     assert rc == 0
     out = vault / "Meta" / "Claude_Setup_Map.html"
     assert out.exists()
     assert "<html" in out.read_text(encoding="utf-8").lower()
+    assert not no_artifacts.exists(), "must never mkdir the artifacts dir"
+
+
+def test_generate_copies_html_to_artifacts_dir_on_every_run(tmp_path, monkeypatch):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    artifact = artifacts / "claude-setup-map.html"
+    generate = _load_generate(monkeypatch, vault, artifact)
+    vault_html = vault / "Meta" / "Claude_Setup_Map.html"
+
+    assert generate.main() == 0
+    assert artifact.read_text(encoding="utf-8") == vault_html.read_text(
+        encoding="utf-8"
+    )
+
+    # The second run takes the unchanged-hash path and must still rewrite the copy.
+    artifact.write_text("stale", encoding="utf-8")
+    assert generate.main() == 0
+    assert artifact.read_text(encoding="utf-8") == vault_html.read_text(
+        encoding="utf-8"
+    )

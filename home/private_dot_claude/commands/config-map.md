@@ -17,4 +17,5 @@ python3 ~/.claude/vault-tooling/config-map/generate.py
 
 Report back the one-line status it prints (whether the HTML was rewritten, left
 unchanged because the semantic content hash didn't change, or skipped because no
-vault is configured). Do not hand-edit `Meta/Claude_Setup_Map.html` — it is generated.
+vault is configured), plus the line naming the `~/.claude/artifacts` copy when
+it prints one. Do not hand-edit `Meta/Claude_Setup_Map.html` — it is generated.
