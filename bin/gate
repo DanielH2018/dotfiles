@@ -21,11 +21,10 @@
 #                             composite floor is a soft ratchet (QUALITY_MIN_SCORE,
 #                             default 52 — raise it as the files improve).
 #   3. lint                 — every hook in .pre-commit-config.yaml, through prek.
-#   4. screen-injection     — red-team regression guard on the injection hook.
-#   5. unit tests           — the deterministic `node --test` suite; offline, self-skips the
+#   4. unit tests           — the deterministic `node --test` suite; offline, self-skips the
 #                             chezmoi-template tests when chezmoi isn't installed.
 #
-# Both test steps print a tq digest rather than the runner's own log — see
+# The test step prints a tq digest rather than the runner's own log — see
 # tq_node below. TQ_OFF=1 bin/gate restores the raw output.
 #
 # Kept bash-3.2 clean (macOS default bash): no mapfile / associative arrays.
@@ -182,13 +181,7 @@ else
   note_skip "lint" "lint (ruff + shellcheck) - prek not installed, skipped"
 fi
 
-# 4. Injection-hook red-team regression guard. Run through --test rather than as
-#    a bare script so the digest covers it too; the file is a node:test suite
-#    either way, and step 5's list picks it up as well — it stays a named step so
-#    a red-team regression is attributed instead of buried in the suite total.
-run "screen-injection red-team" tq_node injection tests/hooks/screen-injection.test.js
-
-# 5. Deterministic unit suite. Fast + offline; the chezmoi-template tests self-skip when
+# 4. Deterministic unit suite. Fast + offline; the chezmoi-template tests self-skip when
 #    chezmoi isn't installed.
 #
 #    The file list comes from git, NOT from `node --test`'s own discovery. Node's default

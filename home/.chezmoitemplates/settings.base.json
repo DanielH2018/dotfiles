@@ -900,16 +900,6 @@
         ]
       },
       {
-        "matcher": "WebFetch|WebSearch|mcp__.*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/screen-injection.sh",
-            "timeout": 10
-          }
-        ]
-      },
-      {
         "matcher": "Skill|Agent|Task",
         "hooks": [
           {

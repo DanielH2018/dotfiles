@@ -219,3 +219,8 @@ Scripts/wslhost-interop-reaper/wslhost-interop-reaper-hidden.vbs
 # #794: the agent-flow trial ended unused on 2026-11-07. Its archive external is gone, and
 # chezmoi leaves a dropped external's files in place.
 .local/share/claude-agent-flow
+
+# 2026-11-07: screen-injection.sh, removed on the operator's decision. In 14 days of transcripts
+# it fired once, on Anthropic's own docs, and Claude Code's system prompt and the auto-mode
+# classifier cover tool-output injection.
+.claude/hooks/screen-injection.sh

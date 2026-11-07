@@ -893,9 +893,9 @@ DOCKER_ARGS=(
   # These hooks have no sandbox-specific variant — mount the single canonical host
   # copy (one source of truth, no drift-prone parallel copy). link-artifact reads
   # CLAUDE_ARTIFACTS_HOST_DIR (set above) so the one file works host and container.
-  # screen-injection, guard-pre-tool-use and protect-secrets add in-container
-  # defense-in-depth (injection screening; deny secret reads/writes, disk wipes, fork
-  # bombs, pipe-to-shell) beyond what the settings deny-list covers.
+  # guard-pre-tool-use and protect-secrets add in-container defense-in-depth (deny secret
+  # reads/writes, disk wipes, fork bombs, pipe-to-shell) beyond what the settings deny-list
+  # covers.
   #
   # guard-pre-tool-use.sh replaced block-dangerous-bash.sh here: the shim is a few lines of
   # bash over the claude-guard package, so the package directory is mounted beside it. The
@@ -905,7 +905,6 @@ DOCKER_ARGS=(
   # comment above gives — a guard the agent it fences can rewrite is no guard, and the
   # package is the half of this control that holds the rules.
   -v "$HOME/.claude/hooks/link-artifact.sh:/home/claudebot/.claude/hooks/link-artifact.sh:ro"
-  -v "$HOME/.claude/hooks/screen-injection.sh:/home/claudebot/.claude/hooks/screen-injection.sh:ro"
   -v "$HOME/.claude/hooks/guard-pre-tool-use.sh:/home/claudebot/.claude/hooks/guard-pre-tool-use.sh:ro"
   -v "$HOME/.local/share/claude-guard:/home/claudebot/.local/share/claude-guard:ro"
   -v "$HOME/.claude/hooks/protect-secrets.sh:/home/claudebot/.claude/hooks/protect-secrets.sh:ro"
