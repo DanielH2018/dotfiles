@@ -9,8 +9,8 @@
 # paplay/pw-play against the freedesktop sound theme, then aplay, then the bell.
 #
 # There is deliberately no powershell.exe fallback. A Windows binary launched from a
-# session whose owning wsl.exe has already exited -- which reap-backgrounded-origins.timer
-# arranges every 30s for every backgrounded session -- takes WSL's VM-mode interop
+# session whose owning wsl.exe has already exited -- which the backgrounded-origin reaper
+# arranged every 30s until its removal on 2026-11-07 -- takes WSL's VM-mode interop
 # path, and that path leaks a permanently spinning CPU thread per launch
 # (microsoft/WSL#41173, unfixed through WSL 2.9.4; measured here at ~12 leaked
 # cores in 2.5h). This hook fires on every permission and idle prompt, which made

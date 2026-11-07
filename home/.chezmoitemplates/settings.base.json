@@ -749,17 +749,7 @@
             "timeout": 15
           }
         ]
-      }{{ if eq .chezmoi.os "linux" }},
-      {
-        "matcher": "startup",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/reap-backgrounded-origin.sh",
-            "timeout": 5
-          }
-        ]
-      }{{ end }}{{ if includeTemplate "is-container" . }},
+      }{{ if includeTemplate "is-container" . }},
       {
         "matcher": "startup",
         "hooks": [

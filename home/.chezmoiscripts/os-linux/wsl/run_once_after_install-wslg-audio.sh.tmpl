@@ -10,7 +10,8 @@
 # binary launched from a session whose owning wsl.exe has already exited takes WSL's VM-mode
 # interop path, and that path leaks a permanently spinning CPU thread per launch
 # (microsoft/WSL#41173, unfixed through WSL 2.9.4 -- there is no version to upgrade to).
-# reap-backgrounded-origins.timer manufactures exactly that orphaned condition every 30s, and
+# The backgrounded-origin reaper's timer manufactured exactly that orphaned condition every 30s
+# until its removal on 2026-11-07, and
 # play-sound.sh fires on every permission and idle prompt, which made it the single largest
 # source of those leaks. paplay starts no Windows process at all. Without this package the
 # hook silently falls back to interop and the leak comes back -- the fallback is deliberate

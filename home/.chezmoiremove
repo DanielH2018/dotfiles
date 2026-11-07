@@ -224,3 +224,12 @@ Scripts/wslhost-interop-reaper/wslhost-interop-reaper-hidden.vbs
 # it fired once, on Anthropic's own docs, and Claude Code's system prompt and the auto-mode
 # classifier cover tool-output injection.
 .claude/hooks/screen-injection.sh
+
+# 2026-11-07: the backgrounded-origin reaper. Claude Code runs backgrounded sessions under
+# `claude daemon` and leaves no interactive origin behind, so the reaper last acted on
+# 2026-10-08. run_onchange_before_disable-reap-timer disables the timer before these go.
+.claude/hooks/reap-backgrounded-origin.sh
+.claude/hooks/lib/reap-origin-lib.sh
+.local/bin/reap-backgrounded-origins-sweep
+.config/systemd/user/reap-backgrounded-origins.service
+.config/systemd/user/reap-backgrounded-origins.timer

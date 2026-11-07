@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# The backgrounded-origin reaper is retired. Disable its timer before this apply's .chezmoiremove
+# entries delete the unit files, or timers.target.wants keeps a dangling link. Idempotent; a no-op
+# where user systemd isn't running.
+set -eu
+if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+  systemctl --user disable --now reap-backgrounded-origins.timer 2>/dev/null || true
+  systemctl --user stop reap-backgrounded-origins.service 2>/dev/null || true
+fi
