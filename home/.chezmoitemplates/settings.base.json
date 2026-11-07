@@ -1077,11 +1077,6 @@
          Gated on the OS for the reason the OTEL block gives: a hostname gate fails open. */}}
     "skins@hellosverre-mods": true
 {{- end }}
-{{- if eq .chezmoi.hostname "daniel-box" }},
-    {{/* The /flow trial (dotfiles #794) ended unused on 2026-11-07. False rather than
-         absent, because the plugin cache still lists it as installed on daniel-box. */}}
-    "agent-flow@claude-agent-flow": false
-{{- end }}
   },
   "extraKnownMarketplaces": {
     "daniel-tools": {
