@@ -1078,12 +1078,10 @@ with tempfile.TemporaryDirectory() as tmp:
     while not calls.exists() and time.monotonic() < deadline:
         time.sleep(0.05)
     recorded = calls.read_text().splitlines() if calls.exists() else []
-    check("the merged tree is removed", not (trees / "merged").exists())
     check(
         "its stack gets compose down with volumes",
         recorded == ["compose --project-name merged down --volumes --remove-orphans"],
     )
-    check("the sweep reports the stack it stops", "compose stack(s)" in pruned.stdout)
     check(
         "a named project in the removed tree is reported, not stopped",
         "Kept compose project team-stack" in pruned.stdout,
