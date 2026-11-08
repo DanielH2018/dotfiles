@@ -62,6 +62,9 @@ spec.loader.exec_module(mod)
 # every env dict built from os.environ below.
 for _var in [k for k in os.environ if k.startswith("GIT_")]:
     del os.environ[_var]
+# Every --prune run below would otherwise ask the machine's real Docker daemon for
+# containers. `false` reads as Docker being down; the compose checks swap in a fake.
+os.environ["DOCKER_BIN"] = "false"
 
 
 def wt(path="/w", head="abc", branch="b", locked=False, reason=""):
@@ -1013,6 +1016,77 @@ with tempfile.TemporaryDirectory() as tmp:
         "a head that is no longer a ref tip is dropped on save",
         json.loads((common / mod.VERDICT_CACHE).read_text()) == {"live:b": "contained"}
         and not list(common.glob("*.tmp")),
+    )
+
+# ── compose stacks of removed worktrees ──────────────────────────────────────────
+
+check(
+    "compose's default name lowercases and drops what compose drops",
+    mod.compose_default_name("/r/.claude/worktrees/Ops_T112.Mark-4bd202")
+    == "ops_t112mark-4bd202",
+)
+check(
+    "compose's default name trims leading separators",
+    mod.compose_default_name("/r/-_x") == "x",
+)
+
+stop, keep = mod.compose_stacks(
+    ["/r/wt/a"],
+    [
+        "a\t/r/wt/a",
+        "a\t/r/wt/a",
+        "shared\t/r/wt/a",
+        "b\t/r/wt/b",
+        "\t/r/wt/a",
+        "c\t",
+    ],
+)
+check(
+    "a removed tree's default-named project is stopped once", stop == [("a", "/r/wt/a")]
+)
+check("a named project started in it is kept", keep == [("shared", "/r/wt/a")])
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp).resolve()
+    repo, trees = build_repo(root)
+    calls = root / "docker-calls"
+    fake = root / "docker"
+    fake.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        "if sys.argv[1] == 'ps':\n"
+        f"    print('merged\\t{trees / 'merged'}')\n"
+        f"    print('team-stack\\t{trees / 'merged'}')\n"
+        f"    print('live\\t{trees / 'live'}')\n"
+        "else:\n"
+        f"    open({str(calls)!r}, 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+    )
+    fake.chmod(0o755)
+    env = {
+        **os.environ,
+        "CLAUDE_CONFIG_DIR": str(root / "cfg"),
+        "DOCKER_BIN": str(fake),
+    }
+    pruned = subprocess.run(
+        [sys.executable, str(SCRIPT), "--prune"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    deadline = time.monotonic() + 5
+    while not calls.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    recorded = calls.read_text().splitlines() if calls.exists() else []
+    check("the merged tree is removed", not (trees / "merged").exists())
+    check(
+        "its stack gets compose down with volumes",
+        recorded == ["compose --project-name merged down --volumes --remove-orphans"],
+    )
+    check("the sweep reports the stack it stops", "compose stack(s)" in pruned.stdout)
+    check(
+        "a named project in the removed tree is reported, not stopped",
+        "Kept compose project team-stack" in pruned.stdout,
     )
 
 finish()

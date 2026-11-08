@@ -150,6 +150,13 @@ with its reason printed 51,010 bytes at a server-repo session start on 2026-09-2
 near-identical paragraphs, too large for the harness to inject. One line now carries
 the count and names `--orphans`, which lists them.
 
+Removing a worktree also stops the compose stacks started in it. Nothing else does,
+and each airflow worktree's stack binds the same host ports, so a stack left behind made
+the next session's `up` fail with "port is already allocated". A removed tree's project
+gets a detached `docker compose -p <project> down --volumes --remove-orphans`. A project
+named by -p or `name:` is reported instead, because other worktrees may share it. With
+no Docker, or Docker not running, this step does nothing.
+
 A repo that ships its own pruner at `scripts/dev/prune_worktrees.py` is skipped. That
 pruner asks the forge which head SHA a PR merged, and this hook does not. The two used
 to give opposite verdicts on the same tree. The repo's own session banner is then the
@@ -170,6 +177,7 @@ import contextlib
 import json
 import os
 import select
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -770,6 +778,124 @@ def remove(repo: str, tree: Worktree) -> tuple[bool, str]:
     return result.returncode == 0, result.stderr.strip()
 
 
+# Compose labels every container with its project and the directory `up` ran in.
+COMPOSE_PROJECT_LABEL = "com.docker.compose.project"
+COMPOSE_DIR_LABEL = "com.docker.compose.project.working_dir"
+DOCKER_TIMEOUT_S = 5.0
+DOCKER_FALLBACKS = (
+    "/usr/local/bin/docker",
+    "/opt/homebrew/bin/docker",
+    "/Applications/Docker.app/Contents/Resources/bin/docker",
+)
+
+
+def compose_default_name(path: str) -> str:
+    """The project name compose gives a directory when no -p or `name:` sets one."""
+    kept = [
+        c for c in Path(path).name.lower() if c.isascii() and (c.isalnum() or c in "-_")
+    ]
+    return "".join(kept).lstrip("-_")
+
+
+def compose_stacks(
+    tree_paths: list[str], rows: list[str]
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """Split the compose projects started in `tree_paths` into (stop, keep) lists.
+
+    `rows` are `project<TAB>working_dir` lines, one per container. A project carrying
+    its directory's default name belongs to that tree alone, so it is stopped. A project
+    named by -p or `name:` is kept: other worktrees can share it, and the label records
+    only the directory that first created each container.
+    """
+    by_dir = {os.path.realpath(p): p for p in tree_paths}
+    stop: dict[str, str] = {}
+    keep: dict[str, str] = {}
+    for row in rows:
+        project, _, working_dir = row.partition("\t")
+        tree = by_dir.get(os.path.realpath(working_dir)) if working_dir else None
+        if not project or tree is None:
+            continue
+        if project == compose_default_name(tree):
+            stop[project] = tree
+        else:
+            keep[project] = tree
+    return sorted(stop.items()), sorted(keep.items() - stop.items())
+
+
+def docker_bin() -> str:
+    """The docker CLI, or "" when there is none. `DOCKER_BIN` overrides it for tests."""
+    override = os.environ.get("DOCKER_BIN")
+    if override:
+        return override
+    found = shutil.which("docker")
+    if found:
+        return found
+    return next((p for p in DOCKER_FALLBACKS if os.access(p, os.X_OK)), "")
+
+
+def compose_containers(docker: str) -> list[str] | None:
+    """`project<TAB>working_dir` per compose container, or None when Docker is down."""
+    project = f'{{{{.Label "{COMPOSE_PROJECT_LABEL}"}}}}'
+    fmt = f'{project}\t{{{{.Label "{COMPOSE_DIR_LABEL}"}}}}'
+    try:
+        result = subprocess.run(
+            [
+                docker,
+                "ps",
+                "--all",
+                "--filter",
+                f"label={COMPOSE_DIR_LABEL}",
+                "--format",
+                fmt,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=DOCKER_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return result.stdout.splitlines() if result.returncode == 0 else None
+
+
+def stop_compose_stacks(
+    tree_paths: list[str],
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """Start `compose down` for each stack the removed trees left, without waiting.
+
+    Compose stops a project by name with no compose file, so this runs after the tree is
+    gone. Detached because stopping a stack can outlast the hook's timeout. --volumes
+    goes with it: the data belonged to a tree whose work has landed.
+    """
+    docker = docker_bin() if tree_paths else ""
+    rows = compose_containers(docker) if docker else None
+    if not rows:
+        return [], []
+    stop, keep = compose_stacks(tree_paths, rows)
+    started = []
+    for project, tree in stop:
+        try:
+            subprocess.Popen(
+                [
+                    docker,
+                    "compose",
+                    "--project-name",
+                    project,
+                    "down",
+                    "--volumes",
+                    "--remove-orphans",
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError:
+            continue
+        started.append((project, tree))
+    return started, keep
+
+
 def delete_branch(repo: str, branch: str, merged_head: str = "") -> bool:
     """Delete a branch with `-d`, or with `-D` when the forge confirmed `merged_head`.
 
@@ -1077,6 +1203,10 @@ def main() -> int:
             branches.append(branch)
             log(f"event=orphan_branch_deleted branch={branch}")
 
+    stacks, shared = stop_compose_stacks([t.path for t in removed])
+    for project, tree_path in stacks:
+        log(f"event=compose_down_started project={project} path={tree_path}")
+
     # Stay silent unless something actually changed on disk — this runs at every session
     # start and a "nothing to do" line every time is noise. The review cases are the
     # exception: they are silent by nature, which is the bug they exist to fix.
@@ -1085,6 +1215,15 @@ def main() -> int:
         print(f"Pruned {len(removed)} merged worktree(s): {names}")
     if branches:
         print(f"Deleted {len(branches)} merged branch(es): {', '.join(branches)}")
+    if stacks:
+        names = ", ".join(project for project, _ in stacks)
+        print(f"Stopping {len(stacks)} compose stack(s) of pruned worktrees: {names}")
+    for project, tree_path in shared:
+        print(
+            f"Kept compose project {project} started in {tree_path}: a named project "
+            "may be shared; stop it with `docker compose -p "
+            f"{project} down` once nothing uses it"
+        )
     for tree, reason in review:
         print(f"Kept {tree.path}: {reason}")
     for tree, reason in busy:
