@@ -9,7 +9,8 @@ Three subjects, as the bash has them (:238-317):
 
     scan     SCAN — the whole command normalised: escaped separators dropped, quoted
              separators dropped unless a re-parse vector is present, newline/tab/backslash
-             collapsed to a space, quote characters removed. Heredoc bodies are IN it.
+             collapsed to a space, quote characters removed. Heredoc bodies are IN it, except
+             a body `deny` strips because it is only stored (`_without_stored_heredocs`).
     scanset  BDB_SCANSET — SCAN, then one normalised line per segment.parse segment and per
              substitution body. The command-position-anchored families read this, so a
              command after a newline is in command position.
@@ -1086,9 +1087,10 @@ def _without_stored_heredocs(sc: Scan) -> Scan:
     """`sc` rebuilt without the heredoc bodies that are only stored: fed to a data sink, by a
     command where nothing runs code. Every other body stays in the scanned text.
 
-    DECIDED: the secret-read rules skip such a body (#865 held off a wider exemption). What
-    `cat > x.py <<EOF … EOF` writes can only reach a secret once something runs it, and a
-    command that runs anything keeps every body here. A write in one call and a run in the
+    DECIDED: `deny` strips such a body before every rule runs. #865 rejected the wider
+    exemption, an interpreter's body, because that body executes. What `cat > x.py <<EOF …
+    EOF` writes can only act once something runs it, and a command that runs anything keeps
+    every body here. A write in one call and a run in the
     next is the remaining gap, and the Write tool already opens it: a file it writes is never
     scanned at all. A body whose delimiter is unquoted expands `$(…)` while it is written, so
     that body is never skipped."""
@@ -1724,18 +1726,37 @@ def sops_editor_override(sc: Scan, target: str) -> Verdict | None:
     return None
 
 
+_GIT_SOPS_DIFF = (
+    rf"{BDB_CMD_AT}git\b[^;&|]*(\bdiff\b|\bshow\b|\blog\b[^;&|]*(-p|--patch)\b)[^;&|]*"
+    rf"{SOPS_PATHS}[^;&|]*"
+)
+
+
+def _renders_plaintext(invocation: str) -> bool:
+    """Whether one `git diff|show|log -p` naming a SOPS path prints the decrypted text."""
+    if re.search(r"(^|\s)--(stat|name-only|name-status)(\s|=|$)", invocation):
+        return False
+    # The sops driver is a textconv, so `--no-textconv` turns it off unless a later
+    # `--textconv` turns it back on.
+    flags = re.findall(r"(?:^|\s)--(no-textconv|textconv)(?=\s|$)", invocation)
+    return not flags or flags[-1] == "textconv"
+
+
 def git_sops_diff(sc: Scan, target: str) -> Verdict | None:
-    """:994-1014. `--stat`, `--name-only`, `--name-status` emit no content and are exempt. An
-    exclude pathspec (`:!secrets.yml`, `:^…`, `:(exclude)…`) keeps the file out of the diff,
-    so it is dropped before the match, as `_EXCLUDE_WORD` drops it for the readers."""
+    """:994-1014. `--stat`, `--name-only`, `--name-status` emit no content and are exempt, as
+    is `--no-textconv`, which prints the ciphertext. Each git invocation is judged on its own
+    flags. An exclude pathspec (`:!secrets.yml`, `:^…`, `:(exclude)…`) keeps the file out of
+    the diff, so it is dropped before the match, as `_EXCLUDE_WORD` drops it for the
+    readers."""
     subject = re.sub(
         r"(^|\s):(!|\^|\([^)]*exclude[^)]*\))\S*", r"\1", f"{sc.scan}\n{sc.lines}", flags=re.M
     )
-    if bdb_re(
-        subject,
-        rf"{BDB_CMD_AT}git\b[^;&|]*(\bdiff\b|\bshow\b|\blog\b[^;&|]*(-p|--patch)\b)[^;&|]*"
-        rf"{SOPS_PATHS}",
-    ) and not bdb_re(subject, r"(^|[[:space:]])--(stat|name-only|name-status)([[:space:]]|=|$)"):
+    pattern = _pattern(_GIT_SOPS_DIFF, False)
+    if any(
+        _renders_plaintext(m.group(0))
+        for line in subject.split("\n")
+        for m in pattern.finditer(line)
+    ):
         return Verdict(
             "deny",
             "git-sops-diff",
@@ -3459,7 +3480,7 @@ def deny(command: str, cwd: str = "", env: Mapping[str, str] | None = None) -> V
     if not command:  # :23
         return NONE
     home = (env or {}).get("HOME", "")
-    sc = build_scan(command)
+    sc = _without_stored_heredocs(build_scan(command))
     target = rm_target(home)
     for rule in RULES:
         verdict = rule(sc, target)

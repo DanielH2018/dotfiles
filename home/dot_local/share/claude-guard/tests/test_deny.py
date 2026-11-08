@@ -989,6 +989,25 @@ def test_a_stored_heredoc_is_still_scanned_when_the_command_runs_code():
     assert kinds(STORED_THEN_RUN) == ["deny"] * len(STORED_THEN_RUN)
 
 
+# Every rule skips a stored body, not only the secret reads: the sampled denials were PR
+# bodies and docs that named the command they describe.
+STORED_TEXT = [
+    "cat > /tmp/pr.md <<'EOF'\nThe unit ran `ssh daniel-server sudo systemctl restart x`.\nEOF",
+    "cat >> docs/x.md <<'EOF'\nRead it with `systemctl cat nut-monitor`.\nEOF",
+    "cat > /tmp/pr.md <<'EOF'\nIt no longer prints `git diff ansible/vars/secrets.yml`.\nEOF",
+]
+# The same texts, once the command runs what it stored.
+STORED_TEXT_THEN_RUN = [f"{c}\nbash {c.split()[2]}" for c in STORED_TEXT]
+
+
+def test_a_command_named_in_a_stored_heredoc_is_not_run():
+    assert kinds(STORED_TEXT) == ["none"] * len(STORED_TEXT)
+
+
+def test_a_command_named_in_a_stored_heredoc_is_denied_once_the_command_runs_it():
+    assert kinds(STORED_TEXT_THEN_RUN) == ["deny"] * len(STORED_TEXT_THEN_RUN)
+
+
 # The `.env` branch stopped matching `os.environ` (#861), and with it the only refusal of an
 # interpreter reading a credential out of the environment. The variable name decides now.
 SECRET_ENV_READS = [
@@ -1156,6 +1175,9 @@ DECRYPT_DENY = [
     'docker inspect -f "{{.Config.Env}}" wg-easy',
     # an exclude pathspec beside the file itself still diffs it (2026-10-24)
     "git diff A...B -- ':!x' ansible/vars/secrets.yml",
+    # a later `--textconv` turns the driver back on, and one invocation's flag exempts no other
+    "git diff --no-textconv --textconv ansible/vars/secrets.yml",
+    "git diff --stat README.md; git diff ansible/vars/secrets.yml",
 ]
 DECRYPT_ALLOW = [
     "sops ansible/vars/secrets.yml",
@@ -1192,6 +1214,9 @@ DECRYPT_ALLOW = [
     # an exclude pathspec keeps the file out of the diff (2026-10-24)
     "git diff A...B -- ':!ansible/vars/secrets.yml' | head -400",
     "git diff A...B -- ':(exclude)ansible/vars/secrets.yml'",
+    # the sops driver is a textconv, so `--no-textconv` prints the ciphertext
+    "git show --no-textconv --numstat --format='%h %s' HEAD -- ansible/vars/secrets.yml",
+    "git diff --no-textconv ansible/vars/secrets.yml",
 ]
 
 
