@@ -1023,6 +1023,19 @@
       "Bash(gh api *--input *)",
       "Bash(gh api graphql*)",
       "Bash(gh api */graphql*)",
+      {{/* The homelab promote workflow's variables. Clearing DEPLOY_HOLD releases `prod`; a
+           hand-written PROD_DIGEST hides a moved `prod`. The server repo's block-footguns
+           hook asks only in that repo's sessions, so these cover every other directory.
+           Only the `none` value asks: setting a hold to a reason is the safe direction and
+           stays unprompted. The hook alone covers an empty body, stdin and an env file. */}}
+      "Bash(gh variable set *DEPLOY_HOLD*none*)",
+      "Bash(gh variable set *none*DEPLOY_HOLD*)",
+      "Bash(gh variable delete *DEPLOY_HOLD*)",
+      "Bash(gh variable set *PROD_DIGEST*)",
+      "Bash(gh variable delete *PROD_DIGEST*)",
+      {{/* Turns off the guard-pre-tool-use.sh check that refuses an apply removing content
+           another worktree job deployed, so the operator decides it. */}}
+      "Bash(CHEZMOI_APPLY_GUARD=off chezmoi apply*)",
       {{/* Docker writes prompt. The package-manager and docker install/run rules that sat here
            were removed for firing zero times in a homelab week, and dependency installs still
            go through uv/prek. Docker came back with the work laptop: 30 days of transcripts on

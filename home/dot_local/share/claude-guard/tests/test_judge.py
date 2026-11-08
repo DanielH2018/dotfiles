@@ -541,6 +541,24 @@ def test_the_real_template_allows_a_lease_push_to_a_feature_branch(real):
 @pytest.mark.parametrize(
     "command",
     [
+        "gh variable set DEPLOY_HOLD --body none -R DanielH2018/server",
+        "gh variable set -R DanielH2018/server --body none DEPLOY_HOLD",
+        "gh variable delete DEPLOY_HOLD -R DanielH2018/server",
+        "gh variable set PROD_DIGEST --body sha256:abc -R DanielH2018/server",
+        "CHEZMOI_APPLY_GUARD=off chezmoi apply ~/.claude/settings.json",
+    ],
+)
+def test_the_real_template_asks_before_a_deploy_plane_release_or_a_guard_override(real, command):
+    assert real.asks(command)
+
+
+def test_the_real_template_leaves_setting_a_hold_to_a_reason_unprompted(real):
+    assert not real.asks("gh variable set DEPLOY_HOLD --body 'abc123 broke traefik' -R o/r")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "date -u +%s",
         "date -u -d 2026-09-28",
         "git stash list --format='%gd %s'",
