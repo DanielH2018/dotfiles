@@ -15,7 +15,15 @@ import pytest
 
 from claude_guard.deny import NONE, Verdict
 from claude_guard.hook import pre_tool_use_json
-from claude_guard.nudges import nudge, seen, tag
+from claude_guard.nudges import claim, nudge, tag
+
+
+@pytest.fixture(autouse=True)
+def marker_home(tmp_path, monkeypatch):
+    """Keep the once-per-session markers out of the real ~/.cache."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    return home
 
 
 def rule(command: str) -> str | None:
@@ -74,12 +82,17 @@ def test_an_unreadable_command_gets_no_nudge():
     assert nudge("git log 'unterminated") is None
 
 
-def test_seen_reads_the_tag_from_the_transcript(tmp_path):
-    transcript = tmp_path / "t.jsonl"
-    transcript.write_text(json.dumps({"content": [f"{tag('unbounded-log')} x"]}) + "\n")
-    assert seen(str(transcript), "unbounded-log")
-    assert not seen(str(transcript), "recursive-ls")
-    assert not seen(str(tmp_path / "missing.jsonl"), "unbounded-log")
+def test_claim_is_won_once_per_transcript_and_rule(tmp_path):
+    transcript = str(tmp_path / "t.jsonl")
+    assert claim(transcript, "unbounded-log")
+    assert not claim(transcript, "unbounded-log")
+    assert claim(transcript, "recursive-ls")
+    assert claim(str(tmp_path / "other.jsonl"), "unbounded-log")
+
+
+def test_without_a_transcript_every_call_nudges():
+    assert claim("", "unbounded-log")
+    assert claim("", "unbounded-log")
 
 
 def test_a_nudge_alone_is_additional_context_with_no_decision():
@@ -111,16 +124,15 @@ def test_the_hook_nudges_once_per_session(tmp_path):
     stdin = json.dumps({"tool_input": {"command": "git log"}, "transcript_path": str(transcript)})
     first = nudge_for("git log", stdin)
     assert first and first.startswith(tag("unbounded-log"))
-    # The harness records additionalContext in the transcript; simulate that.
-    transcript.write_text(json.dumps({"attachment": {"content": [first]}}) + "\n")
+    # A parallel call's hook runs before the harness writes `first` to the transcript.
     assert nudge_for("git log", stdin) is None
 
 
-def test_a_subagent_reads_its_own_transcript_for_the_once_rule(tmp_path):
+def test_a_subagent_gets_its_own_once_rule(tmp_path):
     from claude_guard.hook import context_transcript, nudge_for
 
     parent = tmp_path / "sess.jsonl"
-    parent.write_text(json.dumps({"content": [f"{tag('unbounded-log')} x"]}) + "\n")
+    assert nudge_for("git log", json.dumps({"transcript_path": str(parent)}))
     payload = {"transcript_path": str(parent), "agent_id": "a1"}
     own = tmp_path / "sess" / "subagents" / "agent-a1.jsonl"
     got = context_transcript(payload)
@@ -128,11 +140,9 @@ def test_a_subagent_reads_its_own_transcript_for_the_once_rule(tmp_path):
         # The harness splices a "/" into the path, which Windows spells with a backslash.
         got = os.path.normpath(got)
     assert got == str(own)
-    # The parent saw the nudge, the subagent has not: the subagent still gets it.
+    # The parent had the nudge, the subagent has not: the subagent still gets it, once.
     stdin = json.dumps({"tool_input": {"command": "git log"}, **payload})
     assert nudge_for("git log", stdin)
-    own.parent.mkdir(parents=True)
-    own.write_text(json.dumps({"content": [f"{tag('unbounded-log')} x"]}) + "\n")
     assert nudge_for("git log", stdin) is None
 
 
@@ -233,5 +243,4 @@ def test_the_read_hook_nudges_once_per_session(big_and_small, tmp_path):
     assert out["hookEventName"] == "PreToolUse"
     assert "permissionDecision" not in out
     assert out["additionalContext"].startswith(tag("whole-file-read"))
-    transcript.write_text(json.dumps({"content": [out["additionalContext"]]}) + "\n")
     assert read_nudge_json(stdin) is None

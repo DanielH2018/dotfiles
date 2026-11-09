@@ -340,7 +340,12 @@ def _git(cwd: str, *args: str) -> str | None:
 
 
 def _first_lines(text: str | None, n: int = 5) -> str:
-    return "\n".join((text or "").splitlines()[:n])
+    """The first `n` lines of `text`, plus an `... and N more` line when it had more."""
+    lines = (text or "").splitlines()
+    shown = "\n".join(lines[:n])
+    if len(lines) > n:
+        shown += f"\n... and {len(lines) - n} more"
+    return shown
 
 
 VAULT_LINE = re.compile(r"\s*(?:export\s+)?CLAUDE_VAULT_DIR=(.*)$")

@@ -51,15 +51,19 @@ tool_input for the `read-nudge` hook entry instead:
      context as text.
 
 `nudge()` returns (rule, text) or None. The hook adds the text as additionalContext
-beside whatever the deny rules decided, and only once per session per rule: the text
-carries the tag `[claude-guard:nudge:<rule>]`, the harness records additionalContext in
-the transcript, and a transcript that already holds the tag means the session has seen
-it. A command the segmenter cannot read gets no nudge.
+beside whatever the deny rules decided, and only once per session per rule: `claim()`
+creates a marker file for the (transcript, rule) pair with O_EXCL, and only the call that
+creates it emits. Parallel tool calls in one turn run their hooks before the harness
+writes any of their context to the transcript, so a scan of the transcript for the tag
+lets each of them nudge. A command the segmenter cannot read gets no nudge.
 """
 
+import hashlib
 import os
 import re
 import shlex
+import time
+from pathlib import Path
 
 from claude_guard.segment import parse
 
@@ -339,17 +343,39 @@ def read_nudge(tool_input: dict, cwd: str = "") -> tuple[str, str] | None:
     )
 
 
-def seen(transcript_path: str, rule: str) -> bool:
-    """Whether the session transcript already carries this rule's nudge.
+# A marker older than this is pruned; a session resumed after it may see a nudge again.
+_MARKER_MAX_AGE_S = 7 * 24 * 3600
 
-    An unreadable or absent transcript reads as not seen: the nudge is one line of
-    context, so repeating it is cheaper than losing it.
+
+def _marker_dir() -> Path:
+    home = os.environ.get("HOME") or os.path.expanduser("~")
+    return Path(home) / ".cache" / "claude-guard" / "nudged"
+
+
+def claim(transcript_path: str, rule: str) -> bool:
+    """Whether this call is the first in the session to nudge `rule`, recording that it is.
+
+    The session is the transcript that records the caller's context. Without one, or when
+    the marker cannot be written, the answer is True: the nudge is one line of context, so
+    repeating it is cheaper than losing it.
     """
     if not transcript_path:
-        return False
-    needle = tag(rule).encode()
+        return True
+    key = hashlib.sha256(transcript_path.encode()).hexdigest()[:24]
+    d = _marker_dir()
     try:
-        with open(transcript_path, "rb") as handle:
-            return any(needle in line for line in handle)
-    except OSError:
+        d.mkdir(mode=0o700, parents=True, exist_ok=True)
+        fd = os.open(d / f"{key}-{rule}", os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
         return False
+    except OSError:
+        return True
+    os.close(fd)
+    now = time.time()
+    for old in d.iterdir():
+        try:
+            if now - old.stat().st_mtime > _MARKER_MAX_AGE_S:
+                old.unlink()
+        except OSError:
+            pass
+    return True

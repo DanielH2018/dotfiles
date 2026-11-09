@@ -4,10 +4,14 @@
 #   matcher: startup|compact
 #   timeout: 5
 #   order: 10
-#   description: Inject branch, commit and working-tree context into the session
-# SessionStart hook: inject useful context at the start of each session.
-# Text printed to stdout is added as context Claude can see.
+#   description: Inject abnormal git state at startup, full repo context after a compaction
+# SessionStart hook. Text printed to stdout is added as context Claude can see.
 # Keep this FAST - it runs every time you open Claude Code.
+#
+# On startup it prints only what needs action: a dirty tree, a rebase or merge in progress,
+# or a failed shim repair, and nothing for a clean repo. A repo's own banner (the server
+# repo's session-health) already reports branch and staleness at startup. On compact it
+# prints the full block, because no other hook re-primes the model after a compaction.
 
 set -u
 
@@ -91,23 +95,6 @@ if [ -n "$COMMON_DIR" ] && REPO_ROOT=$(cd "$COMMON_DIR/.." 2>/dev/null && pwd -P
   fi
 fi
 
-BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
-
-echo "=== Repo context ==="
-[ -n "$SHIM_REPAIR" ] && echo "$SHIM_REPAIR"
-echo "Branch: $BRANCH"
-echo "Last commit: $(git log -1 --pretty=format:'%h %s (%cr)' 2>/dev/null)"
-
-# Ahead/behind upstream, if tracking branch exists.
-UPSTREAM=$(git rev-parse --abbrev-ref '@{upstream}' 2>/dev/null)
-if [ -n "$UPSTREAM" ]; then
-  AHEAD=$(git rev-list --count '@{upstream}..HEAD' 2>/dev/null)
-  BEHIND=$(git rev-list --count 'HEAD..@{upstream}' 2>/dev/null)
-  if [ "$AHEAD" -gt 0 ] || [ "$BEHIND" -gt 0 ]; then
-    echo "Upstream: $UPSTREAM (ahead $AHEAD, behind $BEHIND)"
-  fi
-fi
-
 # Uncommitted changes, if any.
 #
 # Bounded (#581, #661), because status walks the working tree. Measured at 13-15ms warm and
@@ -134,52 +121,67 @@ else
     *) UNCHECKED="\`git status\` did not finish within ${T_STATUS}s ($RB_STATUS)" ;;
   esac
 fi
+ABNORMAL=''
 if [ -n "$UNCHECKED" ]; then
-  echo ""
-  echo "Uncommitted changes: not checked ($UNCHECKED)"
+  ABNORMAL+=$'\n'"Uncommitted changes: not checked ($UNCHECKED)"$'\n'
 elif [ -n "$DIRTY" ]; then
-  echo ""
-  echo "Uncommitted changes:"
-  echo "$DIRTY"
+  ABNORMAL+=$'\n'"Uncommitted changes:"$'\n'"$DIRTY"$'\n'
 fi
 
 # In-progress rebase or merge — surface prominently.
 GIT_DIR=$(git rev-parse --git-dir 2>/dev/null)
 if [ -d "$GIT_DIR/rebase-merge" ] || [ -d "$GIT_DIR/rebase-apply" ]; then
-  echo ""
-  echo "WARNING: Rebase in progress — complete or abort before other work."
+  ABNORMAL+=$'\n'"WARNING: Rebase in progress — complete or abort before other work."$'\n'
 fi
 if [ -f "$GIT_DIR/MERGE_HEAD" ]; then
   CONFLICTS=$(git diff --name-only --diff-filter=U 2>/dev/null | head -5)
-  echo ""
   if [ -n "$CONFLICTS" ]; then
-    echo "WARNING: Merge in progress with unresolved conflicts:"
-    echo "$CONFLICTS"
+    ABNORMAL+=$'\n'"WARNING: Merge in progress with unresolved conflicts:"$'\n'"$CONFLICTS"$'\n'
   else
-    echo "WARNING: Merge in progress — commit or abort."
+    ABNORMAL+=$'\n'"WARNING: Merge in progress — commit or abort."$'\n'
   fi
 fi
 
-# Stash count, if any.
+if [ "$SOURCE" = "startup" ]; then
+  if [ -n "$SHIM_REPAIR" ] || [ -n "$ABNORMAL" ]; then
+    echo "=== Repo context ==="
+    [ -n "$SHIM_REPAIR" ] && echo "$SHIM_REPAIR"
+    printf '%s' "$ABNORMAL"
+  fi
+  exit 0
+fi
+
+echo "=== Repo context ==="
+[ -n "$SHIM_REPAIR" ] && echo "$SHIM_REPAIR"
+echo "Branch: $(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+echo "Last commit: $(git log -1 --pretty=format:'%h %s (%cr)' 2>/dev/null)"
+
+UPSTREAM=$(git rev-parse --abbrev-ref '@{upstream}' 2>/dev/null)
+if [ -n "$UPSTREAM" ]; then
+  AHEAD=$(git rev-list --count '@{upstream}..HEAD' 2>/dev/null)
+  BEHIND=$(git rev-list --count 'HEAD..@{upstream}' 2>/dev/null)
+  if [ "$AHEAD" -gt 0 ] || [ "$BEHIND" -gt 0 ]; then
+    echo "Upstream: $UPSTREAM (ahead $AHEAD, behind $BEHIND)"
+  fi
+fi
+printf '%s' "$ABNORMAL"
+
 STASH_COUNT=$(git stash list 2>/dev/null | wc -l | tr -d ' ')
 if [ "$STASH_COUNT" -gt 0 ]; then
   echo ""
   echo "Stashes: $STASH_COUNT"
 fi
 
-# Recent commits for context on what the user has been working on.
 echo ""
 echo "Recent commits:"
 git log -5 --pretty=format:'  %h %s' 2>/dev/null
 echo ""
 
-if [ "$SOURCE" = "compact" ]; then
-  echo ""
-  echo "This context follows a compaction. The state above is ground truth, re-read just"
-  echo "now; prefer it over anything the summary asserts about branch, push state or"
-  echo "working-tree contents. Test pass/fail results, architectural decisions and next"
-  echo "steps are NOT re-derivable here — carry those across yourself, and preserve user"
-  echo "corrections and exact error strings verbatim rather than paraphrasing them."
-fi
+echo ""
+echo "This context follows a compaction. The state above is ground truth, re-read just"
+echo "now; prefer it over anything the summary asserts about branch, push state or"
+echo "working-tree contents. Test pass/fail results, architectural decisions and next"
+echo "steps are NOT re-derivable here — carry those across yourself, and preserve user"
+echo "corrections and exact error strings verbatim rather than paraphrasing them."
 
 exit 0

@@ -29,7 +29,7 @@ from claude_guard.checks.awk import awk_risk
 from claude_guard.deny import NONE, Verdict, deny
 from claude_guard.footguns import footgun
 from claude_guard.judge import Decision, judge
-from claude_guard.nudges import nudge, read_nudge, seen
+from claude_guard.nudges import claim, nudge, read_nudge
 from claude_guard.readonly import readonly
 from claude_guard.rules import load_rules
 from claude_guard.segment import parse
@@ -200,7 +200,7 @@ def run_in_background(stdin_text: str) -> bool:
 
 def nudge_for(command: str, stdin_text: str) -> str | None:
     """The context nudge for `command`, or None when it trips no rule or the session has
-    already seen that rule's nudge. Never raises: a nudge is advice, and a failure in it
+    already had that rule's nudge. Never raises: a nudge is advice, and a failure in it
     must not reach the deny side's ask."""
     try:
         found = nudge(command, read_cwd(stdin_text))
@@ -209,7 +209,7 @@ def nudge_for(command: str, stdin_text: str) -> str | None:
         data = json.loads(stdin_text)
         if not isinstance(data, dict):
             data = {}
-        if seen(context_transcript(data), found[0]):
+        if not claim(context_transcript(data), found[0]):
             return None
         return found[1]
     except Exception:
@@ -219,7 +219,7 @@ def nudge_for(command: str, stdin_text: str) -> str | None:
 def read_nudge_json(stdin_text: str) -> str | None:
     """The PreToolUse/Read stdout: a whole-file-read nudge as additionalContext, or None.
 
-    None also when the session has already seen that nudge, and on any failure: the Read
+    None also when the session has already had that nudge, and on any failure: the Read
     hook decides nothing, so a failure in it must not stand in the way of the Read.
     """
     try:
@@ -229,7 +229,7 @@ def read_nudge_json(stdin_text: str) -> str | None:
             return None
         cwd = data.get("cwd")
         found = read_nudge(tool_input, cwd if isinstance(cwd, str) else "")
-        if found is None or seen(context_transcript(data), found[0]):
+        if found is None or not claim(context_transcript(data), found[0]):
             return None
         return pre_tool_use_json(NONE, found[1])
     except Exception:

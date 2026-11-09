@@ -9,7 +9,7 @@
 #
 # A Read with no offset or limit of a file over 20 KB gets a once-per-session
 # additionalContext line pointing at `rg -n` and a bounded Read. The rule lives in
-# claude_guard.nudges.read_nudge, beside the Bash nudges whose tag and transcript lookup it
+# claude_guard.nudges.read_nudge, beside the Bash nudges whose tag and once-per-session marker it
 # shares; claude-guard's Bash shim never sees a Read, hence this second entry.
 #
 # Failure contract: this hook decides nothing, so whatever cannot run prints nothing on

@@ -67,7 +67,6 @@ test('does not run bin/install-hook-shim from an untrusted repo', { skip }, () =
   assert.strictEqual(code, 0, 'hook still succeeds');
   assert.ok(!fs.existsSync(path.join(root, 'SHIM_RAN')), 'the repo-controlled shim was NOT executed');
   assert.doesNotMatch(out, /shim reinstalled/, 'and its output never reached the transcript');
-  assert.match(out, /=== Repo context ===/, 'the rest of the context is still injected');
 });
 
 test('runs the shim for a repo on the trust list', { skip }, () => {
@@ -105,12 +104,28 @@ test('an untrusted worktree does not get the shim either', { skip }, () => {
   assert.ok(!fs.existsSync(path.join(root, 'SHIM_RAN')));
 });
 
-test('injects branch and recent commits for a normal repo', { skip }, () => {
+// A repo's own SessionStart banner reports branch and staleness, so startup adds only what
+// needs action.
+test('prints nothing at startup for a clean repo', { skip }, () => {
   const root = repoWithShim();
+  const { out, code } = runHook(root, { trusted: '/nonexistent' });
+  assert.strictEqual(code, 0);
+  assert.strictEqual(out, '');
+});
+
+test('names a rebase in progress at startup', { skip }, () => {
+  const root = repoWithShim();
+  fs.mkdirSync(path.join(root, '.git', 'rebase-merge'));
   const { out } = runHook(root, { trusted: '/nonexistent' });
+  assert.match(out, /WARNING: Rebase in progress/);
+  assert.doesNotMatch(out, /Branch:|Recent commits:/);
+});
+
+test('injects branch and recent commits after a compaction', { skip }, () => {
+  const root = repoWithShim();
+  const { out } = runHook(root, { trusted: '/nonexistent', source: 'compact' });
   assert.match(out, /Branch: main/);
-  assert.match(out, /Recent commits:/);
-  assert.match(out, /init/, 'the commit subject shows up');
+  assert.match(out, /Recent commits:\n  \S+ init/);
 });
 
 // `git status --porcelain` walks the whole working tree, so it is the one git call here whose
@@ -140,7 +155,6 @@ test('a hung git status is cut off inside the 5s hook timeout and named', { skip
   assert.ok(seconds < 5, `took ${seconds}s`);
   assert.strictEqual(code, 0);
   assert.match(out, /Uncommitted changes: not checked \(`git status` did not finish within 2s \(timeout\)\)/);
-  assert.match(out, /Recent commits:/, 'the rest of the context is still injected');
 });
 
 test('a missing run-bounded.sh names the unchecked tree rather than running status unbounded', { skip }, () => {
@@ -160,8 +174,6 @@ test('a hung install-hook-shim is cut off inside the 5s hook timeout and named',
   assert.ok(seconds < 5, `took ${seconds}s`);
   assert.strictEqual(code, 0);
   assert.match(out, /Pre-push shim: not re-asserted \(`bin\/install-hook-shim` did not finish within 1s \(timeout\)\)/);
-  assert.match(out, /Branch: main/, 'the repo-context block is still injected');
-  assert.match(out, /Recent commits:/);
 });
 
 test('stays silent on a resumed session', { skip }, () => {
@@ -185,8 +197,8 @@ test('a pending transcript-leak marker stays out of the model context', { skip }
   const root = repoWithShim();
   const f = path.join(fs.realpathSync(scratch(os.tmpdir(), 'sesctx-')), 'pending.tsv');
   fs.writeFileSync(f, '2026-08-29T16:45:03Z\t3\t/home/u/.claude/logs/transcript-leaks.jsonl\n');
-  const { out, code } = runHook(root, { trusted: '/nonexistent', pending: f });
+  const { out, code } = runHook(root, { trusted: '/nonexistent', pending: f, source: 'compact' });
   assert.strictEqual(code, 0);
+  assert.match(out, /=== Repo context ===/);
   assert.doesNotMatch(out, /SECURITY|credential/);
-  assert.match(out, /=== Repo context ===/, 'the rest of the context still runs');
 });

@@ -64,10 +64,11 @@ test('source=compact says the state is ground truth and names what it cannot rec
   assert.match(out, /Test pass\/fail|next steps/i, 'must name what it cannot re-derive');
 });
 
-test('source=startup still works and stays free of the compaction note', { skip }, () => {
+test('source=startup on a dirty tree stays free of the compaction note', { skip }, () => {
   const d = repo();
+  fs.writeFileSync(path.join(d, 'a.txt'), 'two\n');
   const out = run(d, 'startup');
-  assert.match(out, /Recent commits:/);
+  assert.match(out, /Uncommitted changes:/);
   assert.doesNotMatch(out, /compaction/i);
 });
 

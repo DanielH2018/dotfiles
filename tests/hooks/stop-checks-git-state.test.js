@@ -75,6 +75,14 @@ test('an untracked file on master blocks the stop', () => {
   assert.match(d.reason, /docs-draft\.md/, 'the reason must name the file');
 });
 
+test('a long untracked list names five files and counts the rest', () => {
+  const work = repo();
+  for (let i = 1; i <= 7; i++) fs.writeFileSync(path.join(work, `f${i}.md`), 'x\n');
+  const { reason } = run(work);
+  assert.strictEqual((reason.match(/^f\d\.md$/gm) || []).length, 5);
+  assert.match(reason, /^\.\.\. and 2 more$/m);
+});
+
 test('the untracked block offers all four exits, including leaving it', () => {
   const work = repo();
   fs.writeFileSync(path.join(work, 'scratch.txt'), 'x\n');
