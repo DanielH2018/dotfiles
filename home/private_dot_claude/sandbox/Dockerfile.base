@@ -81,7 +81,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # target the CONTAINER home (not the host) and are denied in settings.base.json;
 # run those on the host. Pinned to match the host version.
 # renovate: datasource=github-releases depName=twpayne/chezmoi
-ARG CHEZMOI_VERSION=2.71.1
+ARG CHEZMOI_VERSION=2.74.0
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     base="https://github.com/twpayne/chezmoi/releases/download/v${CHEZMOI_VERSION}"; \
