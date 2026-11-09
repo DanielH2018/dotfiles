@@ -5,6 +5,7 @@
 #   timeout: 300
 #   order: 20
 #   statusMessage: Checking files written by Bash...
+#   description: Run the Edit/Write hooks on files a Bash command wrote
 # Every PostToolUse hook on `Edit|Write` reads `.tool_input.file_path`, which a Bash
 # write does not carry — so a heredoc, a `sed -i` or a `tee` runs none of
 # them. chezmoi-guard is the one that costs work: without it the source never

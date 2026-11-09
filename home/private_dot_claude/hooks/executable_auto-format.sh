@@ -5,6 +5,7 @@
 #   timeout: 30
 #   order: 30
 #   statusMessage: Formatting...
+#   description: Format a file Claude edited, with the formatter for its extension
 # PostToolUse hook: auto-format files after Claude writes or edits them.
 # Dispatches based on extension. Skips when the formatter isn't installed, saying so on
 # stderr once per tool per day.

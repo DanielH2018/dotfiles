@@ -4,6 +4,7 @@
 #   matcher: Read
 #   timeout: 5
 #   order: 52
+#   description: Nudge a whole-file Read of a large file toward offset and limit
 # read-nudge.sh — PreToolUse/Read shim for claude-guard's whole-file-read nudge (dotfiles #1085).
 #
 # A Read with no offset or limit of a file over 20 KB gets a once-per-session

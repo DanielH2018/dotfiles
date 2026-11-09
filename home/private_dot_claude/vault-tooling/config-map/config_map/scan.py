@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from xml.parsers.expat import ExpatError
 
+from .hooks import declared_description, parse_command
 from .model import CascadeNode, Category, Item, Layer, SetupMap
 from .provenance import (
     humanize_filename,
@@ -30,7 +31,6 @@ from .sources import (
     WORK_CONFIG_ROOT,
 )
 
-HOOK_CMD_RE = re.compile(r"~/\.claude/hooks/([\w.\-]+)")
 INCLUDE_RE = re.compile(r"^@(\S+)\s*$", re.MULTILINE)
 HEADING_RE = re.compile(r"^(#{1,2})\s+(.+?)\s*$", re.MULTILINE)
 RUN_SKILL_RE = re.compile(r"run-skill\.sh\s+(\S+)\s+(\S+)")
@@ -156,13 +156,19 @@ def scan_hooks() -> Category:
             matcher = entry.get("matcher")
             for hook in entry.get("hooks", []):
                 command = hook.get("command", "")
-                match = HOOK_CMD_RE.search(command)
-                if match:
-                    script_name = match.group(1)
-                    script_path = CLAUDE_DIR / "hooks" / script_name
+                parsed = parse_command(command)
+                if parsed:
+                    label = parsed.label
+                    script_path = CLAUDE_DIR / "hooks" / label
                     provenance, _ = provenance_for(script_path)
-                    purpose = leading_comment(script_path) or script_name
-                    label = script_name
+                    comment = leading_comment(script_path)
+                    if comment and comment.startswith("gen-hooks:"):
+                        comment = None
+                    purpose = (
+                        declared_description(script_path, event, matcher, parsed.args)
+                        or comment
+                        or label
+                    )
                 else:
                     provenance = "inline"
                     purpose = command if len(command) <= 70 else command[:67] + "..."

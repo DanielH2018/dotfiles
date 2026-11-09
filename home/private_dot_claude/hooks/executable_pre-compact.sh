@@ -4,6 +4,7 @@
 #   matcher: auto|manual
 #   timeout: 10
 #   order: 10
+#   description: Carry branch, push and test state across a compaction
 # PreCompact hook: fires on both auto-compact and manual /compact.
 #
 # Compaction is where the CLAUDE.md compaction policy is most likely to lose things, so this

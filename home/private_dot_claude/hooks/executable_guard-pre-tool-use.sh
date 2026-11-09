@@ -4,6 +4,7 @@
 #   matcher: Bash
 #   timeout: 10
 #   order: 20
+#   description: Deny or rewrite a Bash command through claude-guard's rules
 # DECIDED: claude-guard slice 4 cutover (docs/specs/2026-09-06-claude-guard-design.md,
 # Rollout row 4). This is the sole decision for Bash PreToolUse -- deny.py
 # ports, rule for rule, the block-dangerous-bash.sh that was registered beside it

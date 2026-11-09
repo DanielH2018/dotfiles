@@ -28,6 +28,8 @@
 //                                       harness tests before it spawns the hook at all
 //   #   command: {{ if ... }}...{{ end }} optional; replaces the derived command whole, and
 //                                       is written into the template verbatim (no escaping)
+//   #   description: Format an edited file  required by census() here, not by the shared
+//                                       grammar; never rendered. The config map shows it.
 //
 //   # gen-hooks: library
 //   #   reason: sourced by hook-input.sh consumers
@@ -43,6 +45,7 @@ const FIELD_RE = /^#   ([a-zA-Z]+): (.*)$/;
 
 const REGISTER_KEYS = new Set([
   'event', 'matcher', 'timeout', 'order', 'args', 'when', 'async', 'statusMessage', 'command', 'if',
+  'description',
 ]);
 
 // The events the harness evaluates a handler's `if` on. On any other event a handler that
@@ -69,6 +72,7 @@ const EVENT_ORDER = [
 const INLINE_REGISTRATIONS = [
   {
     file: '(inline)',
+    description: 'Join the dev container to the compose project network',
     event: 'SessionStart',
     matcher: 'startup',
     timeout: 10,
@@ -148,6 +152,7 @@ function parseHookFile(file, text) {
     if (fields.when) reg.when = fields.when;
     if (fields.async) reg.async = true;
     if (fields.statusMessage) reg.statusMessage = fields.statusMessage;
+    if (fields.description) reg.description = fields.description;
     if (fields.if) {
       if (!IF_EVENTS.has(fields.event)) {
         throw new Error(`gen-hooks: ${file}: if: is evaluated only on ${[...IF_EVENTS].join(', ')}; on ${fields.event} the hook would never run.`);
@@ -194,6 +199,14 @@ function census(files) {
       `gen-hooks: ${undeclared.length} hook file(s) declare no registration and are not marked `
       + `library, so they would fire nowhere: ${undeclared.join(', ')}. Add a `
       + '`# gen-hooks: register` block (or `# gen-hooks: library` with a reason:).',
+    );
+  }
+  const undescribed = registrations.filter((r) => !r.description).map((r) => `${r.file} (${r.event})`);
+  if (undescribed.length > 0) {
+    throw new Error(
+      `gen-hooks: ${undescribed.length} registration(s) carry no description:, which the config `
+      + `map shows as the hook's purpose: ${undescribed.join(', ')}. Add a one-line `
+      + '`#   description:` to each register block.',
     );
   }
   registrations.push(...INLINE_REGISTRATIONS);

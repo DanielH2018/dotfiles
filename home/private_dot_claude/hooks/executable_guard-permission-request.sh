@@ -4,6 +4,7 @@
 #   matcher: Bash
 #   timeout: 10
 #   order: 10
+#   description: Approve Bash commands that claude-guard judges safe
 # DECIDED: claude-guard slice 3 cutover (docs/specs/2026-09-06-claude-guard-design.md,
 # Rollout row 3). This is now the sole decision for Bash PermissionRequest --
 # judge() ports, rule for rule, the six bash hooks that used to be registered

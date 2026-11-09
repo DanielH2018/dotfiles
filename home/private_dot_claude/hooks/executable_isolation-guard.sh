@@ -4,6 +4,7 @@
 #   matcher: Edit|Write|NotebookEdit
 #   timeout: 10
 #   order: 60
+#   description: Refuse an unisolated background job's edit to a shared checkout
 # Enforces "Working in isolation" from CLAUDE.md: a background job whose
 # EnterWorktree failed and fell back to "continue in place" must not edit the
 # shared checkout. No-ops outside a background job (CLAUDE_JOB_DIR unset) and

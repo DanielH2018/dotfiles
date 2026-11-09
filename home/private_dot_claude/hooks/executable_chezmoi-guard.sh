@@ -6,12 +6,14 @@
 #   order: 50
 #   statusMessage: Syncing chezmoi source...
 #   when: not (includeTemplate "is-agent" .)
+#   description: Sync the chezmoi source after an edit to a deployed managed file
 # gen-hooks: register
 #   event: PreToolUse
 #   matcher: Edit|Write|NotebookEdit
 #   timeout: 10
 #   order: 55
 #   args: pre
+#   description: Refuse an edit to a file rendered from a template; name its source
 # chezmoi-guard.sh — keep edits to chezmoi-managed files from being silently reverted by the
 # next `chezmoi apply`. One script, two registrations, the same shape as chezmoi-apply-guard.sh.
 #

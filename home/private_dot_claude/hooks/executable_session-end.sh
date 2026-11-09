@@ -4,6 +4,7 @@
 #   timeout: 5
 #   order: 10
 #   async: true
+#   description: Scan the finished transcript for leaked credentials
 # SessionEnd hook: scan the finished transcript for leaked credentials.
 # Fires when a session terminates. Output is informational only (not shown to Claude).
 

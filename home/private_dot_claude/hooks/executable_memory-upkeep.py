@@ -5,6 +5,7 @@
 #   timeout: 10
 #   order: 30
 #   command: bash ~/.claude/hooks/lib/run-python.sh memory-upkeep.py
+#   description: Report memories naming missing paths and an index over its cap
 # A SessionStart sweep over memories. Nothing re-checks a
 # memory when the code it describes changes, and nothing bounds the index that is
 # injected into every session, so both drift one way. This reports memories naming

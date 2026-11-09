@@ -4,6 +4,7 @@
 #   matcher: Read|Edit|Write|NotebookEdit
 #   timeout: 10
 #   order: 50
+#   description: Deny Read, Edit and Write on secret files such as keys
 # NotebookEdit is listed because it is a fourth write path to an arbitrary file
 # path, not because notebooks are used here. A matcher that names Edit and Write
 # but not NotebookEdit reads as covering every edit while leaving one uncovered,

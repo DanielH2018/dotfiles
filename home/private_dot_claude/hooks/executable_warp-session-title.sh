@@ -5,6 +5,7 @@
 #   timeout: 5
 #   order: 110
 #   args: start
+#   description: Label this session's Warp sidebar row "idle" at session start
 # warp: seed the row at session start, so a session opened and left alone is still
 # labelled rather than showing the bare command Warp defaults to.
 # gen-hooks: register
@@ -12,6 +13,7 @@
 #   timeout: 5
 #   order: 40
 #   args: working
+#   description: Relabel the Warp sidebar row "working" when a prompt arrives
 # warp: label this session's sidebar row. Kept as its own block rather than folded
 # into agentview's, which is why retiring agentview left this one standing.
 # gen-hooks: register
@@ -20,18 +22,21 @@
 #   timeout: 5
 #   order: 20
 #   args: needs-input
+#   description: Relabel the Warp sidebar row "input" when the session is blocked
 # warp: something is blocked on Daniel — relabel the row "input"
 # gen-hooks: register
 #   event: Stop
 #   timeout: 5
 #   order: 60
 #   args: completed
+#   description: Relabel the Warp sidebar row "done" when the turn ends
 # warp: the turn is over — relabel the row "done"
 # gen-hooks: register
 #   event: SessionEnd
 #   timeout: 5
 #   order: 20
 #   args: end
+#   description: Reset the Warp sidebar row to Warp's own title at session end
 # warp: the session is gone — reset the row to Warp's own auto-title
 # Label this session's row in Warp's vertical tab sidebar with its state and Claude's own
 # session title, so the sidebar reads like the Agent View picker it replaces.

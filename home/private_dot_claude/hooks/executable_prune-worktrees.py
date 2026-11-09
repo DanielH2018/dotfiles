@@ -5,6 +5,7 @@
 #   timeout: 15
 #   order: 50
 #   command: bash ~/.claude/hooks/lib/run-python.sh prune-worktrees.py --prune
+#   description: Remove merged, clean, unlocked session worktrees
 # A SessionStart sweep over session worktrees: remove the
 # ones under .claude/worktrees/ whose branch is already an ancestor of origin/HEAD and
 # has moved since it was created, are clean, and hold no live session's lock. Claude

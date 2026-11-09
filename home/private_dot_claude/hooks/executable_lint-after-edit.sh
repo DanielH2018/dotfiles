@@ -5,6 +5,7 @@
 #   timeout: 300
 #   order: 40
 #   statusMessage: Running lint checks...
+#   description: Check an edited file's syntax and types; return errors to Claude
 # PostToolUse hook for Edit/Write: run a quick syntax/type check on the edited file
 # and, if it fails, feed the error back to Claude so it can self-correct.
 #

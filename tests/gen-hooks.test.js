@@ -26,13 +26,13 @@ const REG = (body) => `#!/bin/bash\n# gen-hooks: register\n${body}\necho hi\n`;
 // --- lib.parseHookFile ----------------------------------------------------------------------
 
 test('parseHookFile reads a register block, derives the command, and stops at the first non-field line', () => {
-  const text = REG('#   event: SessionStart\n#   matcher: startup|resume\n#   timeout: 5\n#   order: 20\n#   args: start\n#   when: ne .chezmoi.os "windows"\n#   async: true\n#   statusMessage: Seeding...\n# prose that follows the block is not a field');
+  const text = REG('#   event: SessionStart\n#   matcher: startup|resume\n#   timeout: 5\n#   order: 20\n#   args: start\n#   when: ne .chezmoi.os "windows"\n#   async: true\n#   statusMessage: Seeding...\n#   description: Seed the row\n# prose that follows the block is not a field');
   const { registrations, library } = lib.parseHookFile('executable_warp.sh', text);
   assert.strictEqual(library, null);
   assert.deepStrictEqual(registrations, [{
     file: 'executable_warp.sh', event: 'SessionStart', matcher: 'startup|resume', timeout: 5, order: 20,
     when: 'ne .chezmoi.os "windows"', async: true, statusMessage: 'Seeding...',
-    command: '~/.claude/hooks/warp.sh start',
+    description: 'Seed the row', command: '~/.claude/hooks/warp.sh start',
   }]);
 });
 
@@ -68,7 +68,14 @@ test('parseHookFile rejects a malformed block', () => {
 
 // --- lib.census: the verdict the generator exists for ---------------------------------------
 
-const DECLARED = REG('#   event: Stop\n#   timeout: 5\n#   order: 10');
+const DECLARED = REG('#   event: Stop\n#   timeout: 5\n#   order: 10\n#   description: Check the reply');
+
+test('census errors on a registration with no description, naming it', () => {
+  assert.throws(() => lib.census({
+    'executable_declared.sh': DECLARED,
+    'executable_bare.sh': REG('#   event: Stop\n#   timeout: 5\n#   order: 20'),
+  }), /1 registration\(s\) carry no description:.*executable_bare\.sh \(Stop\)/);
+});
 
 test('census errors on an executable that declares nothing, naming it', () => {
   assert.throws(() => lib.census({

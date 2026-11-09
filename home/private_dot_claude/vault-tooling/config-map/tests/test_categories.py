@@ -1,4 +1,63 @@
-from config_map.scan import build_setup_map, scan_mcp, scan_plugins, scan_scheduled
+import json
+
+from config_map.scan import (
+    build_setup_map,
+    scan_hooks,
+    scan_mcp,
+    scan_plugins,
+    scan_scheduled,
+)
+
+
+def _register(event, args, description):
+    return (
+        f"# gen-hooks: register\n#   event: {event}\n#   timeout: 5\n#   order: 10\n"
+        f"#   args: {args}\n#   description: {description}\n# prose, not a field\n"
+    )
+
+
+def _set_hooks(claude_dir, hooks):
+    settings_path = claude_dir / "settings.json"
+    settings = json.loads(settings_path.read_text())
+    settings["hooks"] = hooks
+    settings_path.write_text(json.dumps(settings))
+
+
+def test_a_hook_run_through_a_lib_launcher_is_named_after_its_script(fake_env):
+    claude_dir = fake_env["claude_dir"]
+    (claude_dir / "hooks" / "lib").mkdir()
+    (claude_dir / "hooks" / "lib" / "run-python.sh").write_text("# launcher\n")
+    (claude_dir / "hooks" / "guard.py").write_text(
+        "#!/usr/bin/env python3\n" + _register("Stop", "--strict", "Guard the stop")
+    )
+    command = "bash ~/.claude/hooks/lib/run-python.sh guard.py --strict"
+    _set_hooks(claude_dir, {"Stop": [{"hooks": [{"command": command}]}]})
+
+    [item] = scan_hooks().items
+    assert item.name == "Stop: guard.py"
+    assert item.purpose == "Guard the stop"
+
+
+def test_each_registration_of_one_file_takes_its_own_block_description(fake_env):
+    claude_dir = fake_env["claude_dir"]
+    (claude_dir / "hooks" / "title.sh").write_text(
+        "#!/bin/bash\n"
+        + _register("Stop", "done", "Label the row done")
+        + _register("SessionEnd", "end", "Reset the row")
+    )
+    _set_hooks(
+        claude_dir,
+        {
+            "Stop": [{"hooks": [{"command": "~/.claude/hooks/title.sh done"}]}],
+            "SessionEnd": [{"hooks": [{"command": "~/.claude/hooks/title.sh end"}]}],
+        },
+    )
+
+    purposes = {item.name: item.purpose for item in scan_hooks().items}
+    assert purposes == {
+        "SessionEnd: title.sh": "Reset the row",
+        "Stop: title.sh": "Label the row done",
+    }
 
 
 def test_disabled_and_unlisted_plugins_are_hidden(fake_env):

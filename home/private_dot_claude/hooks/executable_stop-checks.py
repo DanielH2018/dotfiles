@@ -4,6 +4,7 @@
 #   timeout: 10
 #   order: 10
 #   command: bash ~/.claude/hooks/lib/run-python.sh stop-checks.py
+#   description: Block once when the final reply breaks a regex-checkable rule
 # String checks over text the harness already hands a Stop hook: the final reply, and
 # the session transcript. Each rule is a CLAUDE.md sentence that a regex can decide,
 # and each blocks at most once, so a false positive costs one turn rather than a loop.

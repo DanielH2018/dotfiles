@@ -4,6 +4,7 @@
 #   timeout: 5
 #   order: 10
 #   async: true
+#   description: Tell the operator a turn ended on an API error
 # StopFailure hook: tell the operator a turn ended on an API error rather than normal
 # completion. Each branch is guarded by `command -v`, not gated by `when:`. gen-hooks refuses a
 # lone conditional entry as an event's first group, and StopFailure has no other hook to carry

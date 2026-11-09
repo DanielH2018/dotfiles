@@ -65,14 +65,14 @@ Detail level: **name + one-line purpose + key fields per item; full bodies behin
 1. **Overview banner** — per-category counts, generated-at, git SHA of each source repo.
 2. **Settings & precedence** — layer stack `managed → project-local → project → user`; per present layer: key fields, `allow`/`deny`/`ask` counts (user layer today: 268 / 95 / 119), `skillOverrides`, `sandbox` summary, `env`, model/output-style/effort. Show which layers are absent.
 3. **CLAUDE.md cascade** — the `@`-include tree with provenance per node: `~/.claude/CLAUDE.md` → `CLAUDE.local.md` (→work) → `docs/integrations.md` + `docs/enforcement.md` (→work); then project `CLAUDE.md`. Each node also lists its `#`/`##` section headings + line count so the file's shape is visible without opening it.
-4. **Hooks** — grouped by event (13 events: SessionStart×4, PostToolUse×8, PreToolUse×2, UserPromptSubmit×2, +9 single). Each: script, provenance, one-line purpose.
+4. **Hooks** — grouped by event (13 events: SessionStart×4, PostToolUse×8, PreToolUse×2, UserPromptSubmit×2, +9 single). Each: script, provenance, one-line purpose. A command that runs a launcher under `hooks/lib/` (`bash ~/.claude/hooks/lib/run-python.sh stop-checks.py`) is listed under the script the launcher runs, not under `lib`.
 5. **Skills / Commands / Agents / Rules / Output-styles** — inventory with provenance + purpose.
 6. **Plugins** — only **enabled** plugins (`enabledPlugins == true`) are shown; disabled/unlisted are hidden and the count noted. Each carries its manifest `description` (from `<installPath>/.claude-plugin/plugin.json`) + marketplace/scope/version.
 7. **MCP servers** — only **active** servers (local, from `~/.claude.json` `mcpServers` keys). Needs-auth claude.ai connectors are hidden (count noted, names/ids never read into output). Connected connectors have no deterministic local manifest — flagged.
 8. **Scheduled tasks** — the discovered launchd jobs: schedule, skill, mode per job.
 9. **Provenance legend + two-repo model** — chezmoi + work-laptop-config → deployed `~/.claude`.
 
-Purpose text is **sourced deterministically**: skills/agents/commands from frontmatter `description`; hooks from a leading `#` comment; rules from filename topic. Fallback = filename. No model.
+Purpose text is **sourced deterministically**: skills/agents/commands from frontmatter `description`; hooks from the `#   description:` line of the matching `# gen-hooks: register` block, which `bin/gen-hooks` requires on every registration (a hook outside gen-hooks, such as a work overlay hook, falls back to its leading `#` comment); rules from filename topic. Fallback = filename. No model.
 
 ## 6. Output
 

@@ -4,6 +4,7 @@
 #   matcher: permission_prompt|agent_needs_input|idle_prompt
 #   timeout: 5
 #   order: 10
+#   description: Play a sound when a session needs a permission or an answer
 # audible cue only when a session genuinely needs you. Two types qualify:
 # permission_prompt (a foreground session is blocked on an approval) and
 # agent_needs_input (a background job or agentview session is asking a question).
