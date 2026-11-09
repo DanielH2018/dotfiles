@@ -62,6 +62,46 @@ number attached:
 
 **Numbers, not adjectives.** "A lot of log noise" gives a reviewer nothing to check.
 
+### The opener stays visible; the write-up folds
+
+An agent-written body is accurate and long, and a long body reads as slop even when it is
+not. So split it. The opener sits in plain view, and the rest of the write-up goes inside a
+`<details>` block that the reader expands on demand.
+
+You write the opener too. Select it carefully to act as a high-level explanation of what is
+going on: the shortest text a human can read that gets them up to speed. In practice that is
+the measured symptom above plus the outcome, in one to three sentences. Choose it for what a
+reader needs, not to tease the folded part. Add a screenshot under it when the change is
+visual.
+
+Everything under the reviewer-question headings goes inside the block, unchanged. Folding
+cuts nothing: the rejected alternatives and the verification output still have to be there.
+
+```markdown
+<opener: measured symptom and outcome>
+
+<details>
+<summary>Claude Opus 5.5 (high effort): full write-up</summary>
+
+## Why the cheaper fix fails
+...
+</details>
+
+Closes #123
+```
+
+- **Leave a blank line after `</summary>`.** Without it, GitHub renders the headings,
+  tables and code fences inside the block as raw text.
+- **Name the model and effort in the summary line**, so the reader knows what the block
+  holds before opening it.
+- **Three things stay outside the block.** The `Closes #N` line stays visible because
+  GitHub acts on it wherever it sits. The post-merge action stays visible because it is a
+  task, not context. The attribution footer stays at the end.
+- **Skip the block when the write-up fits on one screen.** Folding a short body adds a
+  click and hides nothing worth hiding.
+- **Under a repo template, keep its section headings visible.** Fold only long content
+  inside a section.
+
 ### Headings are the reviewer's question, not a template slot
 
 Write the heading a reviewer would ask out loud: `## Why FINALDELAY is not parameterised`,
@@ -197,6 +237,8 @@ works for `gh issue create --body-file` and for a multi-line `git commit -F <pat
 
 - [ ] The title reads as a commit subject and names the outcome.
 - [ ] The body opens on a fact, not on `This PR`.
+- [ ] The opener stands alone, and a long write-up sits inside `<details>` with the
+      `Closes` line outside it.
 - [ ] Every alternative a reviewer would propose is named and refuted with evidence.
 - [ ] Every verification claim quotes output you read this session.
 - [ ] A closing keyword precedes only the issues this PR fixes.
@@ -221,4 +263,6 @@ what it costs; the cost sentence is what makes the rest credible.
 The title and heading conventions are measured from this operator's own merged PRs. The
 search-key argument, the link-rot rule, the *why* framing, the bad-description list, and
 both composition rules are adapted from Google's CL author's guide —
-<https://google.github.io/eng-practices/review/developer/> (CC-BY 3.0).
+<https://google.github.io/eng-practices/review/developer/> (CC-BY 3.0). The visible
+opener and the folded write-up come from Simon Willison,
+[Hide your slop PR descriptions behind `<details><summary>`](https://simonwillison.net/2026/Nov/9/details-summary/).
