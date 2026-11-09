@@ -43,8 +43,7 @@ provides `/usr/bin/docker` as a shim. Compose is not bundled with either: `podma
 delegates to an external provider it expects to find at
 `~/.docker/cli-plugins/docker-compose`. Install the upstream compose v2 binary there
 (`chmod +x`, no sudo, no daemon) and both `podman compose` and the `docker` shim work.
-podman-compose is the wrong choice here — it mishandles the
-`depends_on: service_completed_successfully` that `tempo-init` relies on.
+Use compose v2 rather than podman-compose, which mishandles `depends_on` conditions.
 
 The **work Mac** (`MacBook-Pro-2`) runs no stack. The org's managed settings send every
 Claude Code session there to Lithic's collector, so a local stack received nothing, and it

@@ -57,17 +57,8 @@ services:
     restart: unless-stopped
     logging: *logging
 
-  # Named volumes are created root-owned; Tempo runs as uid 10001 and would fail to
-  # write its WAL. One-shot chown, as in Grafana's own local-stack example.
-  tempo-init:
-    image: grafana/tempo:2.10.10
-    user: root
-    entrypoint: ["chown", "-R", "10001:10001", "/var/tempo"]
-    volumes:
-      - tempo-data:/var/tempo
-    restart: "no"
-    logging: *logging
-
+  # No chown init container: the image ships /var/tempo owned by uid 10001, and an empty
+  # named volume takes that ownership on first mount. Since 2.10 the image has no chown.
   tempo:
     image: grafana/tempo:2.10.10
     command: ["-config.file=/etc/tempo/config.yaml"]
@@ -76,9 +67,6 @@ services:
       - tempo-data:/var/tempo
     ports:
       - "127.0.0.1:3200:3200"   # Tempo query API (Grafana reads here)
-    depends_on:
-      tempo-init:
-        condition: service_completed_successfully
     restart: unless-stopped
     logging: *logging
 
