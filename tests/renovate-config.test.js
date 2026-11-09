@@ -200,23 +200,27 @@ test('the sandbox base image is digest-pinned and Renovate reads it', () => {
 // run ID. The pin must be the bare version setup-node's manifest lists (#1134). The canary only
 // runs when renovate.json changes, so a bad bump to it passes its own PR.
 
-// The extractVersion Renovate applies to one dependency: the last matching rule's wins. Only the
+// The value of `key` Renovate applies to one dependency: the last matching rule's wins. Only the
 // matchers these rules use are evaluated, and a rule with any other matcher is treated as not
 // matching, so an unknown matcher cannot widen a rule.
-const EVALUATED = new Set(['matchDatasources', 'matchPackageNames', 'matchCurrentValue']);
-function extractVersionFor(dep) {
+const MATCHERS = {
+  matchManagers: (dep, v) => v.includes(dep.manager),
+  matchDatasources: (dep, v) => v.includes(dep.datasource),
+  matchPackageNames: (dep, v) => v.includes(dep.packageName),
+  matchDepNames: (dep, v) => v.includes(dep.depName),
+  matchFileNames: (dep, v) => v.includes(dep.packageFile),
+  matchCurrentValue: (dep, v) => filePattern(v).test(dep.currentValue),
+};
+function ruleValue(dep, key, rules = config.packageRules) {
   let found = null;
-  for (const rule of config.packageRules) {
+  for (const rule of rules) {
     const keys = Object.keys(rule).filter((k) => k.startsWith('match'));
-    if (keys.some((k) => !EVALUATED.has(k))) continue;
-    if (rule.matchDatasources && !rule.matchDatasources.includes(dep.datasource)) continue;
-    if (rule.matchPackageNames && !rule.matchPackageNames.includes(dep.packageName)) continue;
-    if (rule.matchCurrentValue && !filePattern(rule.matchCurrentValue).test(dep.currentValue)) continue;
-    if (rule.extractVersion) found = rule.extractVersion;
+    if (keys.some((k) => !MATCHERS[k] || !MATCHERS[k](dep, rule[k]))) continue;
+    if (key in rule) found = rule[key];
   }
   return found;
 }
-const versionOf = (dep, tag) => new RegExp(extractVersionFor(dep)).exec(tag)?.groups.version ?? null;
+const versionOf = (dep, tag) => new RegExp(ruleValue(dep, 'extractVersion')).exec(tag)?.groups.version ?? null;
 
 test('a node-versions tag is pinned as the bare version, and a v-tag still loses its v', () => {
   const node = { datasource: 'github-releases', packageName: 'actions/node-versions', currentValue: '24.22.2' };
@@ -229,4 +233,44 @@ test("the canary's node-version is a version setup-node can resolve", () => {
   const pins = [...read('.github/workflows/renovate-config-canary.yml').matchAll(/node-version: "([^"]*)"/g)];
   assert.ok(pins.length > 0, 'the canary no longer pins node-version in the shape this test reads');
   for (const [, v] of pins) assert.match(v, /^\d+\.\d+\.\d+$/, `node-version "${v}" is not in setup-node's manifest`);
+});
+
+// --- The weekly batch ------------------------------------------------------------------------
+//
+// One early rule puts every bump into the `weekly pins` PR. The named groups after it must keep
+// their own PRs: the lockstep ones open on a different day and land after the homelab repo moves.
+
+const BATCH = 'weekly pins';
+const NAMED = [
+  [{ manager: 'pre-commit', packageName: 'gitleaks/gitleaks', depName: 'gitleaks/gitleaks' }, /^gitleaks \(lockstep/],
+  [{ manager: 'custom.regex', packageName: 'astral-sh/uv', depName: 'astral-sh/uv' }, /lockstep — land after the homelab/],
+  [{ manager: 'pre-commit', packageName: 'astral-sh/ruff-pre-commit', depName: 'astral-sh/ruff-pre-commit' }, /^ruff$/],
+  [{ manager: 'custom.regex', packageName: 'ruff', depName: 'ruff' }, /^ruff$/],
+  [{ manager: 'custom.regex', packageName: 'node', depName: 'node',
+    packageFile: 'home/private_dot_claude/sandbox/Dockerfile.base' }, /^sandbox node channel \(manual/],
+];
+
+// The named-group dependencies the batch rule swallows, given a packageRules list.
+function swallowed(rules) {
+  return NAMED.filter(([dep, want]) => !want.test(ruleValue(dep, 'groupName', rules) ?? ''))
+    .map(([dep]) => dep.packageName);
+}
+
+test('the batch rule covers every enabled manager', () => {
+  const batch = config.packageRules.find((r) => r.groupName === BATCH);
+  assert.ok(batch, `no packageRule sets groupName "${BATCH}"`);
+  assert.deepStrictEqual([...batch.matchManagers].sort(), [...config.enabledManagers].sort(),
+    'a manager outside matchManagers opens one PR per bump again');
+  for (const dep of [
+    { manager: 'custom.regex', packageName: 'junegunn/fzf', depName: 'junegunn/fzf' },
+    { manager: 'dockerfile', packageName: 'debian', depName: 'debian',
+      packageFile: 'home/private_dot_claude/sandbox/Dockerfile.base' },
+  ]) assert.strictEqual(ruleValue(dep, 'groupName'), BATCH, `${dep.packageName} is not batched`);
+});
+
+test('the named groups override the batch only while the batch rule comes first', () => {
+  assert.deepStrictEqual(swallowed(config.packageRules), []);
+  const batchLast = [...config.packageRules.filter((r) => r.groupName !== BATCH),
+    ...config.packageRules.filter((r) => r.groupName === BATCH)];
+  assert.deepStrictEqual(swallowed(batchLast), NAMED.map(([dep]) => dep.packageName));
 });
