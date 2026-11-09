@@ -16,6 +16,7 @@ const CLAUDE_MD_TMPL = ['home', 'private_dot_claude', 'CLAUDE.md.tmpl'];
 export const RULES_SECTIONS = {
   'sentence-clarity': '### Sentence-level clarity',
   'formatting': '#### Formatting rules for written output',
+  'module-design': '## Module design',
 };
 
 // Pinned so results don't drift with whatever the session default happens to be;

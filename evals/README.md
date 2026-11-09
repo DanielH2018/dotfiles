@@ -230,6 +230,7 @@ The rules ship in two places. Only one is gradable here.
 |---|---|---|
 | `CLAUDE.md` → `### Sentence-level clarity` | text written to disk; reaches subagents | **yes** — the seven cases below |
 | `CLAUDE.md` → `#### Formatting rules for written output` | text written to disk; reaches subagents | **yes** — `rules-formatting`, see below |
+| `CLAUDE.md` → `## Module design` | code and interfaces; reaches subagents | **yes** — `rules-module-design`, see below |
 | `output-styles/daniel-voice.md` | conversational replies in the main session | **no** |
 
 The output style is not testable by this harness: it governs the interactive main loop, where
@@ -325,3 +326,22 @@ heading in `RULES_SECTIONS` (`evals/lib/load-rules.mjs`), write the case under
 reader's judgment to spot — a case that can be graded by `checkAssertions` alone should stay
 that way, both for cost and because a regex gate is easier to prove correct (a red-proof pair)
 than a rubric is to prove non-overreaching (see the rubric-strictness note above).
+
+### Judge-graded code cases: `rules-module-design`
+
+`evals/cases/rules-module-design/` grades `## Module design`. Each case hands over a small
+Python module and a task that does not mention the rule. A judge grades the code in the reply.
+
+| Case | Rule | Control arm, k=2 | Treatment arm, k=2 |
+|---|---|---|---|
+| `001-merge-a-pass-through-layer` | the deletion test | 2/2 | 2/2 |
+| `002-pull-caller-knowledge-inside` | one owner per concept | 0/2 | 2/2 |
+| `003-shrink-the-interface-and-delete-the-old-path` | one obvious way to call it; finish the move | 0/2 | 2/2 |
+| `004-pass-through-is-reported-not-refactored` | the scope bound: no unrelated refactor | 1/2 | 2/2 |
+
+Measured on 2026-11-09 on the non-bare path. That path is valid for this A/B only while the
+deployed `~/.claude/CLAUDE.md` lacks the section. After `chezmoi apply`, the control arm
+receives the section from the ambient file, so re-measure on the `--bare` path. Case 001
+passes without the rule, so it guards against a regression but does not show the rule helps.
+Case 004's control failure came from a regex gate stricter than the rubric. The gate is now
+`\S`, so that result needs re-measuring.

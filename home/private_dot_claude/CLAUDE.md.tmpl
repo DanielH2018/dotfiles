@@ -94,6 +94,17 @@ Don't dispatch a review subagent on your own initiative to double-check work you
 
 **Evidence before claims.** Say tests pass, the linter is clean or a bug is fixed only when you ran that command in this session and read its output; otherwise say the status is unverified. To call a failure pre-existing, run `redproof <default branch> <changed paths> -- <failing test>` and quote its last line: `RED` means the test also fails without your change.
 
+## Module design
+
+Make each module deep: a small interface that hides a lot of behaviour. A module is any unit with callers, such as a function, a class, a file, a script, a CLI or a skill.
+
+- **The deletion test.** Ask what deleting the module would cost. If its callers would have to take on its complexity, it earns its place. If nothing would be lost, as with a pass-through wrapper or a layer that only renames, merge it into its caller.
+- **One owner per concept.** Each concept lives in the one module that owns it. Pull its special cases, ordering rules, validation and derived values inside, so no caller has to know them. A caller that sorts, checks or computes something before every call is doing the module's job.
+- **One obvious way to call it.** Drop a parameter, flag or option when the module can work out the value itself, when every caller passes the same value, or when nothing reads it. A test counts as a caller: keep a seam a test needs, with a default so other callers omit it.
+- **Finish the move.** When you change an interface, move every caller to the new shape in the same change. Then delete the old path completely: no alias, no deprecated shim, no compatibility flag. When a caller outside the repo cannot move, ask me before you keep an old path.
+
+These rules govern the modules a change creates or changes. They also govern a module whose job a new caller would otherwise copy. A shallow module the change only passes through is a finding to report, not a refactor to fold into the change.
+
 ## Code comments
 
 The default is no implementation comment. Add one only when a maintainer who has the code, but not the PR or this conversation, would get something wrong without it. Write it for that maintainer, not the reviewer: what changed and why goes in the commit message or the PR, never in the code. One line is the budget. `rules/comments.md` carries the full rules, and these three hold even before it loads.

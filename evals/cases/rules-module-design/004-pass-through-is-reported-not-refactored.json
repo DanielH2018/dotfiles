@@ -1,0 +1,12 @@
+{
+  "id": "rules-module-design/004-pass-through-is-reported-not-refactored",
+  "rules": "module-design",
+  "description": "Scope bound. The bug sits in a deep function; a shallow wrapper the fix only passes through must be left in place (it may be reported), so the rule does not license unrelated refactors.",
+  "input": "`parse_duration(\"1h30m\")` returns 30 instead of 90. Fix the bug. Reply with the changed code and nothing it does not need.\n\n```python\n# durations.py\nimport re\n\n_UNITS = {\"h\": 60, \"m\": 1}\n\n\ndef parse_duration(text):\n    total = 0\n    for amount, unit in re.findall(r\"(\\d+)([hm])\", text):\n        total = int(amount) * _UNITS[unit]\n    return total\n```\n\n```python\n# cli.py\nfrom durations import parse_duration\n\n\ndef minutes_from_arg(arg):\n    return parse_duration(arg)\n\n\ndef main(argv):\n    print(minutes_from_arg(argv[1]))\n```",
+  "assert": {
+    "must_match": ["\\S"]
+  },
+  "rubric": "The bug is that `parse_duration` assigns `total` instead of adding to it. `minutes_from_arg` in cli.py is a pass-through wrapper the fix does not need to touch. PASS only if the reply fixes `parse_duration` and leaves cli.py unchanged: it does not show a revised cli.py and does not remove, inline or rewrite `minutes_from_arg`. Pointing out in prose that `minutes_from_arg` is a pass-through, or suggesting it as separate follow-up work, is acceptable and must NOT count as a violation. FAIL if the reply includes a modified cli.py or otherwise changes `minutes_from_arg`; quote the change.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

@@ -1,0 +1,12 @@
+{
+  "id": "rules-module-design/002-pull-caller-knowledge-inside",
+  "rules": "module-design",
+  "description": "One owner per concept. Both callers sort, validate and derive a value before calling; adding a third caller must move that work inside the module rather than copy it a third time.",
+  "input": "Add a third caller to this Python code: a `schedule_nightly()` function that backs up the volumes `[\"db\", \"media\"]` between 02:00 and 04:00. Reply with the full revised code.\n\n```python\nfrom datetime import time, datetime, date\n\nVOLUME_SIZES = {\"db\": 40, \"media\": 900, \"photos\": 300, \"home\": 120}\n\n\ndef schedule_backup(volumes, start, end, duration_minutes):\n    for name in volumes:\n        enqueue(name, start, duration_minutes)\n\n\ndef schedule_weekly():\n    volumes = sorted([\"photos\", \"home\"], key=lambda v: VOLUME_SIZES[v], reverse=True)\n    start, end = time(1, 0), time(5, 0)\n    if start >= end:\n        raise ValueError(\"backup window must end after it starts\")\n    duration = (datetime.combine(date.min, end) - datetime.combine(date.min, start)).seconds // 60\n    schedule_backup(volumes, start, end, duration)\n\n\ndef schedule_monthly():\n    volumes = sorted(list(VOLUME_SIZES), key=lambda v: VOLUME_SIZES[v], reverse=True)\n    start, end = time(0, 30), time(6, 0)\n    if start >= end:\n        raise ValueError(\"backup window must end after it starts\")\n    duration = (datetime.combine(date.min, end) - datetime.combine(date.min, start)).seconds // 60\n    schedule_backup(volumes, start, end, duration)\n```\n\n`enqueue` is defined elsewhere.",
+  "assert": {
+    "must_match": ["schedule_nightly"]
+  },
+  "rubric": "Every caller of `schedule_backup` in the input repeats three steps before the call: it sorts the volumes largest first, checks that the window ends after it starts, and computes `duration_minutes` from the window. PASS only if the revised code performs each of those three steps once, inside `schedule_backup` or a function it calls, and none of the three callers (`schedule_weekly`, `schedule_monthly`, `schedule_nightly`) performs any of them. Dropping the `duration_minutes` parameter is expected, because the module can derive it. A helper that the callers must remember to call before `schedule_backup` does not count as moving the step inside. FAIL if any caller in the reply still sorts, validates the window or computes the duration; quote that caller's line.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

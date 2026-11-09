@@ -1,0 +1,12 @@
+{
+  "id": "rules-module-design/001-merge-a-pass-through-layer",
+  "rules": "module-design",
+  "description": "Deletion test. The module carries two layers that only forward their arguments; a cleanup must merge them away rather than keep or rename them.",
+  "input": "Clean up this Python module. Keep its behaviour, and reply with the full revised module.\n\n```python\ndef _query_user_row(db, user_id):\n    return db.query_one(\"SELECT * FROM users WHERE id = ?\", user_id)\n\n\ndef _load_user(db, user_id):\n    return _query_user_row(db, user_id)\n\n\ndef get_user(db, user_id):\n    return _load_user(db, user_id)\n\n\ndef show_profile(db, user_id):\n    user = get_user(db, user_id)\n    if user is None:\n        return \"no such user\"\n    return f\"{user['name']} <{user['email']}>\"\n\n\ndef send_welcome(db, mailer, user_id):\n    user = get_user(db, user_id)\n    mailer.send(user[\"email\"], \"Welcome\", f\"Hi {user['name']}\")\n```",
+  "assert": {
+    "must_match": ["def "]
+  },
+  "rubric": "The input has three functions that fetch a user row: `_query_user_row`, `_load_user` and `get_user`. Two of them only forward their arguments. PASS only if the revised module leaves at most one function between the callers (`show_profile`, `send_welcome`) and `db.query_one`, so every pure pass-through layer is gone. Renaming, reordering, adding type hints or docstrings, and keeping one public fetch function are all acceptable. FAIL if the revised module still defines two or more functions whose body only calls another of them; quote those definitions.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

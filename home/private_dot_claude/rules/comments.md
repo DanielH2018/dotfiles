@@ -44,8 +44,8 @@ have in common, so it is not repeated there.
 - **The default is no implementation comment.** Add one only when a maintainer who has the
   code, but not the PR, the ticket or this conversation, would get something wrong without
   it: a constraint the code cannot express, a non-obvious invariant, a trap. Assume the
-  reader knows the language better than they know this code. If a better name or a smaller
-  function would carry the point, change the code instead.
+  reader knows the language better than they know this code. If a better name or a clearer
+  structure would carry the point, change the code instead.
 - **Write for the next maintainer, not for the reviewer.** Anything that explains the change
   belongs in the commit message or the PR body: what the code replaces, what it used to do,
   how it matches an old implementation, which ticket asked for it, the SHA of a dependency
