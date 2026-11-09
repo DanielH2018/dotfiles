@@ -144,7 +144,17 @@ test('loadSkillFromRepo prefers a plain SKILL.md over a templated sibling', (t) 
 
 test('loadSkillFromRepo error names both the plain and templated paths it looked for', (t) => {
   const fakeRepo = scratch(tmpdir(), 'repo-', t);
-  assert.throws(() => loadSkillFromRepo('nonexistent-skill', fakeRepo), /SKILL\.md or .*SKILL\.md\.tmpl/s);
+  assert.throws(() => loadSkillFromRepo('nonexistent-skill', fakeRepo, undefined, []),
+    /SKILL\.md or .*SKILL\.md\.tmpl.*EVAL_SKILL_DIRS/s);
+});
+
+test('loadSkillFromRepo falls back to an extra skills dir for a work-overlay skill', (t) => {
+  const fakeRepo = scratch(tmpdir(), 'repo-', t);
+  const overlay = scratch(tmpdir(), 'overlay-', t);
+  mkdirSync(pjoin(overlay, 'gh-stack'), { recursive: true });
+  writeFileSync(pjoin(overlay, 'gh-stack', 'SKILL.md'), '---\nname: gh-stack\ndescription: d\n---\n\noverlay body');
+  assert.throws(() => loadSkillFromRepo('gh-stack', fakeRepo, undefined, []), /not found/);
+  assert.strictEqual(loadSkillFromRepo('gh-stack', fakeRepo, undefined, [overlay]).systemPrompt, 'overlay body');
 });
 
 test('loadAgentFlagOrError returns a flag (no error) for a resolvable agent', (t) => {

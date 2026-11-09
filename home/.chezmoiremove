@@ -248,3 +248,11 @@ Scripts/wslhost-interop-reaper/wslhost-interop-reaper-hidden.vbs
 .claude/hooks/play-sound.sh
 .claude/hooks/warp-session-title.sh
 .local/state/claude-auto-format
+
+# 2026-11-09: gh-stack and dependabot-sweep moved to work-laptop-config, the only machine that
+# used them. Not on a work machine: there these paths hold work-laptop-config's symlinks, which
+# an entry here would delete on every apply.
+{{ if not .work -}}
+.claude/skills/gh-stack
+.claude/skills/dependabot-sweep
+{{ end -}}

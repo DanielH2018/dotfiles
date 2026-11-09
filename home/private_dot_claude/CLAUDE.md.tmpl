@@ -69,7 +69,7 @@ isolating. Reading, searching and answering happen in place, and a session insid
 - **A squash merge makes the PR title the commit subject**: imperative, sentence case, naming the outcome rather than the files touched. `guard-pre-tool-use.sh` denies a title{{ if .work }} or a `planka card` title{{ end }} with a `feat:`-style prefix or a ticket id.
 - A PR body exists to stop the reviewer re-deriving what you already worked out. Open on the measured symptom, name the alternatives you rejected and why, and quote real command output for every verification claim.
 - Fill a repo's `.github/pull_request_template.md` when one exists rather than replacing its sections.
-- The long form is the `pr-authoring` skill, which also owns diff size and commit history; `gh-stack` owns splitting.
+- The long form is the `pr-authoring` skill, which also owns diff size and commit history{{ if .work }}; `gh-stack` owns splitting{{ end }}.
 
 ## GitHub
 

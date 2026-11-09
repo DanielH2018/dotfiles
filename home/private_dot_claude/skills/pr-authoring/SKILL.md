@@ -15,7 +15,7 @@ rule below serves that one job.
    those sections. Check for it before drafting: `ls .github/pull_request_template.md
    .github/PULL_REQUEST_TEMPLATE.md`.
 2. **This skill owns the prose, and the size and history check.** Splitting and
-   stacking belong to `gh-stack`; dispatching review agents belongs
+   stacking belong to `gh-stack` (work machines only); dispatching review agents belongs
    to the `## Code review` rule in `~/.claude/CLAUDE.md`. Do not restate their rules
    here or in the PR — a second source of truth on "how big is too big" is how this
    goes wrong.
@@ -160,7 +160,8 @@ working directory, so invoke it by absolute path from the target repo's root.
 
 Both flags are advisory, and the user confirms before any rewrite.
 
-- **`split_worthy`** hands the split to `gh-stack`.
+- **`split_worthy`** hands the split to `gh-stack`. Where that skill is not installed,
+  propose the branches and what each one carries, and let the user split them.
 - **`needs_history_cleanup`** means merge commits, fixup-style commits, or more than six
   commits. To clean the history:
   1. Save a restore point with `REF=$(triage.sh backup)`, and tell the user

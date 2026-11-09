@@ -173,6 +173,16 @@ absent. A plain `SKILL.md` wins if both exist. Before this, the loader looked on
 `SKILL.md`: `skill-router` became a template in 1d3ff0a (2026-07-25) and its three cases
 returned INCONCLUSIVE, unnoticed, for eight days.
 
+The work-overlay skill `gh-stack` lives in **`work-laptop-config/.claude/skills/`**. As with
+`ops-investigator`, its cases stay here and load only when `EVAL_SKILL_DIRS` points at that
+dir (colon-separated, searched after this repo's skills dir); without it they come back
+INCONCLUSIVE:
+
+```bash
+EVAL_SKILL_DIRS=~/work-laptop-config/.claude/skills \
+  node evals/run-evals.mjs --case skill-gh-stack/001-view-requires-json
+```
+
 ### Skill triage (2026-07-24, extended 2026-08-02)
 
 Which repo skills have cases, and why the rest don't. A skill only gets a case
@@ -184,7 +194,7 @@ original pass sat untriaged for a week, which reads the same as "deliberately sk
 |---|---|
 | `artifact-design` | cases — self-contained HTML: no external assets, inline CSS |
 | `pr-authoring` | cases — verbalized safety gates in *Measure the diff* (force-with-lease, stop on guard failure) |
-| `gh-stack` | cases — non-interactive flag contract (`view --json`, `submit --auto`) |
+| `gh-stack` | cases — non-interactive flag contract (`view --json`, `submit --auto`); work overlay, needs `EVAL_SKILL_DIRS` |
 | `orchestrating-subagents` | cases — agent count lands in the stated band; brief carries objective/format/budget |
 | `homelab` | skip — connection details and an ssh verb allowlist; nothing to exhibit without the server |
 | `security-audit` | skip — the full audit needs a sandboxed target, and distill mode's regex validation loop needs node execution |

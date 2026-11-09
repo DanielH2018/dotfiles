@@ -147,6 +147,9 @@ cleanup() {
   if [[ -n "${VAULT_DB_TMPDIR:-}" && -d "$VAULT_DB_TMPDIR" ]]; then
     rm -rf "$VAULT_DB_TMPDIR"
   fi
+  if [[ -n "${VAULT_ALLOWLIST_TMP:-}" && -f "$VAULT_ALLOWLIST_TMP" ]]; then
+    rm -f "$VAULT_ALLOWLIST_TMP"
+  fi
   # The resolved settings file is the mount source, so it has to outlive the
   # container — remove it here rather than earlier. Pattern-matched because
   # resolve-sandbox-settings.sh falls back to returning $SANDBOX_DIR/settings.base.json

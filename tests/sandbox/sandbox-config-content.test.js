@@ -77,11 +77,11 @@ function parseEntries(file) {
     .filter(Boolean);
 }
 
-test('both vault path lists exist and contain at least one real entry', () => {
-  const allow = parseEntries(ALLOWLIST);
-  const sensitive = parseEntries(SENSITIVE);
-  assert.ok(allow.length > 0, 'vault-allowlist.txt must have at least one entry');
-  assert.ok(sensitive.length > 0, 'vault-sensitive.txt must have at least one entry');
+// The base allowlist may be empty: its entries are work vault paths, which
+// work-laptop-config's vault-allowlist.work.txt carries and checks against vault-sensitive.txt.
+test('both vault path lists exist, and vault-sensitive.txt has at least one real entry', () => {
+  assert.ok(fs.existsSync(ALLOWLIST), 'vault-allowlist.txt must exist');
+  assert.ok(parseEntries(SENSITIVE).length > 0, 'vault-sensitive.txt must have at least one entry');
 });
 
 test('no entry is well-formed-invalid: no blank/absolute paths, no path traversal', () => {

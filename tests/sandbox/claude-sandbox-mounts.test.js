@@ -38,6 +38,7 @@ const FN = skip ? {} : {
   add_vault_mounts: SOURCE_MOUNTS,
   add_chezmoi_mount: SOURCE_MOUNTS,
   add_work_config_mount: SOURCE_MOUNTS,
+  add_skill_mounts: SOURCE_MOUNTS,
   add_vault_self_hardening: SOURCE_MOUNTS,
   configure_gh_auth: SOURCE_AUTH,
 };
@@ -90,7 +91,7 @@ const envOf = (args) => args.filter((a, i) => args[i - 1] === '-e');
 
 // A vault with an allowlist naming `standing` and `tasks`, and a workspace that
 // is NOT the vault (the eligible case).
-function vaultFixture({ allowlist, sensitive, present = ['standing', 'tasks'] } = {}) {
+function vaultFixture({ allowlist, workAllowlist, sensitive, present = ['standing', 'tasks'] } = {}) {
   const root = scratch(os.tmpdir(), 'sbmnt-');
   const vault = path.join(root, 'vault');
   const sandboxDir = path.join(root, 'sandbox');
@@ -99,6 +100,7 @@ function vaultFixture({ allowlist, sensitive, present = ['standing', 'tasks'] } 
   for (const p of present) fs.mkdirSync(path.join(vault, p), { recursive: true });
   fs.writeFileSync(path.join(sandboxDir, 'vault-allowlist.txt'),
     allowlist ?? 'standing\ntasks\n');
+  if (workAllowlist !== undefined) fs.writeFileSync(path.join(sandboxDir, 'vault-allowlist.work.txt'), workAllowlist);
   if (sensitive !== undefined) fs.writeFileSync(path.join(sandboxDir, 'vault-sensitive.txt'), sensitive);
   // The real generator, so the index mount path is exercised rather than stubbed.
   fs.copyFileSync(path.join(SANDBOX_SRC, 'executable_gen-vault-index.py'),
@@ -154,6 +156,14 @@ test('allowlist entries that do not exist are skipped', { skip }, () => {
   const srcs = mounts(vaultRun(f).args).map((x) => x.src);
   assert.ok(srcs.some((s) => s.endsWith('/standing')));
   assert.ok(!srcs.some((s) => s.endsWith('/ghost')), 'a missing path must not become a mount');
+});
+
+test('vault-allowlist.work.txt entries are mounted alongside the base list', { skip }, () => {
+  // No trailing newline on the base list: the merge must not glue its last entry to the next.
+  const f = vaultFixture({ allowlist: 'standing', workAllowlist: 'tasks\n' });
+  const srcs = mounts(vaultRun(f).args).map((x) => x.src);
+  assert.ok(srcs.some((s) => s.endsWith('/standing')), `got ${JSON.stringify(srcs)}`);
+  assert.ok(srcs.some((s) => s.endsWith('/tasks')), `got ${JSON.stringify(srcs)}`);
 });
 
 test('allowlist comments and surrounding whitespace are stripped', { skip }, () => {
@@ -310,6 +320,36 @@ test('--no-work-config and non-vault sessions mount nothing', { skip }, () => {
   const f = workConfigFixture();
   assert.deepStrictEqual(workRun(f, { NO_WORK_CONFIG: 'true' }).args, []);
   assert.deepStrictEqual(workRun(f, { REPO_PATH: path.join(f.root, 'someRepo') }).args, []);
+});
+
+// --- add_skill_mounts --------------------------------------------------------
+
+function skillFixture() {
+  const f = workConfigFixture();
+  const home = path.join(f.root, 'home');
+  const workSkills = path.join(f.wcSrc, '.claude', 'skills');
+  for (const d of [path.join(home, '.claude', 'skills'), workSkills]) fs.mkdirSync(d, { recursive: true });
+  return { ...f, home, workSkills };
+}
+
+const skillRun = (f, over) => drive('add_skill_mounts', {
+  env: { HOME: f.home, NO_WORK_CONFIG: 'false', WORK_LAPTOP_CONFIG_DIR: f.wcSrc, ...over },
+});
+
+test('work-laptop-config skills are mounted read-only at their host path', { skip }, () => {
+  const f = skillFixture();
+  const m = mounts(skillRun(f).args);
+  assert.deepStrictEqual(m.find((x) => x.src === f.workSkills),
+    { src: f.workSkills, dest: f.workSkills, mode: 'ro' },
+    'the symlinks in ~/.claude/skills name this host path, so it must resolve in the container');
+});
+
+test('work skills are not re-mounted over a read-write work-config mount, or with --no-work-config', { skip }, () => {
+  const f = skillFixture();
+  for (const over of [{ WORK_CONFIG_MOUNTED: 'true' }, { NO_WORK_CONFIG: 'true' }]) {
+    const srcs = mounts(skillRun(f, over).args).map((x) => x.src);
+    assert.deepStrictEqual(srcs, [path.join(f.home, '.claude', 'skills')], JSON.stringify(over));
+  }
 });
 
 // --- add_vault_self_hardening ------------------------------------------------

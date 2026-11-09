@@ -7,15 +7,6 @@
 # A DIRECTORY entry bind-mounts ALL its contents read-only — including any
 # nested CLAUDE.md/index.md (the generated index omits them, but the mount
 # still exposes them). Only allowlist dirs you've confirmed contain neither.
-Lithic/About_Lithic.md
-Work/Codebase.md
-Work/Glossary.md
-Work/Network_Releases.md
-Work/Systems_and_Tools.md
-Work/processing_llm.md
-Work/Active_Epics.md
-# Work/Claude_Code_Setup.md intentionally NOT listed — setup-meta context that
-# isn't needed in ~/Repositories sandboxes (it stays available when the vault
-# itself is the workspace, where the whole tree is mounted). Don't re-add.
-Ops/Runbooks.md
-Ops/Recurring_Alert_Patterns.md
+# The entries live in work-laptop-config, in vault-allowlist.work.txt, which
+# add_vault_mounts reads after this file. List a path here only if every
+# machine with a vault should mount it.

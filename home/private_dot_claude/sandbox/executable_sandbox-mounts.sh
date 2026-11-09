@@ -13,8 +13,8 @@
 #     REPOS_ROOT, REPO_SNAPSHOT_ROOT, the NO_* / REPOS_LIVE flags, and the
 #     optional CLAUDE_VAULT_DIR / CHEZMOI_SRC_DIR / WORK_LAPTOP_CONFIG_DIR /
 #     VAULT_INDEX_PKG_DIR overrides;
-#   * sets VAULT_INDEX_TMP and VAULT_DB_TMPDIR, which the launcher's cleanup()
-#     trap removes on exit;
+#   * sets VAULT_INDEX_TMP, VAULT_DB_TMPDIR and VAULT_ALLOWLIST_TMP, which the
+#     launcher's cleanup() trap removes on exit;
 #   * prints progress to stdout.
 #
 # So sourcing this file requires the launcher's variable context — it is not a
@@ -71,9 +71,14 @@ add_vault_mounts() {
   # pointer is added to CLAUDE.md by the entrypoint (gated on SANDBOX_VAULT_DIR).
   VAULT_INDEX_TMP=""
   VAULT_DB_TMPDIR=""
-  VAULT_ALLOWLIST="$SANDBOX_DIR/vault-allowlist.txt"
+  VAULT_ALLOWLIST_TMP=""
+  # vault-allowlist.work.txt is work-laptop-config's list, linked here by its install.sh.
+  local list allowlists=()
+  for list in "$SANDBOX_DIR/vault-allowlist.txt" "$SANDBOX_DIR/vault-allowlist.work.txt"; do
+    [[ -f "$list" ]] && allowlists+=("$list")
+  done
   vault_eligible=false
-  if [[ "$NO_VAULT" == false && -n "${CLAUDE_VAULT_DIR:-}" && -d "$CLAUDE_VAULT_DIR" && -f "$VAULT_ALLOWLIST" ]]; then
+  if [[ "$NO_VAULT" == false && -n "${CLAUDE_VAULT_DIR:-}" && -d "$CLAUDE_VAULT_DIR" && ${#allowlists[@]} -gt 0 ]]; then
     case "$WORK_PATH/" in
       "$CLAUDE_VAULT_DIR"/*) : ;;   # sandboxing the vault itself — skip
       *) vault_eligible=true ;;
@@ -81,6 +86,13 @@ add_vault_mounts() {
   fi
 
   if [[ "$vault_eligible" == true ]]; then
+    # One merged file, because gen-vault-index.py and vault-index each take a single path.
+    VAULT_ALLOWLIST_TMP="$(mktemp "${TMPDIR:-/tmp}/vault-allowlist-XXXXXX")"
+    for list in "${allowlists[@]}"; do
+      cat "$list"
+      echo
+    done > "$VAULT_ALLOWLIST_TMP"
+    VAULT_ALLOWLIST="$VAULT_ALLOWLIST_TMP"
     vault_mounted=false
     while IFS= read -r line; do
       entry="${line%%#*}"           # strip inline comments
@@ -195,9 +207,24 @@ add_work_config_mount() {
         if [[ -d "$WORK_CONFIG_SRC/.git/hooks" ]]; then
           DOCKER_ARGS+=(-v "$WORK_CONFIG_SRC/.git/hooks:$WORK_CONFIG_SRC/.git/hooks:ro")
         fi
+        WORK_CONFIG_MOUNTED=true
         echo "  work-laptop-config: source mounted READ-WRITE at $WORK_CONFIG_SRC (install on host; --no-work-config to disable)"
         ;;
     esac
+  fi
+}
+
+add_skill_mounts() {
+  # Mounted in every session so general-purpose skills work in any sandbox, not just vault
+  # ones. Skills that need the vault (vault-lookup/service-context) no-op where it is absent.
+  if [[ -d "$HOME/.claude/skills" ]]; then
+    DOCKER_ARGS+=(-v "$HOME/.claude/skills:/home/claudebot/.claude/skills:ro")
+  fi
+  # work-laptop-config's skills are symlinks into its checkout, which dangle unless that
+  # checkout is visible at its host path. A vault session has it read-write already.
+  local work_skills="${WORK_LAPTOP_CONFIG_DIR:-$HOME/work-laptop-config}/.claude/skills"
+  if [[ "$NO_WORK_CONFIG" == false && "${WORK_CONFIG_MOUNTED:-false}" != true && -d "$work_skills" ]]; then
+    DOCKER_ARGS+=(-v "$work_skills:$work_skills:ro")
   fi
 }
 

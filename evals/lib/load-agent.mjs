@@ -88,18 +88,30 @@ export function renderChezmoiTemplate(path) {
   });
 }
 
-export function loadSkillFromRepo(name, repoRoot, render = renderChezmoiTemplate) {
+export function envSkillDirs() {
+  const raw = process.env.EVAL_SKILL_DIRS;
+  return raw ? raw.split(':').filter(Boolean) : [];
+}
+
+export function loadSkillFromRepo(name, repoRoot, render = renderChezmoiTemplate, extraDirs = envSkillDirs()) {
   const dir = join(repoRoot, 'home', 'private_dot_claude', 'skills', name);
   const plain = join(dir, 'SKILL.md');
   if (existsSync(plain)) return parseAgent(readFileSync(plain, 'utf8'));
   const templated = join(dir, 'SKILL.md.tmpl');
   if (existsSync(templated)) return parseAgent(render(templated));
-  throw new Error(`skill "${name}" not found at ${plain} or ${templated}`);
+  for (const extra of extraDirs) {
+    const overlay = join(extra, name, 'SKILL.md');
+    if (existsSync(overlay)) return parseAgent(readFileSync(overlay, 'utf8'));
+  }
+  throw new Error(
+    `skill "${name}" not found at ${plain} or ${templated}. ` +
+    `If it lives in the work overlay, set EVAL_SKILL_DIRS (e.g. ~/work-laptop-config/.claude/skills).`
+  );
 }
 
-export function loadSkillFlagOrError(name, repoRoot, render = renderChezmoiTemplate) {
+export function loadSkillFlagOrError(name, repoRoot, render = renderChezmoiTemplate, extraDirs = envSkillDirs()) {
   try {
-    const parsed = loadSkillFromRepo(name, repoRoot, render);
+    const parsed = loadSkillFromRepo(name, repoRoot, render, extraDirs);
     return { flag: buildAgentsFlag(parsed, {
       name: `skill-${name}`,
       model: parsed.model || SKILL_EVAL_MODEL,
