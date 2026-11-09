@@ -362,7 +362,9 @@ def pre_tool_use(stdin_text: str, env: Mapping[str, str]) -> str | None:
     # One updatedInput at most. A cc-wait call is never a test run tq claims, and the wait
     # rewrite changes how the call runs, so it goes first.
     updated = wait_rewrite(stdin_text) or tq_rewrite(stdin_text, command, cwd, env)
-    return pre_tool_use_json(verdict, nudge_for(command, stdin_text), updated)
+    # A deny drops the nudge, so it must not spend the session's one claim.
+    nudge_text = None if verdict.kind == "deny" else nudge_for(command, stdin_text)
+    return pre_tool_use_json(verdict, nudge_text, updated)
 
 
 _RANK = {"deny": 3, "ask": 2, "allow": 1, "none": 0}

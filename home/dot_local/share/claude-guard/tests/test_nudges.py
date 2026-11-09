@@ -128,6 +128,20 @@ def test_the_hook_nudges_once_per_session(tmp_path):
     assert nudge_for("git log", stdin) is None
 
 
+def test_a_denied_call_leaves_the_nudge_for_the_next_one(tmp_path):
+    from claude_guard.hook import pre_tool_use
+
+    def run(command):
+        stdin = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(tmp_path)}
+        stdin["transcript_path"] = str(tmp_path / "t.jsonl")
+        return json.loads(pre_tool_use(json.dumps(stdin), {}))["hookSpecificOutput"]
+
+    denied = run("git log && git push --force origin main")
+    assert denied["permissionDecision"] == "deny"
+    assert "additionalContext" not in denied
+    assert run("git log")["additionalContext"].startswith(tag("unbounded-log"))
+
+
 def test_a_subagent_gets_its_own_once_rule(tmp_path):
     from claude_guard.hook import context_transcript, nudge_for
 
