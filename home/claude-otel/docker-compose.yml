@@ -83,7 +83,7 @@ services:
     logging: *logging
 
   grafana:
-    image: grafana/grafana:11.4.0
+    image: grafana/grafana:11.6.16
     environment:
       # Frictionless local access: anonymous admin, no login form. Safe because
       # the port is bound to 127.0.0.1 only.
