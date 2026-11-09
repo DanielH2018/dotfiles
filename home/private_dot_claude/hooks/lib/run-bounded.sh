@@ -6,7 +6,7 @@
 #
 # Self-contained on purpose: this file sets RB_STATUS/RB_EXIT/RB_SIGNAL/RB_OUT and
 # never calls exit. What a non-ok RB_STATUS means to the hook is the caller's
-# decision; lint-after-edit.sh's run_check is the reference wiring.
+# decision; bash-write-fanout.sh's fan-out loop is the reference wiring.
 #
 # RB_STATUS after a call:
 #   ok        - ran to completion inside both bounds; RB_EXIT is the command's own
@@ -58,7 +58,7 @@
 # surfaces as a test failure rather than as a quietly wrong verdict.
 #
 # Where NO timeout exists at all, run_bounded reports `error` without running anything. It used
-# to exec the last name tried, get 127 back, and report `ok` with exit 127 -- so lint-after-edit
+# to exec the last name tried, get 127 back, and report `ok` with exit 127 -- so a lint hook
 # blocked edits with "timeout: command not found" presented as the lint verdict. An unbounded
 # fallback was the other option and is the one M10 exists to forbid; could-not-evaluate is the
 # honest answer when the bound cannot be enforced.

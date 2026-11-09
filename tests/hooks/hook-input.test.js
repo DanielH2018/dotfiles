@@ -1,6 +1,6 @@
 // hook-input.sh's decision helpers: hook_deny and hook_ask print the PreToolUse JSON the
 // guards used to build by hand, and they must carry a reason holding payload data intact.
-// Also hook_under_temp_root, which lint-after-edit.sh and bash-write-fanout.sh share.
+// Also hook_under_temp_root, which bash-write-fanout.sh uses.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');

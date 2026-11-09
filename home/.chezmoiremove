@@ -238,3 +238,13 @@ Scripts/wslhost-interop-reaper/wslhost-interop-reaper-hidden.vbs
 # nothing read it; the hook reports a could-not-evaluate check in its block reason.
 .claude/hooks/lib/outcome-lib.sh
 .local/state/claude/unevaluated
+
+# 2026-11-09: the warp title, audible-cue, format and lint hooks, removed on the operator's
+# decision. Formatting and lint run in each repo's prek or pre-commit hooks instead.
+# claude-auto-format is auto-format.sh's once-per-day missing-formatter stamp.
+.claude/hooks/auto-format.sh
+.claude/hooks/lint-after-edit.sh
+.claude/hooks/notify.sh
+.claude/hooks/play-sound.sh
+.claude/hooks/warp-session-title.sh
+.local/state/claude-auto-format

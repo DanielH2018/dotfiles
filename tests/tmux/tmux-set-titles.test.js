@@ -1,8 +1,8 @@
 // Drives the real title-forwarding behaviour in dot_tmux.conf: a real tmux server on a
 // private socket, a real shell in the pane emitting a real OSC 0 escape.
 //
-// The chain this pins: warp-session-title.sh writes OSC 0 so Warp labels the session's
-// sidebar row. Inside tmux that escape sets tmux's own pane_title and stops there, so a
+// The chain this pins: Claude Code writes OSC 0 so Warp labels the session's sidebar
+// row. Inside tmux that escape sets tmux's own pane_title and stops there, so a
 // Claude session on daniel-box would leave its row showing the bare ssh command. `set-titles
 // on` plus `set-titles-string '#{pane_title}'` forwards it back out to Warp.
 //
@@ -81,7 +81,7 @@ test('the config forwards the pane title, not a decorated string', { skip }, () 
 });
 
 test('an OSC 0 escape from inside a pane reaches pane_title', { skip }, async () => {
-  // The half of the chain tmux owns. warp-session-title.sh emits exactly this shape.
+  // The half of the chain tmux owns: a pane writing an OSC 0 title.
   const sock = newSession();
   tmux(sock, 'send-keys', "printf '\\033]0;working \\302\\267 chezmoi\\007'", 'Enter');
   assert.strictEqual(await waitForPaneTitle(sock, 'working · chezmoi'), 'working · chezmoi');

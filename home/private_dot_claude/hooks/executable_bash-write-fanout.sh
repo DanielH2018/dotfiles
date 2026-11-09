@@ -2,7 +2,7 @@
 # gen-hooks: register
 #   event: PostToolUse
 #   matcher: Bash
-#   timeout: 300
+#   timeout: 240
 #   order: 20
 #   statusMessage: Checking files written by Bash...
 #   description: Run the Edit/Write hooks on files a Bash command wrote
@@ -10,18 +10,18 @@
 # write does not carry — so a heredoc, a `sed -i` or a `tee` runs none of
 # them. chezmoi-guard is the one that costs work: without it the source never
 # tracks the edit and the next `chezmoi apply` silently reverts it. This
-# extracts the written paths from the command text and re-drives all four.
+# extracts the written paths from the command text and re-drives both.
 # It also carries the post side of the chezmoi apply guard (claude_guard.apply_guard,
 # formerly `chezmoi-apply-guard.sh post`), because both need the same claude_guard process
 # and one interpreter start after a Bash call is the budget.
-# Timeout matches lint-after-edit.sh, the slowest thing it can call.
+# Timeout: eight paths at chezmoi-guard's 15s plus link-artifact's 10s is 200s.
 # PostToolUse hook (matcher Bash): re-drive the Edit|Write hooks for files a Bash
 # command wrote.
 #
-# Four hooks hang off PostToolUse matcher `Edit|Write` — auto-format.sh,
-# lint-after-edit.sh, chezmoi-guard.sh, link-artifact.sh — and every one of them reads
-# the path from `.tool_input.file_path`. A `cat > file <<'EOF'`, a `sed -i`, or a `tee`
-# carries no file_path and matches neither event, so none of the four run. The gap is not
+# Two hooks hang off PostToolUse matcher `Edit|Write`, chezmoi-guard.sh and
+# link-artifact.sh, and both read the path from `.tool_input.file_path`. A
+# `cat > file <<'EOF'`, a `sed -i`, or a `tee` carries no file_path and matches neither
+# event, so neither runs. The gap is not
 # theoretical: auto mode injects a standing instruction telling the model to make file
 # changes "with sed, heredocs, or short scripts, rather than using the dedicated Read,
 # Edit, or Write tools", which points straight at it.
@@ -91,8 +91,7 @@ BACKSLASH=$'\x5c'
 # implementation of the same job, and it reads a delimiter the shell would not:
 # `[A-Za-z_]` as the first character means `cat > note.md <<'.END'` is not seen as a
 # heredoc at all, so a body line `> README.md` -- a Markdown blockquote -- is tokenized
-# as a redirect and README.md is handed to auto-format, lint-after-edit and
-# chezmoi-guard although the command never wrote it. Measured against this hook before
+# as a redirect and README.md is handed to chezmoi-guard although the command never wrote it. Measured against this hook before
 # the change: `cat > note.md <<'.END'` with that body fanned out BOTH note.md and
 # README.md. Rewriting a file the command never wrote is the failure this hook exists to
 # prevent, so the parser decides.
@@ -170,7 +169,7 @@ strip_heredocs() {
   # and a destructive one. The payload's command string contains the whole file for a
   # `cat > doc.md <<'EOF'` write, and file content is not shell: a Markdown blockquote
   # line is a bare `>`, so the tokenizer would read `> README.md` out of the prose and
-  # hand an untouched file to auto-format and chezmoi-guard. Rewriting a file the command
+  # hand an untouched file to chezmoi-guard. Rewriting a file the command
   # never wrote is precisely the failure this hook exists to prevent.
   #
   # It also bounds the cost. The tokenizer walks one character at a time, which is fine
@@ -397,9 +396,8 @@ if [ "${#CANDIDATES[@]}" -eq 0 ]; then finish; fi
 # create. Over-collecting above and filtering here is deliberate — the alternative is a
 # precise shell parser, and a missed write costs more than a wasted `chezmoi source-path`.
 
-# Command output saved under a temp dir (`gh api ... > /tmp/changelog.md`) is data, and the
-# prose lint blocked on upstream text in it every run. A heredoc there is authored, so it is
-# still checked.
+# Command output saved under a temp dir (`gh api ... > /tmp/changelog.md`) is data, not an
+# edit, so it is not fanned out. A heredoc there is authored, so it still is.
 case "$CMD" in *'<<'*) HAS_HEREDOC=1 ;; *) HAS_HEREDOC=0 ;; esac
 under_temp_root() {
   hook_under_temp_root "$1" ${CLAUDE_BASH_WRITE_FANOUT_TEMP_ROOTS:+"$CLAUDE_BASH_WRITE_FANOUT_TEMP_ROOTS"}
@@ -423,7 +421,7 @@ for c in "${CANDIDATES[@]}"; do
   case "$seen" in *"|$p|"*) continue ;; esac
   seen="$seen|$p|"
   PATHS+=("$p")
-  # A command that writes a dozen files is a bulk operation, not an edit; running four
+  # A command that writes a dozen files is a bulk operation, not an edit; running the
   # hooks over each would stall the session for no benefit.
   if [ "${#PATHS[@]}" -ge 8 ]; then break; fi
 done
@@ -439,39 +437,38 @@ fi
 
 # ── fan out ──────────────────────────────────────────────────────────────────────────
 
-DOWNSTREAM=(auto-format.sh lint-after-edit.sh chezmoi-guard.sh link-artifact.sh)
+DOWNSTREAM=(chezmoi-guard.sh link-artifact.sh)
 
 # Every downstream hook runs through run_bounded, like every other hook child (#581). They
-# used to run bare, so one that hung ran into this hook's own 300s limit, and the harness
+# used to run bare, so one that hung ran into this hook's own limit, and the harness
 # then killed the fan-out and threw away every other hook's output with it. The library is
 # required: without it nothing below may run unbounded, so the paths are reported as not
-# evaluated. A block, as lint-after-edit.sh does for the same broken install, because the
+# evaluated. A block, because the
 # chezmoi re-sync skipped here is what stops the next apply reverting the write. The
 # library was sourced above, ahead of the heredoc parser.
 if ! command -v run_bounded >/dev/null 2>&1; then
   jq -n --arg lib "$RUN_BOUNDED_PATH" --arg paths "${PATHS[*]}" '{decision: "block",
-    reason: ("bash-write-fanout: cannot load \($lib), so the Edit|Write hooks (format, lint, "
-      + "chezmoi re-sync) did not run on \($paths) -- not evaluated. Restore it "
+    reason: ("bash-write-fanout: cannot load \($lib), so the Edit|Write hooks (chezmoi re-sync, "
+      + "artifact link) did not run on \($paths) -- not evaluated. Restore it "
       + "(chezmoi apply ~/.claude/hooks) and re-run them by hand.")}'
   exit 0
 fi
 
 # Each hook gets the timeout its own gen-hooks header declares, which is what the harness
 # would give it on an Edit or Write. The fan-out as a whole gets a deadline under this
-# hook's own 300s: eight paths times lint-after-edit's 300s is far past it, and a hook
-# started with no time left is reported as not evaluated rather than killed with the rest.
+# hook's own timeout, and a hook started with no time left is reported as not evaluated rather than killed with the rest.
 hook_timeout() {
   local t
   t=$(sed -n 's/^#   timeout: *\([0-9][0-9]*\).*/\1/p' "$1" 2>/dev/null)
   t=${t%%[!0-9]*}
   printf '%s\n' "${t:-30}"
 }
-FANOUT_DEADLINE=$((SECONDS + ${BASH_WRITE_FANOUT_BUDGET_S:-280}))
+FANOUT_DEADLINE=$((SECONDS + ${BASH_WRITE_FANOUT_BUDGET_S:-220}))
 FANOUT_CAP_BYTES=1048576
 
 # Collected in a variable, not a tempfile. `OUTPUTS=$(mktemp) || exit 0` used to skip the
 # whole fan-out when the tempfile could not be made -- a guard that silently did nothing, on
-# the one path where the four hooks it re-drives would otherwise never run (#581). Removing
+# the one path where the hooks it re-drives would otherwise never run (#581). Removing
 # the tempfile removes the failure rather than choosing an outcome for it: each downstream
 # hook's output is a few lines of JSON or text, so holding it in memory costs nothing.
 # run_bounded does make a tempfile of its own. Where it cannot, each hook is reported below
@@ -512,10 +509,10 @@ for p in "${PATHS[@]}"; do
     fi
     out=$RB_OUT
     [ -n "$out" ] || continue
-    # One document per line, because the merge below splits on newlines. lint-after-edit.sh
-    # emits its block through a bare `jq -n`, which pretty-prints across lines, and each
-    # fragment then failed to parse and became plain context: a lint block on a Bash write
-    # reached the model as advisory text, not as a block. Plain text fails `jq -c` and
+    # One document per line, because the merge below splits on newlines. A hook that
+    # emits its block through a bare `jq -n` pretty-prints across lines, and each
+    # fragment then fails to parse and becomes plain context: the block would reach the
+    # model as advisory text, not as a block. Plain text fails `jq -c` and
     # passes through unchanged.
     compact=$(printf '%s' "$out" | jq -c . 2>/dev/null) && out=$compact
     OUTPUTS="$OUTPUTS$out
@@ -525,13 +522,12 @@ done
 
 if [ -z "$OUTPUTS$NOTEVAL" ]; then finish; fi
 
-# Merge. A hook may emit at most one JSON document, so four hooks' worth of output has to
+# Merge. A hook may emit at most one JSON document, so several hooks' worth of output has to
 # collapse into one: any `block` decision wins and its reasons are concatenated, otherwise
 # every additionalContext and every line of plain text is joined into a single context
 # string. The not-evaluated lines, then the apply report, are appended to whichever one it
-# is, so a block never drops them. Plain stdout is kept rather than dropped — auto-format.sh
-# reports a missing formatter that way, and losing it would make the fanout quieter than a
-# real edit.
+# is, so a block never drops them. Plain stdout is kept rather than dropped, because losing it
+# would make the fanout quieter than a real edit.
 # Piped rather than fed as a here-string: bash backs a here-string with a tempfile on many
 # versions, which would bring back the dependency the variable above removed.
 printf '%s' "$OUTPUTS" | jq -Rs --arg noteval "$NOTEVAL" --arg apply "$APPLY_CONTEXT" '

@@ -69,7 +69,7 @@ repos:
       # that hook is a docker_image, and docker here is the rootless-podman shim, which
       # re-pulls the image per batch and then cannot read the bind-mounted files
       # ("openBinaryFile: permission denied" — the :z / --userns=keep-id problem). The
-      # system binary has none of that and is already a dependency of lint-after-edit.
+      # system binary has none of that, and the install scripts already put it on PATH.
       #
       # .chezmoitemplates/linux-install.sh is excluded because it is a Go template that
       # happens to end in .sh — shellcheck cannot parse `{{/* ... */}}` and reports a

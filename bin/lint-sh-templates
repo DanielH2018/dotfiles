@@ -3,8 +3,7 @@
 # lint-sh-templates — shellcheck the chezmoi shell templates, by RENDERING them first.
 #
 # Every *.sh.tmpl was outside every gate. prek types files by extension, and `.sh.tmpl` is
-# not `.sh`, so `types: [shell]` never matched one; lint-after-edit.sh dispatches on
-# `*.sh|*.bash` and misses them for the same reason. That left the privileged half of the
+# not `.sh`, so `types: [shell]` never matched one. That left the privileged half of the
 # tree unchecked -- these are the run_once_/run_onchange_ scripts chezmoi executes during
 # `apply`, the ones that call sudo, dnf, and systemctl.
 #
@@ -33,8 +32,7 @@ cd "$ROOT" || exit 1
 
 # Degrade the way tq and prek do in .githooks/pre-push: a missing local tool should not
 # block a push on a machine that never installed it. Announced rather than silent -- an
-# unannounced skip is indistinguishable from a pass, which is the exact failure
-# auto-format.sh already documents for its absent prettier.
+# unannounced skip is indistinguishable from a pass.
 for tool in chezmoi shellcheck; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     printf 'lint-sh-templates: %s not installed, skipped (templates NOT checked)\n' "$tool"

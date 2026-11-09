@@ -224,49 +224,10 @@ test('every fallbackModel entry is one of availableModels', { skip }, () => {
     + `enforceAvailableModels would reject the very model it falls back to`);
 });
 
-// The audible cue's idle_prompt rule lives in notify.sh, not in the matcher.
-//
-// It was in the matcher, as a flat exclusion: a session that merely went idle is not asking for
-// anything, and a cue 60s after every finished turn trains you to ignore the cue that matters.
-// That silenced background jobs too, which is the opposite case — a job raising idle_prompt IS
-// asking you a question and owns no pane to show it in. notify.sh now tells the two apart by the
-// jobs directory, so the matcher may name idle_prompt as long as the script still gates it.
-// Asserting on the matcher alone would pass a build where that gate had been deleted.
-test('the audible cue gates the idle reminder on the session being a background job', { skip }, () => {
-  const cfg = JSON.parse(render());
-  const entries = ((cfg.hooks || {}).Notification || []).filter((e) =>
-    (e.hooks || []).some((h) => /notify\.sh/.test(h.command || '')));
-  assert.ok(entries.length, 'no Notification entry runs the audible cue');
-  const script = fs.readFileSync(
-    srcPath('private_dot_claude', 'hooks', 'executable_notify.sh'), 'utf8');
-  for (const e of entries) {
-    assert.match(e.matcher, /permission_prompt/,
-      'a genuine permission prompt must still make a sound');
-    if (/idle_prompt/.test(e.matcher)) {
-      assert.match(script, /idle_prompt/,
-        'the matcher admits idle_prompt but notify.sh never mentions it');
-      assert.match(script, /\.claude\/jobs\//,
-        'notify.sh admits idle_prompt without gating it on the jobs directory');
-    }
-  }
-});
-
-// The Warp row label is a different question from the sound. A foreground session idling for 60s
-// has not been blocked on anything, so relabelling its row "needs-input" would be wrong even
-// though the same event legitimately makes a sound for a background job.
-test('the Warp needs-input label does not fire on the idle reminder', { skip }, () => {
-  const cfg = JSON.parse(render());
-  for (const e of (cfg.hooks || {}).Notification || []) {
-    if (!(e.hooks || []).some((h) => /warp-session-title\.sh needs-input/.test(h.command || ''))) continue;
-    assert.doesNotMatch(e.matcher, /idle_prompt/,
-      `the row label still fires on idle_prompt: ${e.matcher}`);
-  }
-});
-
 // A Notification matcher is compared against the payload's notification_type. A matcher that
 // names no real type is not a narrow filter, it is a hook that never runs — and it reads in
 // review exactly like a working one. We shipped "task_complete" for months believing it wrote
-// the agentview completed state; it never fired once, and the two tests above passed the whole
+// the agentview completed state; it never fired once, and the tests of that era passed the whole
 // time because they only ever asserted on the matcher STRING.
 //
 // The list is the set of notification_type literals present in the Claude Code 2.1.224 binary,

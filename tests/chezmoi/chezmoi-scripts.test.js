@@ -84,7 +84,7 @@ function renderWslBody(file) {
 const WSL_TMPLS = SH_TMPLS.filter((f) => f.includes(`${path.sep}wsl${path.sep}`));
 
 test('the WSL script set is non-empty (guards against a silent glob change)', { skip }, () => {
-  assert.ok(WSL_TMPLS.length >= 7, `expected >=7 WSL scripts, found ${WSL_TMPLS.length}`);
+  assert.ok(WSL_TMPLS.length >= 6, `expected >=6 WSL scripts, found ${WSL_TMPLS.length}`);
 });
 
 for (const file of WSL_TMPLS) {

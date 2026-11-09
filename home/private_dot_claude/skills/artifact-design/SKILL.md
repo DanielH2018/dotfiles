@@ -69,11 +69,10 @@ substance into the repo's docs in the same PR that acts on it.
   the matcher, so the hook never runs, no link is emitted, and the closing line degrades to a
   hand-built `file://` path — the one thing *Where the link points* says never to do. Auto
   mode's standing "prefer Bash for file changes" instruction points the other way; this is the
-  exception to it. Three other hooks share that matcher and are skipped the same way
-  (`auto-format.sh`, `lint-after-edit.sh`, `chezmoi-guard.sh`), so a Bash-written file bypasses
-  formatting and lint too.
+  exception to it. `chezmoi-guard.sh` shares that matcher and is skipped the same way,
+  so a Bash-written file also bypasses the chezmoi source re-sync.
   - `bash-write-fanout.sh` narrows this; it does not close it. That hook reads the written
-    paths out of the Bash command and re-drives all four, but a write inside `python3 -c` or
+    paths out of the Bash command and re-drives both, but a write inside `python3 -c` or
     a called script is invisible in the command text, and only a path that exists as a regular
     file afterwards is handed on. Use the Write tool and the question does not arise.
 - **The link goes last.** Write the plan out in the chat first, then write the HTML file, then close the reply with the path — a bare link line, nothing after it. If the link lands above the written plan, Daniel has to scroll back up through the plan to open the file.

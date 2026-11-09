@@ -32,7 +32,7 @@ echo "$1" >> ${JSON.stringify(CALLS)}
 case "$1" in
   managed) [ -n "\${CZ_STUB_SLOW_MANAGED:-}" ] && sleep 30
            printf '%s\\n' "$HOME/.claude/settings.json" "$HOME/.claude/CLAUDE.md" \\
-             "$HOME/.claude/hooks/notify.sh" "$HOME/.gitconfig" "$HOME/.config/once"
+             "$HOME/.claude/hooks/session-end.sh" "$HOME/.gitconfig" "$HOME/.config/once"
            cat ${JSON.stringify(EXTRA)} 2>/dev/null || true ;;
   source-path)
     [ -n "\${CZ_STUB_SLOW_LOOKUP:-}" ] && sleep 30
@@ -40,7 +40,7 @@ case "$1" in
     case "$2" in
       "$HOME/.claude/settings.json") echo "${SRC}/private_dot_claude/modify_settings.json.sh.tmpl" ;;
       "$HOME/.claude/CLAUDE.md") echo "${SRC}/private_dot_claude/CLAUDE.md.tmpl" ;;
-      "$HOME/.claude/hooks/notify.sh") echo "${SRC}/private_dot_claude/hooks/executable_notify.sh" ;;
+      "$HOME/.claude/hooks/session-end.sh") echo "${SRC}/private_dot_claude/hooks/executable_session-end.sh" ;;
       "$HOME/.gitconfig") echo "${SRC}/modify_dot_gitconfig" ;;
       "$HOME/.config/once") echo "${SRC}/dot_config/create_once" ;;
       *) exit 1 ;;
@@ -88,7 +88,7 @@ test('passes an edit to the source itself', { skip }, () => {
 });
 
 test('passes a plain managed file, a create_ target and an unmanaged file', { skip }, () => {
-  assert.strictEqual(decide(path.join(HOME, '.claude', 'hooks', 'notify.sh')), null);
+  assert.strictEqual(decide(path.join(HOME, '.claude', 'hooks', 'session-end.sh')), null);
   assert.strictEqual(decide(path.join(HOME, '.config', 'once')), null);
   assert.strictEqual(decide(path.join(HOME, 'scratch.txt')), null);
   assert.strictEqual(decide('/etc/hosts'), null);

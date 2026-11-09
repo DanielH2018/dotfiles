@@ -43,8 +43,8 @@ export CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000
 # back-to-Agent-View bind had a layer to catch the key, and agentview is retired, so the
 # layer has nothing left to carry.
 #
-# It also cost more than it bought. A session names its own row by writing an OSC 0 title
-# (warp-session-title.sh); inside tmux that sets tmux's pane_title and stops there, because
+# It also cost more than it bought. Claude Code names its own row by writing an OSC 0
+# title; inside tmux that sets tmux's pane_title and stops there, because
 # Warp sets TERM=xterm-256color, which carries no tsl/fsl capability for tmux to set an outer
 # title with. A wrapped session could therefore never label itself. Verified 2026-08-19 both
 # ways: the escape written inside the wrap changed nothing, and the same escape written to the

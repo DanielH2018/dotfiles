@@ -1145,7 +1145,7 @@ class Scanner:
         # no notification path at all still records the finding rather than losing it.
         self._append(self.pending, f"{_now()}\t{fresh_n}\t{self.log}\t{joined}\n")
 
-        # The immediate half, best-effort. Same platform order as hooks/notify.sh:
+        # The immediate half, best-effort, in platform order:
         # osascript is the Mac's only working path, notify-send the Linux desktop's, and
         # a headless host matches neither and is covered by the file above.
         body = f"{self.found} new finding(s). See {self.log}."

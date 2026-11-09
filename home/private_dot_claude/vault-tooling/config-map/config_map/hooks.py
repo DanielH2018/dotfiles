@@ -67,7 +67,7 @@ def declared_description(
 ) -> str | None:
     """The description of the register block in `path` that this registration came from.
 
-    A file may register several times (warp-session-title.sh: one block per event), so the
+    A file may register several times (chezmoi-guard.sh: one block per event), so the
     block is picked by event and matcher, then by args when those still tie.
     """
     try:

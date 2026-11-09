@@ -8,8 +8,8 @@ manager detection side effects, to save four lines. is-wsl and is-desktop-linux 
 same reason — borrow one behavior without importing a module. Scripts that already include
 linux-install.sh can include both; have_sudo is itself just `sudo -v` and does not conflict.
 
-Named without an extension like the other micro-templates here, not least because the
-lint-after-edit hook shellchecks any *.sh and this file is a Go template, not shell.
+Named without an extension like the other micro-templates here, not least because
+shellcheck tooling types files by *.sh and this file is a Go template, not shell.
 
 It exits rather than returns, unlike everything in linux-install.sh: every caller is a
 run_once_ script whose contract is to fail loud and retry on the next apply rather than

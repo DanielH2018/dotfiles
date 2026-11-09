@@ -70,7 +70,7 @@ const ALLOW = [
   // is a different file from ~/.claude.json, and the config work in this repo reads it
   // constantly; a pattern sloppy enough to catch both would be unusable.
   '/home/u/.claude/settings.json',
-  '/home/u/.claude/hooks/notify.sh',
+  '/home/u/.claude/hooks/session-end.sh',
   '/home/u/.kube/README.md',
   '/home/u/project/claude.json',
 ];

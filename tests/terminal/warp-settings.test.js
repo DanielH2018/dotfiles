@@ -103,10 +103,10 @@ test('the custom theme names a theme file that exists', { skip: tomlSkip }, () =
 test('use_latest_prompt_as_title stays off', { skip: tomlSkip }, () => {
   // The one preference worth pinning, because it is not a preference -- it is a conflict.
   // Warp names vertical-tab rows from the latest prompt when this is on, which overwrites the
-  // OSC 0 title that warp-session-title.sh writes to label a Claude session (PR #375). The
+  // OSC 0 title Claude Code writes to label its session (PR #375). The
   // setting reads as a harmless sidebar tweak in the UI, which is exactly why it needs a test.
   const doc = parseToml(renderFile(TMPL));
   const vt = doc.appearance.vertical_tabs || {};
   assert.notStrictEqual(vt.use_latest_prompt_as_title, true,
-    'this overrides the session-title hook; leave it at its default of false');
+    'this overrides the OSC 0 session title; leave it at its default of false');
 });

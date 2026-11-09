@@ -1,8 +1,8 @@
 # User-level override of KDE's Ocean sound theme, carrying one file: a quieter bell.
 #
-# The terminal bell is the ONLY audible cue a Claude Code session on a headless box reached
-# over ssh can give -- daniel-box has no paplay, pw-play, canberra-gtk-play or aplay, so
-# play-sound.sh falls through every player branch to `printf '\a'`. Warp forwards that BEL and
+# The terminal bell is the ONLY audible cue a session on a headless box reached over ssh can
+# give -- daniel-box has no paplay, pw-play, canberra-gtk-play or aplay, so anything that
+# wants a sound there ends at `printf '\a'`. Warp forwards that BEL and
 # KWin plays it (application.id = org.kde.kwin, media.role = "event"), at full volume with no
 # knob: an event-role stream's volume is deliberately not persisted by WirePlumber, and
 # WirePlumber ships device rules only, so there is no per-application setting to turn down.

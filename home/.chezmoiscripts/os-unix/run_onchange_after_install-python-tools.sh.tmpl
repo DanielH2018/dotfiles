@@ -7,9 +7,9 @@
 #   uv   — ~/dev/server's prek hooks shell out to `uv run`, so uv must be on PATH for
 #          `prek run` to work at all. The vault-tooling projects chezmoi deploys under
 #          ~/.claude/vault-tooling (config-map, vault-index) are uv projects too.
-#   ruff — private_dot_claude/hooks/{auto-format,lint-after-edit}.sh call a bare `ruff` on
-#          every *.py Claude edits. Without a global one those hooks silently no-op unless
-#          the cwd happens to sit in a venv that has ruff.
+#   ruff — nvim's LSP and formatter (dot_config/nvim/lua/plugins/{lsp,formatting}.lua) call
+#          a bare `ruff`. Without a global one they silently do nothing unless the cwd
+#          happens to sit in a venv that has ruff.
 #   prek — the Rust pre-commit replacement, invoked as `prek run --all-files`. A git-hook
 #          runner is global by nature; its per-repo config is the repo's prek.toml.
 #

@@ -56,8 +56,8 @@ test('a template with a shellcheck finding fails and names the file', { skip: sk
 });
 
 test('a template that renders empty is reported, not silently passed', { skip: skipUnlessTooling }, () => {
-  // The WSL/Windows scripts do exactly this on Linux. Counting them as clean would repeat
-  // the failure auto-format.sh documents for its absent prettier: a skip that reads as a pass.
+  // The WSL/Windows scripts do exactly this on Linux. Counting them as clean would be a skip
+  // that reads as a pass.
   const f = fixture('other-os.sh.tmpl', '{{ if eq .chezmoi.os "plan9" -}}\n#!/bin/sh\necho hi\n{{- end -}}\n');
   const r = run([f]);
   assert.strictEqual(r.status, 0, 'an inapplicable branch is not a failure');

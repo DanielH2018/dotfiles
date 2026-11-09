@@ -23,7 +23,6 @@ for (const v of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR',
 delete process.env.CLAUDE_VAULT_DIR;
 
 const HOOKS = srcPath('private_dot_claude', 'hooks');
-const AUTO_FORMAT = path.join(HOOKS, 'executable_auto-format.sh');
 // The git-state check of stop-checks.py, which absorbed check-before-stop.sh (#693).
 const CHECK_STOP = path.join(HOOKS, 'executable_stop-checks.py');
 
@@ -44,26 +43,6 @@ function runHook(hook, { input = '', home, cwd, extraPath } = {}) {
   const r = run(hook.endsWith('.py') ? 'python3' : 'bash', [hook], { input, env, cwd });
   return { stdout: r.stdout, stderr: r.stderr, status: r.code };
 }
-
-test('auto-format.sh: vault markdown skipped, non-vault markdown formatted', () => {
-  const home = scratch(os.tmpdir(), 'hookhome-');
-  const vault = path.join(home, 'Vault');
-  fs.mkdirSync(vault, { recursive: true });
-  writeLocalEnv(home, vault);
-  const bin = scratch(os.tmpdir(), 'vault-param-bin-');
-  const marker = path.join(bin, 'called.log');
-  fs.writeFileSync(path.join(bin, 'prettier'), `#!/bin/sh\necho "$@" >> ${JSON.stringify(fwd(marker))}\n`, { mode: 0o755 });
-
-  const vfile = path.join(vault, 'note.md');
-  fs.writeFileSync(vfile, '# x');
-  runHook(AUTO_FORMAT, { input: JSON.stringify({ tool_input: { file_path: fwd(vfile) } }), home, extraPath: bin });
-  assert.ok(!fs.existsSync(marker), 'vault markdown must NOT be formatted');
-
-  const ofile = path.join(home, 'other.md');
-  fs.writeFileSync(ofile, '# y');
-  runHook(AUTO_FORMAT, { input: JSON.stringify({ tool_input: { file_path: fwd(ofile) } }), home, extraPath: bin });
-  assert.ok(fs.existsSync(marker), 'non-vault markdown must be formatted');
-});
 
 test('stop-checks.py git-state: protected-branch block, vault exemption, dead paths removed', () => {
   const home = scratch(os.tmpdir(), 'hookhome-');

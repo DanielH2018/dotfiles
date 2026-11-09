@@ -3,14 +3,14 @@
 
 Run: python3 test_bash_write_fanout.py
 
-The hook's job is to notice which files a Bash command wrote, so that the four
+The hook's job is to notice which files a Bash command wrote, so that the
 PostToolUse `Edit|Write` hooks run for a heredoc or a `sed -i` the same way they run for
 a Write tool call. Extraction is therefore what these tests pin, via the hook's dry-run
 seam: running the whole hook and reading its stdout cannot distinguish a correct
 extraction from an empty one, because the downstream hooks stay silent on most inputs.
 
 Both directions matter and the quiet one matters more. A missed write is the bug the
-hook exists to fix; a spurious one runs a formatter and a linter over a file nobody
+hook exists to fix; a spurious one re-syncs a chezmoi source from a file nobody
 touched, at the end of a command that was only ever a read. `2>/dev/null` appears in a
 large share of this config's read commands, so it gets its own case.
 """
@@ -220,11 +220,11 @@ with tempfile.TemporaryDirectory() as tmp:
 
     temp_root = {"CLAUDE_BASH_WRITE_FANOUT_TEMP_ROOTS": str(root)}
     check(
-        "command output saved under a temp root is not linted",
+        "command output saved under a temp root is not fanned out",
         extracted("gh api repos/x/y > a.txt", root, temp_root) == [],
     )
     check(
-        "a heredoc written under a temp root is still linted",
+        "a heredoc written under a temp root is still fanned out",
         extracted("cat > a.txt <<'EOF'\nbody\nEOF", root, temp_root) == ["a.txt"],
     )
 
@@ -233,7 +233,7 @@ with tempfile.TemporaryDirectory() as tmp:
     # The payload carries the whole file for a heredoc write, and file content is full
     # of characters that mean something to a shell parser. A Markdown blockquote is a
     # bare `>`, so without stripping the body first the hook reads a redirect out of the
-    # prose and hands an untouched file to auto-format and chezmoi-guard — a silent
+    # prose and hands an untouched file to chezmoi-guard — a silent
     # wrong write, which is the failure the whole hook exists to prevent.
 
     check(
@@ -334,11 +334,11 @@ with tempfile.TemporaryDirectory() as tmp:
     # ── the fan-out itself needs no tempfile (#581) ─────────────────────────────────
     #
     # `OUTPUTS=$(mktemp) || exit 0` skipped every downstream hook when no tempfile could
-    # be made. The hook is copied beside a stub lint-after-edit.sh that always blocks,
+    # be made. The hook is copied beside a stub chezmoi-guard.sh that always blocks,
     # then run for real with TMPDIR pointing nowhere: the block must still come out. The
     # accepting half is the same run with a working TMPDIR.
     #
-    # The stub pretty-prints across lines, as lint-after-edit.sh's `jq -n` does.
+    # The stub pretty-prints across lines, as a bare `jq -n` does.
     # The merge splits on newlines, and before the fan-out compacted each hook's output
     # every fragment failed to parse: the block arrived as plain context, not a block.
     hookdir = root / "hookdir"
@@ -347,10 +347,10 @@ with tempfile.TemporaryDirectory() as tmp:
     (hookdir / "lib").mkdir()
     for lib in ("hook-input.sh", "run-bounded.sh"):
         (hookdir / "lib" / lib).write_text((HOOK.parent / "lib" / lib).read_text())
-    stub = hookdir / "lint-after-edit.sh"
+    stub = hookdir / "chezmoi-guard.sh"
     stub.write_text(
         "#!/bin/bash\ncat >/dev/null\n"
-        'printf \'{\\n  "decision": "block",\\n  "reason": "stub-lint"\\n}\\n\'\n'
+        'printf \'{\\n  "decision": "block",\\n  "reason": "stub-block"\\n}\\n\'\n'
     )
     stub.chmod(0o755)
 
@@ -381,23 +381,23 @@ with tempfile.TemporaryDirectory() as tmp:
 
     check(
         "the fan-out reports a downstream block",
-        fanned(tmp).get("reason") == "stub-lint",
+        fanned(tmp).get("reason") == "stub-block",
     )
     # run_bounded needs a tempfile of its own, so with none no hook can run bounded.
     # What must not happen is the old silent skip: each one is named as not evaluated.
     no_tmp = json.dumps(fanned(str(root / "no-such-tmpdir")))
     check(
         "and with no writable TMPDIR names each hook as not evaluated",
-        "lint-after-edit.sh did not finish" in no_tmp and "not evaluated" in no_tmp,
+        "chezmoi-guard.sh did not finish" in no_tmp and "not evaluated" in no_tmp,
     )
 
     # ── every downstream hook is bounded (#581) ─────────────────────────────────────
     #
     # A downstream hook that hangs used to hold the fan-out until the harness killed it
-    # at 300s, taking every other hook's output with it. Each hook now gets the timeout
-    # its own header declares. The slow stub declares 1s and sleeps 30: the fan-out must
-    # return well inside that, still carry the lint block, and name the stub.
-    slow = hookdir / "auto-format.sh"
+    # at its own limit, taking every other hook's output with it. Each hook now gets the
+    # timeout its own header declares. The slow stub declares 1s and sleeps 30: the
+    # fan-out must return well inside that, still carry the block, and name the stub.
+    slow = hookdir / "link-artifact.sh"
     slow.write_text("#!/bin/bash\n#   timeout: 1\ncat >/dev/null\nsleep 30\n")
     slow.chmod(0o755)
     started = time.monotonic()
@@ -407,12 +407,12 @@ with tempfile.TemporaryDirectory() as tmp:
     check("a hung downstream hook is cut off at its own timeout", elapsed < 15)
     check(
         "and named as not evaluated, alongside the block that did run",
-        hung.get("reason", "").startswith("stub-lint")
-        and "auto-format.sh did not finish" in hung.get("reason", ""),
+        hung.get("reason", "").startswith("stub-block")
+        and "link-artifact.sh did not finish" in hung.get("reason", ""),
     )
     check(
         "a spent budget runs nothing and says so",
-        "out of time before lint-after-edit.sh"
+        "out of time before chezmoi-guard.sh"
         in json.dumps(fanned(tmp, {"BASH_WRITE_FANOUT_BUDGET_S": "0"})),
     )
 
@@ -451,7 +451,7 @@ downstream = re.search(
     r"^DOWNSTREAM=\(([^)]*)\)", HOOK.read_text(encoding="utf-8"), re.M
 )
 registered = post_edit_hooks(HERE)
-check("the census finds lint-after-edit.sh", "lint-after-edit.sh" in registered)
+check("the census finds chezmoi-guard.sh", "chezmoi-guard.sh" in registered)
 check(
     "DOWNSTREAM names every PostToolUse Write hook, so a Bash write reaches each one",
     downstream is not None and set(downstream.group(1).split()) == registered,
