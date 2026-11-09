@@ -313,7 +313,7 @@ version = "5.8.1"
 [[node_lsps]]
 name = "yaml-language-server"
 # renovate: datasource=npm depName=yaml-language-server
-version = "1.24.0"
+version = "1.25.0"
 
 [[node_lsps]]
 name = "vscode-langservers-extracted"
