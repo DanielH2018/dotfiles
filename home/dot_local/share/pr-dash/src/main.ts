@@ -3,7 +3,7 @@ import { createClient } from './github.ts';
 import type { LoadResult } from './loader.ts';
 import { resolveToken } from './token.ts';
 import { createCache } from './cache.ts';
-import { createLoadJobs } from './jobs.ts';
+import { createLoadJobLog, createLoadJobs } from './jobs.ts';
 import { createLoadPlanka } from './planka.ts';
 import {
   createIdleExit,
@@ -94,6 +94,8 @@ if (preloadEnabled(process.env)) {
 // The token's own max age (TOKEN_MAX_AGE_MS) bounds how long it stays in memory. Created before the server so
 // the window is already running from process start, not just from the first request.
 const idleExit = createIdleExit();
+// Spawns jobstat per request, never at startup: most machines never ask for /api/jobs.
+const loadJobs = createLoadJobs();
 const server = createServer({
   host: expectedHost(port),
   // Unset on a machine that never configured it, which parseWorkOrgs reads as an empty
@@ -107,8 +109,9 @@ const server = createServer({
   // Spawns the planka CLI per request, never at startup, so a machine without it pays
   // nothing until something asks for /api/planka.
   loadPlanka: createLoadPlanka(),
-  // Spawns jobstat per request for the same reason: most machines never ask for /api/jobs.
-  loadJobs: createLoadJobs(),
+  loadJobs,
+  // Reads through loadJobs, so a log is only ever the file jobstat named for that job.
+  loadJobLog: createLoadJobLog(loadJobs),
   // Shares the PR loader's lazy client, so both routes resolve the token once. Alerts change
   // far more slowly than PR state, hence the longer TTL (above) than the PR cache's 60 seconds.
   loadVulns,

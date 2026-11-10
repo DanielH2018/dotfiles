@@ -4,7 +4,7 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkHost } from './guard.ts';
 import { buildStacks } from './stacks.ts';
-import type { JobsResult } from './jobs.ts';
+import type { JobLogResult, JobsResult } from './jobs.ts';
 import type { PlankaResult } from './planka.ts';
 import type { LoadVulns } from './vulns.ts';
 import type { PrRecord, StackNode } from './types.ts';
@@ -62,6 +62,11 @@ export type ServerOpts = {
   // Backs `GET /api/jobs` — see createLoadJobs in jobs.ts. Optional for the same reason as
   // loadPlanka; unset answers that route with a 502.
   loadJobs?: () => Promise<JobsResult>;
+  // Backs `GET /api/job-log` — see createLoadJobLog in jobs.ts. Optional for the same reason
+  // as loadPlanka; unset answers that route with a 502. Deliberately absent from
+  // EXTENSION_PATHS: a log can quote Slack or alert text, which is why jobstat --json leaves
+  // it out, so log text stays readable from this server's own origin only.
+  loadJobLog?: (label: string) => Promise<JobLogResult>;
   // Backs `GET /api/vulns` — see createVulnLoader in vulns.ts. Optional for the same reason
   // as loadPlanka; unset answers that route with a 502. Deliberately absent from
   // EXTENSION_PATHS: open vulnerabilities are a security inventory, so they stay readable
@@ -231,6 +236,16 @@ async function handle(
     if (result.error !== undefined) return refuse(res, 502, result.error);
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ jobs: result.jobs }));
+    return;
+  }
+
+  if (url.pathname === '/api/job-log') {
+    if (opts.loadJobLog === undefined) return refuse(res, 502, 'job logs are not configured in pr-dash');
+    // The label only selects among jobstat's own jobs; it never becomes a path.
+    const result = await opts.loadJobLog(url.searchParams.get('label') ?? '');
+    if (result.error !== undefined) return refuse(res, result.status, result.error);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(result));
     return;
   }
 

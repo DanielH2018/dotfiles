@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { parseJobsBody, shortLabel, sortJobs } from '../public/job-view.js';
+import { jobLogText, parseJobsBody, shortLabel, sortJobs } from '../public/job-view.js';
 import type { JobStatus } from '../src/jobs.ts';
 
 // Synthetic labels only: this repo is public, and the real jobs belong to a private repo.
@@ -27,4 +27,11 @@ test('sortJobs puts failed jobs first, each group by short label', () => {
     sortJobs(jobs).map((j) => j.label),
     ['com.daniel.y', 'com.daniel.claude.z', 'com.daniel.a', 'com.daniel.b'],
   );
+});
+
+test('jobLogText marks a cut log, names an empty one, and rejects another shape', () => {
+  assert.strictEqual(jobLogText({ text: 'exit 1\n', truncated: false }), 'exit 1\n');
+  assert.match(String(jobLogText({ text: 'exit 1\n', truncated: true })), /^\[earlier lines cut[^\n]*\nexit 1\n$/);
+  assert.strictEqual(jobLogText({ text: '', truncated: false }), '(the log is empty)');
+  assert.strictEqual(jobLogText({ error: 'no log' }), null);
 });

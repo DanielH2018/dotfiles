@@ -57,3 +57,25 @@ export function logTime(logAt) {
   const pad = (/** @type {number} */ n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+/**
+ * Returns the same-origin URL of a job's log.
+ * @param {string} label
+ */
+export function jobLogPath(label) {
+  return `/api/job-log?label=${encodeURIComponent(label)}`;
+}
+
+/**
+ * Returns the log text to show from a `GET /api/job-log` body, or null when the body is not
+ * that shape. A cut log says so on its first line.
+ * @param {unknown} body
+ * @returns {string | null}
+ */
+export function jobLogText(body) {
+  if (typeof body !== 'object' || body === null) return null;
+  const { text, truncated } = /** @type {{ text?: unknown, truncated?: unknown }} */ (body);
+  if (typeof text !== 'string' || typeof truncated !== 'boolean') return null;
+  if (text === '') return '(the log is empty)';
+  return truncated ? `[earlier lines cut; showing the end of the log]\n${text}` : text;
+}

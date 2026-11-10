@@ -583,6 +583,22 @@ span.empty { display: block; }
   color: var(--overlay0);
 }
 
+/* The end of a job's log, opened from its row. Long logs scroll inside the box. */
+.job-log-text {
+  max-height: 50vh;
+  overflow: auto;
+  margin: 0;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--surface0);
+  background: var(--mantle);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--subtext0);
+}
+.job-log-text[hidden] { display: none; }
+
 /* The row the new tab's Jobs panel linked to. */
 .job-row.linked { background: var(--surface0); box-shadow: inset 3px 0 0 var(--red); }
 

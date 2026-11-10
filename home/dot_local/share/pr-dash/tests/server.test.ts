@@ -46,6 +46,7 @@ async function withServer(
   extensionOrigins: string[] = [],
   loadPlanka?: ServerOpts['loadPlanka'],
   loadJobs?: ServerOpts['loadJobs'],
+  loadJobLog?: ServerOpts['loadJobLog'],
 ) {
   const port = await freePort();
   const server = createServer({
@@ -56,6 +57,7 @@ async function withServer(
     extensionOrigins,
     loadPlanka,
     loadJobs,
+    loadJobLog,
   });
   await new Promise<void>((r) => server.listen(port, '127.0.0.1', r));
   try {
@@ -634,9 +636,9 @@ test('an allowlisted extension origin reads /api/prs, answered with CORS headers
 
 test('an allowlisted extension origin is refused on every path outside EXTENSION_PATHS', async () => {
   // The page shell, the client code, near-misses of the API paths, a path that would 404,
-  // and /api/vulns, which stays same-origin only: the allowlist opens the work panels'
-  // routes, not the server.
-  const paths = ['/', '/index.html', '/app.js', '/api/prs/', '/api/planka/', '/api/jobs/', '/api/vulns', '/no-such-file'];
+  // and /api/vulns and /api/job-log, which stay same-origin only: the allowlist opens the
+  // work panels' routes, not the server.
+  const paths = ['/', '/index.html', '/app.js', '/api/prs/', '/api/planka/', '/api/jobs/', '/api/vulns', '/api/job-log?label=x', '/no-such-file'];
   await withExtensionServer([EXTENSION], async (base) => {
     for (const path of paths) {
       const response = await getFrom(base, path, EXTENSION);
@@ -789,4 +791,26 @@ test('a failed jobs load answers an allowlisted extension origin with a 502 it c
     undefined,
     async () => ({ error: 'jobstat --json failed' }),
   );
+});
+
+test('/api/job-log passes the label to the loader and answers with its status', async () => {
+  const labels: string[] = [];
+  const loadJobLog: ServerOpts['loadJobLog'] = async (label) => {
+    labels.push(label);
+    return label === 'com.example.job'
+      ? { log: '~/logs/job.log', text: 'exit 1\n', truncated: false }
+      : { error: 'jobstat reports no job with that label', status: 404 };
+  };
+  await withServer(
+    async (base) => {
+      const ok = await fetch(`${base}/api/job-log?label=com.example.job`);
+      assert.strictEqual(ok.status, 200);
+      assert.deepStrictEqual(await ok.json(), { log: '~/logs/job.log', text: 'exit 1\n', truncated: false });
+      const missing = await fetch(`${base}/api/job-log`);
+      assert.strictEqual(missing.status, 404);
+      assert.deepStrictEqual(await missing.json(), { error: 'jobstat reports no job with that label' });
+    },
+    undefined, undefined, [], [], undefined, undefined, loadJobLog,
+  );
+  assert.deepStrictEqual(labels, ['com.example.job', '']);
 });
