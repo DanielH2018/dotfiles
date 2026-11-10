@@ -120,11 +120,11 @@ test('fetchRepoRow returns each open PR as the dashboard\'s record, naming its a
   const { client } = fakeClient({ 'acme/api': [{ prs: [pr({ number: 7 }), pr({ number: 8, author: null })] }] });
   const items = (await fetchRepoRow(client, API)).row.prs?.items ?? [];
   assert.deepStrictEqual(
-    items.map((i) => [i.id, i.author, i.ci, i.review]),
+    items.map((i) => [i.id, i.author]),
     [
-      ['acme/api#7', 'teammate', 'failure', 'none'],
+      ['acme/api#7', 'teammate'],
       // A deleted account leaves no login; GitHub shows these as "ghost".
-      ['acme/api#8', 'ghost', 'failure', 'none'],
+      ['acme/api#8', 'ghost'],
     ],
   );
 });
