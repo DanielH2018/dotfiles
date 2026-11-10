@@ -637,3 +637,19 @@ button.primary:disabled {
 @media (prefers-reduced-motion: reduce) {
   .refresh-status.flash { animation: none; color: var(--green); }
 }
+
+/* The repositories page. A row holds several links, so it is a div rather than one anchor. */
+.repo-name {
+  flex: none;
+  width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text);
+  text-decoration: none;
+}
+a.repo-name:hover, a.repo-prs:hover { color: var(--blue); text-decoration: underline; }
+a.state-chip { text-decoration: none; }
+.repo-prs { color: var(--subtext0); text-decoration: none; font-size: 12px; }
+.repo-vulns { display: inline-flex; gap: 4px; text-decoration: none; }

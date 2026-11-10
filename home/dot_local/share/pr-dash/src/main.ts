@@ -21,6 +21,7 @@ import {
 import { createPayloadStore, DEFAULT_STATE_DIR } from './payload-store.ts';
 import { createVulnLoader, parseVulnRepos, type VulnLoadResult } from './vulns.ts';
 import { createBaselineStore } from './vuln-baseline.ts';
+import { createRepoLoader, type RepoLoadResult } from './repos.ts';
 
 const parsedPort = parsePort(process.env['PR_DASH_PORT']);
 if (!parsedPort.ok) {
@@ -115,6 +116,9 @@ const server = createServer({
   // Shares the PR loader's lazy client, so both routes resolve the token once. Alerts change
   // far more slowly than PR state, hence the longer TTL (above) than the PR cache's 60 seconds.
   loadVulns,
+  // The same repository list as the vulnerabilities page, on the same lazy client. Five
+  // minutes, like alerts: the page is an overview, and Refresh forces a fetch.
+  loadRepos: createRepoLoader(client, parsedVulnRepos.repos, createCache<RepoLoadResult>(300_000)),
   onRequest: () => idleExit.touch(),
 });
 // Attached before listen(): without a handler, an occupied port reaches Node's default

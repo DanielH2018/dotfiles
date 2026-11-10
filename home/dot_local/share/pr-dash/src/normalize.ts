@@ -41,6 +41,17 @@ const REVIEW_BY_DECISION: Record<string, Review> = {
   REVIEW_REQUIRED: 'review_required',
 };
 
+/** A head commit's `statusCheckRollup.state`, where `undefined` means GitHub reported none. */
+export function ciFromRollup(state: string | undefined): Ci {
+  // `undefined` covers both a null statusCheckRollup (no checks ran) and no commit at all.
+  // Neither is "pending": folding it in would paint every repo without CI permanently yellow.
+  return state === undefined ? 'none' : (CI_BY_STATE[state] ?? 'pending');
+}
+
+export function reviewFromDecision(decision: string | null): Review {
+  return decision === null ? 'none' : (REVIEW_BY_DECISION[decision] ?? 'none');
+}
+
 const DAY_MS = 86_400_000;
 
 // A sentinel for when `from` or `to` can't be read as a date. Chosen to be finite — so it
@@ -95,12 +106,8 @@ export function normalize(nodes: readonly RawPr[], now: Date = new Date()): PrRe
       headRef: n.headRefName,
       baseRef: n.baseRefName,
       isDraft: n.isDraft,
-      // `state === undefined` covers both a null statusCheckRollup (no checks ran) and no
-      // commits at all (nothing to have a rollup). Neither is "pending" — GitHub reported
-      // nothing, which is 'none'. Folding this into 'pending' would paint every PR in a repo
-      // without CI permanently yellow.
-      ci: state === undefined ? 'none' : (CI_BY_STATE[state] ?? 'pending'),
-      review: n.reviewDecision === null ? 'none' : (REVIEW_BY_DECISION[n.reviewDecision] ?? 'none'),
+      ci: ciFromRollup(state),
+      review: reviewFromDecision(n.reviewDecision),
       openedAt: n.createdAt,
       updatedAt: n.updatedAt,
       ageDays: days(n.createdAt, now),

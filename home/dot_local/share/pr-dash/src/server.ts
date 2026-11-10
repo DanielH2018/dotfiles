@@ -6,6 +6,7 @@ import { checkHost } from './guard.ts';
 import { buildStacks } from './stacks.ts';
 import type { JobLogResult, JobsResult } from './jobs.ts';
 import type { PlankaResult } from './planka.ts';
+import type { LoadRepos } from './repos.ts';
 import type { LoadVulns } from './vulns.ts';
 import type { PrRecord, StackNode } from './types.ts';
 
@@ -72,6 +73,9 @@ export type ServerOpts = {
   // EXTENSION_PATHS: open vulnerabilities are a security inventory, so they stay readable
   // from this server's own origin only.
   loadVulns?: LoadVulns;
+  // Backs `GET /api/repos` — see createRepoLoader in repos.ts. Optional and same-origin only,
+  // like loadVulns: it names the configured repositories.
+  loadRepos?: LoadRepos;
 };
 
 // The only paths an allowlisted extension origin may read. The new tab's work panels need
@@ -256,6 +260,16 @@ async function handle(
     const { alerts, repos, fetchedAt, partialErrors, staleRepos, stale, error } = await opts.loadVulns({ force });
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ alerts, repos, fetchedAt, partialErrors, staleRepos, stale, error: error ?? null }));
+    return;
+  }
+
+  if (url.pathname === '/api/repos') {
+    if (opts.loadRepos === undefined) return refuse(res, 502, 'repositories are not configured in pr-dash');
+    // Same contract as /api/vulns: only the exact `refresh=1` reaches the loader, as a boolean.
+    const force = url.searchParams.get('refresh') === '1';
+    const { rows, fetchedAt, partialErrors, stale, error } = await opts.loadRepos({ force });
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ rows, fetchedAt, partialErrors, stale, error: error ?? null }));
     return;
   }
 

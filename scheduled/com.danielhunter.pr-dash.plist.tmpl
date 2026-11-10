@@ -91,7 +91,8 @@
 		<key>PR_DASH_EXTENSION_ORIGINS</key>
 		<string>{{ if hasKey . "prDashExtensionOrigins" }}{{ .prDashExtensionOrigins }}{{ end }}</string>
 		<!-- The repositories the vulnerabilities page (/vulns.html) lists open Dependabot alerts
-		     for, comma-separated owner/name. The names stay out of this repo: they come from
+		     for and the repositories page (/repos.html) summarizes, comma-separated owner/name.
+		     The names stay out of this repo: they come from
 		     `prDashVulnRepos` in the machine-local chezmoi.toml, under [data]. Unset renders an
 		     empty string, and the page then says no repositories are configured. A malformed
 		     entry makes src/main.ts exit at startup rather than silently drop a repository.

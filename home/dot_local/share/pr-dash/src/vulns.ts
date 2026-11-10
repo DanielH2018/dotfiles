@@ -1,7 +1,7 @@
 import type { Client, QueryResult } from './github.ts';
 import type { Cache } from './cache.ts';
 import type { Baseline, BaselineEntry } from './vuln-baseline.ts';
-import { FORCE_MIN_INTERVAL_MS } from './main-lib.ts';
+import { createCachedLoad, type CachedLoad, type Served } from './cached-load.ts';
 
 // The open Dependabot alerts on a fixed list of repositories, for the vulnerabilities page.
 // Kept apart from the PR loader: the PR list comes from one search over the operator's own
@@ -257,7 +257,7 @@ export const ZERO_CONFIRM_MS = 60 * 60 * 1000;
  * What the route serves: a load result, plus whether it is a retained payload behind a failed
  * refresh (`stale`, with `error` saying why) — the same split `withFallback` makes for PRs.
  */
-export type VulnResponse = VulnLoadResult & { stale: boolean; error?: string };
+export type VulnResponse = Served<VulnLoadResult>;
 
 export type VulnLoaderOpts = {
   /** Injectable for the force throttle, as in `withFallback`. Defaults to `Date.now`. */
@@ -272,16 +272,14 @@ export type VulnLoaderOpts = {
   onBaselineChange?: (baseline: Baseline) => void;
 };
 
-export type LoadVulns = (opts?: { force?: boolean }) => Promise<VulnResponse>;
+export type LoadVulns = CachedLoad<VulnLoadResult>;
 
 /**
  * The `loadVulns` the server calls on every `/api/vulns`.
  *
- * Joins an in-flight fetch rather than starting a second one, serves from `cache` until its
- * TTL lapses, and lets `force` bypass the cache at most once per {@link FORCE_MIN_INTERVAL_MS}.
- * Repositories are queried in parallel and fail independently. Only when every one of them
- * fails does the load fail, and then the last good result is served marked stale; with
- * nothing to fall back on, the failure propagates.
+ * Caching, joining and the stale fallback come from {@link createCachedLoad}. Repositories
+ * are queried in parallel and fail independently. Only when every one of them fails does the
+ * load fail, and then the last good result is served marked stale.
  *
  * A repository that had alerts and is suddenly listed with none keeps its previous alerts,
  * named in `staleRepos` and `partialErrors`, until the empty answer has held for
@@ -299,9 +297,6 @@ export function createVulnLoader(
 ): LoadVulns {
   const now = opts.now ?? Date.now;
   const labels = repos.map((r) => `${r.owner}/${r.name}`);
-  let inFlight: Promise<VulnLoadResult> | undefined;
-  let lastGood: VulnLoadResult | undefined;
-  let lastForcedAt: number | undefined;
   // Per repository: the last non-empty alert list GitHub returned and when, and since when it
   // has been answering with none. Only a fulfilled answer touches it.
   const baseline = new Map<string, BaselineEntry>(
@@ -359,31 +354,5 @@ export function createVulnLoader(
     return { alerts, repos: labels, fetchedAt: new Date(at).toISOString(), partialErrors, staleRepos };
   }
 
-  return async function loadVulns(loadOpts = {}): Promise<VulnResponse> {
-    if (inFlight === undefined) {
-      if (loadOpts.force === true) {
-        const at = now();
-        if (lastForcedAt === undefined || at - lastForcedAt >= FORCE_MIN_INTERVAL_MS) {
-          lastForcedAt = at;
-          cache.invalidate();
-        }
-      }
-      const hit = cache.get();
-      if (hit !== undefined) return { ...hit, stale: false };
-      inFlight = fetchAll();
-    }
-    const pending = inFlight;
-    try {
-      const result = await pending;
-      cache.set(result);
-      lastGood = result;
-      return { ...result, stale: false };
-    } catch (err) {
-      if (lastGood === undefined) throw err;
-      return { ...lastGood, stale: true, error: err instanceof Error ? err.message : String(err) };
-    } finally {
-      // Cleared on rejection too, so one transient failure does not answer every later call.
-      if (inFlight === pending) inFlight = undefined;
-    }
-  };
+  return createCachedLoad(fetchAll, cache, now);
 }

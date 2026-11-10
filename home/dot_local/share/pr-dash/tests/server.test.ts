@@ -636,9 +636,9 @@ test('an allowlisted extension origin reads /api/prs, answered with CORS headers
 
 test('an allowlisted extension origin is refused on every path outside EXTENSION_PATHS', async () => {
   // The page shell, the client code, near-misses of the API paths, a path that would 404,
-  // and /api/vulns and /api/job-log, which stay same-origin only: the allowlist opens the
+  // /api/vulns, /api/repos and /api/job-log, which stay same-origin only: the allowlist opens the
   // work panels' routes, not the server.
-  const paths = ['/', '/index.html', '/app.js', '/api/prs/', '/api/planka/', '/api/jobs/', '/api/vulns', '/api/job-log?label=x', '/no-such-file'];
+  const paths = ['/', '/index.html', '/app.js', '/api/prs/', '/api/planka/', '/api/jobs/', '/api/vulns', '/api/repos', '/api/job-log?label=x', '/no-such-file'];
   await withExtensionServer([EXTENSION], async (base) => {
     for (const path of paths) {
       const response = await getFrom(base, path, EXTENSION);
