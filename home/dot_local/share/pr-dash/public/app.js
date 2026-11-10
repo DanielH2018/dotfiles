@@ -19,7 +19,6 @@ import {
   toCollapsedKeys,
   parsePrsBody,
   emptyStateMessage,
-  isSafeUrl,
   repoUrl,
   loadStoredView,
   saveStoredView,
