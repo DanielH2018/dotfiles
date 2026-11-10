@@ -31,8 +31,10 @@ export type RunPlanka = (args: string[]) => Promise<{ stdout: string }>;
  * names and fields Planka's own `GET /api/boards/:id` uses, so the extension's
  * `activeCards` reads either body. Each card also carries `prUrl`: the content of its
  * custom field named `pr`, which the planka CLI stamps with the card's PR URL, or null.
- * The extension's board-page script turns it into a link. Everything else Planka returns
- * — card descriptions, users, the other custom field values — is dropped.
+ * The extension's board-page script turns it into a link. Each card also carries
+ * `parentId`: the card whose checklist holds a task linked to it, or null. The board-page
+ * script collapses a parent's children under it. Everything else Planka returns — card
+ * descriptions, users, the other custom field values — is dropped.
  */
 export type PlankaBoard = {
   boardId: string;
@@ -46,6 +48,7 @@ export type PlankaBoard = {
       position: number;
       listChangedAt: string | null;
       prUrl: string | null;
+      parentId: string | null;
     }[];
   };
 };
@@ -109,6 +112,32 @@ function prUrlsByCard(included: Record<string, unknown>): Map<string, string> {
   return urls;
 }
 
+// Planka links a child by a task in the parent's task list whose linkedCardId names the
+// child. Planka allows two parents to link one card; the task with the smallest ID wins
+// so the answer does not depend on the order Planka returns tasks in.
+function parentIdsByCard(included: Record<string, unknown>): Map<string, string> {
+  const taskLists = Array.isArray(included['taskLists']) ? included['taskLists'] : [];
+  const cardOfTaskList = new Map<string, string>();
+  for (const tl of taskLists.filter(isRecord)) cardOfTaskList.set(String(tl['id']), String(tl['cardId']));
+  const tasks = (Array.isArray(included['tasks']) ? included['tasks'] : [])
+    .filter(isRecord)
+    .filter((t) => typeof t['linkedCardId'] === 'string' && t['linkedCardId'] !== '')
+    .sort((a, b) => {
+      // Planka IDs are numeric strings too long for a Number.
+      const x = String(a['id']);
+      const y = String(b['id']);
+      return x.length - y.length || (x < y ? -1 : x > y ? 1 : 0);
+    });
+  const parents = new Map<string, string>();
+  for (const t of tasks) {
+    const child = String(t['linkedCardId']);
+    const parent = cardOfTaskList.get(String(t['taskListId']));
+    if (parent === undefined || parent === child || parents.has(child)) continue;
+    parents.set(child, parent);
+  }
+  return parents;
+}
+
 function trimBoard(raw: unknown, boardId: string): PlankaBoard | undefined {
   if (!isRecord(raw) || !isRecord(raw['included'])) return undefined;
   const included = raw['included'];
@@ -116,6 +145,7 @@ function trimBoard(raw: unknown, boardId: string): PlankaBoard | undefined {
   const cards = Array.isArray(included['cards']) ? included['cards'] : [];
   const item = isRecord(raw['item']) ? raw['item'] : {};
   const prUrls = prUrlsByCard(included);
+  const parentIds = parentIdsByCard(included);
   return {
     boardId,
     boardName: typeof item['name'] === 'string' ? item['name'] : '',
@@ -130,6 +160,7 @@ function trimBoard(raw: unknown, boardId: string): PlankaBoard | undefined {
         position: typeof c['position'] === 'number' ? c['position'] : 0,
         listChangedAt: typeof c['listChangedAt'] === 'string' ? c['listChangedAt'] : null,
         prUrl: prUrls.get(String(c['id'])) ?? null,
+        parentId: parentIds.get(String(c['id'])) ?? null,
       })),
     },
   };

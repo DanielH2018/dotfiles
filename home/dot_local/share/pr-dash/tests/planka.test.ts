@@ -61,11 +61,52 @@ test('reads the configured board under --strict and keeps only the fields the pa
             position: 2,
             listChangedAt: '2026-10-01T00:00:00.000Z',
             prUrl: null,
+            parentId: null,
           },
         ],
       },
     },
   });
+});
+
+// Task 501 is older than 502, so card 12 belongs to card 10 although Planka listed the
+// task from card 11 first. A task linking its own card, and a task in a task list with no
+// card in the body, link nothing.
+test('each card carries the card whose task list links it, or null', async () => {
+  const body = {
+    ...BOARD_BODY,
+    included: {
+      ...BOARD_BODY.included,
+      cards: [
+        ...BOARD_BODY.included.cards,
+        { id: '11', name: 'Other parent', listId: '1', position: 3 },
+        { id: '12', name: 'Child', listId: '1', position: 4 },
+        { id: '13', name: 'Loose', listId: '1', position: 5 },
+      ],
+      taskLists: [
+        { id: '40', cardId: '10' },
+        { id: '41', cardId: '11' },
+      ],
+      tasks: [
+        { id: '502', taskListId: '41', linkedCardId: '12' },
+        { id: '501', taskListId: '40', linkedCardId: '12' },
+        { id: '503', taskListId: '41', linkedCardId: '11' },
+        { id: '504', taskListId: '49', linkedCardId: '13' },
+        { id: '505', taskListId: '40', linkedCardId: null, name: 'Plain task' },
+      ],
+    },
+  };
+  const run = fakeRun({ board: () => BOARD_SHOW, api: () => JSON.stringify(body) });
+  const result = await createLoadPlanka(run)();
+  assert.deepStrictEqual(
+    result.board?.included.cards.map((c) => [c.id, c.parentId]),
+    [
+      ['10', null],
+      ['11', null],
+      ['12', '10'],
+      ['13', null],
+    ],
+  );
 });
 
 // The `pr` field is found by name. Another field's value on the same card, and a `pr`
