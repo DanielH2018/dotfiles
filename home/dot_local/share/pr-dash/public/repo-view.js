@@ -1,5 +1,5 @@
 // @ts-check
-import { CI_VALUES } from './render-guards.js';
+import { CI_VALUES, isPrRecord } from './render-guards.js';
 import { SEVERITIES, severityCounts } from './vuln-view.js';
 
 /** @typedef {import('../src/repos.ts').RepoRow} RepoRow */
@@ -59,7 +59,9 @@ function isPrSummary(p) {
       Number.isInteger(p['drafts']) &&
       Number.isInteger(p['awaitingReview']) &&
       isStringOrNull(p['oldestOpenedAt']) &&
-      typeof p['url'] === 'string')
+      typeof p['url'] === 'string' &&
+      Array.isArray(p['items']) &&
+      p['items'].every((pr) => isPrRecord(pr) && typeof (/** @type {Record<string, unknown>} */ (pr))['author'] === 'string'))
   );
 }
 

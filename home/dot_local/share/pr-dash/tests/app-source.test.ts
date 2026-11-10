@@ -73,15 +73,16 @@ test('every id app.js looks up (directly, via the change-listener loop, or via c
   }
 });
 
-test('renderRow only assigns href when isSafeUrl approves the url', () => {
+test('renderPrRow only assigns href when isSafeUrl approves the url', () => {
   // isSafeUrl is unit-tested in render-guards.test.ts, but that only proves the function
-  // itself is correct — not that renderRow actually calls it before trusting pr.url as a
+  // itself is correct — not that renderPrRow actually calls it before trusting pr.url as a
   // clickable href.
-  const body = functionBody(STRIPPED, 'function renderRow');
+  const prRow = stripComments(readFileSync(path.join(__dirname, '..', 'public', 'pr-row.js'), 'utf8'));
+  const body = functionBody(prRow, 'export function renderPrRow');
   assert.match(
     body,
     /if\s*\(\s*isSafeUrl\(pr\.url\)\s*\)\s*row\.href\s*=\s*pr\.url;/,
-    'expected renderRow to gate row.href on isSafeUrl(pr.url)',
+    'expected renderPrRow to gate row.href on isSafeUrl(pr.url)',
   );
 });
 
@@ -90,7 +91,7 @@ test('no file under public/ uses an HTML-injection sink', () => {
   // repository) and reaches the row from both the live fetch and the restored file, so
   // row.textContent (and group.js's name.textContent) must never become innerHTML or an
   // equivalent sink.
-  for (const name of ['app.js', 'group.js', 'render-guards.js', 'vulns.js', 'vuln-view.js', 'repos.js', 'repo-view.js']) {
+  for (const name of ['app.js', 'group.js', 'render-guards.js', 'vulns.js', 'vuln-view.js', 'repos.js', 'repo-view.js', 'pr-row.js']) {
     const text = stripComments(readFileSync(path.join(__dirname, '..', 'public', name), 'utf8'));
     assert.doesNotMatch(
       text,

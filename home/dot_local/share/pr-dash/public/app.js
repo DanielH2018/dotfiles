@@ -29,12 +29,10 @@ import {
   nextPollState,
   isPermanentFailure,
   isStaleResponse,
-  ciChip,
-  reviewChip,
-  draftChip,
   stackIndentPx,
 } from './render-guards.js';
 import { createRefreshIndicator } from './refresh-status.js';
+import { renderPrRow } from './pr-row.js';
 
 /** @typedef {import('../src/types.ts').PrRecord} PrRecord */
 /** @typedef {import('../src/types.ts').StackNode} StackNode */
@@ -278,50 +276,6 @@ function hideBanner() {
   if (el !== null) el.hidden = true;
 }
 
-/** @param {PrRecord} pr */
-function renderRow(pr) {
-  const row = document.createElement('a');
-  row.className = `row ci-${pr.ci} review-${pr.review}`;
-  // `row:` prefixed so this can never collide with a stack toggle's bare PR id or a header's
-  // axis-qualified key — the three key kinds share one lookup in `render`'s focus restore.
-  row.dataset.key = `row:${pr.id}`;
-  if (isSafeUrl(pr.url)) row.href = pr.url;
-  row.target = '_blank';
-  row.rel = 'noreferrer';
-
-  const number = document.createElement('span');
-  number.className = 'row-number';
-  number.textContent = `#${pr.number}`;
-  row.append(number);
-
-  const title = document.createElement('span');
-  title.className = 'row-title';
-  title.textContent = pr.title;
-  row.append(title);
-
-  const meta = document.createElement('span');
-  meta.className = 'meta';
-
-  // Spans, not buttons. `.row` is an `<a>`, and a nested `<button>` is invalid there: a
-  // `preventDefault` on click does not stop a middle-click, which dispatches `auxclick` and
-  // opens the PR anyway. Nothing in the row is interactive except the row itself.
-  for (const chip of [draftChip(pr.isDraft), ciChip(pr.ci), reviewChip(pr.review)]) {
-    if (chip === null) continue;
-    const el = document.createElement('span');
-    el.className = `state-chip ${chip.tone}`;
-    el.textContent = chip.label;
-    meta.append(el);
-  }
-
-  const stale = document.createElement('span');
-  stale.className = 'stale';
-  stale.textContent = pr.staleDays === 1 ? '1 day' : `${pr.staleDays} days`;
-  stale.title = 'Days since the last commit on this branch.';
-  meta.append(stale);
-
-  row.append(meta);
-  return row;
-}
 
 /**
  * @param {StackNode[]} stacks
@@ -409,7 +363,7 @@ function renderStack(node, into, allowed) {
   const isRoot = node.depth === 0;
   const rowRendered = allowed.has(node.pr.id);
   if (rowRendered) {
-    const row = renderRow(node.pr);
+    const row = renderPrRow(node.pr);
     addStackBadges(row, node);
     // A sibling wrapper, not a child of `row`: `row` is the PR's own link anchor, and an
     // anchor must not contain interactive content — a nested button breaks tab order and
@@ -580,7 +534,7 @@ function render(records, stacks) {
           for (const root of sortStackRoots(roots, sort)) renderStack(root, section, allowed);
         } else {
           for (const pr of sortWithin(group.records, sort)) {
-            const row = renderRow(pr);
+            const row = renderPrRow(pr);
             addStackBadges(row, byId.get(pr.id));
             section.append(row);
           }

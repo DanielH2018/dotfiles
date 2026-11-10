@@ -1,4 +1,6 @@
 // @ts-check
+import { sortWithin } from './group.js';
+import { renderPrRow } from './pr-row.js';
 import { createRefreshIndicator } from './refresh-status.js';
 import { ciChip, isSafeUrl } from './render-guards.js';
 import { parseReposBody, reposBanner, vulnStatus } from './repo-view.js';
@@ -10,6 +12,32 @@ import { SEVERITIES, ageDays, parseVulnsBody } from './vuln-view.js';
 
 // Both routes cache for five minutes on the server, so polling faster only re-reads them.
 const POLL_MS = 5 * 60 * 1000;
+
+// Which repositories have their PR list open, kept across reloads. Separate from the other
+// pages' storage, since they share an origin.
+const VIEW_KEY = 'pr-dash:repos-view';
+
+/** @type {Set<string>} */
+const expanded = new Set();
+try {
+  const saved = JSON.parse(localStorage.getItem(VIEW_KEY) ?? 'null');
+  if (saved !== null && Array.isArray(saved.expanded)) {
+    for (const repo of saved.expanded) if (typeof repo === 'string') expanded.add(repo);
+  }
+} catch {}
+
+/** @param {string} repo */
+function toggleExpanded(repo) {
+  if (expanded.has(repo)) expanded.delete(repo);
+  else expanded.add(repo);
+  try {
+    localStorage.setItem(VIEW_KEY, JSON.stringify({ expanded: [...expanded] }));
+  } catch {}
+  render();
+  // The re-render replaced the button that had focus; move focus to its replacement.
+  const button = document.querySelector(`[data-toggle="${CSS.escape(repo)}"]`);
+  if (button instanceof HTMLElement) button.focus({ preventScroll: true });
+}
 
 /** @type {ReposBody | null} */
 let current = null;
@@ -104,7 +132,19 @@ function renderRow(row, now) {
   const prParts = [`${prs.open} open PR${prs.open === 1 ? '' : 's'}`];
   if (prs.awaitingReview > 0) prParts.push(`${prs.awaitingReview} awaiting review`);
   if (prs.drafts > 0) prParts.push(`${prs.drafts} draft`);
-  meta.append(link(prParts.join(' · '), 'repo-prs', prs.url));
+  if (prs.items.length === 0) {
+    meta.append(link(prParts.join(' · '), 'repo-prs', prs.url));
+  } else {
+    const isOpen = expanded.has(row.repo);
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'repo-prs';
+    toggle.setAttribute('data-toggle', row.repo);
+    toggle.setAttribute('aria-expanded', String(isOpen));
+    toggle.textContent = `${isOpen ? '▾' : '▸'} ${prParts.join(' · ')}`;
+    toggle.addEventListener('click', () => toggleExpanded(row.repo));
+    meta.append(toggle);
+  }
   if (prs.oldestOpenedAt !== null) {
     const oldest = span(`oldest ${daysText(ageDays(prs.oldestOpenedAt, now))}`, 'stale');
     oldest.title = 'Age of the oldest open PR.';
@@ -149,7 +189,28 @@ function render() {
     main.append(span('No repositories configured. Set prDashVulnRepos in chezmoi.toml and reload the agent.', 'empty'));
     return;
   }
-  for (const row of current.rows) main.append(renderRow(row, now));
+  for (const row of current.rows) {
+    main.append(renderRow(row, now));
+    if (row.prs !== null && row.prs.items.length > 0 && expanded.has(row.repo)) main.append(renderPrList(row.prs));
+  }
+}
+
+/**
+ * A repository's open PRs, drawn with the PR dashboard's own row, most stale first.
+ * @param {NonNullable<RepoRow['prs']>} prs
+ */
+function renderPrList(prs) {
+  const list = document.createElement('div');
+  list.className = 'repo-pr-list';
+  for (const pr of sortWithin(prs.items, 'stale')) {
+    const prRow = renderPrRow(pr);
+    // These are everyone's PRs, not only the operator's, so each one names its author.
+    prRow.querySelector('.meta')?.prepend(span(pr.author, 'badge'));
+    list.append(prRow);
+  }
+  const more = prs.open - prs.items.length;
+  list.append(link(more > 0 ? `${more} more on GitHub` : 'Open on GitHub', 'repo-pr-more', prs.url));
+  return list;
 }
 
 /**

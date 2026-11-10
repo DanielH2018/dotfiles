@@ -28,7 +28,24 @@ const COMMIT: RawCommit = {
 };
 
 function pr(overrides: Partial<RawPrNode> = {}): RawPrNode {
-  return { isDraft: false, createdAt: '2026-10-01T00:00:00Z', reviewDecision: null, reviews: { totalCount: 0 }, ...overrides };
+  return {
+    number: 1,
+    title: 'Change a thing',
+    url: 'https://github.com/acme/api/pull/1',
+    isDraft: false,
+    baseRefName: 'main',
+    headRefName: 'change',
+    createdAt: '2026-10-01T00:00:00Z',
+    updatedAt: '2026-10-02T00:00:00Z',
+    additions: 10,
+    deletions: 2,
+    reviewDecision: null,
+    repository: { nameWithOwner: 'acme/api', defaultBranchRef: { name: 'main' } },
+    commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] },
+    author: { login: 'teammate' },
+    reviews: { totalCount: 0 },
+    ...overrides,
+  };
 }
 
 // Answers each repository from a list of pages keyed by `owner/name`, as vulns.test.ts does.
@@ -88,13 +105,28 @@ test('fetchRepoRow counts open PRs across pages, excluding drafts and reviewed P
   });
   const { row, errors } = await fetchRepoRow(client, API);
   assert.deepStrictEqual(errors, []);
-  assert.deepStrictEqual(row.prs, {
+  const { items, ...summary } = row.prs ?? { items: [] };
+  assert.deepStrictEqual(summary, {
     open: 5,
     drafts: 1,
     awaitingReview: 2,
     oldestOpenedAt: '2026-01-01T00:00:00Z',
     url: 'https://github.com/acme/api/pulls',
   });
+  assert.strictEqual(items.length, 5);
+});
+
+test('fetchRepoRow returns each open PR as the dashboard\'s record, naming its author', async () => {
+  const { client } = fakeClient({ 'acme/api': [{ prs: [pr({ number: 7 }), pr({ number: 8, author: null })] }] });
+  const items = (await fetchRepoRow(client, API)).row.prs?.items ?? [];
+  assert.deepStrictEqual(
+    items.map((i) => [i.id, i.author, i.ci, i.review]),
+    [
+      ['acme/api#7', 'teammate', 'failure', 'none'],
+      // A deleted account leaves no login; GitHub shows these as "ghost".
+      ['acme/api#8', 'ghost', 'failure', 'none'],
+    ],
+  );
 });
 
 test('fetchRepoRow maps the default branch head, falling back to no checks and the author name, and an empty repository to no branch', async () => {

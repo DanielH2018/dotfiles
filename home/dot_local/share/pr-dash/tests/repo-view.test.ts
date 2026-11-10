@@ -1,14 +1,42 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { parseReposBody, reposBanner, vulnStatus } from '../public/repo-view.js';
-import type { RepoRow } from '../src/repos.ts';
+import type { RepoPr, RepoRow } from '../src/repos.ts';
 import type { VulnAlert } from '../src/vulns.ts';
+
+const PR: RepoPr = {
+  id: 'acme/api#1',
+  repo: 'acme/api',
+  number: 1,
+  title: 'Change a thing',
+  url: 'https://github.com/acme/api/pull/1',
+  headRef: 'change',
+  baseRef: 'main',
+  isDraft: false,
+  ci: 'success',
+  review: 'review_required',
+  openedAt: '2026-10-01T00:00:00Z',
+  updatedAt: '2026-10-02T00:00:00Z',
+  ageDays: 40,
+  staleDays: 39,
+  additions: 10,
+  deletions: 2,
+  defaultBranch: 'main',
+  author: 'teammate',
+};
 
 const LOADED: RepoRow = {
   repo: 'acme/api',
   url: 'https://github.com/acme/api',
   branch: null,
-  prs: { open: 1, drafts: 0, awaitingReview: 1, oldestOpenedAt: '2026-10-01T00:00:00Z', url: 'https://github.com/acme/api/pulls' },
+  prs: {
+    open: 1,
+    drafts: 0,
+    awaitingReview: 1,
+    oldestOpenedAt: '2026-10-01T00:00:00Z',
+    url: 'https://github.com/acme/api/pulls',
+    items: [PR],
+  },
   error: null,
 };
 const FAILED: RepoRow = { repo: 'acme/web', url: null, branch: null, prs: null, error: 'not found' };
@@ -37,11 +65,13 @@ function vulns(overrides: Partial<Parameters<typeof vulnStatus>[1] & object> = {
   return { alerts: [], repos: ['acme/api', 'acme/web'], fetchedAt: 'T', partialErrors: [], staleRepos: [], stale: false, error: null, ...overrides };
 }
 
-test('parseReposBody keeps loaded and failed rows, drops a row that is neither, and rejects a malformed envelope', () => {
-  const body = { rows: [LOADED, FAILED, { ...FAILED, prs: LOADED.prs }], fetchedAt: 'T', partialErrors: [], stale: false, error: null };
+test('parseReposBody keeps loaded and failed rows, drops a row that is neither or carries a malformed PR, and rejects a malformed envelope', () => {
+  const { author: _author, ...noAuthor } = PR;
+  const badPr = { ...LOADED, prs: { ...LOADED.prs, items: [noAuthor] } };
+  const body = { rows: [LOADED, FAILED, { ...FAILED, prs: LOADED.prs }, badPr], fetchedAt: 'T', partialErrors: [], stale: false, error: null };
   const parsed = parseReposBody(body);
   assert.deepStrictEqual(parsed.rows, [LOADED, FAILED]);
-  assert.deepStrictEqual(parsed.partialErrors, ['1 malformed repository is not shown']);
+  assert.deepStrictEqual(parsed.partialErrors, ['2 malformed repositories are not shown']);
   assert.throws(() => parseReposBody({ ...body, rows: 'x' }), /expected shape/);
 });
 

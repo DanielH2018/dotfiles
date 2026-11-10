@@ -198,9 +198,10 @@ function comparatorFor(sort) {
 }
 
 /**
- * @param {readonly PrRecord[]} records
+ * @template {PrRecord} T
+ * @param {readonly T[]} records
  * @param {Sort} sort
- * @returns {PrRecord[]}
+ * @returns {T[]}
  */
 export function sortWithin(records, sort) {
   return [...records].sort(comparatorFor(sort));

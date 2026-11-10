@@ -1,8 +1,9 @@
 import type { Client, QueryResult } from './github.ts';
 import type { Cache } from './cache.ts';
 import { createCachedLoad, type CachedLoad } from './cached-load.ts';
-import { ciFromRollup, reviewFromDecision } from './normalize.ts';
-import type { Ci } from './types.ts';
+import { ciFromRollup, normalize, reviewFromDecision, type RawPr } from './normalize.ts';
+import { PR_FIELDS } from './queries.ts';
+import type { Ci, PrRecord } from './types.ts';
 import type { VulnRepo } from './vulns.ts';
 
 // The repositories page: per configured repository, its open PRs and the CI state of its
@@ -21,6 +22,9 @@ export type BranchHead = {
   author: string;
 };
 
+/** An open PR as the PR dashboard draws it, plus who opened it: these are not all the operator's. */
+export type RepoPr = PrRecord & { author: string };
+
 export type PrSummary = {
   open: number;
   drafts: number;
@@ -33,6 +37,8 @@ export type PrSummary = {
   oldestOpenedAt: string | null;
   /** The URL of the repository's open-PR list. */
   url: string;
+  /** Every open PR this load fetched, oldest first. Shorter than `open` only when a page failed. */
+  items: RepoPr[];
 };
 
 /**
@@ -75,7 +81,7 @@ query($owner: String!, $name: String!, $cursor: String) {
     pullRequests(states: OPEN, first: 100, after: $cursor, orderBy: { field: CREATED_AT, direction: ASC }) {
       totalCount
       pageInfo { hasNextPage endCursor }
-      nodes { isDraft createdAt reviewDecision reviews(first: 1) { totalCount } }
+      nodes { ${PR_FIELDS} author { login } reviews(first: 1) { totalCount } }
     }
   }
 }`;
@@ -90,10 +96,9 @@ export type RawCommit = {
   statusCheckRollup: { state: string } | null;
 };
 
-export type RawPrNode = {
-  isDraft: boolean;
-  createdAt: string;
-  reviewDecision: string | null;
+export type RawPrNode = RawPr & {
+  /** `null` when the author's account has been deleted. */
+  author: { login: string } | null;
   reviews: { totalCount: number } | null;
 };
 
@@ -163,13 +168,17 @@ export async function fetchRepoRow(client: Client, repo: VulnRepo): Promise<{ ro
         // Ordered oldest first, so the first page's first node is the oldest of them all.
         oldestOpenedAt: first?.createdAt ?? null,
         url: `${repository.url}/pulls`,
+        items: [],
       };
       const ref = repository.defaultBranchRef;
       row = { repo: label, url: repository.url, branch: ref === null ? null : branchHead(ref), prs, error: null };
     }
     errors.push(...response.errors);
-    for (const node of connection.nodes) {
-      if (node === null) continue;
+    const nodes = connection.nodes.filter((n): n is RawPrNode => n !== null);
+    const records = normalize(nodes);
+    for (const [i, node] of nodes.entries()) {
+      const record = records[i];
+      if (record !== undefined) prs.items.push({ ...record, author: node.author?.login ?? 'ghost' });
       if (node.isDraft) prs.drafts += 1;
       if (awaitsReview(node)) prs.awaitingReview += 1;
     }

@@ -125,6 +125,21 @@ function validateRecord(record, label) {
   return /** @type {PrRecord} */ (record);
 }
 
+/**
+ * Whether `record` passes {@link validateRecord}, for a caller that drops a bad record rather
+ * than failing its whole response.
+ * @param {unknown} record
+ * @returns {record is PrRecord}
+ */
+export function isPrRecord(record) {
+  try {
+    validateRecord(record, 'record');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** The numeric fields every stack node carries, all of them read by the render path. */
 const STACK_NUMBER_FIELDS = ['depth', 'position', 'stackSize'];
 
