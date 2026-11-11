@@ -125,8 +125,6 @@ Prefer the one command that answers the question over three that circle it. Each
 prints its flags with `--help`.
 
 - To ask claude-guard how it judges a command, write the commands as JSONL `{"command": "…"}` records with the Write tool and run `claude-guard replay <file> --deny`.
-- To re-run the failed jobs of a CI run in a repo you own, run `gh-rerun-failed <run-id> [-R owner/repo]` instead of `gh run rerun --failed`. It needs the sandbox off.
-- To capture a command's output to a file, run `runlog <name> -- <command> [args…]` instead of `> file 2>&1`. It gives the command blocking stdio and `/dev/null` as stdin, so `ansible-playbook` starts.
 - To prove a new check can go red, run `redproof <ref> <path>… -- <test command>` and quote its last line in the PR body.
 - To wait on anything (a landing, CI, a file, a process, a unit, a rollout, a time), run `cc-wait <source>`; `--list` names the sources and `--budget S` bounds the wait. Exit 75 means the budget elapsed with the wait still open: re-run the command it prints. A backgrounded wait has returned only once its output file ends with `[exited with code N]`, because the harness can report `completed` while it still runs.
 

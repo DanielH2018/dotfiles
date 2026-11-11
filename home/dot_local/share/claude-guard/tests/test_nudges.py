@@ -1,6 +1,7 @@
 """The context-discipline nudges (dotfiles #586), the show-substitution nudge, the
-gitops-state nudge (dotfiles #1041), the whole-file-cat nudge (dotfiles #1076), and the
-whole-file-read nudge on the Read tool (dotfiles #1085).
+gitops-state nudge (dotfiles #1041), the whole-file-cat nudge (dotfiles #1076), the
+whole-file-read nudge on the Read tool (dotfiles #1085), and the gh-rerun-failed and runlog
+nudges (dotfiles #1223).
 
 Each rule has a command it must nudge and a bounded variant it must leave alone. The
 hook-level tests pin that a nudge rides beside a verdict, never on a deny, and only once
@@ -258,3 +259,60 @@ def test_the_read_hook_nudges_once_per_session(big_and_small, tmp_path):
     assert "permissionDecision" not in out
     assert out["additionalContext"].startswith(tag("whole-file-read"))
     assert read_nudge_json(stdin) is None
+
+
+@pytest.fixture
+def wrappers_on_path(tmp_path, monkeypatch):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for tool in ("gh-rerun-failed", "runlog"):
+        (bin_dir / tool).write_text("#!/bin/sh\n")
+        (bin_dir / tool).chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("gh run rerun 4567 --failed", "gh-rerun-failed"),
+        ("gh run rerun --failed 4567 -R org/repo", "gh-rerun-failed"),
+        ("ansible-playbook site.yml > /tmp/a.log 2>&1", "runlog"),
+        ("make >out.log 2>&1", "runlog"),
+        ("make >> out.log 2>&1", "runlog"),
+        ("make 1>out.log 2>&1 &", "runlog"),
+        ("make &> out.log", "runlog"),
+        ("make &>>out.log", "runlog"),
+    ],
+)
+def test_a_raw_form_a_wrapper_replaces_is_nudged(command, expected, wrappers_on_path):
+    assert rule(command) == expected
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "gh run rerun 4567",
+        "gh run view 4567 --log-failed",
+        "make > /dev/null 2>&1",
+        "make > out.log",
+        "make 2>&1 | tee out.log",
+        "cat > f <<'EOF'\nx\nEOF",
+        "runlog k -- make > out.log 2>&1",
+    ],
+)
+def test_a_form_the_wrapper_does_not_replace_is_left_alone(command, wrappers_on_path):
+    assert rule(command) is None
+
+
+def test_a_wrapper_nudge_needs_the_wrapper_on_path(tmp_path, monkeypatch):
+    # The claude-sandbox image ships gh without either wrapper.
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert rule("gh run rerun 4567 --failed") is None
+    assert rule("make > out.log 2>&1") is None
+
+
+def test_the_rerun_nudge_names_the_raw_form_for_a_repo_the_account_does_not_own(
+    wrappers_on_path,
+):
+    text = nudge("gh run rerun 4567 --failed")[1]
+    assert "`gh-rerun-failed <run-id>" in text and "`gh run rerun --failed`" in text

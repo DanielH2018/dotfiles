@@ -50,6 +50,16 @@ tool_input for the `read-nudge` hook entry instead:
      `limit`. An image or a PDF is skipped: the harness does not put its bytes into the
      context as text.
 
+Two point at a wrapper where a deny would refuse legitimate calls (dotfiles #1223). Each
+fires only where its wrapper is on PATH, since the claude-sandbox image ships neither:
+
+  9. gh-rerun-failed: `gh run rerun … --failed`. The wrapper refuses a repo the
+     logged-in account does not own, and the command text does not name the owner, so a
+     work-org rerun is left to run raw.
+ 10. runlog: a stage that sends stdout to a file and stderr after it (`> f 2>&1`, `&> f`),
+     the hand-written capture `runlog` replaces. `/dev/null` is not a capture. ansible
+     refuses the Bash tool's non-blocking stdio, which `runlog` swaps for blocking files.
+
 `nudge()` returns (rule, text) or None. The hook adds the text as additionalContext
 beside whatever the deny rules decided, and only once per session per rule: `claim()`
 creates a marker file for the (transcript, rule) pair with O_EXCL, and only the call that
@@ -62,6 +72,7 @@ import hashlib
 import os
 import re
 import shlex
+import shutil
 import time
 from pathlib import Path
 
@@ -85,6 +96,8 @@ _REDIRECT_OPERATOR = re.compile(r"^(?:\d*|&)(?:<|>>?)&?$")
 # Stdin read from a file, which `cat` then prints: `<`, `0<`, or `<f` glued to its target.
 # `<<` and `<<<` are a heredoc and a herestring, not a file.
 _STDIN_FROM = re.compile(r"^0?<(?![<&])(.*)$")
+# A word that sends stdout to a file, with its target glued on or in the next word.
+_STDOUT_TO = re.compile(r"^(?:1?>>?|&>>?)(.*)$")
 # Read renders these as images or pages, not as text the size of the file.
 _NON_TEXT_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"})
 
@@ -288,6 +301,41 @@ def _whole_file_cat(stages, i, cwd: str) -> str | None:
     )
 
 
+def _gh_rerun_failed(stages, i) -> str | None:
+    stage = stages[i][0]
+    if stage[:3] != ["gh", "run", "rerun"] or "--failed" not in stage:
+        return None
+    if not shutil.which("gh-rerun-failed"):
+        return None
+    return (
+        "In a repo you own, `gh-rerun-failed <run-id> [-R owner/repo]` re-runs the failed "
+        "jobs without a prompt; it needs the sandbox off. It refuses a repo owned by "
+        "anyone else, such as a work org, so there `gh run rerun --failed` is the one to run."
+    )
+
+
+def _runlog(stages, i) -> str | None:
+    stage = stages[i][0]
+    if stage[0] == "runlog" or not shutil.which("runlog"):
+        return None
+    target, merged = None, False
+    words = iter(stage[1:])
+    for w in words:
+        if w in ("2>&1", "&>", "&>>") or w.startswith("&>"):
+            merged = True
+        m = _STDOUT_TO.match(w)
+        if m:
+            target = m.group(1) or next(words, None)
+    if not merged or not target or target == "/dev/null":
+        return None
+    return (
+        "To capture a command's output to a file, `runlog <name> -- <command> [args…]` "
+        "writes stdout and stderr to a log it names, then prints the path, the tail and "
+        "the exit code. It gives the command blocking stdio and `/dev/null` as stdin, "
+        "which `ansible-playbook` needs to start."
+    )
+
+
 _RULES = (
     ("unbounded-log", _unbounded_log),
     ("recursive-ls", _recursive_ls),
@@ -295,6 +343,8 @@ _RULES = (
     ("python-json", _python_json),
     ("show-substitution", _show_substitution),
     ("gitops-state", _gitops_state),
+    ("gh-rerun-failed", _gh_rerun_failed),
+    ("runlog", _runlog),
 )
 
 

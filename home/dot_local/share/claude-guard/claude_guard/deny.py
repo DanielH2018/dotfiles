@@ -3448,19 +3448,42 @@ _GH_READS = {
 _DOCKQ_VERBS = frozenset(
     {"ps", "images", "info", "logs", "manifest inspect", "compose ps", "compose logs"}
 )
-# The flags dockrun's `run` and `pull` parsers accept, as (takes a value, flags). A docker
-# run or pull with any other flag stays at the settings ask, so the operator can still
-# approve what dockrun would refuse. A bind (`-v`) is left out on purpose: dockrun vets its
-# source path, which this rule cannot.
-_DOCKRUN_FLAGS = {
+# The flags dockrun's `run` and `pull` parsers accept: (valued flags, bare flags). A valued
+# flag maps to the pattern its value must fullmatch for dockrun to pass it on unchanged; each
+# is dockrun's own check, tightened where dockrun rewrites or drops a value it accepts. A
+# docker run or pull outside these stays at the settings ask, so the operator can still
+# approve what dockrun would refuse or change. A bind (`-v`) is left out on purpose: dockrun
+# vets its source path, which this rule cannot.
+_DOCKRUN_NAME = r"[A-Za-z0-9][A-Za-z0-9_.-]*"
+_DOCKRUN_PLATFORM = r"[a-z0-9]+/[a-z0-9]+(?:/[a-z0-9]+)?"
+_DOCKRUN_IMAGE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/:@-]*")
+_DOCKRUN_FLAGS: dict[str, tuple[dict[str, re.Pattern[str]], frozenset[str]]] = {
     "run": (
-        frozenset(
-            {"-e", "--env", "-u", "--user", "-w", "--workdir", "--name", "--entrypoint",
-             "--network", "--platform", "--pull", "-p", "--publish"}
-        ),
+        {
+            **dict.fromkeys(
+                ("-e", "--env"),
+                # KEY=VALUE, at most 4096 characters, no control character but a tab.
+                re.compile(r"(?=[^\x00-\x08\x0a-\x1f\x7f]{1,4096}\Z)[A-Za-z_][A-Za-z0-9_]*=.*"),
+            ),
+            **dict.fromkeys(("-u", "--user"), re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.:-]*")),
+            **dict.fromkeys(("-w", "--workdir"), re.compile(r"/[A-Za-z0-9_./@+-]*")),
+            "--name": re.compile(_DOCKRUN_NAME),
+            "--entrypoint": re.compile(r"[A-Za-z0-9_./][A-Za-z0-9_./-]*"),
+            "--network": re.compile(rf"(?!host\Z){_DOCKRUN_NAME}"),
+            "--platform": re.compile(_DOCKRUN_PLATFORM),
+            "--pull": re.compile(r"missing|always|never"),
+            # Loopback only: dockrun rewrites a bare `8080:80`, which listens on every
+            # interface, to 127.0.0.1.
+            **dict.fromkeys(
+                ("-p", "--publish"), re.compile(r"127\.0\.0\.1:[0-9]{1,5}:[0-9]{1,5}(?:/tcp|/udp)?")
+            ),
+        },
         frozenset({"-d", "--detach", "--init", "--rm"}),
     ),
-    "pull": (frozenset({"--platform"}), frozenset({"-q", "--quiet"})),
+    "pull": (
+        {"--platform": re.compile(_DOCKRUN_PLATFORM)},
+        frozenset({"-q", "--quiet"}),
+    ),
 }  # fmt: skip
 _COMPOSE_VALUE_OPTS = frozenset(
     {"-f", "--file", "-p", "--project-name", "--env-file", "--profile", "--project-directory"}
@@ -3551,21 +3574,26 @@ def _route(argv: list[str], has: Callable[[str], bool]) -> Verdict | None:
 
 
 def _dockrun_takes(verb: str, args: list[str]) -> bool:
-    """Whether dockrun's `verb` accepts every flag ahead of the image in `args`."""
+    """Whether dockrun's `verb` passes every flag ahead of the image in `args`, and the image,
+    on to docker unchanged."""
     valued, bare = _DOCKRUN_FLAGS[verb]
     i = 0
     while i < len(args) and args[i].startswith("-"):
         flag, eq, value = args[i].partition("=")
         if flag in valued:
+            if eq and not flag.startswith("--"):
+                return False  # argparse reads `-e=A=1` as the value `=A=1`; docker as `A=1`.
             if not eq:
                 i += 1
-                value = args[i] if i < len(args) else ""
-            if flag == "--network" and (value == "host" or value.startswith("container:")):
+                if i == len(args):
+                    return False
+                value = args[i]
+            if not valued[flag].fullmatch(value):
                 return False
         elif flag not in bare or eq:
             return False
         i += 1
-    return i < len(args)
+    return i < len(args) and _DOCKRUN_IMAGE.fullmatch(args[i]) is not None
 
 
 def _reads_log(args: list[str]) -> bool:

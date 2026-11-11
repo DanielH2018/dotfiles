@@ -189,8 +189,13 @@ because their allow rules already run workspace code or load none. The DECIDED c
 wrapper, so no `CLAUDE.md` bullet has to. `gh pr|issue|run` reads, `gh search` and
 `gh stack view` route to `ghread`; `docker ps|images|info|logs`, `docker manifest inspect`
 and `docker compose ps|logs` route to `dockq`; `docker run|pull` route to `dockrun`
-when every flag is one dockrun accepts (`_DOCKRUN_FLAGS`, binds excluded). Any other run or
-pull stays at the settings ask, which the operator can approve. Each of
+when dockrun passes every flag, its value and the image to docker unchanged
+(`_DOCKRUN_FLAGS`, binds excluded). A bare `-e FOO`, a `-p` without `127.0.0.1:`, or an
+empty `--entrypoint` is refused, rewritten or dropped there, so that run or pull stays at
+the settings ask, which the operator can approve. `gh run rerun --failed` and a
+`> file 2>&1` capture are not refused, because `gh-rerun-failed` serves only repos the
+account owns and a redirect is often what is wanted; `claude_guard/nudges.py` names those
+wrappers once per session instead. Each of
 those is refused only when its wrapper is on the PATH that `env` carries, because the
 claude-sandbox image ships `gh` and `docker` without the wrappers. `find -exec`, `-execdir`,
 `-ok` and `-okdir` are refused everywhere, with `rg` and `xargs -0` named instead. Writes such

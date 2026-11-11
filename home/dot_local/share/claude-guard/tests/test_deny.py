@@ -8,6 +8,8 @@ went with the bash. The normalisation suite is tests/test_deny_normalization.py.
 pinned to a fake so the home-directory anchors are deterministic.
 """
 
+import importlib.machinery
+import importlib.util
 import json
 import re
 import subprocess
@@ -2669,7 +2671,7 @@ WRAPPED = [
     ("docker compose -p claude-otel logs loki", "dockq-route", "`dockq compose logs …`"),
     ("docker images --digests", "dockq-route", "`dockq images …`"),
     ("docker run --rm alpine true", "dockrun-route", "`dockrun run …`"),
-    ("docker run -d --network=bridge -e A=1 -p 8080:80 nginx", "dockrun-route", "`dockrun run …`"),
+    ("docker run -d --network=n -e A=1 -p 127.0.0.1:80:80 x", "dockrun-route", "`dockrun run …`"),
     ("docker pull -q grafana/loki:3.4.2", "dockrun-route", "`dockrun pull …`"),
 ]  # fmt: skip
 UNWRAPPED = [
@@ -2687,6 +2689,13 @@ UNWRAPPED = [
     "docker run --privileged alpine true",
     "docker run -it alpine sh",
     "docker pull --all-tags grafana/loki",
+    # dockrun would accept these flags but refuse, rewrite or drop the value (dotfiles #1225)
+    "docker run -e FOO alpine env",
+    "docker run -p 0.0.0.0:8080:80 nginx",
+    "docker run -p 8080 nginx",
+    "docker run -p 8080:80 nginx",
+    "docker run --entrypoint '' img",
+    "docker run --name a/b img",
     "find . -name '*.py' -print0",
 ]
 
@@ -2731,4 +2740,65 @@ def test_every_flag_routed_to_dockrun_is_one_dockrun_accepts(verb):
     ).stdout
     accepted = set(re.findall(r"(?<![\w-])(--?[a-z][\w-]*)", usage))
     valued, bare = d._DOCKRUN_FLAGS[verb]
-    assert valued | bare <= accepted
+    assert set(valued) | bare <= accepted
+
+
+def _load_dockrun():
+    script = REPO / "home" / "dot_local" / "bin" / "executable_dockrun"
+    loader = importlib.machinery.SourceFileLoader("dockrun", str(script))
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader("dockrun", loader))
+    loader.exec_module(module)
+    return module
+
+
+# Each flag's value, good and bad by dockrun's checks. Every `run` argv below is one flag and
+# one value ahead of the image, so the parity test covers each value on its own.
+_DOCKRUN_VALUES = {
+    ("-e", "--env"): ["A=1", "A=", "_x=a b", "A=1\tz", "FOO", "=1", "A=1\n", "A=" + "x" * 4094],
+    ("-u", "--user"): ["1000", "1000:1000", "app", "", "a/b", "-x"],
+    ("-w", "--workdir"): ["/src", "/", "src", "", "/a b"],
+    ("--name",): ["web", "web.1_a-b", "", "a/b", "-x", "a\n"],
+    ("--entrypoint",): ["pip3", "/bin/sh", "./run", "", "a b"],
+    ("--network",): ["bridge", "my-net", "host", "container:db", ""],
+    ("--platform",): ["linux/amd64", "linux/arm64/v8", "Linux/amd64", "linux", ""],
+    ("--pull",): ["missing", "always", "never", "sometimes", ""],
+    ("-p", "--publish"): [
+        "127.0.0.1:8080:80", "127.0.0.1:53:53/udp", "8080:80", "0.0.0.0:8080:80", "8080", "",
+    ],
+}  # fmt: skip
+# (argv after `docker`, the valued flag in it, that flag's value)
+_DOCKRUN_CASES = [
+    (["run", *form, "alpine"], flag, value)
+    for flags, values in _DOCKRUN_VALUES.items()
+    for flag in flags
+    for value in values
+    for form in ([flag, value], [f"{flag}={value}"])
+] + [
+    (["pull", "--platform", "linux/amd64", "grafana/loki:3.4.2"], "--platform", "linux/amd64"),
+    (["pull", "--platform=linux", "alpine"], "--platform", "linux"),
+    (["run", "alpine"], None, None),
+    (["run", "Alpine:3"], None, None),
+    (["run", "--rm", "-d", "--init", "alpine", "sh", "-c", "x"], None, None),
+    (["pull", "-q", "alpine"], None, None),
+]
+_LONG = {"-e": "--env", "-u": "--user", "-w": "--workdir", "-p": "--publish"}
+
+
+@pytest.mark.parametrize(("argv", "flag", "value"), _DOCKRUN_CASES, ids=repr)
+def test_dockrun_passes_every_routed_value_to_docker_unchanged(argv, flag, value):
+    # A routed run whose value dockrun refuses, rewrites or drops leaves the session with
+    # neither the raw command nor the run it asked for (dotfiles #1225).
+    if not d._dockrun_takes(argv[0], argv[1:]):
+        return
+    dockrun = _load_dockrun()
+    ns = dockrun._parser().parse_args(argv)
+    built = dockrun.build_run(ns, []) if argv[0] == "run" else dockrun.build_pull(ns)
+    if flag:
+        assert f"{_LONG.get(flag, flag)}={value}" in built
+    assert ns.image in built
+
+
+def test_the_routed_values_include_some_of_each_flag():
+    # Without this the parity test above could pass by routing nothing.
+    routed = {f for a, f, _ in _DOCKRUN_CASES if f and d._dockrun_takes(a[0], a[1:])}
+    assert set(d._DOCKRUN_FLAGS["run"][0]) | {"--platform"} <= routed
