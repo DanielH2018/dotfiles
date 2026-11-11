@@ -15,11 +15,6 @@
          never expires. The sweep deletes a file once it is 30 full days old. Set to 0 to
          disable both rows. */}}
     "CLAUDE_ARTIFACT_RETENTION_DAYS": "30",
-    {{/* The skins plugin draws its light palette unless something says the terminal is
-         dark. Its `auto` theme reads COLORFGBG, which no terminal here sets, then GNOME's
-         color-scheme, which reads 'default' (light) on the headless hosts. Every terminal
-         here runs Catppuccin Mocha, so pin it. */}}
-    "SKINS_THEME": "dark",
 {{ if and (has .chezmoi.hostname (list "daniel-box" "daniel-server" "daniel-pi")) (not (includeTemplate "is-agent" .)) }}
     {{/* sudo run from a `!` command has no terminal to prompt on, so without an askpass
          helper it just refuses. ~/.zshenv sets this too, but that only reaches shells that
@@ -972,15 +967,6 @@
          holds claude-code events; hosts without one get a skill that reports it cannot
          connect, not a broken session. */}}
     "claude-permission-audit@daniel-tools": true
-{{- if ne .chezmoi.os "darwin" }},
-    {{/* Restyles the transcript: tool rail, table cards, spinner, turn footer. Its prefs
-         (skin, band off) live in the plugin store, which
-         .chezmoiscripts/os-unix/run_onchange_after_seed-skins-prefs.sh.tmpl seeds.
-         Not on darwin, the work laptop: the plugin is disabled there, and registering
-         its marketplace below would still clone the third-party repo onto that host.
-         Gated on the OS for the reason the OTEL block gives: a hostname gate fails open. */}}
-    "skins@hellosverre-mods": true
-{{- end }}
   },
   "extraKnownMarketplaces": {
     "daniel-tools": {
@@ -990,15 +976,6 @@
       },
       "autoUpdate": true
     }
-{{- if ne .chezmoi.os "darwin" }},
-    {{/* Same darwin gate as skins@hellosverre-mods in enabledPlugins above. */}}
-    "hellosverre-mods": {
-      "source": {
-        "source": "github",
-        "repo": "hellosverre/claude-skins"
-      }
-    }
-{{- end }}
   },
   "sandbox": {{/* macOS-only: the block below is macOS-tuned (1Password agent socket, /System, allowUnixSockets) and Linux lacks bwrap/socat, so an enabled sandbox there just runs unsandboxed and warns about glob Read/Edit rules it can't enforce */}}{{ if eq .chezmoi.os "darwin" }}{
     "enabled": true,
