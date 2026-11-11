@@ -1,5 +1,6 @@
 """Scratch cleanup inside a session's own worktree: `rm` and `git clean` of untracked
-files, `git restore`, and `git stash drop` of an entry made on the worktree's branch.
+files, `git rm` of tracked ones, `git restore`, and `git stash drop` of an entry made on the
+worktree's branch.
 
 All three commands sit in the ask tier, because each destroys work no reflog brings back.
 A headless session has no prompt to answer, so every cleanup it ran was refused: 41
@@ -22,7 +23,9 @@ What bounds them:
   - Every operand resolves (realpath, so a symlink is followed) strictly below that
     toplevel, and never into its `.git` file.
   - `rm` refuses any operand git tracks, so it only deletes untracked files. A tracked file
-    goes through `git rm`, which the index records.
+    goes through `git rm`, which the index records. `git rm` takes only `-q` and `--cached`,
+    each operand must name exactly one tracked file, and without `-f` git refuses a file
+    with uncommitted changes, so HEAD still holds whatever it removes (dotfiles #1211).
   - `rm` also refuses an operand, or a directory holding one, that a specific ignore rule
     names or whose name marks state or a secret (a dotenv file, a `.venv`, a SOPS file, a
     key). A root catch-all rule (`/*`, as the homelab repo has) ignores every new scratch
@@ -274,6 +277,42 @@ def worktree_restore_safe(part: str, cwd: str, cwd_changed: bool, project_dir: s
                 return False
         elif not endopts and tok.startswith("-"):
             if len(tok) == 1 or any(ch not in _RESTORE_SHORT for ch in tok[1:]):
+                return False
+        elif tok.startswith(":"):
+            # `:(…)` is pathspec magic, which can name paths no operand spells out.
+            return False
+        else:
+            real = _confined(tok, root, cwd, cwd_changed)
+            if real is None or not _is_one_tracked_file(real, root):
+                return False
+            paths += 1
+    return paths > 0
+
+
+_GIT_RM_FLAGS = frozenset({"-q", "--quiet", "--cached"})
+
+
+def worktree_git_rm_safe(part: str, cwd: str, cwd_changed: bool, project_dir: str) -> bool:
+    """True when `part` is `git rm [-q] [--cached] [--] paths` with every path one tracked
+    file below the session worktree that holds both `cwd` and `project_dir`.
+
+    Without `-f`, git itself refuses a file whose content differs from HEAD or the index, so
+    whatever this lets through is still in HEAD. `-r` is refused because a directory names
+    files no operand spells out.
+    """
+    tokens = tokenize(part)
+    if not tokens or tokens[:2] != ["git", "rm"]:
+        return False
+    root = session_root(cwd, project_dir)
+    if root is None:
+        return False
+    paths = 0
+    endopts = False
+    for tok in tokens[2:]:
+        if not endopts and tok == "--":
+            endopts = True
+        elif not endopts and tok.startswith("-"):
+            if tok not in _GIT_RM_FLAGS:
                 return False
         elif tok.startswith(":"):
             # `:(…)` is pathspec magic, which can name paths no operand spells out.

@@ -7,7 +7,11 @@ import sys
 
 import pytest
 
-from claude_guard.checks.worktree_scratch import worktree_restore_safe, worktree_rm_safe
+from claude_guard.checks.worktree_scratch import (
+    worktree_git_rm_safe,
+    worktree_restore_safe,
+    worktree_rm_safe,
+)
 from claude_guard.judge import judge
 from claude_guard.rules import load_rules
 from claude_guard.tables import scratch_roots
@@ -123,6 +127,36 @@ def test_git_restore_from_another_source_or_with_other_options_is_refused(repo):
         "git restore .",
     ]:
         assert not worktree_restore_safe(command, wt, cwd_changed=False, project_dir=wt), command
+
+
+@only_posix_allow
+def test_git_rm_of_tracked_files_in_a_session_worktree_is_allowed(repo):
+    _, wt = repo
+    for command in [
+        "git rm src/app.py",
+        "git rm -q --cached -- src/app.py",
+        f"git rm --quiet {wt}/src/app.py",
+    ]:
+        assert worktree_git_rm_safe(command, wt, cwd_changed=False, project_dir=wt), command
+
+
+def test_git_rm_forced_recursive_untracked_or_outside_the_worktree_is_refused(repo):
+    main, wt = repo
+    for command in [
+        "git rm",
+        "git rm -f src/app.py",
+        "git rm --force src/app.py",
+        "git rm -r src",
+        "git rm src",
+        "git rm 'src/*.py'",
+        "git rm ':(glob)src/*'",
+        "git rm .git-pr-body.md",
+        f"git rm {main}/src/app.py",
+        "git rm ../../../src/app.py",
+    ]:
+        assert not worktree_git_rm_safe(command, wt, cwd_changed=False, project_dir=wt), command
+    assert not worktree_git_rm_safe("git rm src/app.py", wt, cwd_changed=True, project_dir=wt)
+    assert not worktree_git_rm_safe("git rm src/app.py", main, cwd_changed=False, project_dir=main)
 
 
 @only_posix_allow

@@ -42,6 +42,7 @@ from claude_guard.checks.scratch import rm_confined, tokenize, write_confined
 from claude_guard.checks.worktree_scratch import (
     session_root,
     worktree_clean_safe,
+    worktree_git_rm_safe,
     worktree_restore_safe,
     worktree_rm_safe,
     worktree_stash_drop_safe,
@@ -1111,6 +1112,8 @@ def judge_segment(
         return True, "worktree-rm-check"
     if word == "git" and worktree_restore_safe(part, cwd, cwd_changed, project_dir):
         return True, "worktree-restore-check"
+    if word == "git" and worktree_git_rm_safe(part, cwd, cwd_changed, project_dir):
+        return True, "worktree-git-rm-check"
     if word == "git" and worktree_clean_safe(part, cwd, cwd_changed, project_dir):
         return True, "worktree-clean-check"
     if word == "git" and worktree_stash_drop_safe(part, cwd, cwd_changed, project_dir):
