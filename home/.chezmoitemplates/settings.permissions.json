@@ -464,9 +464,9 @@
       {{/* Issue plumbing runs unattended for the same reason PR plumbing does. `scripts/dev/findings.py`
            in the server repo files, comments on, relabels and closes issues at the end of a review or a
            session, and CLAUDE.md instructs every session to file a finding it will not fix. Each verb is
-           reversible from the GitHub UI; `gh issue delete` is deliberately absent. In auto mode the
-           classifier judges the command text and suspends these rules, so the wrapper's stable command
-           line is what keeps that judgement consistent — these entries help outside auto mode. */}}
+           reversible from the GitHub UI; `gh issue delete` is deliberately absent. Auto mode suspends
+           these rules, so they decide only outside it. Inside auto mode, the `findings.py` entry in
+           settings.base.json's autoMode.allow states what each verb writes (dotfiles#1200). */}}
       "Bash(gh issue create:*)",
       "Bash(gh issue edit:*)",
       "Bash(gh issue comment:*)",
