@@ -2690,7 +2690,7 @@ UNWRAPPED = [
     "docker run -it alpine sh",
     "docker pull --all-tags grafana/loki",
     # dockrun would accept these flags but refuse, rewrite or drop the value (dotfiles #1225)
-    "docker run -e FOO alpine env",
+    "docker run -e FOO alpine true",
     "docker run -p 0.0.0.0:8080:80 nginx",
     "docker run -p 8080 nginx",
     "docker run -p 8080:80 nginx",
