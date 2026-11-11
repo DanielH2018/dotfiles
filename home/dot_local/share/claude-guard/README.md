@@ -188,7 +188,9 @@ because their allow rules already run workspace code or load none. The DECIDED c
 `wrapper_route` refuses a raw command that a wrapper replaces, and its message names the
 wrapper, so no `CLAUDE.md` bullet has to. `gh pr|issue|run` reads, `gh search` and
 `gh stack view` route to `ghread`; `docker ps|images|info|logs`, `docker manifest inspect`
-and `docker compose ps|logs` route to `dockq`; `docker run|pull` route to `dockrun`. Each of
+and `docker compose ps|logs` route to `dockq`; `docker run|pull` route to `dockrun`
+when every flag is one dockrun accepts (`_DOCKRUN_FLAGS`, binds excluded). Any other run or
+pull stays at the settings ask, which the operator can approve. Each of
 those is refused only when its wrapper is on the PATH that `env` carries, because the
 claude-sandbox image ships `gh` and `docker` without the wrappers. `find -exec`, `-execdir`,
 `-ok` and `-okdir` are refused everywhere, with `rg` and `xargs -0` named instead. Writes such
