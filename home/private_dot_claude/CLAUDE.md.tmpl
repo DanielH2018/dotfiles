@@ -84,7 +84,7 @@ the place the repo already keeps tests for that kind of change. Verify however y
 working, but a scratch script or a quick check is not a test — don't promote it into an extra
 permanent test file. This governs extras only: every behaviour the task asks for gets its test.
 
-When a change adds or edits tests, apply the `test-scenario-hygiene` skill to the test diff
+When a change adds tests, apply the `test-scenario-hygiene` skill to the test diff
 before you stop; `stop-checks.py` blocks once if you don't. Read its *Anti-patterns* section
 before you write a stub or a textual assertion.
 

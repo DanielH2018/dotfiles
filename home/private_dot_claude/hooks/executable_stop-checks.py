@@ -54,10 +54,11 @@ Checks:
       all" is not.
 
   test-hygiene (session) -- CLAUDE.md's Testing section names `test-scenario-hygiene`
-      as the sweep that ends a change carrying tests. The session edited a file on a
-      test path outside scratch space, and neither invoked that skill nor Read its
-      SKILL.md. The prose alone never fired it: 0 loads across 71 test-editing
-      transcripts from 2026-09-09 to 2026-10-21.
+      as the sweep that ends a change carrying tests. The session added a test
+      definition to a file on a test path outside scratch space, and neither invoked
+      that skill nor Read its SKILL.md. The prose alone never fired it: 0 loads across
+      71 test-editing transcripts from 2026-09-09 to 2026-10-21. An edit that adds no
+      test passes, because the skill itself says to skip a session that added none.
 
   migration (session) -- rules/sql.md. The session wrote a file under migrations/,
       migration/ or db/migrate/, and either the file names no down step or
@@ -257,6 +258,7 @@ class Session:
 
     def __init__(self, transcript: Path | None):
         self.edited: list[str] = []  # file paths passed to Edit/Write/NotebookEdit
+        self.tests_added: set[str] = set()  # paths an edit added a test definition to
         self.created: set[str] = set()  # paths whose Write result was "create"
         self.bash: list[str] = []  # Bash commands
         self.agents: set[str] = set()  # subagent_type of every Agent/Task call
@@ -293,6 +295,8 @@ class Session:
             path = data.get("file_path") or data.get("notebook_path")
             if isinstance(path, str):
                 self.edited.append(path)
+                if _adds_test(name, data):
+                    self.tests_added.add(path)
         elif name == "Bash" and isinstance(data.get("command"), str):
             self.bash.append(data["command"])
         elif name in ("Agent", "Task") and isinstance(data.get("subagent_type"), str):
@@ -609,6 +613,34 @@ def tests_for_source(turn: Turn) -> str | None:
 
 HYGIENE_SKILL = "test-scenario-hygiene"
 
+# A test definition in the frameworks the rules cover: pytest, node:test/jest/mocha,
+# Go, Rust, JUnit, RSpec and bats.
+TEST_DEF = re.compile(
+    r"^\s*(?:async\s+)?def test_\w*\s*\("
+    r"|\b(?:test|it)(?:\.\w+)?\s*\(\s*['\"`]"
+    r"|\bfunc Test\w*\s*\("
+    r"|#\[(?:\w+::)?test\]"
+    r"|@Test\b"
+    r"|^\s*it\s+['\"]"
+    r"|^\s*@test\s+['\"]",
+    re.M,
+)
+
+
+def _adds_test(name: str, data: dict) -> bool:
+    """True when this edit leaves more test definitions than it replaced."""
+
+    def count(text) -> int:
+        return len(TEST_DEF.findall(text)) if isinstance(text, str) else 0
+
+    if name == "Write":
+        return count(data.get("content")) > 0
+    edits = data.get("edits") if name == "MultiEdit" else [data]
+    return any(
+        isinstance(e, dict) and count(e.get("new_string")) > count(e.get("old_string"))
+        for e in edits or []
+    )
+
 
 def test_hygiene(turn: Turn) -> str | None:
     session = turn.session()
@@ -619,7 +651,7 @@ def test_hygiene(turn: Turn) -> str | None:
     tests = sorted(
         {
             p
-            for p in session.edited
+            for p in session.tests_added
             if TEST_PATH.search(p)
             and not _is_scratch(p, turn.env)
             and not _outside_work_tree(p)
@@ -629,7 +661,7 @@ def test_hygiene(turn: Turn) -> str | None:
         return None
     shown = ", ".join(tests[:5]) + (" ..." if len(tests) > 5 else "")
     return (
-        f"This session edited test files ({shown}) and never loaded "
+        f"This session added tests ({shown}) and never loaded "
         f"`{HYGIENE_SKILL}`. CLAUDE.md names it as the sweep that ends a change "
         "carrying tests. Load it, apply it to this session's test changes, then stop "
         "again. This fires once per session."

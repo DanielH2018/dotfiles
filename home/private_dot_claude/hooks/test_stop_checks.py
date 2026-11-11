@@ -319,11 +319,52 @@ with tempfile.TemporaryDirectory(
 
 # ---------------------------------------------------------------- test-hygiene
 
-TEST_EDIT = tool("Edit", file_path="/work/repo/tests/test_ledger.py")
+TEST_EDIT = tool(
+    "Edit",
+    file_path="/work/repo/tests/test_ledger.py",
+    old_string="",
+    new_string="def test_balance_is_never_negative():\n    assert ledger.ok()\n",
+)
 
 check(
-    "editing a test file without loading test-scenario-hygiene blocks",
+    "adding a test without loading test-scenario-hygiene blocks",
     tagged(evaluate("Done.", [user("x"), TEST_EDIT]), "test-hygiene"),
+)
+check(
+    "adding a node:test case blocks too",
+    tagged(
+        evaluate(
+            "Done.",
+            [
+                user("x"),
+                tool(
+                    "Edit",
+                    file_path="/work/repo/tests/ledger.test.js",
+                    old_string="",
+                    new_string="test('balance is never negative', () => {});\n",
+                ),
+            ],
+        ),
+        "test-hygiene",
+    ),
+)
+check(
+    "changing an assertion inside an existing test passes",
+    not tagged(
+        evaluate(
+            "Done.",
+            [
+                user("x"),
+                tool(
+                    "Edit",
+                    file_path="/work/repo/tests/test_ledger.py",
+                    old_string="assert found.has('a.sh')",
+                    new_string="assert found.has('b.sh')",
+                ),
+            ],
+        ),
+        "test-hygiene",
+    ),
 )
 check(
     "a test edit after invoking the skill passes",
@@ -355,7 +396,17 @@ check(
 check(
     "a scratch test file under /tmp passes",
     not tagged(
-        evaluate("Done.", [user("x"), tool("Write", file_path="/tmp/test_probe.py")]),
+        evaluate(
+            "Done.",
+            [
+                user("x"),
+                tool(
+                    "Write",
+                    file_path="/tmp/test_probe.py",
+                    content="def test_probe():\n    pass\n",
+                ),
+            ],
+        ),
         "test-hygiene",
     ),
 )
