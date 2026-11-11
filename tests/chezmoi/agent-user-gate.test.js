@@ -143,7 +143,6 @@ test('the agent skips the scripts that need sudo, a tty or a toolchain Ansible s
     ['.chezmoiscripts', 'os-linux', 'run_onchange_after_install-cli-tools.sh.tmpl'],
     ['.chezmoiscripts', 'os-linux', 'run_onchange_after_install-tmux.sh.tmpl'],
     ['.chezmoiscripts', 'post-install', 'run_onchange_after_install-js-lint.sh.tmpl'],
-    ['.chezmoiscripts', 'post-install', 'run_onchange_after_install-node-lsps.sh.tmpl'],
   ]) {
     const file = srcPath(...rel);
     assert.strictEqual(onBox(file, true).trim(), '', `${rel.at(-1)} runs for the agent`);

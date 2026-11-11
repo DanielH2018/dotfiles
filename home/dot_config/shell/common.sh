@@ -25,14 +25,11 @@ export IGNOREEOF=2
 [ -n "$ZSH_VERSION" ] && setopt ignore_eof 2>/dev/null
 
 # --- Editor ---
-# Neovim is the configured editor (dot_config/nvim/); no vimrc is tracked. The Linux
-# installer pins nvim, but the Brewfile does not list it, so fall back to vim where no
-# nvim is on PATH. Man pages read in nvim too (search, yank, syntax) when it's there.
-if command -v nvim >/dev/null 2>&1; then
-  export EDITOR='nvim'
-  export MANPAGER='nvim +Man!'
+# nano where it exists, which covers Fedora, Debian and macOS out of the box; vi otherwise.
+if command -v nano >/dev/null 2>&1; then
+  export EDITOR='nano'
 else
-  export EDITOR='vim'
+  export EDITOR='vi'
 fi
 export VISUAL="$EDITOR"
 
@@ -222,9 +219,9 @@ fi
 [ -z "${_FNM_ENV_LOADED:-}" ] && command -v fnm >/dev/null 2>&1 && eval "$(fnm env --use-on-cd --shell "$_CUR_SHELL")"
 
 # bat ships a vendored Catppuccin Mocha theme (dot_config/bat/themes) and a post-install
-# script builds its cache, but nothing ever SELECTED it — only yazi passed --theme
-# explicitly, so every other bat call (including the fzf preview below) rendered in bat's
-# Monokai default. An env var rather than a bat config file: the config isn't chezmoi-managed.
+# script builds its cache, and only BAT_THEME selects it: without it every bat call
+# (including the fzf preview below) renders in bat's Monokai default. An env var rather than a bat config file: the config
+# isn't chezmoi-managed.
 command -v bat >/dev/null 2>&1 && export BAT_THEME="Catppuccin Mocha"
 
 # --- fzf: env + previews (the shell keybinding integration lives in each rc) ---
@@ -273,19 +270,6 @@ fi
 
 # --- fd helper ---
 command -v fd >/dev/null 2>&1 && ff() { fd "$1" "${2:-.}" --hidden --follow --exclude .git; }
-
-# --- Yazi wrapper: cd to the last-browsed dir on quit ---
-if command -v yazi >/dev/null 2>&1; then
-  y() {
-    local tmp cwd
-    tmp="$(mktemp -t yazi-cwd.XXXXXX)"
-    yazi "$@" --cwd-file="$tmp"
-    IFS= read -r -d '' cwd < "$tmp"
-    # shellcheck disable=SC2164  # quit-without-cd leaves cwd empty; either way fall through to cleanup
-    [ -n "$cwd" ] && [ "$cwd" != "$PWD" ] && builtin cd -- "$cwd"
-    rm -f -- "$tmp"
-  }
-fi
 
 # --- fastfetch: system-info banner with the best logo/image protocol per terminal ---
 # One implementation for both shells (bash and zsh diverged here before): each rc calls it
@@ -406,14 +390,6 @@ if command -v chezmoi >/dev/null 2>&1; then
 fi
 # shellcheck disable=SC2009  # deliberately shows the full `ps aux` line, which pgrep doesn't
 psgrep() { ps aux | grep -i "$1" | grep -v grep; }
-
-# --- HTTP helpers via curlie (prefixed to avoid collisions with system `delete` etc.) ---
-if command -v curlie >/dev/null 2>&1; then
-  hget()    { curlie GET "$@"; }
-  hpost()   { curlie POST "$@"; }
-  hput()    { curlie PUT "$@"; }
-  hdelete() { curlie DELETE "$@"; }
-fi
 
 # --- Dump the clipboard image to a PNG for Claude Code ---
 # Claude can't take a clipboard image straight from the terminal, so save it to a file and

@@ -13,17 +13,14 @@ You'll be prompted whether this is a **work** machine (gates work-only config). 
 
 `chezmoi apply` provisions the CLI toolchain itself on **Debian/Ubuntu (apt)** and
 **Fedora (dnf)**; package names per distro live in `home/.chezmoidata/tools.toml`. Tools with
-no `apt`/`dnf` entry (eza, fzf, zoxide, ripgrep, starship, fastfetch, curlie, sd, nvim, yazi)
-come from GitHub release binaries on *every* Linux, so the two distros run one code path.
+no `apt`/`dnf` entry (eza, fzf, zoxide, ripgrep, starship, fastfetch) come from GitHub
+release binaries on *every* Linux, so the two distros run one code path.
 
 On any other distro the installer warns, skips the package phase, and still lays down the
 release binaries — install these by hand for the full experience (configs degrade gracefully
 without them):
 
     zsh starship eza fzf zoxide fastfetch        # then: chsh -s "$(which zsh)"
-
-One Fedora-specific divergence, because Fedora doesn't package it: `gron` falls back to its
-GitHub release binary.
 
 ## Layout
 

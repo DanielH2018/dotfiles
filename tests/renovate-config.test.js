@@ -49,7 +49,7 @@ const managers = config.customManagers;
 const read = (f) => fs.readFileSync(repoPath(f), 'utf8');
 
 test('every custom manager finds at least one file and one pin', () => {
-  assert.ok(managers.length >= 5, `expected the five annotated files' managers, found ${managers.length}`);
+  assert.ok(managers.length >= 4, `expected the four annotated files' managers, found ${managers.length}`);
   for (const mgr of managers) {
     const files = tracked.filter((f) => mgr.managerFilePatterns.some((p) => filePattern(p).test(f)));
     assert.ok(files.length > 0, `no tracked file matches ${mgr.managerFilePatterns}`);
@@ -67,7 +67,7 @@ test('every # renovate: annotation in the tree is consumed by a manager', () => 
     }
   });
   // Non-vacuity: name the files the census must find, so a moved file fails by name.
-  for (const f of ['home/.chezmoidata/tools.toml', 'home/.chezmoidata/packages.toml',
+  for (const f of ['home/.chezmoidata/tools.toml',
     'home/private_dot_claude/sandbox/Dockerfile.base',
     'home/private_dot_claude/sandbox/executable_sandbox-image.sh',
     'home/.chezmoiscripts/os-linux/run_onchange_after_install-tmux.sh.tmpl']) {
@@ -86,8 +86,6 @@ test('the managers extract the pin value, not a neighbouring string', () => {
   const want = {
     'eza-community/eza': /^v\d+\.\d+\.\d+$/,
     prek: /^\d+\.\d+\.\d+$/,
-    '@vtsls/language-server': /^\d+\.\d+\.\d+$/,
-    'Genymobile/scrcpy': /^v\d/,
     '@anthropic-ai/claude-code': /^\d+\.\d+\.\d+$/,
     'rust-lang/rust': /^\d+\.\d+\.\d+$/,
     'tmux/tmux': /^\d+\.\d+[a-z]?$/,

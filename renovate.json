@@ -35,23 +35,13 @@
   },
   "customManagers": [
     {
-      "description": "tools.toml: the [releases] tags the Linux installer downloads, the [toolchain] versions CI and the machine installers read, and the [[node_lsps]] versions. Every pin sits on the line after its `# renovate: datasource=... depName=...` annotation. The value is the LAST quoted string on that line, which covers all three shapes: `eza = { repo = \"...\", tag = \"v0.23.5\" }`, `prek = \"0.5.3\"` and `version = \"0.3.0\"`.",
+      "description": "tools.toml: the [releases] tags the Linux installer downloads, and the [toolchain] versions CI and the machine installers read. Every pin sits on the line after its `# renovate: datasource=... depName=...` annotation. The value is the LAST quoted string on that line, which covers both shapes: `eza = { repo = \"...\", tag = \"v0.23.5\" }` and `prek = \"0.5.3\"`.",
       "customType": "regex",
       "managerFilePatterns": [
         "/^home/\\.chezmoidata/tools\\.toml$/"
       ],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n[^\\n]*\"(?<currentValue>[^\"\\n]+)\"[ }]*\\n"
-      ]
-    },
-    {
-      "description": "packages.toml: the `tarball_tag` of an app installed from an upstream release directory (scrcpy). Same annotation shape as tools.toml.",
-      "customType": "regex",
-      "managerFilePatterns": [
-        "/^home/\\.chezmoidata/packages\\.toml$/"
-      ],
-      "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n[a-z_]+ = \"(?<currentValue>[^\"\\n]+)\"\\n"
       ]
     },
     {

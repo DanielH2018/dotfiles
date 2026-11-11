@@ -56,6 +56,5 @@ by hand, and it is what this list is for.
   `chezmoi init` from `home/.chezmoi.toml.tmpl` (answers the `work` and `profile` prompts).
   Re-run `chezmoi init` if the "config file template has changed" warning appears.
 
-Desktop-environment state (KDE Plasma, GTK, Firefox, dconf) and generated payload (yazi's
-`ya pkg install` plugins/flavors) are ignored too, but need nothing from you — the desktop
-rewrites its own state on first login, and yazi reinstalls from the tracked `package.toml`.
+Desktop-environment state (KDE Plasma, GTK, Firefox, dconf) is ignored too, but needs
+nothing from you: the desktop rewrites its own state on first login.

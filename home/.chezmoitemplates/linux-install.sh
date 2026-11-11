@@ -15,13 +15,12 @@ of the run. Nothing here calls `exit` — convergence checks belong to the calle
 # that thought it had sandboxed itself installed straight into the real ~/.local/bin and replaced
 # live binaries with its fixtures. tests/install/linux-install-lib.test.js fails if that form comes back.
 #
-# To sandbox this module, redirect HOME — all three install destinations derive from it, so there
-# is no fourth one left pointing at the live machine when you forget it. The individual overrides
+# To sandbox this module, redirect HOME — both install destinations derive from it, so there
+# is no third one left pointing at the live machine when you forget it. The individual overrides
 # are for aiming a single destination somewhere else, not for containment.
 : "${BIN_DIR:=$HOME/.local/bin}"
 : "${VER_DIR:=$BIN_DIR/.versions}"  # release tag last installed per tool, so a re-apply upgrades
                                     # a stale binary in place instead of skipping it (install-once).
-: "${APP_DIR:=$HOME/.local/share}"  # unpacked multi-file release apps (scrcpy), symlinked into BIN_DIR
 : "${REPO_DIR:=/etc/yum.repos.d}"
 # The apt counterparts to REPO_DIR. Named rather than written inline in apt_repo_add so both
 # package managers' repo helpers can be aimed at a throwaway directory the same way; the dnf side
@@ -65,16 +64,16 @@ pkg_install() { # $@=packages. dnf refreshes its own metadata, so it needs no `u
 have_sudo() { sudo -v; }
 
 # --- 2. Arch naming ------------------------------------------------------------------------
-# Per-project arch names differ: Rust target triple (eza/sd/scrcpy) vs fastfetch's -aarch64 vs
-# goreleaser's arm64 (curlie). Downloading the wrong arch would tar-extract cleanly but
+# Per-project arch names differ: Rust target triple (eza) vs fastfetch's -aarch64 vs
+# goreleaser's arm64 (fzf). Downloading the wrong arch would tar-extract cleanly but
 # Exec-format-error at first use, so an arch we lack names for leaves every var empty and
 # callers skip their release installs outright. Each caller uses only the names it needs, so the
 # rest read as unused to shellcheck.
 # shellcheck disable=SC2034
 case "$(uname -m)" in
-  x86_64|amd64)  rust_arch=x86_64;  ff_arch=amd64;   go_arch=amd64;  nvim_arch=x86_64; rg_target=x86_64-unknown-linux-musl ;;
-  aarch64|arm64) rust_arch=aarch64; ff_arch=aarch64; go_arch=arm64;  nvim_arch=arm64;  rg_target=aarch64-unknown-linux-gnu ;;
-  *)             rust_arch="";      ff_arch="";      go_arch="";     nvim_arch="";     rg_target="" ;;
+  x86_64|amd64)  rust_arch=x86_64;  ff_arch=amd64;   go_arch=amd64;  rg_target=x86_64-unknown-linux-musl ;;
+  aarch64|arm64) rust_arch=aarch64; ff_arch=aarch64; go_arch=arm64;  rg_target=aarch64-unknown-linux-gnu ;;
+  *)             rust_arch="";      ff_arch="";      go_arch="";     rg_target="" ;;
 esac
 
 # --- 3. GitHub release installers ----------------------------------------------------------
@@ -131,39 +130,6 @@ install_release() {
     fi
   else
     echo "$TAG: failed to fetch $bin ($url)" >&2
-  fi
-  rm -rf "$tmp"
-}
-
-# Version-aware install for a release that ships a DIRECTORY rather than one binary (scrcpy
-# carries scrcpy-server and adb beside its executable, and locates the server via /proc/self/exe
-# — which resolves the symlink below back into the unpacked tree, so a plain symlink is enough).
-# $1=appname $2=owner/repo $3=pinned tag $4=asset-URL template $5=binary inside the archive.
-install_tarball_app() {
-  app="$1"; repo="$2"; tag="$3"; tmpl="$4"; bin="$5"
-  tag="$(pinned_tag "$repo" "$tag")"
-  if [ -z "$tag" ]; then echo "$TAG: no pinned tag for $repo" >&2; return 0; fi
-  [ -x "$BIN_DIR/$bin" ] && [ "$(recorded_tag "$app")" = "$tag" ] && return 0
-  url="$(_asset_url "$tag" "$tmpl")"
-  old="$(recorded_tag "$app")"
-  tmp="$(mktemp -d)"
-  if curl -fsSL "$url" -o "$tmp/a.tgz" 2>/dev/null && tar xzf "$tmp/a.tgz" -C "$tmp" 2>/dev/null; then
-    src="$(find "$tmp" -mindepth 1 -maxdepth 1 -type d | head -1)"
-    if [ -n "$src" ] && [ -f "$src/$bin" ]; then
-      # ${app:?} guards the replace-in-place below: an empty $app would make this `rm -rf` take
-      # out all of ~/.local/share rather than one unpacked app.
-      rm -rf "$APP_DIR/${app:?}"
-      if mkdir -p "$APP_DIR" && cp -a "$src" "$APP_DIR/$app"; then
-        chmod 0755 "$APP_DIR/$app/$bin"
-        ln -sf "$APP_DIR/$app/$bin" "$BIN_DIR/$bin"
-        printf '%s' "$tag" > "$VER_DIR/$app"
-        echo "$TAG: installed $app ${old:+$old -> }$tag"
-      fi
-    else
-      echo "$TAG: $bin not found in archive ($url)" >&2
-    fi
-  else
-    echo "$TAG: failed to fetch $app ($url)" >&2
   fi
   rm -rf "$tmp"
 }
@@ -289,9 +255,9 @@ apt_repo_add() {
   sudo apt-get update -qq
 }
 
-# --- 6. Zip / prefix-merge / matched-file release installers -------------------------------
-# These three take $tag already resolved, the same as install_release/install_tarball_app above
-# now do. Bitwarden is the one caller that still works its own tag out at run time: it tags the
+# --- 6. Zip / matched-file release installers ----------------------------------------------
+# These two take $tag already resolved, the same as install_release above
+# does. Bitwarden is the one caller that still works its own tag out at run time: it tags the
 # CLI release "cli-vYYYY.M.P" alongside the desktop app's own tags, so neither a releases/latest
 # redirect nor a plain pin spells it, and that caller hands the tag in ready-made.
 _fetch_archive() { # $1=url $2=dest-dir -> extract $1 into $2; .zip needs unzip, else tar xzf
@@ -314,7 +280,7 @@ _report_installed() { # $1=verkey $2=tag $3=old-tag -> records $2 under $1 and p
   echo "$TAG: installed $1 ${3:+$3 -> }$2"
 }
 
-# Version-aware zip release install, for vendors (yazi) that ship .zip instead of .tar.gz.
+# Version-aware zip release install, for vendors (Bitwarden CLI) that ship .zip instead of .tar.gz.
 # $1=verkey $2=tag (already resolved) $3=asset-URL template $4...=binary names to install into
 # $BIN_DIR at 0755; the first name doubles as the already-current sentinel, and the tag is only
 # recorded once it has landed, so a partial extract still upgrades on the next apply.
@@ -340,38 +306,6 @@ install_release_zip() {
       fi
     done
     [ "$status" -eq 0 ] && _report_installed "$verkey" "$tag" "$old"
-  else
-    echo "$TAG: failed to fetch $verkey ($url)" >&2
-  fi
-  rm -rf "$tmp"
-  return "$status"
-}
-
-# Version-aware install for a release whose tarball is one top-level directory holding a full
-# prefix tree (Neovim: bin/nvim + share/nvim/runtime) rather than one binary or an app directory
-# of its own — so, unlike install_tarball_app, the payload gets merged INTO an existing prefix
-# ($4) rather than unpacked beside it, and bin/nvim can find ../share/nvim/runtime at the paths
-# it expects. $1=verkey $2=tag (already resolved) $3=asset-URL template $4=prefix-dir
-# $5=sentinel-bin (path under $4 that proves the merge worked, e.g. bin/nvim).
-install_prefix_tarball() {
-  verkey="$1"; tag="$2"; tmpl="$3"; prefix="$4"; sentinel="$5"
-  [ -x "$prefix/$sentinel" ] && [ "$(recorded_tag "$verkey")" = "$tag" ] && return 0
-  old="$(recorded_tag "$verkey")"
-  url="$(_asset_url "$tag" "$tmpl")"
-  tmp="$(mktemp -d)"
-  status=1
-  if _fetch_archive "$url" "$tmp"; then
-    src="$(find "$tmp" -mindepth 1 -maxdepth 1 -type d | head -1)"
-    if [ -n "$src" ] && mkdir -p "$prefix" && cp -a "$src"/. "$prefix"/; then
-      if [ -x "$prefix/$sentinel" ]; then
-        _report_installed "$verkey" "$tag" "$old"
-        status=0
-      else
-        echo "$TAG: $sentinel missing from $prefix after merging $verkey ($url)" >&2
-      fi
-    else
-      echo "$TAG: $verkey archive did not contain a top-level directory ($url)" >&2
-    fi
   else
     echo "$TAG: failed to fetch $verkey ($url)" >&2
   fi

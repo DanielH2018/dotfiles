@@ -31,10 +31,10 @@ const source = fs.readFileSync(LIB, 'utf8');
 // Every destination the module resolves at source time. APT_LIST_DIR/APT_KEYRING_DIR joined the
 // list late: apt_repo_add wrote /etc/apt/... inline, so the apt half of the repo helpers could not
 // be aimed at a throwaway directory the way the dnf half already could via REPO_DIR.
-const DESTINATIONS = ['BIN_DIR', 'VER_DIR', 'APP_DIR', 'REPO_DIR', 'APT_LIST_DIR', 'APT_KEYRING_DIR'];
+const DESTINATIONS = ['BIN_DIR', 'VER_DIR', 'REPO_DIR', 'APT_LIST_DIR', 'APT_KEYRING_DIR'];
 // The subset deriving from $HOME — the ones redirecting HOME alone is enough to contain. The rest
 // are system paths that no amount of HOME juggling moves, which is why they need explicit overrides.
-const HOME_DERIVED = ['BIN_DIR', 'VER_DIR', 'APP_DIR'];
+const HOME_DERIVED = ['BIN_DIR', 'VER_DIR'];
 
 // Skip cleanly where chezmoi isn't installed (minimal CI / sandbox) rather than failing with a
 // spurious spawn ENOENT. --source pins the render to THIS checkout; without it chezmoi resolves
@@ -169,8 +169,8 @@ test('no destination is hardcoded past the override', { skip: false }, () => {
 
 // --- pinned_tag: the one remaining route to the releases/latest redirect ---------------------
 //
-// install_release and install_tarball_app used to resolve their own tag through that redirect,
-// which made the install DATE decide which build a machine got. They now take the tag from the
+// install_release used to resolve its own tag through that redirect,
+// which made the install DATE decide which build a machine got. It now takes the tag from the
 // caller, and pinned_tag is the single place that can still ask upstream — behind INSTALL_LATEST,
 // which nothing in normal operation sets. The pair below is what proves the default is the pin
 // and the override is live; a helper that quietly ignored INSTALL_LATEST and one that quietly

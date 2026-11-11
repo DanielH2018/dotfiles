@@ -26,9 +26,6 @@ brew "util-linux"
 # an interactive PATH, and a hook launched from elsewhere may not see it.
 brew "coreutils"
 brew "mas"
-# neovim and yazi are OS-unique (tools.toml's header): the Linux cli-tools installer fetches
-# them from upstream releases and names this file as their macOS route.
-brew "neovim"
 brew "pipx"
 brew "pre-commit"
 # tfenv supplies the host Terraform default that sandbox-image.sh reads into the image.
@@ -39,14 +36,6 @@ brew "tmux"
 # both. Windows gets uv from winget. Not in tools.toml: no apt field means no shared row.
 brew "uv"
 brew "wget"
-brew "yazi"
-# yazi's previewers: glow renders markdown (dot_config/yazi/yazi.toml), poppler PDFs, resvg
-# SVGs, and sevenzip lists archives. yazi runs without them and previews those types as
-# plain text.
-brew "glow"
-brew "poppler"
-brew "resvg"
-brew "sevenzip"
 brew "pulumi/tap/pulumi"
 
 # Core CLI toolchain — generated from .chezmoidata/tools.toml (the shared source of truth

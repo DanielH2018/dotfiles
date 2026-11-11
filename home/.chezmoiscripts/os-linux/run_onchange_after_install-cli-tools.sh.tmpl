@@ -46,21 +46,10 @@ TAG=install-cli-tools
 # on is CLI-toolchain-specific.
 {{ includeTemplate "linux-install.sh" . }}
 
-# 1. unzip up front — a release install below (yazi) extracts a .zip, and a bare distro (fresh
-#    WSL Ubuntu) ships without unzip. Install it before any other package so it's guaranteed
-#    present when the yazi step runs; nvim and the rest use tar and don't need it.
-if ! command -v unzip >/dev/null 2>&1 && [ -n "$PM" ]; then
-  if have_sudo; then
-    pkg_install unzip
-  else
-    echo "install-cli-tools: sudo unavailable; deferring unzip (yazi extraction will be skipped)" >&2
-  fi
-fi
-
-# 2. Distro packages (only if any are missing; needs sudo, which prompts in an interactive
+# 1. Distro packages (only if any are missing; needs sudo, which prompts in an interactive
 #    terminal). The list comes from .chezmoidata/tools.toml — the shared source of truth with the
 #    winget + Brewfile installers. Both package lists are rendered so the script stays portable at
-#    runtime and PM picks one. Release-binary tools (eza/fastfetch/curlie/sd/fzf/zoxide/ripgrep)
+#    runtime and PM picks one. Release-binary tools (eza/fastfetch/fzf/zoxide/ripgrep)
 #    have no apt/dnf field and stay in the bespoke section below.
 PKGS_APT="{{ range .tools }}{{ if .apt }}{{ .apt }} {{ end }}{{ end }}"
 PKGS_DNF="{{ range .tools }}{{ if .dnf }}{{ .dnf }} {{ end }}{{ end }}"
@@ -83,7 +72,7 @@ if [ -n "$missing" ]; then
   fi
 fi
 
-# 2b. GitHub CLI.
+# 1b. GitHub CLI.
 #     Debian/Ubuntu: from gh's own apt repo. Ubuntu's package is frozen at 2.45, which throws on a
 #     deprecated Projects-classic GraphQL query (breaks `gh pr edit`/`gh pr merge`); cli.github.com
 #     tracks current releases. Adds the repo + keyring once, then `apt upgrade` keeps gh current.
@@ -118,7 +107,7 @@ if ! gh_ready; then
 fi
 
 {{ if includeTemplate "is-desktop-linux" . -}}
-# 2c. Docker CLI shim for Podman. Fedora ships podman but no `docker`, so anything that shells
+# 1c. Docker CLI shim for Podman. Fedora ships podman but no `docker`, so anything that shells
 #     out to `docker` (most container tutorials, plenty of build scripts) fails on a stock
 #     workstation. podman-docker supplies /usr/bin/docker -> podman. Podman itself arrives as a
 #     package dependency where it is absent.
@@ -163,17 +152,15 @@ if [ -n "$PM" ] && pkg_installed podman-docker; then
   fi
 fi
 {{ end }}
-# 3. Real-name symlinks for Debian's renamed binaries (so the shell uses bat/fd). lua is what
-#    tests/nvim-config.test.js shells out to for a syntax check; Debian's package ships it as
-#    lua5.4, so without this alias that test silently skips there. Fedora installs all three
-#    under their real names already, so every pair below no-ops on it.
-for pair in "bat:batcat" "fd:fdfind" "lua:lua5.4"; do
+# 2. Real-name symlinks for Debian's renamed binaries (so the shell uses bat/fd). Fedora installs
+#    both under their real names already, so every pair below no-ops on it.
+for pair in "bat:batcat" "fd:fdfind"; do
   name="${pair%%:*}"; real="${pair##*:}"
   rp="$(command -v "$real" 2>/dev/null || true)"
   [ -n "$rp" ] && ln -sf "$rp" "$BIN_DIR/$name"
 done
 
-# 4. Release binaries for the package gaps (no sudo). install_release, pinned_tag, recorded_tag
+# 3. Release binaries for the package gaps (no sudo). install_release, pinned_tag, recorded_tag
 #    and the arch names all come from the shared module; an arch it has no names for leaves
 #    rust_arch empty, which skips every download below rather than fetching a binary that would
 #    tar-extract cleanly and then Exec-format-error at first use.
@@ -183,12 +170,10 @@ done
 #    reach: that URL always serves the current release, so the machine would record the pinned
 #    tag and run whatever shipped that day — worse than floating openly, because it reads as
 #    pinned.
-[ -n "$rust_arch" ] || echo "$TAG: unknown arch $(uname -m); skipping eza/fastfetch/curlie/sd/fzf/zoxide/ripgrep/gron/nvim/yazi" >&2
+[ -n "$rust_arch" ] || echo "$TAG: unknown arch $(uname -m); skipping eza/fastfetch/starship/fzf/zoxide/ripgrep" >&2
 if [ -n "$rust_arch" ]; then
   install_release eza       eza-community/eza       '{{ .releases.eza.tag }}'       "https://github.com/eza-community/eza/releases/download/{tag}/eza_${rust_arch}-unknown-linux-gnu.tar.gz"
   install_release fastfetch fastfetch-cli/fastfetch '{{ .releases.fastfetch.tag }}' "https://github.com/fastfetch-cli/fastfetch/releases/download/{tag}/fastfetch-linux-${ff_arch}.tar.gz"
-  install_release curlie    rs/curlie               '{{ .releases.curlie.tag }}'    "https://github.com/rs/curlie/releases/download/{tag}/curlie_{ver}_linux_${go_arch}.tar.gz"
-  install_release sd        chmln/sd                '{{ .releases.sd.tag }}'        "https://github.com/chmln/sd/releases/download/{tag}/sd-{tag}-${rust_arch}-unknown-linux-gnu.tar.gz"
   install_release starship  starship/starship       '{{ .releases.starship.tag }}'  "https://github.com/starship/starship/releases/download/{tag}/starship-${rust_arch}-unknown-linux-gnu.tar.gz"
   # fzf/zoxide/ripgrep back the shell init (fzf keybindings, zoxide `cd`, rg as FZF_DEFAULT_COMMAND)
   # but have no apt/dnf field here, so install the pinned release binaries rather than relying on
@@ -196,38 +181,6 @@ if [ -n "$rust_arch" ]; then
   install_release fzf       junegunn/fzf            '{{ .releases.fzf.tag }}'       "https://github.com/junegunn/fzf/releases/download/{tag}/fzf-{ver}-linux_${go_arch}.tar.gz"
   install_release zoxide    ajeetdsouza/zoxide      '{{ .releases.zoxide.tag }}'    "https://github.com/ajeetdsouza/zoxide/releases/download/{tag}/zoxide-{ver}-${rust_arch}-unknown-linux-musl.tar.gz"
   install_release rg        BurntSushi/ripgrep      '{{ .releases.rg.tag }}'        "https://github.com/BurntSushi/ripgrep/releases/download/{tag}/ripgrep-{ver}-${rg_target}.tar.gz"
-  # gron is the one tools.toml entry whose distro coverage is uneven: apt has it, Fedora packages
-  # none. Guarded on the binary rather than on PM, so it stays a no-op wherever the package phase
-  # already supplied gron and the fallback isn't pinned to one distro's absence.
-  command -v gron >/dev/null 2>&1 \
-    || install_release gron tomnomnom/gron          '{{ .releases.gron.tag }}'      "https://github.com/tomnomnom/gron/releases/download/{tag}/gron-linux-${go_arch}-{ver}.tgz"
-fi
-
-# 5. Neovim + Yazi. OS-UNIQUE tools handled elsewhere (winget on Windows, Brewfile on macOS) —
-#    this is their Linux path. Neither fits the lone-binary install_release helper: nvim ships a
-#    runtime tree, yazi ships a second binary (`ya`). No sudo. install_release_zip/
-#    install_prefix_tarball take the tag as an argument (see the module), so pinned_tag runs here.
-if [ -n "$rust_arch" ]; then
-  # Neovim: official static release. The tarball is bin/ + its runtime under one prefix; merge it
-  # into ~/.local so bin/nvim resolves ../share/nvim/runtime. nvim config self-bootstraps lazy.nvim.
-  nvim_tag="$(pinned_tag neovim/neovim '{{ .releases.nvim.tag }}')"
-  if [ -n "$nvim_tag" ]; then
-    install_prefix_tarball nvim "$nvim_tag" \
-      "https://github.com/neovim/neovim/releases/download/{tag}/nvim-linux-${nvim_arch}.tar.gz" \
-      "$HOME/.local" bin/nvim
-  else
-    echo "install-cli-tools: no pinned tag for neovim/neovim" >&2
-  fi
-  # Yazi: release zip carrying both `yazi` and its `ya` plugin manager (ya pkg install is driven
-  # by run_onchange_after_ya-pkg-install). yazi is listed first so it gates the recorded tag.
-  yazi_tag="$(pinned_tag sxyazi/yazi '{{ .releases.yazi.tag }}')"
-  if [ -n "$yazi_tag" ]; then
-    install_release_zip yazi "$yazi_tag" \
-      "https://github.com/sxyazi/yazi/releases/download/{tag}/yazi-${rust_arch}-unknown-linux-gnu.zip" \
-      yazi ya
-  else
-    echo "install-cli-tools: no pinned tag for sxyazi/yazi" >&2
-  fi
 fi
 
 # Fail loudly (and retry next apply) if any distro package is still missing — e.g. a sudo-less

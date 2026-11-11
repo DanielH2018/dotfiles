@@ -1,5 +1,5 @@
 // The Linux app installer renders one pipe-separated record per app from packages.toml and picks
-// a route at runtime (distro package -> Flathub -> upstream tarball). Two failure modes motivate
+// a route at runtime (distro package -> Flathub). Two failure modes motivate
 // most of what follows and both are silent:
 //   1. packages.toml is now shared with the Windows installer. Dropping or renaming a field there
 //      doesn't error — it just renders an empty column, and the app quietly stops installing on
@@ -42,9 +42,9 @@ function records() {
   const block = out.match(/APPS='\n([\s\S]*?)\n'/);
   assert.ok(block, 'APPS block must render');
   return block[1].split('\n').filter(Boolean).map((line) => {
-    const [name, apt, dnf, flatpak, repo, copr, tarball, tarballTag, tarballBin, tarballUrl] = line.split('|');
+    const [name, apt, dnf, flatpak, repo, copr] = line.split('|');
     return {
-      name, apt, dnf, flatpak, repo, copr, tarball, tarballTag, tarballBin, tarballUrl,
+      name, apt, dnf, flatpak, repo, copr,
       fields: line.split('|').length,
     };
   });
@@ -74,7 +74,7 @@ test('script is gated to a non-WSL Linux workstation', { skip }, () => {
 test('every rendered record has all ten columns', { skip }, (t) => {
   if (!rendersHere()) return t.skip('renders empty on this host');
   for (const r of records()) {
-    assert.strictEqual(r.fields, 10, `record for ${r.name} must have 10 columns`);
+    assert.strictEqual(r.fields, 6, `record for ${r.name} must have 6 columns`);
     assert.ok(r.name.trim(), 'every record must carry a name');
   }
 });
@@ -85,7 +85,7 @@ test('apps excluded from Linux declare no Linux route', { skip }, (t) => {
   for (const name of EXCLUDED_FROM_LINUX) {
     const r = byName.get(name);
     assert.ok(r, `${name} must still be present (it installs on Windows)`);
-    assert.strictEqual(r.apt + r.dnf + r.flatpak + r.tarball, '',
+    assert.strictEqual(r.apt + r.dnf + r.flatpak, '',
       `${name} was excluded from the Linux set but declares an install route`);
   }
 });
@@ -100,7 +100,7 @@ test('every app either installs on Linux or explains why not', () => {
     assert.ok(name, 'every app block declares a name');
     // bw_cli is a route too — a real Linux install that just doesn't fit the table, because
     // Bitwarden's cli-v* tags need bespoke handling in the script rather than a package name.
-    const hasLinux = /^(apt|dnf|flatpak|tarball) = "/m.test(b) || /^bw_cli = true/m.test(b);
+    const hasLinux = /^(apt|dnf|flatpak) = "/m.test(b) || /^bw_cli = true/m.test(b);
     const hasManual = /^manual = "/m.test(b);
     assert.ok(hasLinux || hasManual,
       `${name} has no Linux route and no manual note explaining the absence`);
@@ -114,42 +114,15 @@ test('the requested Linux apps really do resolve to a route', { skip }, (t) => {
   // one app is the case a bulk "most of them have routes" check would sail straight past.
   const want = [
     '7-Zip', 'Firefox', 'Google Chrome', 'Obsidian', 'Spotify', 'Bitwarden', 'WireGuard',
-    'Mullvad VPN', 'OBS Studio', 'VLC', 'Elgato Stream Deck', 'f.lux', 'OpenRGB', 'Solaar',
-    'Piper', 'Git', 'Visual Studio Code', 'age', 'scrcpy', 'Steam', 'Discord',
+    'Mullvad VPN', 'VLC', 'Elgato Stream Deck', 'OpenRGB', 'Solaar',
+    'Piper', 'Git', 'Visual Studio Code', 'age', 'Steam', 'Discord',
     'Prism Launcher', 'Temurin JDK', 'Epic Games Launcher',
   ];
   for (const name of want) {
     const r = byName.get(name);
     assert.ok(r, `${name} must be in the app list`);
-    assert.ok(r.apt || r.dnf || r.flatpak || r.tarball, `${name} must declare a Linux route`);
+    assert.ok(r.apt || r.dnf || r.flatpak, `${name} must declare a Linux route`);
   }
-});
-
-test('scrcpy falls back to the upstream tarball on Fedora', { skip }, (t) => {
-  if (!rendersHere()) return t.skip('renders empty on this host');
-  const scrcpy = records().find((r) => r.name === 'scrcpy');
-  // Fedora ships no scrcpy package (verified against dist-git), so the dnf column must stay empty
-  // and the tarball must cover it. An apt column alone would silently skip Fedora.
-  assert.strictEqual(scrcpy.dnf, '', 'Fedora does not package scrcpy');
-  assert.strictEqual(scrcpy.apt, 'scrcpy', 'Debian/Ubuntu do package it');
-  assert.strictEqual(scrcpy.tarball, 'Genymobile/scrcpy');
-  assert.match(scrcpy.tarballUrl, /\{arch\}/, 'the tarball URL must carry an {arch} placeholder');
-  assert.doesNotMatch(scrcpy.tarballUrl, /\$\{/, 'shell expansion in TOML would never expand');
-});
-
-// install_tarball_app used to follow the releases/latest redirect for its own tag, so which
-// scrcpy a Fedora box got was decided by the day it was provisioned. The tag is now a column,
-// and the script SKIPS a tarball entry that has none — which is the quiet failure this guards:
-// an app with a route that installs nothing looks the same as an app with no route.
-test('every tarball entry declares the tag to install', { skip }, (t) => {
-  if (!rendersHere()) return t.skip('renders empty on this host');
-  const withTarball = records().filter((r) => r.tarball);
-  assert.ok(withTarball.length >= 1, 'sanity: the census found no tarball entries at all');
-  for (const r of withTarball) {
-    assert.match(r.tarballTag, /^\S+$/, `${r.name} declares a tarball repo but no tarball_tag`);
-  }
-  assert.match(body, /\[ -n "\$tb_tag" \]/,
-    'the installer must refuse a tarball entry with no pinned tag rather than resolving one');
 });
 
 test('the shared packages.toml still feeds the Windows installer', { skip }, () => {
@@ -204,14 +177,13 @@ function runWithStubs(stubs, seed) {
 // stubbed without stubbing apt-get, so detection still resolves to dnf while dpkg calls are caught.
 const DPKG_TRIPWIRE = 'echo "DPKG WAS CALLED" >&2; exit 1';
 const SUDO_OK = '[ "$1" = "-v" ] && exit 0; exec "$@"';
-// Resolves the scrcpy tarball tag without touching the network; anything else fails.
+// Answers a release-redirect probe without touching the network; anything else fails.
 const CURL_TAG_ONLY = `case "$*" in
   *-fsSLI*) echo "https://github.com/Genymobile/scrcpy/releases/tag/v4.1" ;;
   *) exit 1 ;;
 esac`;
 
-// A dnf host where every package and flatpak is already present, scrcpy is already unpacked at the
-// current tag, and bw is on PATH. Nothing is left to do, so the run must converge silently.
+// A dnf host where every package and flatpak is already present, and bw is on PATH. Nothing is left to do, so the run must converge silently.
 test('dnf host with everything present converges', { skip }, (t) => {
   if (!rendersHere()) return t.skip('renders empty on this host');
   const { out } = runWithStubs({
@@ -224,13 +196,6 @@ test('dnf host with everything present converges', { skip }, (t) => {
     unzip: 'exit 0',
     bw: 'exit 0',                        // Bitwarden CLI already on PATH
     uname: '[ "$1" = "-m" ] && echo x86_64 || echo Linux',
-  }, (home) => {
-    // scrcpy already unpacked at exactly the tag the curl stub reports, so its tarball route is a
-    // no-op too. Without this the run legitimately fails on scrcpy and never reaches convergence.
-    const bin = path.join(home, '.local', 'bin');
-    fs.mkdirSync(path.join(bin, '.versions'), { recursive: true });
-    fs.writeFileSync(path.join(bin, 'scrcpy'), '#!/bin/sh\n', { mode: 0o755 });
-    fs.writeFileSync(path.join(bin, '.versions', 'scrcpy'), 'v4.1');
   });
   assert.doesNotMatch(out, /DPKG WAS CALLED/, 'a dnf host must never shell out to dpkg');
   assert.doesNotMatch(out, /apt-get/, 'a dnf host must never reach for apt-get');

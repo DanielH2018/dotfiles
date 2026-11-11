@@ -14,10 +14,9 @@
 # binary on Debian comes from one on Fedora too, even where Fedora happens to package it
 # (eza, ripgrep, fzf, zoxide and fastfetch all exist in the Fedora repos). The same binaries
 # on every Linux beats "whatever this distro shipped", and it keeps one code path under test.
-# The dnf field therefore differs from apt only in package NAMING, never in coverage — except
-# gron, which Fedora does not package at all (see below).
+# The dnf field therefore differs from apt only in package NAMING, never in coverage.
 #
-# OS-UNIQUE tools stay in their own installer, NOT here: winget's nvim/yazi/zig/uv,
+# OS-UNIQUE tools stay in their own installer, NOT here: winget's uv,
 # and the Brewfile's casks / mas / vscode / brew-only (bash, chezmoi, gh, tmux, wget, ...).
 
 [[tools]]
@@ -53,19 +52,6 @@ cmd = "fzf"
 winget = "junegunn.fzf"
 brew = "fzf"
 apt = ""
-dnf = ""
-
-[[tools]]
-name = "gron"
-cmd = "gron"
-# No winget package (checked microsoft/winget-pkgs — none exists); Windows goes without.
-winget = ""
-brew = "gron"
-apt = "gron"
-# Fedora packages no gron (checked F44). It is the one tool where apt and dnf coverage
-# genuinely diverges, so the installer falls back to the tomnomnom/gron release binary
-# whenever gron is still missing after the package step — a no-op on Debian, where apt
-# supplied it.
 dnf = ""
 
 [[tools]]
@@ -126,51 +112,12 @@ apt = ""
 dnf = ""
 
 [[tools]]
-name = "lua"
-cmd = "lua"
-# Here for tests/nvim-config.test.js, which syntax-checks the Neovim Lua config with
-# `loadfile`. Ubuntu's package installs /usr/bin/lua5.4 and no bare name, so the installer
-# symlinks lua -> lua5.4 into ~/.local/bin. No winget id: Windows gets Lua from the
-# hardcoded DEVCOM.Lua entry in the ps1 installer instead, because that package hides
-# lua.exe outside PATH and needs the bespoke skip handling.
-winget = ""
-brew = "lua"
-apt = "lua5.4"
-# Fedora's `lua` is 5.4 under an unversioned name (/usr/bin/lua), so it resolves without
-# the symlink shim Debian needs.
-dnf = "lua"
-
-[[tools]]
-name = "btop"
-cmd = "btop"
-winget = ""
-brew = "btop"
-apt = "btop"
-dnf = "btop"
-
-[[tools]]
 name = "chafa"
 cmd = "chafa"
 winget = ""
 brew = "chafa"
 apt = "chafa"
 dnf = "chafa"
-
-[[tools]]
-name = "curlie"
-cmd = "curlie"
-winget = ""
-brew = "curlie"
-apt = ""
-dnf = ""
-
-[[tools]]
-name = "sd"
-cmd = "sd"
-winget = ""
-brew = "sd"
-apt = ""
-dnf = ""
 
 [[tools]]
 name = "zsh"
@@ -247,10 +194,6 @@ dnf = "util-linux-script"
 eza = { repo = "eza-community/eza", tag = "v0.23.5" }
 # renovate: datasource=github-releases depName=fastfetch-cli/fastfetch
 fastfetch = { repo = "fastfetch-cli/fastfetch", tag = "2.71.0" }
-# renovate: datasource=github-releases depName=rs/curlie
-curlie = { repo = "rs/curlie", tag = "v1.8.2" }
-# renovate: datasource=github-releases depName=chmln/sd
-sd = { repo = "chmln/sd", tag = "v1.1.0" }
 # renovate: datasource=github-releases depName=starship/starship
 starship = { repo = "starship/starship", tag = "v1.27.0" }
 # renovate: datasource=github-releases depName=junegunn/fzf
@@ -259,12 +202,6 @@ fzf = { repo = "junegunn/fzf", tag = "v0.75.0" }
 zoxide = { repo = "ajeetdsouza/zoxide", tag = "v0.10.0" }
 # renovate: datasource=github-releases depName=BurntSushi/ripgrep
 rg = { repo = "BurntSushi/ripgrep", tag = "15.2.0" }
-# renovate: datasource=github-releases depName=tomnomnom/gron
-gron = { repo = "tomnomnom/gron", tag = "v0.7.1" }
-# renovate: datasource=github-releases depName=neovim/neovim
-nvim = { repo = "neovim/neovim", tag = "v0.12.6" }
-# renovate: datasource=github-releases depName=sxyazi/yazi
-yazi = { repo = "sxyazi/yazi", tag = "v26.9.1" }
 # renovate: datasource=github-releases depName=ryanoasis/nerd-fonts
 nerd-fonts = { repo = "ryanoasis/nerd-fonts", tag = "v3.5.1" }
 
@@ -298,27 +235,6 @@ oxlint = "1.93.0"
 node = "22.23.4"
 # renovate: datasource=python-version depName=python
 python = "3.15.2"
-
-# The language servers dot_config/nvim/lua/plugins/lsp.lua enables, installed globally from npm.
-[[node_lsps]]
-name = "@vtsls/language-server"
-# renovate: datasource=npm depName=@vtsls/language-server
-version = "0.3.0"
-
-[[node_lsps]]
-name = "bash-language-server"
-# renovate: datasource=npm depName=bash-language-server
-version = "5.8.1"
-
-[[node_lsps]]
-name = "yaml-language-server"
-# renovate: datasource=npm depName=yaml-language-server
-version = "1.25.0"
-
-[[node_lsps]]
-name = "vscode-langservers-extracted"
-# renovate: datasource=npm depName=vscode-langservers-extracted
-version = "4.10.0"
 
 # The hosts whose Claude agent user gets uv, Python and prek from install-python-tools. It is
 # the server repo's `dev_tooling_hosts` (ansible/inventory/group_vars/all.yml), the same list

@@ -15,18 +15,8 @@ $packages = @(
 {{- range .tools }}{{ if .winget }}
     @{ id = '{{ .winget }}'; cmd = '{{ .cmd }}' },
 {{- end }}{{- end }}
-    # Windows-only additions (not in the shared core): Python (uv), the editor + file
-    # manager (configured under ~/.config/{nvim,yazi}), and zig (the C compiler
-    # nvim-treesitter needs on Windows).
-    @{ id = 'astral-sh.uv';  cmd = 'uv'      },
-    @{ id = 'Neovim.Neovim'; cmd = 'nvim'    },
-    @{ id = 'sxyazi.yazi';   cmd = 'ya'      },
-    @{ id = 'zig.zig';       cmd = 'zig'     },
-    # Lua interpreter tests/nvim-config.test.js uses to syntax-check the Neovim Lua config
-    # (loadfile). DEVCOM.Lua drops lua.exe under %LOCALAPPDATA%\Programs\Lua\bin and does
-    # NOT add it to PATH, so Get-Command below won't find it - the winget-list check
-    # handles the skip, and the test locates lua.exe by that path directly.
-    @{ id = 'DEVCOM.Lua';    cmd = 'luac'    }
+    # Windows-only addition (not in the shared core): Python (uv).
+    @{ id = 'astral-sh.uv';  cmd = 'uv'      }
 )
 
 foreach ($p in $packages) {
@@ -67,7 +57,7 @@ if ($uv) {
     # The two Python CLIs that are machine-global rather than per-project - the Windows half
     # of os-unix/run_onchange_after_install-python-tools.sh.tmpl (see its header for the full
     # rationale, including why pytest is deliberately NOT installed globally). ruff backs
-    # nvim's LSP and formatter, which call a bare `ruff`; prek is the
+    # `tq ruff check` and a bare `ruff check .`; prek is the
     # pre-commit replacement run as `prek run --all-files`.
     #
     # Pinned from .chezmoidata/tools.toml, the same literals the Linux installer and CI read.

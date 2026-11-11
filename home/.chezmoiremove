@@ -259,3 +259,33 @@ Scripts/wslhost-interop-reaper
 .claude/skills/gh-stack
 .claude/skills/dependabot-sweep
 {{ end -}}
+
+# 2026-11-11: Neovim, Yazi, terminal-cheatsheet, gron, sd, curlie and scrcpy's Linux route,
+# pruned as unused. The config is chezmoi's; the binaries, the Neovim runtime merged into
+# ~/.local, and the .versions stamps are what install-cli-tools and install-apps left behind.
+.config/nvim
+.config/yazi
+.local/bin/terminal-cheatsheet
+.local/share/terminal-cheatsheet
+.local/share/html-kit/index.js
+.local/bin/nvim
+.local/lib/nvim
+.local/share/nvim
+.local/state/nvim
+.cache/nvim
+.local/share/man/man1/nvim.1
+.local/share/applications/nvim.desktop
+.local/share/icons/hicolor/128x128/apps/nvim.png
+.local/bin/yazi
+.local/bin/ya
+.local/bin/gron
+.local/bin/sd
+.local/bin/curlie
+.local/bin/scrcpy
+.local/share/scrcpy
+.local/bin/.versions/nvim
+.local/bin/.versions/yazi
+.local/bin/.versions/gron
+.local/bin/.versions/sd
+.local/bin/.versions/curlie
+.local/bin/.versions/scrcpy

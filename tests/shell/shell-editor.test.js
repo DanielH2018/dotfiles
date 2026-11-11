@@ -1,6 +1,4 @@
-// shell/common.sh sets EDITOR to nvim, the editor dot_config/nvim configures, and falls back
-// to vim on a host where no installer put nvim on PATH. On macOS that is a host that never ran
-// `brew bundle`, since the Brewfile lists neovim.
+// shell/common.sh sets EDITOR to nano, and falls back to vi on a host without nano.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
@@ -24,14 +22,14 @@ function editorsWith(pathVar) {
   }).trim();
 }
 
-test('EDITOR and VISUAL are nvim when nvim is on PATH', { skip }, () => {
+test('EDITOR and VISUAL are nano when nano is on PATH', { skip }, () => {
   const bin = scratch(os.tmpdir(), 'editor-bin-');
-  fs.writeFileSync(path.join(bin, 'nvim'), '#!/bin/sh\n', { mode: 0o755 });
-  assert.strictEqual(editorsWith(`${bin}:${BASE_PATH}`), 'nvim nvim');
+  fs.writeFileSync(path.join(bin, 'nano'), '#!/bin/sh\n', { mode: 0o755 });
+  assert.strictEqual(editorsWith(`${bin}:${BASE_PATH}`), 'nano nano');
 });
 
-test('EDITOR and VISUAL fall back to vim without nvim', {
-  skip: skip || (['/usr/bin/nvim', '/bin/nvim'].some(fs.existsSync) && 'nvim is in /usr/bin or /bin'),
+test('EDITOR and VISUAL fall back to vi without nano', {
+  skip: skip || (['/usr/bin/nano', '/bin/nano'].some(fs.existsSync) && 'nano is in /usr/bin or /bin'),
 }, () => {
-  assert.strictEqual(editorsWith(BASE_PATH), 'vim vim');
+  assert.strictEqual(editorsWith(BASE_PATH), 'vi vi');
 });

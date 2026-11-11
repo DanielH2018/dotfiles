@@ -159,16 +159,6 @@ Scripts
 .local/share/sounds
 {{ end }}
 
-# yazi: plugin & flavor code is vendored by `ya pkg install` from the tracked
-# package.toml, so don't manage the fetched dirs — except the hand-written
-# linemode-cycle plugin, which IS tracked here.
-.config/yazi/plugins/*
-!.config/yazi/plugins/linemode-cycle.yazi
-.config/yazi/flavors
-
-# nvim: lazy's lockfile is machine-local (stable branches, no pinning).
-.config/nvim/lazy-lock.json
-
 # Python bytecode. tq imports its library from .local/share/tq, so running it —
 # or its tests — from the source tree writes __pycache__ next to the source.
 # A global gitignore keeps that out of `git status`, so chezmoi is the only thing

@@ -117,8 +117,6 @@ test('both apt and dnf package lists render non-empty', { skip }, () => {
   assert.match(apt[1], /\bzsh\b/, 'apt list must carry zsh');
   assert.match(dnf[1], /\bzsh\b/, 'dnf list must carry zsh');
   assert.match(dnf[1], /ShellCheck/, "dnf list must use Fedora's capitalised ShellCheck");
-  assert.match(dnf[1], /\blua\b/, 'dnf list must use unversioned lua, not Debian lua5.4');
-  assert.doesNotMatch(dnf[1], /lua5\.4/, 'Debian lua5.4 must not leak into the dnf list');
 });
 
 // 3. tools.toml stays the single source of truth: every tool carries a dnf field, so a new entry
@@ -355,7 +353,7 @@ function pinnedReleases() {
 // The frozenset is the non-vacuity guard. A regex census of the render returns an empty set the
 // moment the call spelling changes, and an assertion over nothing passes — so name the tools the
 // census MUST find rather than only counting them.
-const MUST_BE_PINNED = ['eza', 'fastfetch', 'curlie', 'sd', 'starship', 'fzf', 'zoxide', 'rg', 'gron'];
+const MUST_BE_PINNED = ['eza', 'fastfetch', 'starship', 'fzf', 'zoxide', 'rg'];
 
 test('every release install carries its pinned tag', { skip }, () => {
   if (!rendersHere()) return;
@@ -370,11 +368,6 @@ test('every release install carries its pinned tag', { skip }, () => {
   }
   for (const bin of MUST_BE_PINNED) {
     assert.ok(seen.has(bin), `the census found no pinned install_release line for ${bin}`);
-  }
-  // nvim and yazi take the same pins through pinned_tag, because their helpers want the tag as
-  // an argument rather than resolving it.
-  for (const bin of ['nvim', 'yazi']) {
-    assert.ok(render().includes(`'${pins[bin].tag}'`), `${bin} must install the tools.toml tag`);
   }
 });
 

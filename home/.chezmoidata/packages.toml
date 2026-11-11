@@ -8,11 +8,6 @@
 #   flatpak  = Flathub application id   -> same; the fallback when dnf/apt can't supply it
 #   copr     = Fedora COPR to enable first (dnf only)
 #   repo     = third-party repo key the Linux installer knows how to add (see its REPO section)
-#   tarball  = owner/repo of an upstream release that ships a directory rather than one binary
-#   tarball_tag = the release tag to install from that repo. Required alongside `tarball`: the
-#              installer used to follow the releases/latest redirect instead, so which build a
-#              machine got was decided by the date it was provisioned. `# renovate:` above it,
-#              the same shape tools.toml uses.
 #   manual   = why there is NO automated route on the other platform; rendered into
 #              LINUX-SETUP.md so an unavailable app is documented rather than silently dropped
 #
@@ -21,8 +16,8 @@
 # genuinely doesn't carry the app.
 #
 # Scope rules:
-#   - The dev CLI toolchain (starship, zoxide, fzf, eza, fd, ripgrep, bat, fastfetch, fnm, uv,
-#     neovim, yazi, zig) belongs to tools.toml + the cli-tools installers. Not here.
+#   - The dev CLI toolchain (starship, zoxide, fzf, eza, fd, ripgrep, bat, fastfetch, fnm, uv)
+#     belongs to tools.toml + the cli-tools installers. Not here.
 #   - Games themselves are NOT listed — only launchers; libraries re-download after sign-in.
 #   - An entry with no winget field is Linux-only; one with no Linux field is Windows-only.
 #   - Some apps winget genuinely cannot provide (Office licence, GPU/chipset drivers, Ryzen
@@ -80,7 +75,7 @@ flatpak = "com.bitwarden.desktop"
 [[apps.base]]
 name = "Notepad++"
 winget = "Notepad++.Notepad++"
-manual = "Windows-only and not on Flathub. Neovim (tools.toml) and VS Code already cover editing on Linux."
+manual = "Windows-only and not on Flathub. KWrite and VS Code cover editing on Linux."
 
 [[apps.base]]
 name = "WireGuard"
@@ -135,8 +130,7 @@ dnf = "onedriver"
 [[apps.base]]
 name = "OBS Studio"
 winget = "OBSProject.OBSStudio"
-dnf = "obs-studio"
-apt = "obs-studio"
+manual = "Windows-only by choice: it was never launched on the Fedora desktop. `sudo dnf install obs-studio` installs it if that changes."
 
 [[apps.base]]
 name = "VLC"
@@ -181,10 +175,7 @@ apt = "pavucontrol"
 [[apps.base]]
 name = "f.lux"
 winget = "flux.flux"
-# f.lux's Linux build is X11-only and unmaintained. gammastep is the Wayland-native equivalent;
-# KDE Plasma's built-in Night Colour covers the same ground if you prefer no extra package.
-dnf = "gammastep"
-apt = "gammastep"
+manual = "Windows-only. On KDE, Plasma's built-in Night Colour (System Settings -> Colours & Themes -> Night Light) does the same colour-temperature shift."
 
 [[apps.base]]
 name = "Corsair iCUE"
@@ -247,13 +238,7 @@ apt = "nvme-cli"
 
 [[apps.base]]
 name = "AMD Ryzen Master"
-manual = "Not in winget — vendor download on Windows (see WINDOWS-SETUP.md). CoreCtrl (installed below) is the closest Linux equivalent for CPU/GPU tuning and fan curves; it needs the amd_pstate driver and a kernel parameter for full control."
-
-[[apps.base]]
-name = "CoreCtrl"
-# Linux stand-in for Ryzen Master: per-profile CPU/GPU tuning and fan curves.
-dnf = "corectrl"
-apt = "corectrl"
+manual = "Not in winget — vendor download on Windows (see WINDOWS-SETUP.md). No Linux tool is installed for it; CoreCtrl is the closest equivalent if CPU/GPU tuning is ever needed."
 
 [[apps.base]]
 name = "NVIDIA App"
@@ -352,15 +337,7 @@ bw_cli = true
 [[apps.coding]]
 name = "scrcpy"
 winget = "Genymobile.scrcpy"
-# Genymobile develops scrcpy on Linux, so it is at least as useful here as on Windows. Debian and
-# Ubuntu package it; Fedora does not (no rpms/scrcpy in dist-git, zero Bodhi updates as of
-# 2026-07-31), so Fedora takes the upstream release tarball instead.
-apt = "scrcpy"
-tarball = "Genymobile/scrcpy"
-# renovate: datasource=github-releases depName=Genymobile/scrcpy
-tarball_tag = "v4.1"
-tarball_bin = "scrcpy"
-tarball_url = "https://github.com/Genymobile/scrcpy/releases/download/{tag}/scrcpy-linux-{arch}-{tag}.tar.gz"
+manual = "Windows-only by choice: it was never launched on the Fedora desktop. Fedora does not package it; Debian and Ubuntu do (`apt install scrcpy`), and upstream publishes a Linux release tarball."
 
 # ---------------------------------------------------------------------------------------------
 # Game launchers only (never individual games).
