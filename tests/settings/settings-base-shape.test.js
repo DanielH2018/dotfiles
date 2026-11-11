@@ -304,8 +304,10 @@ test('reprime-nudge is not registered', { skip }, () => {
 
 // #621: the workspace_default join has nothing to connect on a bare host. The negative half
 // needs a host that is not itself a container, because is-container also reads the markers.
+// A distrobox/toolbox (/run/.toolboxenv) is not one: it renders the host's settings.json.
 const DOCKER_JOIN = 'docker network connect workspace_default $(hostname) 2>/dev/null || true';
-const inContainer = fs.existsSync('/.dockerenv') || fs.existsSync('/run/.containerenv');
+const inContainer = (fs.existsSync('/.dockerenv') || fs.existsSync('/run/.containerenv'))
+  && !fs.existsSync('/run/.toolboxenv');
 
 test('the workspace_default join renders where Claude runs in a container', { skip }, () => {
   const s = JSON.parse(renderFile(TMPL, { data: { claude_in_container: true } }));

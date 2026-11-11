@@ -228,6 +228,10 @@ If you start running Claude Code in a container on the `workspace_default` docke
 `is-container` chezmoi template holds), attach this stack's collector to that
 network too and change `OTEL_EXPORTER_OTLP_ENDPOINT` to `http://otel-collector:4317`.
 
+The `claude` distrobox on the Fedora desktop is not such a container. It uses the host's
+network, so `localhost:4317` reaches the collector unchanged, and `is-container` excludes
+distrobox and toolbox containers for that reason.
+
 ## Notes
 
 - Image tags are pinned; bump them in `docker-compose.yml` as you like.

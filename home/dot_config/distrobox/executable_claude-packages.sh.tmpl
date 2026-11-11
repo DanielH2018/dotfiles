@@ -1,0 +1,55 @@
+#!/bin/sh
+# Installs the Debian packages the `claude` distrobox needs, as root inside it. claude.ini runs
+# it as an init hook on a rebuild; on a live container, run it from the host:
+#   distrobox enter claude -- sudo ~/.config/distrobox/claude-packages.sh
+# Idempotent: it installs only what is missing.
+set -eu
+
+# Test seam: tests point it at a scratch tree.
+ROOT="${CLAUDE_PACKAGES_ROOT:-}"
+
+if [ -z "$ROOT" ] && [ "$(id -u)" -ne 0 ]; then
+  echo "claude-packages: run as root: distrobox enter claude -- sudo $0" >&2
+  exit 1
+fi
+
+# The apt fields of .chezmoidata/tools.toml, which the host's install-cli-tools script reads too,
+# plus git-lfs, which no installer in this repo carries.
+PKGS="{{ range .tools }}{{ if .apt }}{{ .apt }} {{ end }}{{ end }}git-lfs"
+
+# Debian's own gh (2.46 on trixie) fails `gh pr edit` and `gh pr merge` on a removed GraphQL
+# field, so gh comes from cli.github.com, as in install-cli-tools.
+KEYRING="$ROOT/etc/apt/keyrings/githubcli-archive-keyring.gpg"
+GH_LIST="$ROOT/etc/apt/sources.list.d/github-cli.list"
+
+missing=""
+for p in $PKGS; do
+  dpkg -s "$p" >/dev/null 2>&1 || missing="$missing $p"
+done
+
+if [ ! -f "$GH_LIST" ]; then
+  command -v curl >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y curl ca-certificates; }
+  mkdir -p "$(dirname "$KEYRING")" "$(dirname "$GH_LIST")"
+  curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o "$KEYRING"
+  chmod 0644 "$KEYRING"
+  echo "deb [signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" >"$GH_LIST"
+  # Listed even when Debian's gh is installed, so apt replaces it with the newer one.
+  missing="$missing gh"
+elif ! dpkg -s gh >/dev/null 2>&1; then
+  missing="$missing gh"
+fi
+
+if [ -n "$missing" ]; then
+  apt-get update -qq
+  # shellcheck disable=SC2086  # $missing is a space-separated package list
+  apt-get install -y $missing
+fi
+
+# Debian renames these binaries; the host's install-cli-tools links them under ~/.local/bin only
+# where it runs, and on Fedora the real names need no link.
+for pair in bat:batcat fd:fdfind lua:lua5.4; do
+  name="${pair%%:*}"; real="${pair##*:}"
+  [ -x "$ROOT/usr/bin/$real" ] && [ ! -e "$ROOT/usr/local/bin/$name" ] \
+    && ln -s "/usr/bin/$real" "$ROOT/usr/local/bin/$name"
+done
+exit 0

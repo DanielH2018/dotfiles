@@ -122,6 +122,8 @@ Scripts
 #     (GNU spellings, Linux-only timer) and left it deployed anyway, so this does not overrule
 #     that; it probes for the spelling it needs at runtime
 {{ if not (includeTemplate "is-desktop-linux" .) }}
+# The `claude` distrobox that Claude Code runs in on the Fedora desktop.
+.config/distrobox
 .local/bin/audio-sink-toggle
 .local/bin/bt-hid-kick
 .local/bin/clip2server

@@ -69,6 +69,7 @@ const EVENT_ORDER = [
 // Dev-container network glue: it joins the container Claude runs in to the compose project's
 // network. It renders only where is-container says Claude runs in a container (#621). On a bare
 // host the command has no container to connect and started a process per session for nothing.
+// A distrobox is not such a container: it shares the host's network and its ~/.claude.
 const INLINE_REGISTRATIONS = [
   {
     file: '(inline)',

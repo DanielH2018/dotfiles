@@ -1,0 +1,12 @@
+# distrobox assemble manifest for the `claude` container Claude Code runs in on this desktop.
+# The container shares $HOME with the host but not /usr, and sudo fails inside a Claude session,
+# so chezmoi's package installers cannot reach it. claude-packages.sh installs them instead.
+#
+# Rebuild from the host (destroys the container's /usr, keeps $HOME):
+#   distrobox assemble create --replace --file ~/.config/distrobox/claude.ini
+# Add packages to the running container from the host after this list changes:
+#   distrobox enter claude -- sudo ~/.config/distrobox/claude-packages.sh
+[claude]
+image=quay.io/toolbx-images/debian-toolbox:13
+pull=true
+init_hooks={{ .chezmoi.homeDir }}/.config/distrobox/claude-packages.sh
