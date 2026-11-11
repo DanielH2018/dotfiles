@@ -211,7 +211,7 @@ test('gen-hooks --check fails when the hooks directory gains an executable that 
 //
 // `gen-hooks --check` above proves every hook on disk is registered. It proves nothing about
 // the reverse: CLAUDE.md.tmpl, the rules and the skills name hooks by bare filename
-// (`chezmoi-guard.sh`, `isolation-guard.sh`, `pre-compact.sh`), so a rename leaves the doc
+// (`chezmoi-guard.sh`, `pre-compact.sh`), so a rename leaves the doc
 // citing a hook that no longer exists and nothing goes red (#577). A filename is an identifier
 // with an oracle on disk, which is what makes this checkable where the paragraph around it is
 // not -- the repo's own "assert an identifier, not the prose" rule turned on its own prose.
@@ -285,7 +285,7 @@ test('every hook the prose names by filename exists and is gen-hooks registered'
   const found = citations(docTexts());
   // A census that finds nothing passes for free, and this one globs for its own corpus. The
   // floor is a named member, so a docs reshuffle that empties it says which hook went missing.
-  assert.ok(found.has('isolation-guard.sh'), `citations found: ${[...found.keys()].join(', ')}`);
+  assert.ok(found.has('chezmoi-guard.sh'), `citations found: ${[...found.keys()].join(', ')}`);
   assert.ok(found.size >= 8, `expected at least the eight hooks the docs name, got ${found.size}`);
 
   const registered = registeredBasenames();
