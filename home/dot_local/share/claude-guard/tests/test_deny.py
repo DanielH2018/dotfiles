@@ -10,6 +10,8 @@ pinned to a fake so the home-directory anchors are deterministic.
 
 import json
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -2667,6 +2669,8 @@ WRAPPED = [
     ("docker compose -p claude-otel logs loki", "dockq-route", "`dockq compose logs …`"),
     ("docker images --digests", "dockq-route", "`dockq images …`"),
     ("docker run --rm alpine true", "dockrun-route", "`dockrun run …`"),
+    ("docker run -d --network=bridge -e A=1 -p 8080:80 nginx", "dockrun-route", "`dockrun run …`"),
+    ("docker pull -q grafana/loki:3.4.2", "dockrun-route", "`dockrun pull …`"),
 ]  # fmt: skip
 UNWRAPPED = [
     "gh pr create --title t --body \"$(cat <<'EOF'\ngh pr view 1 and docker ps\nEOF\n)\"",
@@ -2676,6 +2680,13 @@ UNWRAPPED = [
     "gh run rerun 4567 --failed",
     "docker compose config",
     "docker build -t x .",
+    # dockrun would refuse these, so they stay at the settings ask the operator can approve
+    "docker run --rm -v /:/host alpine true",
+    "docker run --network host alpine true",
+    "docker run --network=container:db alpine true",
+    "docker run --privileged alpine true",
+    "docker run -it alpine sh",
+    "docker pull --all-tags grafana/loki",
     "find . -name '*.py' -print0",
 ]
 
@@ -2709,3 +2720,15 @@ def test_a_raw_form_is_left_alone_where_its_wrapper_is_not_on_path():
 def test_the_ghread_refusal_carries_the_sandbox_and_out_advice(wrappers_env):
     reason = d.deny("gh pr view 12", "", wrappers_env).reason
     assert "sandbox off" in reason and "--out <path>" in reason and "printenv TMPDIR" in reason
+
+
+@pytest.mark.parametrize("verb", sorted(d._DOCKRUN_FLAGS))
+def test_every_flag_routed_to_dockrun_is_one_dockrun_accepts(verb):
+    # A flag routed here that dockrun refuses would leave the session no way to run it.
+    script = REPO / "home" / "dot_local" / "bin" / "executable_dockrun"
+    usage = subprocess.run(
+        [sys.executable, str(script), verb, "--help"], capture_output=True, text=True, check=True
+    ).stdout
+    accepted = set(re.findall(r"(?<![\w-])(--?[a-z][\w-]*)", usage))
+    valued, bare = d._DOCKRUN_FLAGS[verb]
+    assert valued | bare <= accepted

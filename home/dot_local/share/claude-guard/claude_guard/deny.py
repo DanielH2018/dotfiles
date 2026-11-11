@@ -3448,7 +3448,20 @@ _GH_READS = {
 _DOCKQ_VERBS = frozenset(
     {"ps", "images", "info", "logs", "manifest inspect", "compose ps", "compose logs"}
 )
-_DOCKRUN_VERBS = frozenset({"run", "pull"})
+# The flags dockrun's `run` and `pull` parsers accept, as (takes a value, flags). A docker
+# run or pull with any other flag stays at the settings ask, so the operator can still
+# approve what dockrun would refuse. A bind (`-v`) is left out on purpose: dockrun vets its
+# source path, which this rule cannot.
+_DOCKRUN_FLAGS = {
+    "run": (
+        frozenset(
+            {"-e", "--env", "-u", "--user", "-w", "--workdir", "--name", "--entrypoint",
+             "--network", "--platform", "--pull", "-p", "--publish"}
+        ),
+        frozenset({"-d", "--detach", "--init", "--rm"}),
+    ),
+    "pull": (frozenset({"--platform"}), frozenset({"-q", "--quiet"})),
+}  # fmt: skip
 _COMPOSE_VALUE_OPTS = frozenset(
     {"-f", "--file", "-p", "--project-name", "--env-file", "--profile", "--project-directory"}
 )
@@ -3469,8 +3482,7 @@ DOCKQ_MSG = (
 DOCKRUN_MSG = (
     "Blocked: run `dockrun {verb} …` instead of `docker {verb}`. dockrun pulls images and "
     "runs `--rm` containers under a fixed policy without a prompt; `dockrun {verb} --help` "
-    "lists its flags. It needs the sandbox off to reach the Docker socket. If dockrun "
-    "refuses a flag the work needs, ask the operator to run the docker command."
+    "lists its flags. It needs the sandbox off to reach the Docker socket."
 )
 FIND_EXEC_MSG = (
     "Blocked: `find {flag}` runs a command for every match. To search the files `find` "
@@ -3533,9 +3545,27 @@ def _route(argv: list[str], has: Callable[[str], bool]) -> Verdict | None:
         verb = f"manifest {args[1] if len(args) > 1 else ''}"
     if verb in _DOCKQ_VERBS and has("dockq"):
         return Verdict("deny", "dockq-route", DOCKQ_MSG.format(verb=verb))
-    if verb in _DOCKRUN_VERBS and has("dockrun"):
+    if verb in _DOCKRUN_FLAGS and _dockrun_takes(verb, args[1:]) and has("dockrun"):
         return Verdict("deny", "dockrun-route", DOCKRUN_MSG.format(verb=verb))
     return None
+
+
+def _dockrun_takes(verb: str, args: list[str]) -> bool:
+    """Whether dockrun's `verb` accepts every flag ahead of the image in `args`."""
+    valued, bare = _DOCKRUN_FLAGS[verb]
+    i = 0
+    while i < len(args) and args[i].startswith("-"):
+        flag, eq, value = args[i].partition("=")
+        if flag in valued:
+            if not eq:
+                i += 1
+                value = args[i] if i < len(args) else ""
+            if flag == "--network" and (value == "host" or value.startswith("container:")):
+                return False
+        elif flag not in bare or eq:
+            return False
+        i += 1
+    return i < len(args)
 
 
 def _reads_log(args: list[str]) -> bool:
