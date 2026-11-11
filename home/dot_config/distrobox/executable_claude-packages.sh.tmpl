@@ -67,7 +67,7 @@ fi
 
 # Debian renames these binaries; the host's install-cli-tools links them under ~/.local/bin only
 # where it runs, and on Fedora the real names need no link.
-for pair in bat:batcat fd:fdfind lua:lua5.4; do
+for pair in bat:batcat fd:fdfind; do
   name="${pair%%:*}"; real="${pair##*:}"
   [ -x "$ROOT/usr/bin/$real" ] && [ ! -e "$ROOT/usr/local/bin/$name" ] \
     && ln -s "/usr/bin/$real" "$ROOT/usr/local/bin/$name"

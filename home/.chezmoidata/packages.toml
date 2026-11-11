@@ -175,7 +175,7 @@ apt = "pavucontrol"
 [[apps.base]]
 name = "f.lux"
 winget = "flux.flux"
-manual = "Windows-only. On KDE, Plasma's built-in Night Colour (System Settings -> Colours & Themes -> Night Light) does the same colour-temperature shift."
+manual = "Windows-only. On KDE, Plasma's built-in Night Light (search System Settings for it) does the same colour-temperature shift."
 
 [[apps.base]]
 name = "Corsair iCUE"
