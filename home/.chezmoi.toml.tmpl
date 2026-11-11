@@ -48,7 +48,7 @@ umask = 0o022
 # invocation (`powershell -NoLogo <script>`) fails the os-windows .chezmoiscripts
 # with "running scripts is disabled on this system". Bypass it per-process rather
 # than loosening the machine policy — same flags the repo's own .ps1 launchers use
-# (run_onchange_install-nerd-font, the WSL interop-reaper installer). `powershell`,
+# (run_onchange_install-nerd-font). `powershell`,
 # not `pwsh`: on a fresh box pwsh isn't installed until these scripts run.
 [interpreters.ps1]
     command = "powershell"

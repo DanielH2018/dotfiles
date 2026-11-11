@@ -125,12 +125,15 @@
 .local/bin/tools-inventory
 .local/share/tools-inventory
 
-# #731: each logon watcher's own hidden-window launcher, replaced by the shared
-# Scripts/logon-watcher/run-hidden.vbs. Windows only: Scripts is ignored everywhere else.
+# The Windows logon watchers (StreamDeck, Sonar routing, WSL interop reaper) and their
+# shared launcher, retired. Removing the deployed copies does not unregister their
+# scheduled tasks; unregister those by hand, or each logon shows a wscript
+# "Can not find script file" dialog. Windows only: Scripts is ignored everywhere else.
 {{ if eq .chezmoi.os "windows" -}}
-Scripts/streamdeck-watcher/streamdeck-watcher-hidden.vbs
-Scripts/sonar-routing-watcher/sonar-routing-watcher-hidden.vbs
-Scripts/wslhost-interop-reaper/wslhost-interop-reaper-hidden.vbs
+Scripts/logon-watcher
+Scripts/streamdeck-watcher
+Scripts/sonar-routing-watcher
+Scripts/wslhost-interop-reaper
 {{ end -}}
 
 # Deploy desktop, macOS and sandbox files only to the machines that use them: no
