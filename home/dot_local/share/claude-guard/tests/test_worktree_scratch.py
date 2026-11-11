@@ -185,6 +185,20 @@ def test_the_judge_resolves_both_ask_rules_inside_a_session_worktree(repo, tmp_p
     assert not judge(command, rules, roots, wt, "").allow
 
 
+def test_the_judge_allows_git_rm_only_inside_a_session_worktree(repo, tmp_path):
+    main, wt = repo
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "settings.json").write_text('{"permissions": {"allow": []}}')
+    rules = load_rules(home=str(home), project_dir=None)
+    roots = scratch_roots(str(home))
+    if ALLOW_OK:
+        assert judge("git rm -q src/app.py", rules, roots, wt, wt).allow
+        assert judge(f"git -C {wt} rm -q src/app.py", rules, roots, wt, wt).allow
+    assert not judge("git rm -q src/app.py", rules, roots, main, main).allow
+    assert not judge("git rm -qf src/app.py", rules, roots, wt, wt).allow
+
+
 def test_cleanup_in_another_sessions_worktree_is_refused(repo):
     main, wt = repo
     other = os.path.join(main, ".claude", "worktrees", "fanout-2")
