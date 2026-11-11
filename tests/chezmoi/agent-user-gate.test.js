@@ -55,16 +55,16 @@ const BOX = '{{ $_ := set .chezmoi "hostname" "daniel-box" }}{{ $_ := set .chezm
 const parse = (text) =>
   new Set(text.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')));
 const ignored = (agent) => parse(renderTemplate(BOX + fs.readFileSync(IGNORE, 'utf8'),
-  { data: { agent, profile: 'server', work: false } }));
+  { data: { agent, profile: 'server', work: false, in_toolbox: false } }));
 
 // Pinned to daniel-box like the renders above: the telemetry env the owner check reads is off
 // on darwin, so an unpinned render on the work Mac has no OTEL_RESOURCE_ATTRIBUTES to find.
 const settings = (agent) => JSON.parse(renderTemplate(`${BOX}{{ includeTemplate "settings.base.json" . }}`,
-  { data: { agent, profile: 'server', work: false } }));
+  { data: { agent, profile: 'server', work: false, in_toolbox: false } }));
 
 const onBox = (file, agent) => renderTemplate(
   `${BOX}${fs.readFileSync(file, 'utf8')}`,
-  { data: { agent, profile: 'server', work: false } },
+  { data: { agent, profile: 'server', work: false, in_toolbox: false } },
 );
 
 test('an agent ignores every path its Ansible owns and every operator-only tool', { skip }, () => {
