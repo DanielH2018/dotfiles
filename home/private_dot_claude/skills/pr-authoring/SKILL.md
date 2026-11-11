@@ -203,22 +203,10 @@ Both flags are advisory, and the user confirms before any rewrite.
 - **`split_worthy`** hands the split to `gh-stack`. Where that skill is not installed,
   propose the branches and what each one carries, and let the user split them.
 - **`needs_history_cleanup`** means merge commits, fixup-style commits, or more than six
-  commits. To clean the history:
-  1. Save a restore point with `REF=$(triage.sh backup)`, and tell the user
-     `git reset --hard $REF` undoes everything.
-  2. Rebase onto `origin/<default>`. Resolve conflicts or hand them back; never
-     `--skip` silently.
-  3. Save a second ref, `CHECKPOINT=$(triage.sh backup)`. The regroup must preserve this
-     post-rebase tree, which differs from `$REF` whenever the rebase pulled in upstream work.
-  4. Propose the target commits in prose, each with a why-focused message. Fold a commit
-     that reverses an earlier approach into the commit it corrects.
-  5. On confirmation, run `GIT_EDITOR=true GIT_SEQUENCE_EDITOR='cp <todo>' git rebase -i
-     <base>`. The todo uses `fixup`, not `squash`, and an `exec git commit --amend -m ...`
-     after each group, so no step opens an editor.
-  6. `triage.sh assert-tree-equal "$CHECKPOINT"` must exit 0. Otherwise stop, show its
-     diff, and do not push.
-  7. Push with `git push --force-with-lease` after the user confirms. Never plain
-     `--force`, never `--no-verify`.
+  commits. Once the user confirms, read `references/history-cleanup.md` and follow it step
+  by step: a restore point, a rebase, a checkpoint the regroup must preserve, and a tree
+  check before the push. The push is `git push --force-with-lease` after the user
+  confirms. Never plain `--force`, never `--no-verify`.
 
 Don't run the `lpt-pr-curator` plugin on a PR you open. Its "Add Code Comments" step
 commits comments that summarise each block for the reviewer, which `rules/comments.md`
