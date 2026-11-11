@@ -241,7 +241,7 @@ test("the canary's node-version is a version setup-node can resolve", () => {
 const BATCH = 'weekly pins';
 const NAMED = [
   [{ manager: 'pre-commit', packageName: 'gitleaks/gitleaks', depName: 'gitleaks/gitleaks' }, /^gitleaks \(lockstep/],
-  [{ manager: 'custom.regex', packageName: 'astral-sh/uv', depName: 'astral-sh/uv' }, /lockstep — land after the homelab/],
+  [{ manager: 'custom.regex', packageName: 'python', depName: 'python' }, /lockstep — land after the homelab/],
   [{ manager: 'pre-commit', packageName: 'astral-sh/ruff-pre-commit', depName: 'astral-sh/ruff-pre-commit' }, /^ruff$/],
   [{ manager: 'custom.regex', packageName: 'ruff', depName: 'ruff' }, /^ruff$/],
   [{ manager: 'custom.regex', packageName: 'node', depName: 'node',
@@ -261,6 +261,8 @@ test('the batch rule covers every enabled manager', () => {
     'a manager outside matchManagers opens one PR per bump again');
   for (const dep of [
     { manager: 'custom.regex', packageName: 'junegunn/fzf', depName: 'junegunn/fzf' },
+    { manager: 'custom.regex', packageName: 'astral-sh/uv', depName: 'astral-sh/uv' },
+    { manager: 'custom.regex', packageName: 'prek', depName: 'prek' },
     { manager: 'dockerfile', packageName: 'debian', depName: 'debian',
       packageFile: 'home/private_dot_claude/sandbox/Dockerfile.base' },
   ]) assert.strictEqual(ruleValue(dep, 'groupName'), BATCH, `${dep.packageName} is not batched`);
