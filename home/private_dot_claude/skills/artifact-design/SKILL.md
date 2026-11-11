@@ -75,7 +75,8 @@ substance into the repo's docs in the same PR that acts on it.
     paths out of the Bash command and re-drives both, but a write inside `python3 -c` or
     a called script is invisible in the command text, and only a path that exists as a regular
     file afterwards is handed on. Use the Write tool and the question does not arise.
-- **The link goes last.** Write the plan out in the chat first, then write the HTML file, then close the reply with the path — a bare link line, nothing after it. If the link lands above the written plan, Daniel has to scroll back up through the plan to open the file.
+- **The link goes last.** Write the plan out in the chat first, then write the HTML file, then close the reply with the path — a bare link line, nothing after it. If the link lands above the written plan, Daniel has to scroll back up through the plan to open the file. Relay the link `link-artifact.sh` emits verbatim.
+- **In the Claude desktop app, also load that URL in the Browser pane.** The pane is the only surface that renders `.html` inside the app, and it refuses `file://`. Open the pane *and* close with the link.
 - **Never publish to claude.ai** or call the Artifact tool unless Daniel explicitly asks for it. Serving an artifact inside the homelab is not publishing — see *Where the link points* below; the rule is about claude.ai, not about the LAN.
 - **Self-contained.** Inline all CSS; no external fonts, scripts, or network assets — it must render offline from `file://`. A minimal skeleton:
   ```html

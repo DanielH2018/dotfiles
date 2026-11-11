@@ -945,7 +945,9 @@
          than absent, so a host that still has either installed resolves the same way. */}}
     "superpowers@claude-plugins-official": false,
     "code-review@claude-plugins-official": false,
-    "claude-md-management@claude-plugins-official": true,
+    {{/* claude-md-management and ralph-loop disabled 2026-11-11 by /doctor: zero invocations
+         across 1,406 session transcripts (2026-10-25 → 11-11). Flip back to true to restore. */}}
+    "claude-md-management@claude-plugins-official": false,
     "code-simplifier@claude-plugins-official": false,
     "remember@claude-plugins-official": false,
 {{- if ne .chezmoi.os "windows" }}
@@ -958,7 +960,7 @@
     "commit-commands@claude-plugins-official": false,
     "pr-review-toolkit@claude-plugins-official": false,
 {{- end }}
-    "ralph-loop@claude-plugins-official": true,
+    "ralph-loop@claude-plugins-official": false,
     {{/* Back after a brief removal, and it is a different plugin now. It used to install a
          PreToolUse hook that logged every permission decision so its audit had something to
          read; that hook is gone, because Claude Code's own OTEL tool_decision events say the
@@ -967,6 +969,12 @@
          holds claude-code events; hosts without one get a skill that reports it cannot
          connect, not a broken session. */}}
     "claude-permission-audit@daniel-tools": true
+  },
+  {{/* Turned off 2026-11-11 by /doctor: no Skill or slash invocation across 1,406 session
+       transcripts (2026-10-25 → 11-11). Delete an entry to restore the skill. */}}
+  "skillOverrides": {
+    "security-audit": "off",
+    "systematic-debugging": "off"
   },
   "extraKnownMarketplaces": {
     "daniel-tools": {

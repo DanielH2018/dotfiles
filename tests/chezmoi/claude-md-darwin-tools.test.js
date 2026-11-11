@@ -11,7 +11,7 @@ const { SOURCE, srcPath } = require('../lib/paths');
 
 const skip = skipUnless('chezmoi');
 const TMPL = srcPath('private_dot_claude', 'CLAUDE.md.tmpl');
-const LINUX_ONLY = ['takeover-check', 'secretq', 'unitq', 'rootq', 'killown', 'envq'];
+const LINUX_ONLY = ['secretq', 'unitq', 'rootq', 'killown', 'envq'];
 
 function renderAs(os) {
   return execFileSync('chezmoi', [
