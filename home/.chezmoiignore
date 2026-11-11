@@ -397,6 +397,14 @@ AppData
 .local/bin/mac-askpass
 {{ end }}
 
+{{ if includeTemplate "is-desktop-linux" . }}
+# Headless-host helpers, the inverse of the desktop-only block: tmux-askpass prompts on a tmux
+# client because daniel-box has no dialog to draw, and the desktop uses ksshaskpass instead.
+# claude-rc-resume goes unused on the desktop.
+.local/bin/tmux-askpass
+.local/bin/claude-rc-resume
+{{ end }}
+
 # The home/private_dot_claude/hooks/test_*.py files and _testkit.py deploy to
 # ~/.claude/hooks, where none of them can run: each finds its subject by the SOURCE tree's
 # executable_-prefixed name, which chezmoi strips before deploying. tests/python-suites.test.js

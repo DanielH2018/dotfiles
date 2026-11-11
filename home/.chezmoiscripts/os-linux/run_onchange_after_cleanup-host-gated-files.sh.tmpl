@@ -2,7 +2,8 @@
 #!/bin/sh
 # Managed by chezmoi (run_onchange). Clears stale copies of files that home/.chezmoiignore now
 # excludes on this host but did not exclude before — desktop-only utilities, the Docker sandbox
-# tool, and the Linux Warp config on a server, the darwin-only mac-askpass on Linux, and the
+# tool, and the Linux Warp config on a server, the headless-host helpers on the desktop, the
+# darwin-only mac-askpass on Linux, and the
 # hooks/test_*.py suites everywhere. `.chezmoiremove` cannot do this: a target BOTH ignored and
 # listed there is a silent no-op, verified against a scratch --destination before this script
 # was written (see home/.chezmoiremove's note on the same change). This is that removal, done
@@ -110,6 +111,12 @@ rmdir "$HOME/.config/warp-terminal" 2>/dev/null || true
 # daniel-box nor daniel-server has run Docker since the k3s migration completed 2026-08-14.
 rm_file .local/bin/claude-sandbox
 rm_dir .claude/sandbox
+{{ end -}}
+
+{{ if includeTemplate "is-desktop-linux" . -}}
+# The headless-host helpers (home/.chezmoiignore's is-desktop-linux block).
+rm_file .local/bin/tmux-askpass
+rm_file .local/bin/claude-rc-resume
 {{ end -}}
 
 # The darwin-only mac-askpass (home/.chezmoiignore's `ne .chezmoi.os "darwin"` block). Always

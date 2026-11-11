@@ -38,6 +38,7 @@ const DESKTOP_ONLY_MARKERS = [
 ];
 const SANDBOX_MARKERS = ['claude-sandbox', '.claude/sandbox'];
 const DARWIN_HELPER_MARKERS = ['mac-askpass'];
+const HEADLESS_ONLY_MARKERS = ['tmux-askpass', 'claude-rc-resume'];
 const HOOKS_MARKER = 'test_*.py';
 // Each script's header comment names the hooks/test_*.py suites, so a marker check on the
 // whole render would pass with the removal code gone. Hooks checks read code lines only.
@@ -48,10 +49,13 @@ test('a server removes the desktop utilities, the sandbox, the darwin helper, an
   for (const m of [...DESKTOP_ONLY_MARKERS, ...SANDBOX_MARKERS, ...DARWIN_HELPER_MARKERS]) {
     assert.ok(rendered.includes(m), `daniel-box/daniel-server must clean up ${m}`);
   }
+  for (const m of HEADLESS_ONLY_MARKERS) {
+    assert.ok(!rendered.includes(m), `a headless host must keep using ${m}, not clean it up`);
+  }
   assert.ok(codeOnly(rendered).includes(HOOKS_MARKER), 'the hooks test suites are cleaned up on every host');
 });
 
-test('a workstation removes only the darwin helper and the hooks tests', { skip }, () => {
+test('a workstation removes only the headless helpers, the darwin helper and the hooks tests', { skip }, () => {
   const rendered = linuxWorkstation();
   for (const m of DESKTOP_ONLY_MARKERS) {
     assert.ok(!rendered.includes(m), `a desktop must keep using ${m}, not clean it up`);
@@ -61,6 +65,9 @@ test('a workstation removes only the darwin helper and the hooks tests', { skip 
   }
   for (const m of DARWIN_HELPER_MARKERS) {
     assert.ok(rendered.includes(m), `Linux is never darwin, so ${m} is cleaned up on every Linux host`);
+  }
+  for (const m of HEADLESS_ONLY_MARKERS) {
+    assert.ok(rendered.includes(m), `the desktop does not deploy ${m}, so it cleans up a stale copy`);
   }
   assert.ok(codeOnly(rendered).includes(HOOKS_MARKER), 'the hooks test suites are cleaned up on every host');
 });
