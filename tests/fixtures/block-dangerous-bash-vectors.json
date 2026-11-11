@@ -481,9 +481,9 @@
       ]
     },
     {
-      "why": "The common legitimate escaped separator. Allowed before and after `\\;` was stripped, for the same underlying reason both times: `rm {}` names no target the rm rules anchor on. Pinned because it is the idiom most likely to regress if the stripping changes.",
+      "why": "An rm fed its operands on stdin names no target the rm rules anchor on. This held `find -exec rm {} \\;` until `find -exec` was refused in its own right for the `xargs` route (#1210).",
       "commands": [
-        "find . -name '*.tmp' -exec rm {} \\;"
+        "find . -name '*.tmp' -print0 | xargs -0 rm"
       ]
     },
     {

@@ -196,7 +196,7 @@ check(
 )
 check(
     "the content reason names the command that settles it",
-    "gh pr list --state merged --head b"
+    "ghread pr list --state merged --search head:b"
     in mod.classify(wt(), merged=False, dirty=False, is_current=False, contained=True)[
         1
     ],

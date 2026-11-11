@@ -2356,7 +2356,7 @@ SUDO_PASS = [
     # an executor's option value, leading argument or command argument is no command word
     'find . -name "$P"',
     'find "$DIR" -name x -print',
-    'find . -exec grep -l "$P" {} +',
+    'find . -print0 | xargs -0 grep -l "$P"',
     'timeout 5 git log "$REV"',
     'timeout "$T" git status',
     'timeout 5 python3 "$S"',
@@ -2446,7 +2446,7 @@ def test_a_variable_an_executor_runs_is_refused_as_a_variable(command):
 
 def test_a_real_sudo_beside_a_variable_command_word_keeps_the_sudo_message():
     v = d.deny('"$H"; sudo -n true', "", ENV)
-    assert v.reason == d.SUDO_MSG
+    assert v.reason == d.SUDO_MSG + d.ROOTQ_HINT
 
 
 # A refusal of text that only names a protected thing routes to the tool that handles text
@@ -2466,6 +2466,8 @@ ROUTED = [
     ("sudo -n /usr/local/sbin/homelab-takeover-check --help 2>&1 | head -20", "sudo-boundary",
      "`takeover-check`"),
     ("sudo -n /usr/local/sbin/homelab-rootq ufw", "sudo-boundary", "run `rootq`"),
+    ("sudo -n true", "sudo-boundary", "run `rootq`"),
+    ("find . -name '*.py' -exec grep -l x {} +", "find-exec", "xargs -0 grep -l"),
     ("python3 -c 'from claude_guard.deny import deny; deny(\"cat ~/.aws/credentials\")'",
      "secret-read", "claude-guard replay"),
 ]  # fmt: skip
@@ -2651,3 +2653,59 @@ def test_the_refused_tool_comes_from_the_allow_rules(tmp_path):
 def test_the_loader_tables_are_not_vacuous():
     assert len(LOADER_REFUSE) >= 15 and len(LOADER_PASS) >= 10
     assert not set(LOADER_REFUSE) & set(LOADER_PASS)
+
+
+# --- a raw form a wrapper replaces (dotfiles #1210) -----------------------------------------
+
+WRAPPED = [
+    ("gh pr view 12 --json title", "ghread-route", "`ghread pr view …`"),
+    ("cd x && gh issue list --state open", "ghread-route", "`ghread issue list …`"),
+    ("gh run view 4567 --log-failed | tail", "ghread-route", "`ghread run logs …`"),
+    ("n=$(gh pr list --head b --json number)", "ghread-route", "`ghread pr list …`"),
+    ("/usr/bin/gh search prs --author me", "ghread-route", "`ghread search …`"),
+    ("docker ps --format '{{.Names}}'", "dockq-route", "`dockq ps …`"),
+    ("docker compose -p claude-otel logs loki", "dockq-route", "`dockq compose logs …`"),
+    ("docker images --digests", "dockq-route", "`dockq images …`"),
+    ("docker run --rm alpine true", "dockrun-route", "`dockrun run …`"),
+]  # fmt: skip
+UNWRAPPED = [
+    "gh pr create --title t --body \"$(cat <<'EOF'\ngh pr view 1 and docker ps\nEOF\n)\"",
+    "git commit -m 'find -exec is refused; gh pr view prompts'",
+    "ssh daniel-server docker logs kopia --since 24h",
+    "gh pr comment 12 --body done",
+    "gh run rerun 4567 --failed",
+    "docker compose config",
+    "docker build -t x .",
+    "find . -name '*.py' -print0",
+]
+
+
+@pytest.fixture
+def wrappers_env(tmp_path):
+    for tool in ("ghread", "dockq", "dockrun"):
+        (tmp_path / tool).write_text("#!/bin/sh\n")
+        (tmp_path / tool).chmod(0o755)
+    return {**ENV, "PATH": str(tmp_path)}
+
+
+@pytest.mark.parametrize(("command", "rule", "route"), WRAPPED)
+def test_a_raw_read_or_run_names_the_wrapper_that_replaces_it(command, rule, route, wrappers_env):
+    v = d.deny(command, "", wrappers_env)
+    assert (v.kind, v.rule) == ("deny", rule)
+    assert route in v.reason
+
+
+@pytest.mark.parametrize("command", UNWRAPPED)
+def test_a_write_quoted_text_or_remote_command_is_not_routed(command, wrappers_env):
+    assert not d.deny(command, "", wrappers_env).rule.endswith(("-route", "find-exec"))
+
+
+def test_a_raw_form_is_left_alone_where_its_wrapper_is_not_on_path():
+    # The claude-sandbox image ships gh and docker but neither wrapper.
+    assert d.deny("gh pr view 12", "", ENV).kind == "none"
+    assert d.deny("docker ps", "", {**ENV, "PATH": "/usr/bin"}).kind == "none"
+
+
+def test_the_ghread_refusal_carries_the_sandbox_and_out_advice(wrappers_env):
+    reason = d.deny("gh pr view 12", "", wrappers_env).reason
+    assert "sandbox off" in reason and "--out <path>" in reason and "printenv TMPDIR" in reason

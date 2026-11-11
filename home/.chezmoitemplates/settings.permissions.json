@@ -420,12 +420,7 @@
            no prompt, in whatever repo happened to be open. Unlike find/awk/xargs there is
            no execution "form" to deny-glob, so it belongs with `env` and `timeout`. */}}
       "Bash(just:*)",
-      "Bash(docker ps:*)",
-      "Bash(docker images:*)",
-      "Bash(docker logs:*)",
       "Bash(docker inspect:*)",
-      "Bash(docker compose ps:*)",
-      "Bash(docker compose logs:*)",
       "Bash(docker compose config:*)",
       "Bash(docker compose ls:*)",
       "Bash(docker compose top:*)",

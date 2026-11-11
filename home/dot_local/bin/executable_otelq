@@ -77,7 +77,7 @@ TEMPO = TEMPO_BASES[0]
 # Lithic's collector -- so there the answer is never `docker ps`. A session on that
 # machine reads the session transcripts under ~/.claude/projects instead.
 UNREACHABLE_HINT = (
-    "— is the stack up? `docker ps`"
+    "— is the stack up? `dockq ps`"
     " (the work Mac has no stack: read the transcripts under ~/.claude/projects)"
 )
 

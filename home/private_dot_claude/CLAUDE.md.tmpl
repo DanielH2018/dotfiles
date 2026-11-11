@@ -67,7 +67,7 @@ answering happen in place, and a session inside `.claude/worktrees/` is already 
 
 ## GitHub
 
-`WebFetch(domain:github.com)` is denied; use `gh`. `raw.githubusercontent.com` stays fetchable for raw files `gh` doesn't cover cleanly.
+`WebFetch(domain:github.com)` is denied; use `gh`, or `ghread` for a read. `raw.githubusercontent.com` stays fetchable for raw files `gh` doesn't cover cleanly.
 
 ## Testing
 
@@ -124,18 +124,8 @@ Finishing the whole thing has two failure modes that look finished. **Reverse st
 Prefer the one command that answers the question over three that circle it. Each helper below
 prints its flags with `--help`.
 
-- `find … -exec` is denied. To search the files `find` selects, use `rg`, the Grep tool, or `find … -print0 | xargs -0 grep -l <pattern>`.
 - To ask claude-guard how it judges a command, write the commands as JSONL `{"command": "…"}` records with the Write tool and run `claude-guard replay <file> --deny`.
-{{- if ne .chezmoi.os "darwin" }}
-- To learn a fact about a secret file without reading it, run `secretq` (`keys`, `has`, `encrypted`, `sha256`, `kubeconfig`, `ssh-config`; `--rev REV`). It never prints a value.
-- To read a systemd unit, run `unitq cat|show [--user] <unit>` instead of `systemctl cat` or an Exec/Environment `systemctl show`.
-- To read root-only host state on daniel-box or daniel-server, run `rootq` instead of sudo. Don't probe sudo capability with `sudo -n true`; the guard refuses it.
-- To stop a process this session started, run `killown [--dry-run] PATTERN` instead of `pkill -f`. It works only inside a Claude Code session, so not over ssh.
-- To read the environment, run `envq NAME…` or `envq --names [REGEX]` instead of `env | grep`.
-{{- end }}
-- To read GitHub, run `ghread` instead of `gh`: PRs, issues, runs and their logs, `api` GETs and `graphql` reads. Use `--out <path>` instead of a `>` redirect, and give it a literal path: an isolated session refuses a path built on `$TMPDIR`, so run `{{ if eq .chezmoi.os "darwin" }}printenv{{ else }}envq{{ end }} TMPDIR` once and write the directory it prints. It needs the sandbox off, like `gh`.
 - To re-run the failed jobs of a CI run in a repo you own, run `gh-rerun-failed <run-id> [-R owner/repo]` instead of `gh run rerun --failed`. It needs the sandbox off.
-- To read Docker, including an image's tags or digest, run `dockq`. To change Docker state, run `dockrun`; bare `docker` writes prompt. Both need the sandbox off to reach the Docker socket.
 - To capture a command's output to a file, run `runlog <name> -- <command> [args…]` instead of `> file 2>&1`. It gives the command blocking stdio and `/dev/null` as stdin, so `ansible-playbook` starts.
 - To prove a new check can go red, run `redproof <ref> <path>… -- <test command>` and quote its last line in the PR body.
 - To wait on anything (a landing, CI, a file, a process, a unit, a rollout, a time), run `cc-wait <source>`; `--list` names the sources and `--budget S` bounds the wait. Exit 75 means the budget elapsed with the wait still open: re-run the command it prints. A backgrounded wait has returned only once its output file ends with `[exited with code N]`, because the harness can report `completed` while it still runs.

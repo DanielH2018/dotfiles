@@ -374,7 +374,7 @@ test('ready reports every backend against the live stack', { skip: skip || !loki
 test('reports an unreachable backend as a refusal, not a crash', { skip }, () => {
   // Ports are fixed, so this asserts the error path's shape via the message the
   // URLError branch produces; a live stack makes it a no-op.
-  assert.match(SRC, /UNREACHABLE_HINT = \([\s\S]*?docker ps/, 'unreachable path should hint at the stack');
+  assert.match(SRC, /UNREACHABLE_HINT = \([\s\S]*?dockq ps/, 'unreachable path should hint at the stack');
   assert.match(SRC, /unreachable \(\{exc[.a-z]*\}\) \{UNREACHABLE_HINT\}/);
 });
 
@@ -387,7 +387,7 @@ test('a backend that hangs up is reported as unreachable, not a traceback', { sk
     assert.strictEqual(out.ready[name].code, null, `${name} should have no HTTP status`);
     assert.match(out.ready[name].body, /^unreachable: /, name);
   }
-  assert.match(out.get, /unreachable .*docker ps/);
+  assert.match(out.get, /unreachable .*dockq ps/);
   // The work Mac has no stack at all, so the hint has to name the record that exists there.
   assert.match(out.get, /work Mac has no stack: read the transcripts under ~\/\.claude\/projects/);
 });

@@ -185,6 +185,15 @@ when PYTHONPATH is already exported. Runners, interpreters and plain builtins ar
 because their allow rules already run workspace code or load none. The DECIDED comment above
 `_LOADER_NAMES` has the measurements.
 
+`wrapper_route` refuses a raw command that a wrapper replaces, and its message names the
+wrapper, so no `CLAUDE.md` bullet has to. `gh pr|issue|run` reads, `gh search` and
+`gh stack view` route to `ghread`; `docker ps|images|info|logs`, `docker manifest inspect`
+and `docker compose ps|logs` route to `dockq`; `docker run|pull` route to `dockrun`. Each of
+those is refused only when its wrapper is on the PATH that `env` carries, because the
+claude-sandbox image ships `gh` and `docker` without the wrappers. `find -exec`, `-execdir`,
+`-ok` and `-okdir` are refused everywhere, with `rg` and `xargs -0` named instead. Writes such
+as `gh pr comment` and `docker build` are left to the settings rules.
+
     claude-guard explain 'ssh homelab sudo reboot'          # unchanged: segments and the judge
     claude-guard replay commands.jsonl --deny                # one line per non-none verdict, then
                                                              # its reason indented; the git

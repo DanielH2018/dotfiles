@@ -55,6 +55,7 @@ import os
 import posixpath
 import re
 import shlex
+import shutil
 import tokenize
 from collections import Counter
 from collections.abc import Callable, Mapping
@@ -3218,9 +3219,7 @@ def sudo_boundary(sc: Scan, target: str) -> Verdict | None:
         rank = max(map(_sudo_text, variants))
     if rank == _SUDO_ESCALATES:
         hint = TAKEOVER_CHECK_HINT if SUDO_WRAPPER in sc.command else ""
-        if "homelab-rootq" in sc.command:
-            hint += ROOTQ_HINT
-        return Verdict("deny", "sudo-boundary", SUDO_MSG + hint)
+        return Verdict("deny", "sudo-boundary", SUDO_MSG + hint + ROOTQ_HINT)
     if rank == _SUDO_VARIABLE:
         return Verdict("deny", "sudo-boundary", SUDO_VARIABLE_MSG)
     return None
@@ -3232,8 +3231,11 @@ TAKEOVER_CHECK_HINT = (
     " To pipe or redirect the takeover check's output, or to pass a relative path, run "
     "`takeover-check` with the same flags instead; it merges stderr into stdout."
 )
-# The rootq shim is the one entry point to homelab-rootq (#1050), so the refusal names it.
-ROOTQ_HINT = " To read root-only host state, run `rootq` with the same arguments instead."
+# The rootq shim is the one entry point to homelab-rootq (#1050), so every refusal names it.
+ROOTQ_HINT = (
+    " To read root-only host state on daniel-box or daniel-server, run `rootq` instead. "
+    "Probing sudo, as with `sudo -n true`, is refused too."
+)
 
 
 # --- rootq's sudo test seam (dotfiles #1050) --------------------------------------------------
@@ -3433,6 +3435,130 @@ def loader_env(command: str, env: Mapping[str, str] | None) -> Verdict | None:
     return None
 
 
+# --- a raw form a wrapper replaces (dotfiles #1210) -------------------------------------------
+
+# Each refusal names the wrapper, so no prose has to. A gh or docker read is refused only
+# where its wrapper is on PATH: the claude-sandbox image ships gh and neither wrapper.
+_GH_READS = {
+    "pr": frozenset({"view", "list", "checks", "diff"}),
+    "issue": frozenset({"view", "list"}),
+    "run": frozenset({"view", "list"}),
+    "stack": frozenset({"view"}),
+}
+_DOCKQ_VERBS = frozenset(
+    {"ps", "images", "info", "logs", "manifest inspect", "compose ps", "compose logs"}
+)
+_DOCKRUN_VERBS = frozenset({"run", "pull"})
+_COMPOSE_VALUE_OPTS = frozenset(
+    {"-f", "--file", "-p", "--project-name", "--env-file", "--profile", "--project-directory"}
+)
+_FIND_EXEC = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
+GHREAD_MSG = (
+    "Blocked: `gh {verb}` prompts, and `ghread {route}` reads the same without a prompt and "
+    "never writes to GitHub. Run `ghread {route} …`; `ghread {route} --help` lists its flags, "
+    "and `ghread api <path>` GETs any REST path they do not cover. It needs the sandbox off, "
+    "like `gh`. To keep a big response out of context, pass `--out <path>` instead of a `>` "
+    "redirect, with a literal path: an isolated session refuses one built on `$TMPDIR`, so "
+    "run `printenv TMPDIR` once and write the directory it prints."
+)
+DOCKQ_MSG = (
+    "Blocked: run `dockq {verb} …` instead of `docker {verb}`. dockq reads Docker state "
+    "without a prompt and never changes it; `dockq {verb} --help` lists its flags. "
+    "It needs the sandbox off to reach the Docker socket."
+)
+DOCKRUN_MSG = (
+    "Blocked: run `dockrun {verb} …` instead of `docker {verb}`. dockrun pulls images and "
+    "runs `--rm` containers under a fixed policy without a prompt; `dockrun {verb} --help` "
+    "lists its flags. It needs the sandbox off to reach the Docker socket. If dockrun "
+    "refuses a flag the work needs, ask the operator to run the docker command."
+)
+FIND_EXEC_MSG = (
+    "Blocked: `find {flag}` runs a command for every match. To search the files `find` "
+    "selects, use `rg`, the Grep tool, or `find … -print0 | xargs -0 grep -l <pattern>`."
+)
+
+
+def _stage_argvs(command: str) -> list[list[str]]:
+    """The argv of every top-level segment and substitution of `command`, past keywords,
+    assignments and a `command`/`env` prefix, with the command word's directory dropped."""
+    p = parse(command)
+    if not p.ok:
+        return []
+    out: list[list[str]] = []
+    for text in [seg.text for seg in p.segments] + list(p.substitutions):
+        words = _words(text)
+        if words is None:
+            continue
+        argv = _argv(_command_words(words))
+        while argv and argv[0] in ("command", "env", "exec"):
+            argv = _past_env(argv)[1] if argv[0] == "env" else argv[1:]
+        if argv:
+            out.append([posixpath.basename(argv[0]), *argv[1:]])
+    return out
+
+
+def _compose_verb(args: list[str]) -> str | None:
+    """The subcommand of a `docker compose` whose arguments after `compose` are `args`."""
+    i = 0
+    while i < len(args):
+        if args[i] in _COMPOSE_VALUE_OPTS:
+            i += 2
+        elif args[i].startswith("-"):
+            i += 1
+        else:
+            return args[i]
+    return None
+
+
+def _route(argv: list[str], has: Callable[[str], bool]) -> Verdict | None:
+    tool, args = argv[0], argv[1:]
+    if tool == "find":
+        flag = next((w for w in args if w in _FIND_EXEC), None)
+        return flag and Verdict("deny", "find-exec", FIND_EXEC_MSG.format(flag=flag))
+    if tool == "gh" and len(args) >= 2 and args[1] in _GH_READS.get(args[0], ()):
+        verb = f"{args[0]} {args[1]}"
+        route = "run logs" if verb == "run view" and _reads_log(args) else verb
+        if has("ghread"):
+            msg = GHREAD_MSG.format(verb=verb, route=route)
+            return Verdict("deny", "ghread-route", msg)
+    if tool == "gh" and args[:1] == ["search"] and has("ghread"):
+        msg = GHREAD_MSG.format(verb="search", route="search")
+        return Verdict("deny", "ghread-route", msg)
+    if tool != "docker" or not args:
+        return None
+    verb = args[0]
+    if verb == "compose":
+        verb = f"compose {_compose_verb(args[1:])}"
+    elif verb == "manifest":
+        verb = f"manifest {args[1] if len(args) > 1 else ''}"
+    if verb in _DOCKQ_VERBS and has("dockq"):
+        return Verdict("deny", "dockq-route", DOCKQ_MSG.format(verb=verb))
+    if verb in _DOCKRUN_VERBS and has("dockrun"):
+        return Verdict("deny", "dockrun-route", DOCKRUN_MSG.format(verb=verb))
+    return None
+
+
+def _reads_log(args: list[str]) -> bool:
+    return any(w in ("--log", "--log-failed") for w in args)
+
+
+def wrapper_route(command: str, env: Mapping[str, str] | None) -> Verdict | None:
+    """A deny naming the wrapper that replaces a raw form `command` runs, or None. `env`
+    supplies the PATH a wrapper must be on; None means os.environ."""
+    path = (os.environ if env is None else env).get("PATH", "")
+    found: dict[str, bool] = {}
+
+    def has(tool: str) -> bool:
+        if tool not in found:
+            found[tool] = bool(path) and shutil.which(tool, path=path) is not None
+        return found[tool]
+
+    for argv in _stage_argvs(command):
+        if verdict := _route(argv, has):
+            return verdict
+    return None
+
+
 # --- the decision ------------------------------------------------------------------------------
 
 # Bash order (:625-1142). The first match wins and carries its message; later tasks append.
@@ -3474,9 +3600,9 @@ def deny(command: str, cwd: str = "", env: Mapping[str, str] | None = None) -> V
     """The bash's decision for one command. `cwd` is accepted for the hook signature the
     spec names and is unused: no rule in the bash reads the working directory. `env`
     supplies HOME for the written-out home path (:595-598), CLAUDE_JOB_DIR and TMPDIR for
-    the scratch directories a secret-named fixture may be written into, and HOME or
-    CLAUDE_GUARD_SETTINGS_HOME for the allow rules `loader_env` reads. None means
-    os.environ for that last read."""
+    the scratch directories a secret-named fixture may be written into, PATH for the
+    wrappers `wrapper_route` names, and HOME or CLAUDE_GUARD_SETTINGS_HOME for the allow
+    rules `loader_env` reads. None means os.environ for those last two reads."""
     if not command:  # :23
         return NONE
     home = (env or {}).get("HOME", "")
@@ -3497,8 +3623,8 @@ def deny(command: str, cwd: str = "", env: Mapping[str, str] | None = None) -> V
             if _GUARD_PROBE.search(command):
                 return Verdict(verdict.kind, verdict.rule, verdict.reason + GUARD_PROBE_HINT)
             return verdict
-    # Last, and outside RULES, because it alone reads the user's allow rules through `env`.
-    return loader_env(command, env) or NONE
+    # Last, and outside RULES, because these two alone read `env` beyond HOME.
+    return wrapper_route(command, env) or loader_env(command, env) or NONE
 
 
 # A probe that hands the guard test commands as text is refused for that text. Replay reads

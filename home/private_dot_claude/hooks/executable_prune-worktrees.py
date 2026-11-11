@@ -347,7 +347,7 @@ def classify(
                 f"{tree.branch} is not an ancestor of the default branch, but every "
                 "commit on it already has an equivalent there — landed by a squash or "
                 "rebase merge, OR simply older than what is on the default branch. "
-                "Before removing, establish which: `gh pr list --state merged --head "
+                "Before removing, establish which: `ghread pr list --state merged --search head:"
                 f"{tree.branch}` names the merge, and `git diff --stat <default> "
                 f"{tree.branch}` shows whether the branch is behind rather than landed."
             )
@@ -357,7 +357,7 @@ def classify(
                 "on it has a patch-id match there, but merging it would change nothing "
                 "— its content is already on the default branch. That is what a squash "
                 "merge leaves behind, OR a branch that later work superseded. Before "
-                "removing, establish which: `gh pr list --state merged --head "
+                "removing, establish which: `ghread pr list --state merged --search head:"
                 f"{tree.branch}` names the merge, and `git log --oneline <default>.."
                 f"{tree.branch}` lists the commits whose content would be lost."
             )
@@ -973,8 +973,8 @@ def report_orphans(branches: list[str], itemise: bool) -> None:
     print(
         f"{len(branches)} branch(es) with no worktree, and nothing on them is missing "
         "from the default branch (by patch-id or by content). Each landed by a squash "
-        "or rebase merge, or is only older than the default branch. Check `gh pr list "
-        "--state merged --head <branch>` before deleting one."
+        "or rebase merge, or is only older than the default branch. Check `ghread pr list "
+        "--state merged --search head:<branch>` before deleting one."
     )
     for branch in branches:
         print(f"[{REVIEW:9}] branch {branch}")
