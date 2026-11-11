@@ -21,12 +21,14 @@ const TMUX_VERSION = shConst(SRC, 'TMUX_VERSION');
 // This test renders a chezmoi template; skip cleanly where the binary isn't installed
 // (minimal CI / sandbox) rather than failing with a spurious spawn ENOENT.
 const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
+// Renders as the host would even inside the claude distrobox, where the builder renders empty.
+const HOST = { in_toolbox: false };
 
 // 1. The script is gated to Linux: off Linux it renders to nothing (so `chezmoi apply` never
 //    runs it there); on Linux + non-minimal it renders the builder. A minimal profile also
 //    renders empty, so on Linux only assert the shape when something rendered.
 test('script is gated to Linux', { skip }, () => {
-  const rendered = renderTemplate(body);
+  const rendered = renderTemplate(body, { data: HOST });
   if (process.platform !== 'linux') {
     assert.strictEqual(rendered.trim(), '', 'script must render empty off Linux');
   } else if (rendered.trim() !== '') {
@@ -47,8 +49,13 @@ test('the pinned tmux version', () => {
 test('a minimal profile renders no builder', { skip }, () => {
   assert.strictEqual(renderTemplate(body, { profile: 'minimal' }).trim(), '');
   if (process.platform === 'linux') {
-    assert.notStrictEqual(renderTemplate(body, { profile: 'workstation' }).trim(), '');
+    assert.notStrictEqual(renderTemplate(body, { profile: 'workstation', data: HOST }).trim(), '');
   }
+});
+
+// A distrobox shares ~/.local/bin and the run_onchange_ state with its host, so it renders none.
+test('a distrobox or toolbox container renders no builder', { skip }, () => {
+  assert.strictEqual(renderTemplate(body, { profile: 'workstation', data: { in_toolbox: true } }).trim(), '');
 });
 
 // Drive the rendered builder on a HOME with no tmux. Every command that would reach the
@@ -89,7 +96,7 @@ p="$(cat .prefix)"; mkdir -p "$p/bin"
 printf '#!/bin/sh\\necho "tmux ${TMUX_VERSION}"\\n' > "$p/bin/tmux"; chmod +x "$p/bin/tmux"`);
 
   const scriptFile = path.join(root, 'render.sh');
-  fs.writeFileSync(scriptFile, renderTemplate(body, { profile: 'workstation' }));
+  fs.writeFileSync(scriptFile, renderTemplate(body, { profile: 'workstation', data: HOST }));
   const res = { status: 0, out: '' };
   try {
     res.out = execFileSync('sh', [scriptFile], {
@@ -135,7 +142,7 @@ test('with sudo it installs the deps and builds the pinned release into ~/.local
 //    so `chezmoi apply` on an up-to-date host is a no-op. Drive the rendered script with a
 //    HOME whose .local/bin/tmux reports the target version and assert it skips at exit 0.
 test('idempotence: current local tmux skips the rebuild', { skip }, () => {
-  const rendered = renderTemplate(body);
+  const rendered = renderTemplate(body, { data: HOST });
   if (process.platform === 'linux' && rendered.trim() !== '') {
     const home = scratch(os.tmpdir(), 'tmux-inst-');
     const bin = path.join(home, '.local', 'bin');

@@ -1,6 +1,12 @@
 export SDKMAN_DIR="$HOME/.sdkman"
 [[ -s "$HOME/.sdkman/bin/sdkman-init.sh" ]] && source "$HOME/.sdkman/bin/sdkman-init.sh"
 
+# Non-interactive layer (PATH, chezmoi umask wrapper, cargo env) shared with zsh/sh — see
+# ~/.config/shell/env.sh for the WHY. Sourced here because non-interactive bash login shells
+# (`ssh host cmd`, bash -lc) read .bash_profile but never reach common.sh via .bashrc.
+# Before fnm: Debian's /etc/profile resets PATH, and fnm lives in ~/.local/bin, which env.sh adds.
+[ -r "$HOME/.config/shell/env.sh" ] && . "$HOME/.config/shell/env.sh"
+
 # FNM (Fast Node Manager) — node version manager, used on all machines. This must run
 # HERE because a non-interactive login shell (`bash -lc`, `ssh host cmd`) reads only
 # .bash_profile, never .bashrc/common.sh (interactive-only, see .bashrc:18-20). An
@@ -11,11 +17,6 @@ if command -v fnm >/dev/null 2>&1; then
   eval "$(fnm env --use-on-cd --shell bash)"
   _FNM_ENV_LOADED=1
 fi
-
-# Non-interactive layer (PATH, chezmoi umask wrapper, cargo env) shared with zsh/sh — see
-# ~/.config/shell/env.sh for the WHY. Sourced here because non-interactive bash login shells
-# (`ssh host cmd`, bash -lc) read .bash_profile but never reach common.sh via .bashrc.
-[ -r "$HOME/.config/shell/env.sh" ] && . "$HOME/.config/shell/env.sh"
 
 # Interactive setup (prompt, aliases, tool integrations) lives in ~/.bashrc; Git Bash
 # login shells don't read it automatically, so source it here.

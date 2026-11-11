@@ -22,6 +22,18 @@ PKGS="{{ range .tools }}{{ if .apt }}{{ .apt }} {{ end }}{{ end }}git-lfs"
 KEYRING="$ROOT/etc/apt/keyrings/githubcli-archive-keyring.gpg"
 GH_LIST="$ROOT/etc/apt/sources.list.d/github-cli.list"
 
+# tmux: the host's build in ~/.local/bin cannot load on this libc, and Debian's 3.5a predates the
+# 3.7 synchronized-output fix Claude Code's fullscreen TUI needs. Version and build deps come from
+# install-tmux, the host's builder; host and container share /tmp/tmux-1000, so they must match.
+{{- $tmux := include ".chezmoiscripts/os-linux/run_onchange_after_install-tmux.sh.tmpl" }}
+TMUX_VERSION={{ regexReplaceAll "(?s).*\nTMUX_VERSION=(\\S+)\n.*" $tmux "${1}" }}
+TMUX_DEPS="{{ regexReplaceAll "(?s).*\n  apt\\) DEPS=\"([^\"]+)\".*" $tmux "${1}" }}"
+build_tmux=""
+if [ "$("$ROOT/usr/local/bin/tmux" -V 2>/dev/null)" != "tmux $TMUX_VERSION" ]; then
+  build_tmux=1
+  PKGS="$PKGS $TMUX_DEPS"
+fi
+
 missing=""
 for p in $PKGS; do
   dpkg -s "$p" >/dev/null 2>&1 || missing="$missing $p"
@@ -43,6 +55,14 @@ if [ -n "$missing" ]; then
   apt-get update -qq
   # shellcheck disable=SC2086  # $missing is a space-separated package list
   apt-get install -y $missing
+fi
+
+if [ -n "$build_tmux" ]; then
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  curl -fsSL "https://github.com/tmux/tmux/releases/download/$TMUX_VERSION/tmux-$TMUX_VERSION.tar.gz" -o "$tmp/tmux.tar.gz"
+  tar xzf "$tmp/tmux.tar.gz" -C "$tmp"
+  (cd "$tmp/tmux-$TMUX_VERSION" && ./configure --prefix="$ROOT/usr/local" >/dev/null && make >/dev/null && make install >/dev/null)
 fi
 
 # Debian renames these binaries; the host's install-cli-tools links them under ~/.local/bin only

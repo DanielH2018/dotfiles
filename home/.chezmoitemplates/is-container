@@ -8,6 +8,6 @@ A distrobox or toolbox container (both write /run/.toolboxenv) does not count. I
 and so ~/.claude, with the host, and it uses the host's network, so the docker join below has
 nothing to join. Counting it made host and container render two different settings.json.
 Gates the SessionStart `docker network connect workspace_default` hook (#621). */ -}}
-{{- if or (and (hasKey . "claude_in_container") .claude_in_container) (and (or (stat "/.dockerenv") (stat "/run/.containerenv")) (not (stat "/run/.toolboxenv"))) -}}
+{{- if or (and (hasKey . "claude_in_container") .claude_in_container) (and (or (stat "/.dockerenv") (stat "/run/.containerenv")) (not (includeTemplate "is-toolbox" .))) -}}
 true
 {{- end -}}

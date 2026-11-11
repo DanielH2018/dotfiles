@@ -16,6 +16,11 @@ for _d in "$HOME/.local/bin" "$HOME/go/bin"; do
   [ -d "$_d" ] && case ":$PATH:" in *":$_d:"*) ;; *) PATH="$_d:$PATH" ;; esac
 done
 unset _d
+# In a distrobox/toolbox, ~/.local/bin is the host's: its source-built tmux cannot load on the
+# container's libc. claude-packages.sh builds the container's own copy into /usr/local/bin.
+if [ -f "${TOOLBOXENV_MARKER:-/run/.toolboxenv}" ]; then
+  case "$PATH:" in /usr/local/bin:*) ;; *) PATH="/usr/local/bin:$PATH" ;; esac
+fi
 export PATH
 
 # chezmoi's `umask = 0o022` config feeds its target-mode COMPUTATION only, not the mkdir

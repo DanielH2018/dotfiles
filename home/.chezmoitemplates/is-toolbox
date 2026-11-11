@@ -1,0 +1,9 @@
+{{/* Renders "true" when this apply runs inside a distrobox or toolbox container (both write
+/run/.toolboxenv), "" otherwise -- callers write {{ if includeTemplate "is-toolbox" . }}. Such a
+container shares $HOME, so ~/.local/bin, ~/.claude and chezmoi's state, with its host, but not
+/usr. The `in_toolbox` data key overrides the marker, which is how a test renders either side. */ -}}
+{{- if hasKey . "in_toolbox" -}}
+{{- if .in_toolbox }}true{{ end -}}
+{{- else if stat "/run/.toolboxenv" -}}
+true
+{{- end -}}

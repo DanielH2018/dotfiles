@@ -32,10 +32,12 @@ const ENV_SH = srcPath('dot_config', 'shell', 'env.sh');
 const skipBash = !have('bash') && 'bash unavailable';
 const skipZsh = !have('zsh') && 'zsh unavailable';
 
+// The stub sits in ~/.local/bin, where fnm is installed, not on the inherited PATH: Debian's
+// /etc/profile resets PATH for a login shell, and only env.sh puts ~/.local/bin back.
 function makeHome() {
   const home = scratch(os.tmpdir(), 'fnm-single-run-');
-  const bin = path.join(home, 'bin');
-  fs.mkdirSync(bin);
+  const bin = path.join(home, '.local', 'bin');
+  fs.mkdirSync(bin, { recursive: true });
   // Logs one line per invocation; prints ":" so the eval'd result is a harmless no-op.
   fs.writeFileSync(path.join(bin, 'fnm'), '#!/bin/bash\necho called >> "$FNM_CALL_LOG"\necho ":"\n', { mode: 0o755 });
   // .bash_profile/.bashrc/common.sh resolve these by $HOME, so copy them in place.
@@ -44,7 +46,7 @@ function makeHome() {
   fs.copyFileSync(ENV_SH, path.join(home, '.config', 'shell', 'env.sh'));
   fs.copyFileSync(BASHRC, path.join(home, '.bashrc'));
   fs.copyFileSync(BASH_PROFILE, path.join(home, '.bash_profile'));
-  return { home, bin };
+  return { home };
 }
 
 function callCount(log) {
@@ -53,17 +55,17 @@ function callCount(log) {
 }
 
 test('bash -lc (non-interactive login) still gets fnm, exactly once', { skip: skipBash }, () => {
-  const { home, bin } = makeHome();
+  const { home } = makeHome();
   const log = path.join(home, 'fnm-calls.log');
   execFileSync('bash', ['-lc', 'true'], {
-    env: { HOME: home, PATH: `${bin}:${process.env.PATH}`, FNM_CALL_LOG: log },
+    env: { HOME: home, PATH: '/usr/bin:/bin', FNM_CALL_LOG: log },
     encoding: 'utf8',
   });
   assert.strictEqual(callCount(log), 1);
 });
 
 test('an interactive bash login shell gets fnm exactly once, not twice', { skip: skipBash }, () => {
-  const { home, bin } = makeHome();
+  const { home } = makeHome();
   const log = path.join(home, 'fnm-calls.log');
   // -il: a real login+interactive shell, which sources .bash_profile once on its own
   // startup (which itself sources .bashrc once) -- unlike `bash -i -c '. .bash_profile'`,
@@ -72,7 +74,7 @@ test('an interactive bash login shell gets fnm exactly once, not twice', { skip:
   // fix. .bashrc does not return early at its "interactive shells only" guard here, so
   // it reaches common.sh, same as a real interactive bash login shell would.
   execFileSync('bash', ['-il', '-c', 'true'], {
-    env: { HOME: home, PATH: `${bin}:${process.env.PATH}`, FNM_CALL_LOG: log },
+    env: { HOME: home, PATH: '/usr/bin:/bin', FNM_CALL_LOG: log },
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'], // silence bash's job-control-without-a-tty noise
   });
@@ -80,10 +82,10 @@ test('an interactive bash login shell gets fnm exactly once, not twice', { skip:
 });
 
 test('zsh still gets exactly one fnm call (env.sh then common.sh)', { skip: skipZsh }, () => {
-  const { home, bin } = makeHome();
+  const { home } = makeHome();
   const log = path.join(home, 'fnm-calls.log');
   execFileSync('zsh', ['-c', '. "$HOME/.config/shell/env.sh"; . "$HOME/.config/shell/common.sh"'], {
-    env: { HOME: home, PATH: `${bin}:${process.env.PATH}`, FNM_CALL_LOG: log },
+    env: { HOME: home, PATH: '/usr/bin:/bin', FNM_CALL_LOG: log },
     encoding: 'utf8',
   });
   assert.strictEqual(callCount(log), 1);

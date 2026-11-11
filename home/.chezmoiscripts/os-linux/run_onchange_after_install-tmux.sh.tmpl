@@ -1,5 +1,8 @@
-{{ if and (eq .chezmoi.os "linux") (ne .profile "minimal") (not (includeTemplate "is-agent" .)) -}}
+{{ if and (eq .chezmoi.os "linux") (ne .profile "minimal") (not (includeTemplate "is-agent" .)) (not (includeTemplate "is-toolbox" .)) -}}
 #!/bin/sh
+# Not in a distrobox/toolbox: it shares ~/.local/bin and chezmoi's run_onchange_ state with the
+# host, so a build there would replace the host's tmux and stop the host rebuilding after a bump.
+# The container builds its own copy in ~/.config/distrobox/claude-packages.sh.
 # Builds tmux from the release tarball into ~/.local, shadowing the older distro tmux (Ubuntu
 # ships 3.6a) because ~/.local/bin is ahead of /usr/bin on PATH. Needed because Claude Code's
 # fullscreen TUI ("tui": "fullscreen") blanks / goes stale on a tmux pane-split until you scroll:

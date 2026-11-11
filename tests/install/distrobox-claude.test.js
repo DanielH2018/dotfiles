@@ -18,17 +18,26 @@ const render = (file) => renderTemplate(fs.readFileSync(path.join(DIR, file), 'u
 const aptPackages = [...fs.readFileSync(srcPath('.chezmoidata', 'tools.toml'), 'utf8')
   .matchAll(/^apt = "([^"]+)"$/gm)].map((m) => m[1]);
 
-const PASSTHROUGH = ['sh', 'mkdir', 'dirname', 'chmod', 'ln'];
+const tmuxSource = fs.readFileSync(srcPath('.chezmoiscripts', 'os-linux', 'run_onchange_after_install-tmux.sh.tmpl'), 'utf8');
+const TMUX_VERSION = /^TMUX_VERSION=(\S+)$/m.exec(tmuxSource)[1];
+const tmuxDeps = /^ {2}apt\) DEPS="([^"]+)"/m.exec(tmuxSource)[1].split(' ');
 
-// Runs the rendered script with dpkg/apt-get/curl stubbed. `installed` lists the packages dpkg
-// reports present; `ghList` pre-creates the cli.github.com apt source. Returns the apt-get log.
-function run(t, { installed = [], ghList = false, env = {} } = {}) {
+const PASSTHROUGH = ['sh', 'mkdir', 'dirname', 'chmod', 'ln', 'mktemp', 'rm', 'cp'];
+
+// Runs the rendered script with dpkg/apt-get/curl and the tmux build stubbed. `installed` lists the
+// packages dpkg reports present; `ghList` pre-creates the cli.github.com apt source; `tmux` is the
+// version an existing /usr/local/bin/tmux reports. Returns the apt-get and curl logs.
+function run(t, { installed = [], ghList = false, tmux = null, env = {} } = {}) {
   const root = scratch(os.tmpdir(), 'distrobox-claude-', t);
   const bin = path.join(root, 'stubs');
   fs.mkdirSync(bin);
   fs.mkdirSync(path.join(root, 'usr', 'bin'), { recursive: true });
   fs.mkdirSync(path.join(root, 'usr', 'local', 'bin'), { recursive: true });
   fs.writeFileSync(path.join(root, 'usr', 'bin', 'batcat'), '', { mode: 0o755 });
+  const tmuxReporting = (v) => `#!/bin/sh\necho "tmux ${v}"\n`;
+  if (tmux) fs.writeFileSync(path.join(root, 'usr', 'local', 'bin', 'tmux'), tmuxReporting(tmux), { mode: 0o755 });
+  const built = path.join(root, 'tmux-built');
+  fs.writeFileSync(built, tmuxReporting(TMUX_VERSION), { mode: 0o755 });
   if (ghList) {
     fs.mkdirSync(path.join(root, 'etc', 'apt', 'sources.list.d'), { recursive: true });
     fs.writeFileSync(path.join(root, 'etc', 'apt', 'sources.list.d', 'github-cli.list'), '');
@@ -40,7 +49,9 @@ function run(t, { installed = [], ghList = false, env = {} } = {}) {
   const stubs = {
     dpkg: `case " ${installed.join(' ')} " in *" $2 "*) exit 0 ;; esac; exit 1`,
     'apt-get': `echo "$*" >> ${JSON.stringify(log)}`,
-    curl: 'while [ $# -gt 1 ]; do [ "$1" = -o ] && : > "$2"; shift; done',
+    curl: `echo "$*" >> ${JSON.stringify(path.join(root, 'curl.log'))}; while [ $# -gt 1 ]; do [ "$1" = -o ] && : > "$2"; shift; done`,
+    tar: `while [ "$1" != -C ]; do shift; done; d="$2/tmux-${TMUX_VERSION}"; mkdir -p "$d"; printf '#!/bin/sh\\n' > "$d/configure"; chmod +x "$d/configure"`,
+    make: `[ "$1" = install ] && cp ${JSON.stringify(built)} "$CLAUDE_PACKAGES_ROOT/usr/local/bin/tmux"; exit 0`,
     id: 'echo 1000',
   };
   for (const [name, body] of Object.entries(stubs)) {
@@ -59,8 +70,8 @@ function run(t, { installed = [], ghList = false, env = {} } = {}) {
     status = e.status;
     out = e.stderr;
   }
-  const apt = fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '';
-  return { status, out, apt, root };
+  const read = (f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '');
+  return { status, out, apt: read(log), curl: read(path.join(root, 'curl.log')), root };
 }
 
 test('the manifest runs the deployed installer on a rebuild', { skip }, () => {
@@ -83,14 +94,25 @@ test('a fresh container gets every tools.toml apt package, git-lfs, and gh from 
 });
 
 test("Debian's gh is replaced once the cli.github.com source is added", { skip }, (t) => {
-  const { apt } = run(t, { installed: [...aptPackages, 'git-lfs', 'gh'] });
+  const { apt } = run(t, { installed: [...aptPackages, 'git-lfs', 'gh'], tmux: TMUX_VERSION });
   assert.match(apt, /^install -y gh$/m);
 });
 
-test('a converged container installs nothing', { skip }, (t) => {
-  const { status, apt } = run(t, { installed: [...aptPackages, 'git-lfs', 'gh'], ghList: true });
+test("a tmux other than install-tmux's pin is rebuilt at the pin, with its build deps", { skip }, (t) => {
+  const { status, apt, curl, root } = run(t, { installed: [...aptPackages, 'git-lfs', 'gh'], ghList: true, tmux: '3.5a' });
+  assert.strictEqual(status, 0);
+  const pkgs = apt.split('\n').find((l) => l.startsWith('install -y')).split(/\s+/).slice(2);
+  assert.deepStrictEqual(pkgs.sort(), [...tmuxDeps].sort());
+  assert.match(curl, new RegExp(`/tmux/releases/download/${TMUX_VERSION}/tmux-${TMUX_VERSION}\\.tar\\.gz`));
+  const tmux = execFileSync(path.join(root, 'usr', 'local', 'bin', 'tmux'), ['-V'], { encoding: 'utf8' });
+  assert.strictEqual(tmux.trim(), `tmux ${TMUX_VERSION}`);
+});
+
+test('a converged container installs and fetches nothing', { skip }, (t) => {
+  const { status, apt, curl } = run(t, { installed: [...aptPackages, 'git-lfs', 'gh'], ghList: true, tmux: TMUX_VERSION });
   assert.strictEqual(status, 0);
   assert.strictEqual(apt, '');
+  assert.strictEqual(curl, '');
 });
 
 test('it refuses to run without root', { skip }, (t) => {
