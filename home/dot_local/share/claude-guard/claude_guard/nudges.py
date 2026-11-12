@@ -60,6 +60,16 @@ fires only where its wrapper is on PATH, since the claude-sandbox image ships ne
      the hand-written capture `runlog` replaces. `/dev/null` is not a capture. ansible
      refuses the Bash tool's non-blocking stdio, which `runlog` swaps for blocking files.
 
+One warns about a host tool, the way footguns.py's ugrep-flag rule does:
+
+ 11. ugrep-bounded-class: an extended-regex grep whose pattern bounds a negated class,
+     such as `[^"]{0,200}`, where grep is ugrep. ugrep expands the class into every UTF-8
+     byte sequence before it applies the bound. Two such classes with literals between
+     them exceed its complexity limit: grep prints an error to stderr, exits 2 and
+     matches nothing, so a `| wc -l` after it reads as zero (measured 2026-11-12, ugrep
+     7.8.4). A single class often passes, so this is a nudge, not a deny. `-P` compiles
+     the same pattern.
+
 `nudge()` returns (rule, text) or None. The hook adds the text as additionalContext
 beside whatever the deny rules decided, and only once per session per rule: `claim()`
 creates a marker file for the (transcript, rule) pair with O_EXCL, and only the call that
@@ -76,6 +86,7 @@ import shutil
 import time
 from pathlib import Path
 
+from claude_guard.footguns import _grep_is_ugrep, _short_flags
 from claude_guard.segment import parse
 
 _COUNT_FLAG = re.compile(r"^-(?:\d+|n\d*|-max-count(?:=.*)?|-since=.*|-after=.*)$")
@@ -98,6 +109,9 @@ _REDIRECT_OPERATOR = re.compile(r"^(?:\d*|&)(?:<|>>?)&?$")
 _STDIN_FROM = re.compile(r"^0?<(?![<&])(.*)$")
 # A word that sends stdout to a file, with its target glued on or in the next word.
 _STDOUT_TO = re.compile(r"^(?:1?>>?|&>>?)(.*)$")
+# A bounded negated class: `[^"]{0,80}` in ERE, `[^"]\{0,80\}` in BRE.
+_BOUNDED_NEGATED_ERE = re.compile(r"\[\^[^\]]*\]\{\d*,?\d*\}")
+_BOUNDED_NEGATED_BRE = re.compile(r"\[\^[^\]]*\]\\\{\d*,?\d*\\\}")
 # Read renders these as images or pages, not as text the size of the file.
 _NON_TEXT_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"})
 
@@ -335,6 +349,27 @@ def _runlog(stages, i) -> str | None:
     )
 
 
+def _ugrep_bounded_class(stages, i) -> str | None:
+    stage = stages[i][0]
+    if stage[0] not in ("grep", "egrep", "ugrep"):
+        return None
+    flags = _short_flags(stage)
+    if "P" in flags or "--perl-regexp" in stage:
+        return None
+    extended = stage[0] != "grep" or "E" in flags or "--extended-regexp" in stage
+    bounded = _BOUNDED_NEGATED_ERE if extended else _BOUNDED_NEGATED_BRE
+    if not any(bounded.search(w) for w in stage[1:]):
+        return None
+    if stage[0] != "ugrep" and not _grep_is_ugrep():
+        return None
+    return (
+        "This host's grep is ugrep, which can refuse a bounded negated class such as "
+        '`[^"]{0,200}` with "exceeds complexity limits". It then exits 2 and matches '
+        "nothing, so a count after it reads as zero. Use `grep -P` for the same pattern, "
+        "or drop the bound."
+    )
+
+
 _RULES = (
     ("unbounded-log", _unbounded_log),
     ("recursive-ls", _recursive_ls),
@@ -344,6 +379,7 @@ _RULES = (
     ("gitops-state", _gitops_state),
     ("gh-rerun-failed", _gh_rerun_failed),
     ("runlog", _runlog),
+    ("ugrep-bounded-class", _ugrep_bounded_class),
 )
 
 

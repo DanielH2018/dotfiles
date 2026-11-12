@@ -52,6 +52,32 @@ checkout main` there, then `bin/land-sync`.
 Done when the primary checkout is on `main`, `git show main:<path>` holds the landed content,
 and the file in `$HOME` matches it.
 
+### Deploying on daniel-server
+
+`land` and `land-sync` move origin/main and daniel-box's checkout only. daniel-server keeps
+its own `~/.local/share/chezmoi`, and an apply there without a pull redeploys whatever that
+checkout last held and reports success. `homelab-claude-dotfiles-sync` does not cover it: it
+runs as the `claude` user and updates only the agent's checkout (re-verified 2026-11-12). To
+deploy a landed change on daniel-server, pull first:
+
+```sh
+ssh daniel-server 'cd ~/.local/share/chezmoi && git pull --ff-only -q && chezmoi apply <paths>'
+```
+
+Confirm the deploy by grepping the deployed file on daniel-server for a symbol the change
+added, not by the apply's exit status.
+
+### A file deleted from the source stays deployed
+
+`chezmoi apply` writes only what the source declares. A file removed from `home/` becomes
+unmanaged and stays where it was deployed, executable if it was before; `chezmoi managed` no
+longer lists it. To retire a deployed file, add its `$HOME`-relative path to
+`home/.chezmoiremove` in the same PR, so the apply deletes it. A path that `.chezmoiignore`
+matches is a silent no-op there; the header of `.chezmoiremove` names the scripts that
+remove those instead. For a deletion that landed without an entry, run
+`chezmoi unmanaged <dir>` on the directory it lived in and `rm` the leftovers. Verify by
+listing the target directory, not by the apply's exit code.
+
 A config already read by a running process needs a separate nudge; the deployed file only
 reaches *future* shells and servers. For tmux: `tmux -S /tmp/tmux-1000/default set -g <option>`.
 

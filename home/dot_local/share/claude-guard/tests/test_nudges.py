@@ -1,7 +1,7 @@
 """The context-discipline nudges (dotfiles #586), the show-substitution nudge, the
 gitops-state nudge (dotfiles #1041), the whole-file-cat nudge (dotfiles #1076), the
-whole-file-read nudge on the Read tool (dotfiles #1085), and the gh-rerun-failed and runlog
-nudges (dotfiles #1223).
+whole-file-read nudge on the Read tool (dotfiles #1085), the gh-rerun-failed and runlog
+nudges (dotfiles #1223), and the ugrep-bounded-class nudge (dotfiles #1236).
 
 Each rule has a command it must nudge and a bounded variant it must leave alone. The
 hook-level tests pin that a nudge rides beside a verdict, never on a deny, and only once
@@ -14,6 +14,7 @@ import sys
 
 import pytest
 
+from claude_guard import nudges
 from claude_guard.deny import NONE, Verdict
 from claude_guard.hook import pre_tool_use_json
 from claude_guard.nudges import claim, nudge, tag
@@ -316,3 +317,39 @@ def test_the_rerun_nudge_names_the_raw_form_for_a_repo_the_account_does_not_own(
 ):
     text = nudge("gh run rerun 4567 --failed")[1]
     assert "`gh-rerun-failed <run-id>" in text and "`gh run rerun --failed`" in text
+
+
+@pytest.fixture
+def grep_is_ugrep(monkeypatch):
+    monkeypatch.setattr(nudges, "_grep_is_ugrep", lambda: True)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        """grep -E 'x[^"]{0,20}y[^"]{0,20}z' log.txt | wc -l""",
+        """grep -rhoE '"command":"[^"\\\\]{0,80}' ~/notes""",
+        """grep 'x[^"]\\{0,80\\}y' f""",
+        """ugrep '[^a]{2,9}b' f""",
+    ],
+)
+def test_a_bounded_negated_class_is_nudged_where_grep_is_ugrep(command, grep_is_ugrep):
+    assert rule(command) == "ugrep-bounded-class"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        """grep -P 'x[^"]{0,20}y[^"]{0,20}z' f""",
+        """grep -E 'x[^"]*y' f""",
+        """grep -E '[a-z]{0,8}' f""",
+        """grep '[^"]{0,8}' f""",
+    ],
+)
+def test_a_pattern_ugrep_compiles_is_left_alone(command, grep_is_ugrep):
+    assert rule(command) is None
+
+
+def test_a_bounded_negated_class_is_left_alone_on_gnu_grep(monkeypatch):
+    monkeypatch.setattr(nudges, "_grep_is_ugrep", lambda: False)
+    assert rule("""grep -E 'x[^"]{0,20}y[^"]{0,20}z' f""") is None

@@ -8,6 +8,7 @@ style never does, so everything below also governs text written to disk.
 #### Formatting rules for written output
 
 - No emojis unless I ask. Reference code as `file:line`.
+- The attribution footer of a commit or PR is `Generated with [Claude Code](https://claude.com/claude-code)`, without the robot emoji the harness suggests. A brief that tells a subagent how to end a commit or PR gives it this footer and says "no emojis anywhere".
 - Paths to things I'll open (specs, plans, HTML reports, sandbox artifacts) go as short clickable markdown links, never raw: a raw path stops being clickable once it wraps. A terminal session takes `[label](file:///abs/path)`. The Claude desktop app rejects `file://`, so there use a path relative to the working directory, or the `http://127.0.0.1` URL for anything under `~/.claude/artifacts`, which the app never grants.
 - Every reference to something with a URL is a markdown link: a ticket, a PR, an issue, a Slack thread, a doc page, a dashboard, an incident, a web source. Write `[PROC-1234](https://…/browse/PROC-1234)`, never a bare `PROC-1234`. Build the URL from a known pattern when the ID alone determines it. Leave the reference unlinked only when no URL can be derived, rather than guessing one.
 
@@ -123,6 +124,13 @@ prints its flags with `--help`.
 
 - To ask claude-guard how it judges a command, write the commands as JSONL `{"command": "…"}` records with the Write tool and run `claude-guard replay <file> --deny`.
 - To wait on anything (a landing, CI, a file, a process, a unit, a rollout, a time), run `cc-wait <source>`; `--list` names the sources and `--budget S` bounds the wait. Exit 75 means the budget elapsed with the wait still open: re-run the command it prints. A backgrounded wait has returned only once its output file ends with `[exited with code N]`, because the harness can report `completed` while it still runs.
+
+## Shell and harness facts
+
+- The Bash tool's shell is zsh, which does not word-split an unquoted `$VAR`; bash does. To reproduce a line from a bash script or hook by hand, run it under `bash -c '…'`. A "No such file" error naming a path that contains `\n` comes from this, not from a missing file.
+- A resumed or compacted session keeps its session crons. Before re-creating a cron that looks lost, run `CronList`, because a duplicate fires its full prompt again.
+- In an agent file under `.claude/agents/`, the tool allowlist key is `tools:`. `allowed-tools:` is the skill key: Claude Code ignores it in an agent file, so that agent gets every tool.
+- The ralph-loop plugin's stop hook reads `.claude/ralph-loop.local.md` relative to the shell's working directory, so a `cd` ends the loop without a message. A blank `Stop hook error:` line is how Claude Code shows a hook that blocks the stop, not a failure.
 
 ## Delegating to subagents
 
