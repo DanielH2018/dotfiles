@@ -1,6 +1,6 @@
 ---
 name: test-scenario-hygiene
-description: Use when a finished change carries more test than it needs — test additions outweighing the implementation they cover, scaffolding written to drive out one line and never removed, a `temp`/`wip`/`scaffold` name about to be committed, an assertion that a stub ran rather than what it did, or an unexplained skip/xfail. Also on "clean up the tests", "did I over-test this", "trim the test additions", and before requesting review after a TDD session. Covers test CONTENT; pr-authoring covers diff shape and commit history.
+description: "Use before stopping on a change that adds tests, or on \"clean up / trim the tests\": removes leftover scaffolding, assertions that only check a stub ran, temp/wip names, unexplained skips, and test volume beyond the behaviour. Covers test content; pr-authoring covers diff shape."
 ---
 
 # test-scenario-hygiene

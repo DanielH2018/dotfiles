@@ -1,6 +1,6 @@
 ---
 name: otel-review
-description: Use when reviewing, auditing or debugging Claude Code OTEL telemetry across the machines — this PC, daniel-box, daniel-server. Covers pipeline health, sessions that export nowhere, then — unprompted, once the pipeline is healthy — analysis of the data itself: spend, cache efficiency, api_error and tool-failure rates, hook failures, MCP connection churn, compaction, and the tooling-rule savings. Triggers on "review the OTEL logs", "check telemetry", "analyse the telemetry", "is anything not exporting", "why is Loki empty".
+description: "Use when reviewing or debugging Claude Code OTEL telemetry on this PC, daniel-box or daniel-server: pipeline health and sessions exporting nowhere, then spend, cache, error, hook and MCP analysis. Triggers on \"check telemetry\", \"is anything not exporting\", \"why is Loki empty\"."
 ---
 
 # otel-review
