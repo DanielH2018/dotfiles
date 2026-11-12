@@ -3,6 +3,27 @@
 Re-record after any edit to the skill's `description`, which is the only field this
 eval measures. A result is valid only for the model that produced it.
 
+## 2026-11-12 (description cut from 620 to 271 chars) · opus · 3 runs/case · 8/8
+
+Peers in the isolated config: `receiving-code-review`. `gh-stack` is not installed on
+daniel-box, where this ran, so the runner ran without it.
+
+| Case | Expect | Fired | Verdict |
+|---|---|---|---|
+| write-pr-description | fires | 3/3 | pass |
+| what-should-it-say | fires | 3/3 | pass |
+| empty-body | fires | 3/3 | pass |
+| gh-pr-create | fires | 3/3 | pass |
+| commit-message | silent | 0/3 | pass |
+| review-diff | silent | 0/3 | pass |
+| split-branch | silent | 0/3 | pass |
+| rebase-howto | silent | 0/3 | pass |
+
+The description dropped the trigger-phrase list and the rationale, and kept the
+squash-subject reason, the empty-body case and the `gh-stack` boundary. `split-branch`
+stayed silent without `gh-stack` present as a peer, so this run does not show the two being
+told apart. Re-run on a host with `gh-stack` to check that.
+
 ## 2026-09-25 (pr-review-prep folded in) · opus · 3 runs/case · 8/8
 
 Peers in the isolated config: `gh-stack`, `receiving-code-review`.
