@@ -9,12 +9,6 @@
 # the fastfetch wrapper, and the autosuggestions/syntax-highlighting plugins.
 
 # =============================================================================
-# BREW PREFIX (Homebrew init itself lives in .zprofile)
-# =============================================================================
-BREW_PREFIX="${HOMEBREW_PREFIX:-/opt/homebrew}"
-export HOMEBREW_NO_ENV_HINTS=1
-
-# =============================================================================
 # ENVIRONMENT VARIABLES
 # =============================================================================
 # Prefer en_US.UTF-8 but fall back to C.UTF-8 on a minimal host that hasn't generated it
@@ -54,41 +48,10 @@ setopt SHARE_HISTORY HIST_IGNORE_ALL_DUPS HIST_FIND_NO_DUPS \
 setopt AUTO_CD EXTENDED_GLOB NO_CASE_GLOB AUTO_MENU
 
 # =============================================================================
-# PATH CONFIGURATION (brew/python/coreutils are macOS-only; generic paths in common.sh)
+# HOMEBREW (BREW_PREFIX and the brew PATH entries, shared with bash; a no-op without brew)
 # =============================================================================
-{{- if eq .chezmoi.os "darwin" }}
-
-# Ensure Homebrew bin precedes /usr/bin in non-login shells (.zprofile handles login shells).
-# The check avoids adding a duplicate entry when .zprofile already ran.
-[[ ":$PATH:" != *":$BREW_PREFIX/bin:"* ]] && \
-  export PATH="$BREW_PREFIX/bin:$BREW_PREFIX/sbin:$PATH"
-
-# Unversioned `python`/`pip` from the brew keg. Guarded and prefix-derived like its two
-# neighbours below — it had been neither, so an Intel Mac (prefix /usr/local) or a box on a
-# different Python minor silently prepended a directory that does not exist.
-if [[ -d "$BREW_PREFIX/opt/python@3.14/libexec/bin" ]]; then
-  export PATH="$BREW_PREFIX/opt/python@3.14/libexec/bin:$PATH"
-fi
-
-# gnubin is live only once the coreutils formula is installed — see the Brewfile's note on why
-# it is, which is that run_bounded needs timeout(1) and a stock Mac has none.
-if [[ -d "$BREW_PREFIX/opt/coreutils/libexec/gnubin" ]]; then
-  export PATH="$BREW_PREFIX/opt/coreutils/libexec/gnubin:$PATH"
-fi
-
-# util-linux is keg-only, so brew never links it into $BREW_PREFIX/bin. APPENDED rather than
-# prepended, unlike gnubin above, and that direction is deliberate: the only tool in this keg
-# that macOS does not already provide is flock — which retention-sweep's lock and bin/land's
-# cross-worktree lock both want — while the keg also ships column, getopt, hexdump, logger,
-# rename, rev, look and ul, all of which would shadow the BSD versions that scripts on this
-# machine already expect. Appending resolves flock and changes nothing that already works.
-#
-# Note it does NOT supply script(1): brew omits it on macOS because the base system has BSD
-# script, so the agentview pty tests that want the util-linux one stay skipped here.
-if [[ -d "$BREW_PREFIX/opt/util-linux/bin" ]]; then
-  export PATH="$PATH:$BREW_PREFIX/opt/util-linux/bin"
-fi
-{{- end }}
+# Before compinit, because the fpath line below reads $BREW_PREFIX.
+[[ -r "$HOME/.config/shell/brew.sh" ]] && source "$HOME/.config/shell/brew.sh"
 
 # =============================================================================
 # COMPLETION SYSTEM

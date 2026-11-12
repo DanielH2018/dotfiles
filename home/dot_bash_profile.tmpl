@@ -7,6 +7,10 @@ export SDKMAN_DIR="$HOME/.sdkman"
 # Before fnm: Debian's /etc/profile resets PATH, and fnm lives in ~/.local/bin, which env.sh adds.
 [ -r "$HOME/.config/shell/env.sh" ] && . "$HOME/.config/shell/env.sh"
 
+# Homebrew's PATH entries. Claude Code's Bash tool gets its PATH through this file: its snapshot
+# shell is a non-interactive login bash, which never gets past .bashrc's interactive check.
+[ -r "$HOME/.config/shell/brew.sh" ] && . "$HOME/.config/shell/brew.sh"
+
 # FNM (Fast Node Manager) — node version manager, used on all machines. This must run
 # HERE because a non-interactive login shell (`bash -lc`, `ssh host cmd`) reads only
 # .bash_profile, never .bashrc/common.sh (interactive-only, see .bashrc:18-20). An

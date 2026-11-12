@@ -158,7 +158,7 @@ case $- in
     ;;
 esac
 
-# --- PATH (idempotent prepends; brew/python/coreutils paths are macOS-only, set in .zshrc) ---
+# --- PATH (idempotent prepends; the Homebrew entries are in brew.sh) ---
 for _d in "$HOME/.local/bin" "$HOME/go/bin"; do
   [ -d "$_d" ] && case ":$PATH:" in *":$_d:"*) ;; *) PATH="$_d:$PATH" ;; esac
 done

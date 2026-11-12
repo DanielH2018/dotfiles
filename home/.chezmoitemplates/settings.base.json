@@ -15,6 +15,14 @@
          never expires. The sweep deletes a file once it is 30 full days old. Set to 0 to
          disable both rows. */}}
     "CLAUDE_ARTIFACT_RETENTION_DAYS": "30",
+{{ if ne .chezmoi.os "windows" }}
+    {{/* The Bash tool's shell, pinned so it matches the shell every hook and script here is
+         written for; without it Claude Code picks the login shell, which is zsh. Its PATH comes
+         from ~/.bash_profile, and ~/.config/shell/brew.sh puts Homebrew's entries there on
+         macOS. Windows is left out because Claude Code runs Git Bash there regardless and
+         /bin/bash is no Windows path. */}}
+    "CLAUDE_CODE_SHELL": "/bin/bash",
+{{ end }}
 {{ if and (has .chezmoi.hostname (list "daniel-box" "daniel-server" "daniel-pi")) (not (includeTemplate "is-agent" .)) }}
     {{/* sudo run from a `!` command has no terminal to prompt on, so without an askpass
          helper it just refuses. ~/.zshenv sets this too, but that only reaches shells that

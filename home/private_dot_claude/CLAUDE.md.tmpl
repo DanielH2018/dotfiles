@@ -127,7 +127,7 @@ prints its flags with `--help`.
 
 ## Shell and harness facts
 
-- The Bash tool's shell is zsh, which does not word-split an unquoted `$VAR`; bash does. To reproduce a line from a bash script or hook by hand, run it under `bash -c '…'`. A "No such file" error naming a path that contains `\n` comes from this, not from a missing file.
+- The Bash tool's shell is bash, pinned by `CLAUDE_CODE_SHELL` in settings, so an unquoted `$VAR` word-splits there as it does in a hook. The operator's terminal shell is zsh, which does not word-split. To reproduce a line typed in that terminal, run it under `zsh -c '…'`. On macOS the Bash tool's bash is `/bin/bash` 3.2, which has no associative arrays, `mapfile` or `${var,,}`.
 - A resumed or compacted session keeps its session crons. Before re-creating a cron that looks lost, run `CronList`, because a duplicate fires its full prompt again.
 - In an agent file under `.claude/agents/`, the tool allowlist key is `tools:`. `allowed-tools:` is the skill key: Claude Code ignores it in an agent file, so that agent gets every tool.
 - The ralph-loop plugin's stop hook reads `.claude/ralph-loop.local.md` relative to the shell's working directory, so a `cd` ends the loop without a message. A blank `Stop hook error:` line is how Claude Code shows a hook that blocks the stop, not a failure.

@@ -1,6 +1,8 @@
 # ~/.bashrc — interactive Bash config. Primary use is Git Bash on Windows; the zsh config
-# in ~/.zshrc covers macOS/Linux. Sourced from ~/.bash_profile for login shells (Git Bash
-# doesn't read ~/.bashrc on its own).
+# in ~/.zshrc covers interactive macOS/Linux shells. Sourced from ~/.bash_profile for login
+# shells (Git Bash doesn't read ~/.bashrc on its own). Claude Code's Bash tool is a
+# non-interactive login bash, so it stops at the check below and takes its PATH from
+# ~/.bash_profile.
 #
 # Config shared with zsh (env, PATH, aliases, functions, tool init) lives in
 # ~/.config/shell/common.sh — the single source of truth. This file holds ONLY the

@@ -7,7 +7,8 @@ brew "gh"
 # tools.toml: gawk and flock are base-system on Linux and simply absent on macOS. Without them
 # 24 tests in the pre-push suite self-skip on this machine — 9 on gawk, 15 on flock — and a
 # skipped test is indistinguishable from a passing one in the totals. util-linux is keg-only, so
-# .zshrc appends its bin to PATH; see the comment there for why appended and not prepended.
+# ~/.config/shell/brew.sh appends its bin to PATH; see the comment there for why appended and
+# not prepended.
 # It does NOT ship script(1) on macOS, so the pty tests that want the util-linux one stay
 # skipped regardless.
 brew "gawk"
@@ -20,9 +21,9 @@ brew "util-linux"
 # The hole has two fixes: put a timeout(1) on the hook's PATH (this) or give run_bounded a
 # fallback, which is a change
 # to the M10 bounded-execution contract and larger than the bug.
-# .zshrc already PREPENDS coreutils/libexec/gnubin where it exists — that prepend was written
-# for this formula and had been dead code, guarded on a `-d` that never matched. Installing the
-# formula is what makes it live. Scripts keep their own BSD fallbacks regardless: gnubin reaches
+# ~/.config/shell/brew.sh PREPENDS coreutils/libexec/gnubin where it exists — that prepend was
+# written for this formula and had been dead code, guarded on a `-d` that never matched.
+# Installing the formula is what makes it live. Scripts keep their own BSD fallbacks regardless: gnubin reaches
 # an interactive PATH, and a hook launched from elsewhere may not see it.
 brew "coreutils"
 brew "mas"
