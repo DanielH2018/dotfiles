@@ -61,15 +61,30 @@ Assume other Claude sessions are in this repo right now, in worktrees under
   chezmoi manages.
 
 Integrate with `bin/land`, which rebases, pushes, and merges the PR under a repo-wide lock so
-two sessions can't land onto a main the other is still moving. Nothing runs it unasked: a
-session that finishes work opens a draft PR and stops there, background jobs included.
+two sessions can't land onto a main the other is still moving.
 
-But when you *are* asked to land something, run `bin/land` yourself — don't print the command
-for the operator to paste back. It is yours to run, not to recommend. The general rule you
-carry ("never push to main, force-push, or merge") is about doing those by hand to a branch
-you were not asked to integrate; `land` is exactly how this repo does them safely — under the
-lock, through the PR, on request. If a permission prompt fires on the invocation, that is the
-confirmation step — let it, instead of pre-empting it with a command to paste.
+**A session that finishes work lands it and deploys it, without asking.** Background jobs
+follow the same default. Asking for the change is asking to land and apply it. The sequence:
+
+1. Open the PR, then run `bin/land` yourself. Never print the command for the operator to
+   paste back.
+2. `land` runs `bin/land-sync`, which moves the primary checkout's `main` onto the landing.
+3. Run `chezmoi diff`, read it, then run `chezmoi apply`. The `chezmoi-repo-ops` skill has the
+   done-check.
+
+The general rule you carry ("never push to main, force-push, or merge") is about doing those
+by hand. `land` is how this repo does them safely: under the lock, through the PR, behind the
+`gate` check. If a permission prompt fires on the invocation, that is the confirmation step.
+Let it fire, instead of pre-empting it with a command to paste.
+
+Stop and report instead, naming which of these applies:
+
+- The brief says not to merge or not to apply. The brief wins over this default.
+- `bin/gate` fails, or `land` refuses. Fix the cause or report it; never bypass the gate.
+- `land` exits 3. The branch has landed, so re-run `bin/land-sync`, never `land`.
+- `chezmoi diff` removes content the source never had. Another job owns that file (see above).
+- The primary checkout is parked on a bench branch, so an apply would deploy the bench.
+  `bin/try --back` is the operator's to run.
 
 To *test* a branch, don't go to its worktree — bring it to the primary checkout with
 `bin/try <branch>`, and `bin/try --back` when you're done. It detaches onto the branch, which
@@ -81,8 +96,8 @@ branch you meant to test. `try` holds its own lock and makes the same refusal
 the chezmoi apply guard in `guard-pre-tool-use.sh` does, since that hook matches the Bash
 command string and never sees the apply inside a script.
 
-Same rule as `land` on who runs it, for a different reason: `try` moves the primary checkout's
-HEAD and deploys to `$HOME`, which is the operator's live config, so don't put a branch on the
-bench on your own initiative. Asked to, though, you run it — `bin/try --dry-run` and
+`try` is not part of the default. It moves the primary checkout's HEAD onto a branch that has
+not landed and deploys that branch to `$HOME`, which is the operator's live config, so don't
+put a branch on the bench on your own initiative. Asked to, though, you run it — `bin/try --dry-run` and
 `bin/try --diff` are there for showing what a bench would do, which is a better answer than
 handing over a command to paste.

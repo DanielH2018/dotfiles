@@ -37,7 +37,7 @@ alone, and prints what a switch back would change under `home/`. A `main` that h
 gets a refusal, not a merge commit. `--dry-run` prints the plan.
 
 Syncing the ref still isn't deploying, and `land-sync` deliberately stops short of it. On
-`main`, deploy with `chezmoi diff` then `chezmoi apply`. While the checkout sits on a pre-merge
+`main`, deploy with `chezmoi diff` then `chezmoi apply`, in the same session as the landing. While the checkout sits on a pre-merge
 branch, every apply deploys pre-merge content and it looks like the change never landed;
 `bin/try --back` (checkout main + apply) is the fix, and it moves `$HOME`, so it is the
 operator's to run. `guard-pre-tool-use.sh` denies a plain `chezmoi apply` typed while the

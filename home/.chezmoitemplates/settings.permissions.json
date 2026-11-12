@@ -428,8 +428,8 @@
       "Bash(systemctl --user status:*)",
       "Bash(systemctl --user list-units:*)",
       "Bash(fzf --version)",
-      {{/* PR plumbing runs unattended. CLAUDE.md instructs Claude to open a draft PR at the end of a
-           worktree job, so leaving `gh pr create` in the ask list contradicted the instruction it had
+      {{/* PR plumbing runs unattended. CLAUDE.md instructs Claude to open a PR at the end of a
+           worktree job and land it, so leaving `gh pr create` in the ask list contradicted the instruction it had
            already been given; the prompt audit measured 45 invocations, every one of the shape
            `cd <worktree> && gh pr create --draft`. These verbs are all reversible from the GitHub UI.
            A plain `gh pr merge` is listed nowhere, so it still prompts outside auto mode.

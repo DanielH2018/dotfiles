@@ -25,10 +25,10 @@
 # deploying. If the sync fails, land exits 3 — the branch HAS landed, so re-run
 # bin/land-sync, never land.
 #
-# Never run this unasked: a session that finishes work opens a draft PR and stops
-# there, background jobs included. But when the operator asks for it, run it —
-# don't print the command back for them to paste. Their ask is the sanction for
-# the one thing here that force-pushes, takes a PR out of draft, or merges.
+# A session that finishes work runs this itself, background jobs included, and
+# then deploys with chezmoi diff and chezmoi apply; CLAUDE.md lists when to stop
+# instead. Never print the command for the operator to paste. Asking for the
+# change sanctions the force-push, the move out of draft and the merge here.
 #
 #   land                 land the current branch
 #   land <branch>        land <branch> (must be checked out in this worktree)
