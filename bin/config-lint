@@ -14,6 +14,8 @@
  *     check before a `source` (e.g. ble.sh) — absent from PATH/disk on this
  *     host — info-only for now (M14/M15 reference-resolver slice 1; see
  *     specs/env-modules)
+ *   - agent files under agents/ whose frontmatter sets `allowed-tools:`, the
+ *     skill key; Claude Code ignores it in an agent, which then gets every tool
  *
  * Usage: bin/config-lint [rootDir] [--strict] [--json]
  *   rootDir  config dir to audit (default: ~/.claude)
@@ -292,6 +294,25 @@ function checkPathDeps(deps, home, hasPath) {
     return findings;
 }
 
+// `allowed-tools:` is the skill key. In an agent file Claude Code ignores it and the agent
+// gets every tool, so a "read-only" reviewer written that way can Edit and Write; the agent
+// key is `tools:`. Only the leading `---` block counts: a body may quote the key as prose.
+function frontmatterKeys(text) {
+    const lines = String(text).split("\n");
+    if (lines[0].trim() !== "---") return [];
+    const keys = [];
+    for (const line of lines.slice(1)) {
+        if (line.trim() === "---") return keys;
+        const m = line.match(/^([A-Za-z0-9_-]+)\s*:/);
+        if (m) keys.push(m[1]);
+    }
+    return [];
+}
+
+function findAgentAllowedTools(files) {
+    return files.filter(({ text }) => frontmatterKeys(text).includes("allowed-tools")).map(f => f.path);
+}
+
 // ── fs wrappers ───────────────────────────────────────────────────────────────
 
 function readJSON(file) {
@@ -319,6 +340,17 @@ function readHookScripts(hooksDir) {
                 return { path: p, text: fs.readFileSync(p, "utf8") };
             });
     });
+}
+
+// statSync follows symlinks: the work agents reach ~/.claude/agents as symlinks, which a
+// Dirent's isFile() reports false.
+function readAgentFiles(agentsDir) {
+    if (!fs.existsSync(agentsDir)) return [];
+    return fs.readdirSync(agentsDir)
+        .filter(name => name.endsWith(".md"))
+        .map(name => path.join(agentsDir, name))
+        .filter(p => { try { return fs.statSync(p).isFile(); } catch { return false; } })
+        .map(p => ({ path: p, text: fs.readFileSync(p, "utf8") }));
 }
 
 function listSkillNames(skillsDir) {
@@ -397,6 +429,10 @@ function audit(root, home) {
         add("info", "skills", `skill name "${dupe.name}" defined in: ${dupe.sources.join(", ")}`);
     }
 
+    for (const p of findAgentAllowedTools(readAgentFiles(path.join(root, "agents")))) {
+        add("should-fix", "agents", `${p} sets allowed-tools:, the skill key, which an agent ignores and so gets every tool; use tools:`);
+    }
+
     // Binary/tool dependencies (report-only: always info)
     const hookScripts = readHookScripts(path.join(root, "hooks"));
     const binaryDeps = extractBinaryDeps(hookScripts)
@@ -452,6 +488,7 @@ module.exports = {
     findDuplicateSkills, checkBloat, extractBinaryDeps, checkBinaryDeps, audit,
     extractPermissionDeps, extractPathDeps, checkPathDeps,
     extractShellFunctionNames, enumeratePluginSkills, readHookScripts,
+    findAgentAllowedTools, readAgentFiles,
     BLOAT_MAX_BYTES, BLOAT_MAX_LINES,
 };
 

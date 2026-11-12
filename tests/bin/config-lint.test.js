@@ -254,3 +254,34 @@ test("checkPathDeps expands $HOME and reports info findings only for paths the i
   assert.match(findings[0].msg, /blesh\/ble\.sh/);
   assert.match(findings[0].msg, /not found on disk/);
 });
+
+test("findAgentAllowedTools flags allowed-tools: in the frontmatter only, never tools: or a body mention", () => {
+  const files = [
+    { path: "bad.md", text: "---\nname: bad\nallowed-tools: Read, Grep\n---\nbody\n" },
+    { path: "good.md", text: "---\nname: good\ntools: Read, Grep\n---\nbody\n" },
+    { path: "prose.md", text: "---\nname: prose\ntools: Read\n---\nallowed-tools: is the skill key\n" },
+  ];
+  assert.deepStrictEqual(m.findAgentAllowedTools(files), ["bad.md"]);
+});
+
+test("audit reports allowed-tools: in an agent file as should-fix, symlinked agents included", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "config-lint-agents-"));
+  const agentsDir = path.join(root, "agents");
+  fs.mkdirSync(agentsDir);
+  const bad = "---\nname: x\nallowed-tools: Read\n---\n";
+  fs.writeFileSync(path.join(agentsDir, "plain.md"), bad);
+  fs.writeFileSync(path.join(root, "linked-target.md"), bad);
+  fs.symlinkSync(path.join(root, "linked-target.md"), path.join(agentsDir, "linked.md"));
+  try {
+    const findings = m.audit(root, root).filter(f => f.area === "agents");
+    assert.strictEqual(findings.length, 2);
+    assert.ok(findings.every(f => f.sev === "should-fix"));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("no agent file in this repo's source sets allowed-tools:", () => {
+  const agentsDir = path.join(__dirname, "..", "..", "home", "private_dot_claude", "agents");
+  assert.deepStrictEqual(m.findAgentAllowedTools(m.readAgentFiles(agentsDir)), []);
+});

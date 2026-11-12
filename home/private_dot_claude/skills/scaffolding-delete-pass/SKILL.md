@@ -88,7 +88,7 @@ a CI workflow and `distill-scan` feeding the vault pre-commit hook, after a skil
 grep had reported no callers for either.
 
 For drift in the config itself (orphaned hook paths, dead plugin toggles, duplicate skill
-names), run `~/.local/share/chezmoi/bin/config-lint`. Pass `--json` for machine output, or a
+names, an agent that sets the skill key `allowed-tools:` instead of `tools:`), run `~/.local/share/chezmoi/bin/config-lint`. Pass `--json` for machine output, or a
 project `.claude/` path as the argument.
 
 ### 3. Read the candidates in this order
