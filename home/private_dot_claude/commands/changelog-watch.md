@@ -108,5 +108,8 @@ Put a link to the upstream changelog at the top of the page, immediately below t
 before the summary block: https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md —
 that one is an `https://` link, not a `file://` one.
 
+Declare `<meta name="artifact:origin" content="scheduled">` in the `<head>` beside the skill's
+four metadata tags. The artifacts browser files this run under its scheduled filter.
+
 Use the Write tool only — never the Artifact tool. This runs headless with permissions skipped,
 and publishing your own config's weak points to claude.ai is not a thing to do unattended.

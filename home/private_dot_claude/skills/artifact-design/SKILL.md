@@ -120,6 +120,12 @@ Declaring costs four lines and ends the ambiguity.
 three. The indexer caps derived services at five, most-mentioned first; a declared list is
 taken as written, so keep it to the subject.
 
+**A headless run adds a fifth tag.** When no one is in the session, such as a timer or a
+`claude -p` job, also declare `<meta name="artifact:origin" content="scheduled">`
+(`origin: scheduled` in Markdown frontmatter). The browser's origin filter separates these
+artifacts from the ones an operator asked for. An interactive session declares nothing:
+an artifact without the tag counts as `session`.
+
 ## Where the link points
 
 Writing the file is the same everywhere; only the closing link differs, and `link-artifact.sh`
