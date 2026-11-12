@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { checkHost } from './guard.ts';
 import { buildStacks } from './stacks.ts';
 import type { JobLogResult, JobsResult } from './jobs.ts';
+import type { OnCallResult } from './oncall.ts';
 import type { PlankaResult } from './planka.ts';
 import type { LoadRepos } from './repos.ts';
 import type { LoadVulns } from './vulns.ts';
@@ -68,6 +69,9 @@ export type ServerOpts = {
   // EXTENSION_PATHS: a log can quote Slack or alert text, which is why jobstat --json leaves
   // it out, so log text stays readable from this server's own origin only.
   loadJobLog?: (label: string) => Promise<JobLogResult>;
+  // Backs `GET /api/oncall` — see createLoadOnCall in oncall.ts. Optional for the same
+  // reason as loadPlanka; unset answers that route with a 502.
+  loadOnCall?: () => Promise<OnCallResult>;
   // Backs `GET /api/vulns` — see createVulnLoader in vulns.ts. Optional for the same reason
   // as loadPlanka; unset answers that route with a 502. Deliberately absent from
   // EXTENSION_PATHS: open vulnerabilities are a security inventory, so they stay readable
@@ -80,7 +84,7 @@ export type ServerOpts = {
 
 // The only paths an allowlisted extension origin may read. The new tab's work panels need
 // these and nothing else, so the page shell, app.js and every 404 stay refused.
-const EXTENSION_PATHS: ReadonlySet<string> = new Set(['/api/prs', '/api/planka', '/api/jobs']);
+const EXTENSION_PATHS: ReadonlySet<string> = new Set(['/api/prs', '/api/planka', '/api/jobs', '/api/oncall']);
 
 // Derived from opts.loadPrs's own return type rather than restating it: a hand-maintained
 // copy closes the omission this round found (`refreshing` dropped at the wire) but not the
@@ -240,6 +244,19 @@ async function handle(
     if (result.error !== undefined) return refuse(res, 502, result.error);
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ jobs: result.jobs }));
+    return;
+  }
+
+  if (url.pathname === '/api/oncall') {
+    // Same shape as /api/jobs.
+    if (extensionOrigin !== undefined) {
+      res.setHeader('access-control-allow-origin', extensionOrigin);
+      res.setHeader('vary', 'Origin');
+    }
+    const result = opts.loadOnCall ? await opts.loadOnCall() : { error: 'on-call is not configured in pr-dash' };
+    if (result.error !== undefined) return refuse(res, 502, result.error);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ shifts: result.shifts, incidents: result.incidents }));
     return;
   }
 

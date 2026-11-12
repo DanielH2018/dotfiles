@@ -47,6 +47,7 @@ async function withServer(
   loadPlanka?: ServerOpts['loadPlanka'],
   loadJobs?: ServerOpts['loadJobs'],
   loadJobLog?: ServerOpts['loadJobLog'],
+  loadOnCall?: ServerOpts['loadOnCall'],
 ) {
   const port = await freePort();
   const server = createServer({
@@ -58,6 +59,7 @@ async function withServer(
     loadPlanka,
     loadJobs,
     loadJobLog,
+    loadOnCall,
   });
   await new Promise<void>((r) => server.listen(port, '127.0.0.1', r));
   try {
@@ -610,8 +612,9 @@ function withExtensionServer(
   loadPrs?: Parameters<typeof withServer>[1],
   loadPlanka?: ServerOpts['loadPlanka'],
   loadJobs?: ServerOpts['loadJobs'],
+  loadOnCall?: ServerOpts['loadOnCall'],
 ) {
-  return withServer(fn, loadPrs, undefined, [], extensionOrigins, loadPlanka, loadJobs);
+  return withServer(fn, loadPrs, undefined, [], extensionOrigins, loadPlanka, loadJobs, undefined, loadOnCall);
 }
 
 test('an allowlisted extension origin reads /api/prs, answered with CORS headers naming that exact origin', async () => {
@@ -638,7 +641,7 @@ test('an allowlisted extension origin is refused on every path outside EXTENSION
   // The page shell, the client code, near-misses of the API paths, a path that would 404,
   // /api/vulns, /api/repos and /api/job-log, which stay same-origin only: the allowlist opens the
   // work panels' routes, not the server.
-  const paths = ['/', '/index.html', '/app.js', '/api/prs/', '/api/planka/', '/api/jobs/', '/api/vulns', '/api/repos', '/api/job-log?label=x', '/no-such-file'];
+  const paths = ['/', '/index.html', '/app.js', '/api/prs/', '/api/planka/', '/api/jobs/', '/api/oncall/', '/api/vulns', '/api/repos', '/api/job-log?label=x', '/no-such-file'];
   await withExtensionServer([EXTENSION], async (base) => {
     for (const path of paths) {
       const response = await getFrom(base, path, EXTENSION);
@@ -775,6 +778,26 @@ test('an allowlisted extension origin reads /api/jobs, answered with CORS header
     undefined,
     undefined,
     async () => ({ jobs }),
+  );
+});
+
+test('an allowlisted extension origin reads /api/oncall, answered with CORS headers naming that exact origin', async () => {
+  const body = {
+    shifts: [{ schedule: 'Secondary', level: 2, start: '2026-11-12T18:00:00Z', end: '2026-11-19T18:00:00Z' }],
+    incidents: [],
+  };
+  await withExtensionServer(
+    [EXTENSION],
+    async (base) => {
+      const response = await getFrom(base, '/api/oncall', EXTENSION);
+      assert.match(response, /^HTTP\/1\.1 200 /);
+      assert.ok(response.toLowerCase().includes(`\r\naccess-control-allow-origin: ${EXTENSION}\r\n`), response);
+      assert.ok(response.includes(JSON.stringify(body)), response);
+    },
+    undefined,
+    undefined,
+    undefined,
+    async () => body,
   );
 });
 

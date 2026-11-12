@@ -4,6 +4,7 @@ import type { LoadResult } from './loader.ts';
 import { resolveToken } from './token.ts';
 import { createCache } from './cache.ts';
 import { createLoadJobLog, createLoadJobs } from './jobs.ts';
+import { createLoadOnCall } from './oncall.ts';
 import { createLoadPlanka } from './planka.ts';
 import {
   createIdleExit,
@@ -113,6 +114,8 @@ const server = createServer({
   loadJobs,
   // Reads through loadJobs, so a log is only ever the file jobstat named for that job.
   loadJobLog: createLoadJobLog(loadJobs),
+  // Spawns oncall per request, like jobstat.
+  loadOnCall: createLoadOnCall(),
   // Shares the PR loader's lazy client, so both routes resolve the token once. Alerts change
   // far more slowly than PR state, hence the longer TTL (above) than the PR cache's 60 seconds.
   loadVulns,

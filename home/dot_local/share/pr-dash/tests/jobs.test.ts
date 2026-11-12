@@ -3,12 +3,13 @@ import assert from 'node:assert';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createLoadJobLog, createLoadJobs, LOG_TAIL_BYTES, type JobStatus, type RunJobstat } from '../src/jobs.ts';
+import { createLoadJobLog, createLoadJobs, LOG_TAIL_BYTES, type JobStatus } from '../src/jobs.ts';
+import type { RunCli } from '../src/cli-loader.ts';
 
 // Synthetic labels only: this repo is public, and the real jobs belong to a private repo.
 const JOB = { label: 'com.example.digest', schedule: 'Mon-Fri 08:34', status: 'not running, last exit 1', failed: true, logAt: 1761137640, log: '~/logs/digest.log' };
 
-function fakeRun(...answers: (() => string)[]): RunJobstat & { calls: string[][] } {
+function fakeRun(...answers: (() => string)[]): RunCli & { calls: string[][] } {
   const calls: string[][] = [];
   const run = async (args: string[]) => {
     calls.push(args);

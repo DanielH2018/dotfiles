@@ -1,9 +1,8 @@
-import { execFile } from 'node:child_process';
 import { constants } from 'node:fs';
 import { open, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
-import { createCache } from './cache.ts';
+import { createCliLoader, type RunCli } from './cli-loader.ts';
 
 // pr-dash reads the launchd jobs' status through the operator's `jobstat --json`, which
 // lives in the private work-laptop-config repo, not this one. Like the planka CLI, every
@@ -19,9 +18,6 @@ const TIMEOUT_MS = 20_000;
 // A job's state changes a few times a day at most, while every new tab asks. The
 // extension keeps its own 60-second cache on top of this.
 const CACHE_TTL_MS = 120_000;
-
-/** Runs `jobstat` with `args`; rejects on ENOENT, a non-zero exit or the timeout. */
-export type RunJobstat = (args: string[]) => Promise<{ stdout: string }>;
 
 /**
  * One job as `GET /api/jobs` serves it. `failed` is jobstat's own decision, catch-up
@@ -42,25 +38,8 @@ export type JobStatus = {
 /** One `/api/jobs` answer: every job, or the reason jobstat could not be read. */
 export type JobsResult = { jobs: JobStatus[]; error?: undefined } | { jobs?: undefined; error: string };
 
-function defaultRunJobstat(args: string[]): Promise<{ stdout: string }> {
-  return new Promise((resolve, reject) => {
-    execFile(JOBSTAT_BIN, args, { timeout: TIMEOUT_MS }, (err, stdout, stderr) => {
-      if (err) reject(Object.assign(err, { stderr: String(stderr) }));
-      else resolve({ stdout: String(stdout) });
-    });
-  });
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
-}
-
-// ENOENT means jobstat is not installed, which is the normal state outside the work laptop.
-function failureMessage(err: unknown): string {
-  if (isRecord(err) && err['code'] === 'ENOENT') return `jobstat is not installed at ${JOBSTAT_BIN}`;
-  if (isRecord(err) && err['killed'] === true) return `jobstat did not finish within ${TIMEOUT_MS / 1000}s`;
-  const stderr = isRecord(err) && typeof err['stderr'] === 'string' ? err['stderr'].trim() : '';
-  return stderr !== '' ? `jobstat: ${stderr}` : 'jobstat --json failed';
 }
 
 // An entry missing a field is dropped rather than passed on half-formed.
@@ -80,36 +59,21 @@ function toJob(raw: unknown): JobStatus | undefined {
  * nothing a caller sends reaches jobstat's argv. A failure is never cached, so the next
  * request retries, and concurrent requests share one run.
  */
-export function createLoadJobs(run: RunJobstat = defaultRunJobstat): () => Promise<JobsResult> {
-  const cache = createCache<JobStatus[]>(CACHE_TTL_MS);
-  let inFlight: Promise<JobsResult> | undefined;
-
-  async function load(): Promise<JobsResult> {
-    let stdout: string;
-    try {
-      ({ stdout } = await run(['--json']));
-    } catch (err) {
-      return { error: failureMessage(err) };
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(stdout);
-    } catch {
-      return { error: 'jobstat --json printed something that is not JSON' };
-    }
-    if (!Array.isArray(parsed)) return { error: 'jobstat --json printed something other than a list' };
-    const jobs = parsed.map(toJob).filter((j): j is JobStatus => j !== undefined);
-    cache.set(jobs);
-    return { jobs };
-  }
-
-  return () => {
-    const cached = cache.get();
-    if (cached !== undefined) return Promise.resolve({ jobs: cached });
-    inFlight ??= load().finally(() => {
-      inFlight = undefined;
-    });
-    return inFlight;
+export function createLoadJobs(run?: RunCli): () => Promise<JobsResult> {
+  const load = createCliLoader<JobStatus[]>({
+    bin: JOBSTAT_BIN,
+    name: 'jobstat',
+    timeoutMs: TIMEOUT_MS,
+    ttlMs: CACHE_TTL_MS,
+    run,
+    parse: (json) =>
+      Array.isArray(json)
+        ? { value: json.map(toJob).filter((j): j is JobStatus => j !== undefined) }
+        : { error: 'jobstat --json printed something other than a list' },
+  });
+  return async () => {
+    const result = await load();
+    return result.error !== undefined ? { error: result.error } : { jobs: result.value };
   };
 }
 
