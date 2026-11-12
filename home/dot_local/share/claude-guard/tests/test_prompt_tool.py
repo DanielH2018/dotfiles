@@ -114,8 +114,10 @@ def test_a_subagents_id_is_recorded_and_handed_back_with_its_cwd(tmp_path):
     payload = json.loads(hook_payload("git rebase origin/main", "/tmp", "toolu_agent"))
     prompt_tool.record_context(json.dumps({**payload, "agent_id": "a41336082886a72e3"}), env)
     prompt_tool.record_context(hook_payload("ls", "/tmp", "toolu_main"), env)
-    assert prompt_tool.take_context("toolu_agent", env)[::2] == ("/tmp", "a41336082886a72e3")
-    assert prompt_tool.take_context("toolu_main", env)[::2] == ("/tmp", "")
+    cwd, _, agent_id = prompt_tool.take_context("toolu_agent", env)
+    assert (cwd, agent_id) == ("/tmp", "a41336082886a72e3")
+    cwd, _, agent_id = prompt_tool.take_context("toolu_main", env)
+    assert (cwd, agent_id) == ("/tmp", "")
 
 
 def test_the_server_answers_initialize_list_and_call_over_stdio(tmp_path):

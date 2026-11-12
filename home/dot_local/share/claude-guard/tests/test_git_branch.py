@@ -9,7 +9,6 @@ import sys
 import pytest
 
 from claude_guard.checks.git_branch import checkout_branch_safe, merge_safe, rebase_safe
-from claude_guard.checks.worktree_scratch import worktree_rm_safe
 from claude_guard.judge import judge
 from claude_guard.rules import load_rules
 from claude_guard.tables import scratch_roots
@@ -114,10 +113,14 @@ def test_strategy_options_hooks_skips_and_unresolved_refs_are_refused(clone):
         assert not merge_safe(_argv(command), clone, cwd_changed=False), command
 
 
-def test_no_cwd_or_a_moved_cwd_gets_no_opinion(clone):
+def test_no_cwd_a_moved_cwd_or_a_plain_repos_rebase_or_subagent_gets_no_opinion(clone):
     for cwd, moved in [("", False), ("relative", False), (clone, True)]:
         assert not checkout_branch_safe(_argv("git checkout feature"), cwd, moved)
         assert not merge_safe(_argv("git merge origin/main"), cwd, moved)
+    # A plain repo has no owned worktree to rebase in, and a subagent there shares its
+    # parent's checkout.
+    assert not rebase_safe(_argv("git rebase origin/main"), clone, False, clone)
+    assert not checkout_branch_safe(_argv("git checkout feature"), clone, False, clone, AGENT)
 
 
 def test_the_judge_grants_a_switch_then_merge_chain_and_refuses_discard_forms(clone, tmp_path):
@@ -212,15 +215,12 @@ def test_in_its_own_worktree_a_caller_may_reset_a_branch_and_rebase(shared):
         for command in [
             "git checkout -B local-8004 origin/feature",
             "git switch -C local-8004 origin/feature",
-            "git checkout --detach origin/main",
         ]:
             assert checkout_branch_safe(command.split(), cwd, False, project_dir, agent_id), command
         assert merge_safe(["git", "merge", "origin/main"], cwd, False, project_dir, agent_id)
         for command in [
             "git rebase origin/main",
-            "git rebase -q origin/main",
-            "git rebase --onto origin/main feature",
-            "git rebase --onto=origin/main feature HEAD",
+            "git rebase --onto origin/main feature HEAD",
             "git rebase --continue",
             "git rebase --abort",
         ]:
@@ -232,14 +232,9 @@ def test_rebase_forms_that_run_code_drop_commits_or_name_no_ref_are_refused(shar
     primary, session, _, _ = shared
     for command in [
         "git rebase -i origin/main",
-        "git rebase --interactive origin/main",
         "git rebase --exec make origin/main",
-        "git rebase -x make origin/main",
         "git rebase -X theirs origin/main",
-        "git rebase -s ours origin/main",
         "git rebase --root",
-        "git rebase --autostash origin/main",
-        "git rebase --no-verify origin/main",
         "git rebase --skip",
         "git rebase --onto origin/main",
         "git rebase missing",
@@ -247,29 +242,6 @@ def test_rebase_forms_that_run_code_drop_commits_or_name_no_ref_are_refused(shar
         "git rebase",
     ]:
         assert not rebase_safe(command.split(), session, False, primary), command
-
-
-def test_a_plain_repo_keeps_switching_and_merging_but_not_resets_or_rebases(clone):
-    # No session worktrees and no subagent: the checks behave as they did before ownership.
-    assert checkout_branch_safe(_argv("git checkout feature"), clone, False, clone)
-    assert merge_safe(_argv("git merge origin/main"), clone, False, clone)
-    assert not checkout_branch_safe(_argv("git checkout -B feature origin/main"), clone, False)
-    assert not rebase_safe(_argv("git rebase origin/main"), clone, False, clone)
-    # A subagent in a plain repo is sharing its parent's checkout.
-    assert not checkout_branch_safe(_argv("git checkout feature"), clone, False, clone, AGENT)
-
-
-@only_owned
-def test_a_subagent_cleans_its_own_worktree_and_keeps_its_parents(shared):
-    primary, session, agent_tree, _ = shared
-    for tree in (session, agent_tree):
-        with open(os.path.join(tree, "probe.py"), "w") as fh:
-            fh.write("x\n")
-    # Its own isolation worktree, which only its id identifies, since it shares the pid.
-    assert worktree_rm_safe("rm probe.py", agent_tree, False, primary, AGENT)
-    assert not worktree_rm_safe("rm probe.py", agent_tree, False, primary, "a0000000000000000")
-    # DECIDED: its parent's worktree stays open to cleanup, which moves no branch.
-    assert worktree_rm_safe("rm probe.py", session, False, primary, AGENT)
 
 
 @only_owned

@@ -472,8 +472,8 @@ def _start_time(pid: int) -> int:
         return int(fh.read().rpartition(")")[2].split()[19])
 
 
-def _lock(main, wt, pid: int, start: int, name: str = "fanout-1") -> None:
-    reason = f"claude session {name} (pid {pid} start {start})"
+def _lock(main, wt, pid: int, start: int, name: str = "fanout-1", kind: str = "session") -> None:
+    reason = f"claude {kind} {name} (pid {pid} start {start})"
     _sh(main, "git", "worktree", "lock", "--reason", reason, wt)
 
 
@@ -510,6 +510,22 @@ def test_a_lock_naming_another_process_a_reused_pid_or_no_session_is_refused(rep
     # A lock in another format, such as a fan-out launcher's, names no session.
     _sh(main, "git", "worktree", "lock", "--reason", f"fanout batch pid {os.getpid()}", wt)
     assert not worktree_rm_safe("rm .git-pr-body.md", wt, False, project_dir=main)
+
+
+@only_posix_allow
+@only_proc
+def test_a_subagent_cleans_its_own_worktree_and_keeps_its_parents(repo):
+    # An agent lock names the parent's pid, so only the payload's agent_id says whose it is.
+    main, wt = repo
+    me = (os.getpid(), _start_time(os.getpid()))
+    _lock(main, wt, *me, name="agent-a41336082886a72e3", kind="agent")
+    assert worktree_rm_safe("rm .git-pr-body.md", wt, False, main, "a41336082886a72e3")
+    assert not worktree_rm_safe("rm .git-pr-body.md", wt, False, main, "a0000000000000000")
+    assert not worktree_rm_safe("rm .git-pr-body.md", wt, False, main)
+    _sh(main, "git", "worktree", "unlock", wt)
+    # DECIDED: its parent's worktree stays open to cleanup, which moves no branch.
+    _lock(main, wt, *me)
+    assert worktree_rm_safe("rm .git-pr-body.md", wt, False, main, "a41336082886a72e3")
 
 
 @only_proc
