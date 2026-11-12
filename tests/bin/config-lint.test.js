@@ -282,6 +282,6 @@ test("audit reports allowed-tools: in an agent file as should-fix, symlinked age
 });
 
 test("no agent file in this repo's source sets allowed-tools:", () => {
-  const agentsDir = path.join(__dirname, "..", "..", "home", "private_dot_claude", "agents");
-  assert.deepStrictEqual(m.findAgentAllowedTools(m.readAgentFiles(agentsDir)), []);
+  const sourceAgents = path.join(__dirname, "..", "..", "home", "private_dot_claude", "agents");
+  assert.deepStrictEqual(m.findAgentAllowedTools(m.readAgentFiles(sourceAgents)), []);
 });
