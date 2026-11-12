@@ -59,8 +59,10 @@ from claude_guard.checks.git_reset import _git
 from claude_guard.checks.scratch import BOOL_SHORT, LONG_OK, tokenize
 
 _SESSION_WORKTREE = re.compile(r"/\.claude/worktrees/[^/]+$")
-# The lock reason Claude Code writes when a session enters a worktree.
-_CLAUDE_LOCK = re.compile(r"claude session \S+ \(pid (\d+) start (\d+)\)")
+# The lock reason Claude Code writes when a session enters a worktree (`session`), or when it
+# creates an Agent subagent's isolation worktree (`agent`, named `agent-<agent_id>`). An
+# in-process subagent shares its parent's pid, so only the name tells two agents apart.
+_CLAUDE_LOCK = re.compile(r"claude (session|agent) (\S+) \(pid (\d+) start (\d+)\)")
 # The hook sits a few processes below its session; the bound only stops a malformed chain.
 _ANCESTOR_LIMIT = 64
 # Ignore rules that match every root entry: they cover scratch as well as state.
@@ -105,9 +107,10 @@ def _ppid_and_start(pid: int) -> tuple[int, int] | None:
         return None
 
 
-def _locked_by_ancestor(root: str) -> bool:
-    """True when `root`'s git lock is a Claude session lock naming a process that is this
-    process or one of its ancestors, matched on pid and start time so a reused pid fails.
+def _lock_holder(root: str) -> tuple[str, str] | None:
+    """(kind, name) of `root`'s Claude lock, `kind` being `session` or `agent`, when the lock
+    names a process that is this process or one of its ancestors, matched on pid and start
+    time so a reused pid fails. None otherwise.
 
     DECIDED: the lock file is agent-writable, so `judge()` refuses these grants in any
     command that names a worktree lock. A lock rewritten by one command and relied on by a
@@ -118,38 +121,77 @@ def _locked_by_ancestor(root: str) -> bool:
     """
     gitdir = _git(root, "rev-parse", "--absolute-git-dir")
     if gitdir is None:
-        return False
+        return None
     try:
         with open(os.path.join(gitdir.strip(), "locked")) as fh:
             reason = fh.read().strip()
     except OSError:
-        return False
+        return None
     match = _CLAUDE_LOCK.fullmatch(reason)
     if match is None:
-        return False
-    owner = (int(match.group(1)), int(match.group(2)))
+        return None
+    owner = (int(match.group(3)), int(match.group(4)))
     pid = os.getpid()
     for _ in range(_ANCESTOR_LIMIT):
         if pid <= 1:
-            return False
+            return None
         stat = _ppid_and_start(pid)
         if stat is None:
-            return False
+            return None
         if (pid, stat[1]) == owner:
-            return True
+            return match.group(1), match.group(2)
         pid = stat[0]
-    return False
+    return None
 
 
-def session_root(cwd: str, project_dir: str) -> str | None:
+def _own_agent_lock(holder: tuple[str, str] | None, agent_id: str) -> bool:
+    """True when `holder` is the isolation-worktree lock of the subagent `agent_id`."""
+    return bool(agent_id) and holder == ("agent", f"agent-{agent_id}")
+
+
+def session_root(cwd: str, project_dir: str, agent_id: str = "") -> str | None:
     """The worktree root `cwd` sits in, when this session owns it: `project_dir` sits in
-    the same worktree, or the worktree's lock names an ancestor of this process."""
+    the same worktree, the worktree's session lock names an ancestor of this process, or it
+    is the isolation worktree of the subagent `agent_id` (the hook payload's field)."""
     root = _worktree_root(cwd)
     if root is None:
         return None
     if project_dir and _worktree_root(project_dir) == root:
         return root
-    return root if _locked_by_ancestor(root) else None
+    holder = _lock_holder(root)
+    if holder is not None and (holder[0] == "session" or _own_agent_lock(holder, agent_id)):
+        return root
+    return None
+
+
+def head_root(cwd: str, project_dir: str, agent_id: str = "") -> str | None:
+    """The worktree root `cwd` sits in, when this caller may move that worktree's HEAD.
+
+    Stricter than `session_root` for a subagent: it may move HEAD only in its own isolation
+    worktree. A subagent that runs in its parent's worktree shares it, and switching that
+    branch pulls it out from under the parent (server, 2026-11-09: a fix agent switched its
+    orchestrator's branch). The pid cannot catch that, because the agent shares it."""
+    if not agent_id:
+        return session_root(cwd, project_dir)
+    root = _worktree_root(cwd)
+    if root is None:
+        return None
+    return root if _own_agent_lock(_lock_holder(root), agent_id) else None
+
+
+def shares_session_worktrees(cwd: str) -> bool:
+    """True when the repository at `cwd` has a linked worktree under `.claude/worktrees/`,
+    the mark of a repo several sessions work at once. A probe failure counts as True, so
+    the caller refuses rather than treating an unread repo as an ordinary one."""
+    if not cwd or not cwd.startswith("/"):
+        return True
+    out = _git(cwd, "worktree", "list", "--porcelain")
+    if out is None:
+        return True
+    return any(
+        line.startswith("worktree ") and _SESSION_WORKTREE.search(line[len("worktree ") :])
+        for line in out.splitlines()
+    )
 
 
 def _confined(path: str, root: str, cwd: str, cwd_changed: bool) -> str | None:
@@ -166,14 +208,16 @@ def _confined(path: str, root: str, cwd: str, cwd_changed: bool) -> str | None:
     return real
 
 
-def worktree_rm_safe(part: str, cwd: str, cwd_changed: bool, project_dir: str) -> bool:
+def worktree_rm_safe(
+    part: str, cwd: str, cwd_changed: bool, project_dir: str, agent_id: str = ""
+) -> bool:
     """True when `part` is an `rm` whose every operand is an untracked path below the
     session worktree that holds both `cwd` and `project_dir`. Options are scratch.py's
     table."""
     tokens = tokenize(part)
     if not tokens or tokens[0].rsplit("/", 1)[-1] != "rm":
         return False
-    root = session_root(cwd, project_dir)
+    root = session_root(cwd, project_dir, agent_id)
     if root is None:
         return False
     operands: list[str] = []
@@ -252,14 +296,16 @@ def _is_one_tracked_file(real: str, root: str) -> bool:
     )
 
 
-def worktree_restore_safe(part: str, cwd: str, cwd_changed: bool, project_dir: str) -> bool:
+def worktree_restore_safe(
+    part: str, cwd: str, cwd_changed: bool, project_dir: str, agent_id: str = ""
+) -> bool:
     """True when `part` is `git restore [--staged] [--worktree] [--source=HEAD] [--] paths`
     with every path one tracked file below the session worktree that holds both `cwd` and
     `project_dir`."""
     tokens = tokenize(part)
     if not tokens or tokens[:2] != ["git", "restore"]:
         return False
-    root = session_root(cwd, project_dir)
+    root = session_root(cwd, project_dir, agent_id)
     if root is None:
         return False
     paths = 0
@@ -292,7 +338,9 @@ def worktree_restore_safe(part: str, cwd: str, cwd_changed: bool, project_dir: s
 _GIT_RM_FLAGS = frozenset({"-q", "--quiet", "--cached"})
 
 
-def worktree_git_rm_safe(part: str, cwd: str, cwd_changed: bool, project_dir: str) -> bool:
+def worktree_git_rm_safe(
+    part: str, cwd: str, cwd_changed: bool, project_dir: str, agent_id: str = ""
+) -> bool:
     """True when `part` is `git rm [-q] [--cached] [--] paths` with every path one tracked
     file below the session worktree that holds both `cwd` and `project_dir`.
 
@@ -303,7 +351,7 @@ def worktree_git_rm_safe(part: str, cwd: str, cwd_changed: bool, project_dir: st
     tokens = tokenize(part)
     if not tokens or tokens[:2] != ["git", "rm"]:
         return False
-    root = session_root(cwd, project_dir)
+    root = session_root(cwd, project_dir, agent_id)
     if root is None:
         return False
     paths = 0
@@ -329,7 +377,9 @@ _CLEAN_SHORT = frozenset("fdqn")
 _CLEAN_LONG = frozenset({"--force", "--quiet", "--dry-run"})
 
 
-def worktree_clean_safe(part: str, cwd: str, cwd_changed: bool, project_dir: str) -> bool:
+def worktree_clean_safe(
+    part: str, cwd: str, cwd_changed: bool, project_dir: str, agent_id: str = ""
+) -> bool:
     """True when `part` is `git clean -f [-d] [-q] [--] paths` with every path untracked
     scratch below the session worktree that holds both `cwd` and `project_dir`, held to the
     same tests as `worktree_rm_safe` (dotfiles #864).
@@ -342,7 +392,7 @@ def worktree_clean_safe(part: str, cwd: str, cwd_changed: bool, project_dir: str
     tokens = tokenize(part)
     if not tokens or tokens[:2] != ["git", "clean"]:
         return False
-    root = session_root(cwd, project_dir)
+    root = session_root(cwd, project_dir, agent_id)
     if root is None:
         return False
     operands: list[str] = []
@@ -379,7 +429,9 @@ _STASH_INDEX = re.compile(r"stash@\{\d+\}")
 _BARE_STASH_INDEX = re.compile(r"(?<![^ \t])(stash@\{\d+\})(?![^ \t])")
 
 
-def worktree_stash_drop_safe(part: str, cwd: str, cwd_changed: bool, project_dir: str) -> bool:
+def worktree_stash_drop_safe(
+    part: str, cwd: str, cwd_changed: bool, project_dir: str, agent_id: str = ""
+) -> bool:
     """True when `part` is `git stash drop [-q] stash@{n}` and entry `n` was created on the
     branch the session worktree holding `cwd` and `project_dir` has checked out (dotfiles
     #1023).
@@ -408,7 +460,7 @@ def worktree_stash_drop_safe(part: str, cwd: str, cwd_changed: bool, project_dir
         return False
     if cwd_changed:
         return False
-    root = session_root(cwd, project_dir)
+    root = session_root(cwd, project_dir, agent_id)
     if root is None:
         return False
     head = _git(root, "symbolic-ref", "--quiet", "HEAD")

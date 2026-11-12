@@ -86,6 +86,9 @@ def record_context(stdin_text: str, env: Mapping[str, str], now: float | None = 
             except OSError:
                 pass
         body = {"cwd": cwd, "env": {k: env[k] for k in CONTEXT_ENV if env.get(k)}}
+        agent_id = data.get("agent_id")
+        if isinstance(agent_id, str) and agent_id:
+            body["agent_id"] = agent_id
         tmp = d / f".{tool_use_id}.tmp"
         tmp.write_text(json.dumps(body))
         tmp.replace(d / f"{tool_use_id}.json")
@@ -93,21 +96,27 @@ def record_context(stdin_text: str, env: Mapping[str, str], now: float | None = 
         return
 
 
-def take_context(tool_use_id: object, env: Mapping[str, str]) -> tuple[str, dict[str, str]]:
-    """The recorded (cwd, env values) for `tool_use_id`, deleting the record, or ("", {})."""
+def take_context(tool_use_id: object, env: Mapping[str, str]) -> tuple[str, dict[str, str], str]:
+    """The recorded (cwd, env values, agent_id) for `tool_use_id`, deleting the record, or
+    ("", {}, ""). agent_id is "" for the main session's calls."""
     if not isinstance(tool_use_id, str) or not _TOOL_USE_ID.match(tool_use_id):
-        return "", {}
+        return "", {}, ""
     path = context_dir(env) / f"{tool_use_id}.json"
     try:
         body = json.loads(path.read_text())
         path.unlink()
     except OSError, ValueError:
-        return "", {}
+        return "", {}, ""
     cwd = body.get("cwd") if isinstance(body, dict) else None
     saved = body.get("env") if isinstance(body, dict) else None
     if not isinstance(cwd, str) or not isinstance(saved, dict):
-        return "", {}
-    return cwd, {k: v for k, v in saved.items() if k in CONTEXT_ENV and isinstance(v, str)}
+        return "", {}, ""
+    agent_id = body.get("agent_id")
+    return (
+        cwd,
+        {k: v for k, v in saved.items() if k in CONTEXT_ENV and isinstance(v, str)},
+        agent_id if isinstance(agent_id, str) else "",
+    )
 
 
 def decide(arguments: object, env: Mapping[str, str]) -> dict:
@@ -128,8 +137,8 @@ def decide(arguments: object, env: Mapping[str, str]) -> dict:
         command = tool_input.get("command")
         if not isinstance(command, str) or not command.strip():
             return deny
-        cwd, saved = take_context(arguments.get("tool_use_id"), env)
-        decision = hook.decide(command, cwd, {**env, **saved})
+        cwd, saved, agent_id = take_context(arguments.get("tool_use_id"), env)
+        decision = hook.decide(command, cwd, {**env, **saved}, agent_id)
         if decision.allow:
             return {"behavior": "allow", "updatedInput": tool_input}
         return deny

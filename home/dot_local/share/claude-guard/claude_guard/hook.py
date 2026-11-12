@@ -75,7 +75,19 @@ def read_cwd(stdin_text: str) -> str:
     return cwd if isinstance(cwd, str) else ""
 
 
-def decide(command: str, cwd: str, env: Mapping[str, str]) -> Decision:
+def read_agent_id(stdin_text: str) -> str:
+    """The calling subagent's id (the hook JSON's top-level `.agent_id`), or "" for the main
+    session or a payload that doesn't parse. "" never grants more: an agent's isolation
+    worktree counts as owned only when its id is here."""
+    try:
+        data = json.loads(stdin_text)
+    except ValueError:
+        return ""
+    agent = data.get("agent_id") if isinstance(data, dict) else None
+    return agent if isinstance(agent, str) else ""
+
+
+def decide(command: str, cwd: str, env: Mapping[str, str], agent_id: str = "") -> Decision:
     rules = load_rules(env=env)
     roots = scratch_roots(env.get("HOME", ""), env.get("TMPDIR"))
     return judge(
@@ -85,6 +97,7 @@ def decide(command: str, cwd: str, env: Mapping[str, str]) -> Decision:
         cwd,
         env.get("CLAUDE_PROJECT_DIR", ""),
         env.get("CLAUDE_JOB_DIR", ""),
+        agent_id,
     )
 
 
@@ -95,7 +108,7 @@ def permission_request(stdin_text: str, env: Mapping[str, str]) -> str | None:
         if command is None:
             return None
         cwd = read_cwd(stdin_text)
-        decision = decide(command, cwd, env)
+        decision = decide(command, cwd, env, read_agent_id(stdin_text))
         return ALLOW_JSON if decision.allow else None
     except Exception:
         return None

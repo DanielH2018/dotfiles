@@ -104,6 +104,24 @@ def test_permission_request_threads_the_sessions_cwd_into_the_decision(tmp_path)
     assert permission_request(stdin, env_for(home)) == ALLOW_JSON
 
 
+@pytest.mark.skipif(not os.path.exists("/proc/self/stat"), reason="lock ownership reads /proc")
+def test_permission_request_threads_the_subagents_id_into_the_decision(tmp_path):
+    # A subagent's isolation worktree is owned only through the payload's agent_id, so a
+    # mutation that drops it at hook.py's read_agent_id call site must turn this red.
+    home = home_with(tmp_path)
+    work = _make_repo(tmp_path)
+    tree = os.path.join(work, ".claude", "worktrees", "agent-a41336082886a72e3")
+    subprocess.run(["git", "worktree", "add", "-q", tree], cwd=work, check=True)
+    with open("/proc/self/stat") as fh:
+        start = fh.read().rpartition(")")[2].split()[19]
+    lock = f"claude agent agent-a41336082886a72e3 (pid {os.getpid()} start {start})"
+    subprocess.run(["git", "worktree", "lock", "--reason", lock, tree], cwd=work, check=True)
+    call = {"tool_input": {"command": "git checkout -B local-8004 origin/master"}, "cwd": tree}
+    agent = json.dumps({**call, "agent_id": "a41336082886a72e3"})
+    assert permission_request(agent, env_for(home)) == ALLOW_JSON
+    assert permission_request(json.dumps(call), env_for(home)) is None
+
+
 def test_permission_request_reads_the_job_dir_from_its_environment(tmp_path):
     home = home_with(tmp_path, {"allow": [], "deny": [], "ask": ["Bash(rm:*)"]})
     job = str(home / ".claude" / "jobs" / "abc123")

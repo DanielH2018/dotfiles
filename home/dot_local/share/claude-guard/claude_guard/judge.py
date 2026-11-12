@@ -34,7 +34,7 @@ from claude_guard.assignments import prefix_ok, split_assignments, standalone_na
 from claude_guard.checks.ansible import ansible_readonly_safe
 from claude_guard.checks.awk import segment_risk
 from claude_guard.checks.curl import curl_safe
-from claude_guard.checks.git_branch import checkout_branch_safe, merge_safe
+from claude_guard.checks.git_branch import checkout_branch_safe, merge_safe, rebase_safe
 from claude_guard.checks.git_reset import clean_reset_safe
 from claude_guard.checks.remote import readonly_remote_safe, trusted_host_safe
 from claude_guard.checks.remote_guards import git_readonly
@@ -389,7 +389,7 @@ def _cd_stays(part: str, cwd: str) -> bool:
     return os.path.realpath(target) == os.path.realpath(cwd)
 
 
-def _cd_to_session_worktree(part: str, project_dir: str) -> str | None:
+def _cd_to_session_worktree(part: str, project_dir: str, agent_id: str = "") -> str | None:
     """The worktree root a bare `cd <literal absolute path>` lands in, when that path is
     the root of the session worktree holding `project_dir`, else None.
 
@@ -410,7 +410,7 @@ def _cd_to_session_worktree(part: str, project_dir: str) -> str | None:
     real = os.path.realpath(target)
     if not os.path.isdir(real):
         return None
-    return real if session_root(real, project_dir) == real else None
+    return real if session_root(real, project_dir, agent_id) == real else None
 
 
 def _mask_quotes(s: str) -> str:
@@ -579,6 +579,9 @@ _WORKTREE_GRANTS = frozenset(
         "worktree-restore-check",
         "worktree-clean-check",
         "worktree-stash-drop-check",
+        "git-checkout-check",
+        "git-merge-check",
+        "git-rebase-check",
     }
 )
 
@@ -871,6 +874,7 @@ def judge_segment(
     project_dir: str = "",
     scratch_ok: bool = False,
     job_dir: str = "",
+    agent_id: str = "",
 ) -> tuple[bool, str]:
     """:286-395, one iteration of the loop. (ok, reason).
 
@@ -884,7 +888,9 @@ def judge_segment(
     `_changes_cwd`, after judging each segment in turn). Its consumers below are the
     heredoc-write carve-out and the two worktree cleanup checks (#861), which refuse a
     relative operand once it is set. `project_dir` is the session's CLAUDE_PROJECT_DIR,
-    which those two checks require to sit in the same worktree as `cwd`. Every other check
+    which those two checks require to sit in the same worktree as `cwd`. `agent_id` is the
+    hook payload's, set only for a subagent's call; it names the isolation worktree the
+    subagent owns (`worktree_scratch.session_root`). Every other check
     in this function judges the segment's own text and is unaffected by where the shell
     happens to be.
     """
@@ -1066,7 +1072,7 @@ def judge_segment(
         if inner is None:
             return False, f"{word}-unreadable"
         return judge_segment(
-            inner, rules, roots, cwd, cwd_changed, project_dir, scratch_ok, job_dir
+            inner, rules, roots, cwd, cwd_changed, project_dir, scratch_ok, job_dir, agent_id
         )
 
     # `git -C <path> <rest>` is `git <rest>` run in `<path>`, so it is judged as exactly
@@ -1088,7 +1094,7 @@ def judge_segment(
             if not (_QUOTED_PATH.fullmatch(path) and _git_reads(_strip_harmless(rest))):
                 return False, "git-C-unreadable"
             return judge_segment(
-                rest, rules, roots, "", cwd_changed, project_dir, scratch_ok, job_dir
+                rest, rules, roots, "", cwd_changed, project_dir, scratch_ok, job_dir, agent_id
             )
         if path.startswith("/"):
             git_cwd = path
@@ -1097,7 +1103,7 @@ def judge_segment(
         else:
             git_cwd = ""
         return judge_segment(
-            rest, rules, roots, git_cwd, cwd_changed, project_dir, scratch_ok, job_dir
+            rest, rules, roots, git_cwd, cwd_changed, project_dir, scratch_ok, job_dir, agent_id
         )
 
     if word == "curl" and curl_safe(part):
@@ -1108,15 +1114,15 @@ def judge_segment(
     # dotfiles #861, #864 and #1023. The same ask rules (`rm:*`, `git restore:*`,
     # `git clean:*`, `git stash drop:*`) resolved for cleanup inside the session's own
     # worktree, which a headless session otherwise cannot run.
-    if word == "rm" and worktree_rm_safe(part, cwd, cwd_changed, project_dir):
+    if word == "rm" and worktree_rm_safe(part, cwd, cwd_changed, project_dir, agent_id):
         return True, "worktree-rm-check"
-    if word == "git" and worktree_restore_safe(part, cwd, cwd_changed, project_dir):
+    if word == "git" and worktree_restore_safe(part, cwd, cwd_changed, project_dir, agent_id):
         return True, "worktree-restore-check"
-    if word == "git" and worktree_git_rm_safe(part, cwd, cwd_changed, project_dir):
+    if word == "git" and worktree_git_rm_safe(part, cwd, cwd_changed, project_dir, agent_id):
         return True, "worktree-git-rm-check"
-    if word == "git" and worktree_clean_safe(part, cwd, cwd_changed, project_dir):
+    if word == "git" and worktree_clean_safe(part, cwd, cwd_changed, project_dir, agent_id):
         return True, "worktree-clean-check"
-    if word == "git" and worktree_stash_drop_safe(part, cwd, cwd_changed, project_dir):
+    if word == "git" and worktree_stash_drop_safe(part, cwd, cwd_changed, project_dir, agent_id):
         return True, "worktree-stash-drop-check"
 
     # server #1898. The per-segment twin of judge()'s two whole-command remote arms, so an
@@ -1165,16 +1171,19 @@ def judge_segment(
                 return True, "git-read-check"
         except ValueError:
             pass
-        # Branch switching and merging that the reflog recovers, which no prefix rule can
-        # separate from the pathspec, discard and strategy forms (git_branch.py).
+        # Branch switching, merging and rebasing that the reflog recovers, in a checkout this
+        # caller owns, which no prefix rule can separate from the pathspec, discard and
+        # strategy forms (git_branch.py).
         try:
             argv = shlex.split(redir)
         except ValueError:
             argv = []
-        if checkout_branch_safe(argv, cwd, cwd_changed):
+        if checkout_branch_safe(argv, cwd, cwd_changed, project_dir, agent_id):
             return True, "git-checkout-check"
-        if merge_safe(argv, cwd, cwd_changed):
+        if merge_safe(argv, cwd, cwd_changed, project_dir, agent_id):
             return True, "git-merge-check"
+        if rebase_safe(argv, cwd, cwd_changed, project_dir, agent_id):
+            return True, "git-rebase-check"
 
     # :374-378.
     target = unwrap_wrapper(part)
@@ -1198,6 +1207,7 @@ def judge(
     cwd: str,
     project_dir: str = "",
     job_dir: str = "",
+    agent_id: str = "",
 ) -> Decision:
     # DECIDED: D2 (docs/specs/2026-09-06-claude-guard-design.md, Decisions — "a single
     # segment is judged like a chain"). This used to be a literal-substring eligibility
@@ -1432,7 +1442,7 @@ def judge(
                 return refuse(i, "assignment:deny-or-ask")
             part = words.rest
         ok, reason = judge_segment(
-            part, rules, roots, cwd, cwd_changed, project_dir, scratch_ok, job_dir
+            part, rules, roots, cwd, cwd_changed, project_dir, scratch_ok, job_dir, agent_id
         )
         if reason == "worktree-stash-drop-check" and (stash_segments > 1 or looped):
             ok, reason = False, "worktree-stash-drop:stack-changes"
@@ -1442,7 +1452,7 @@ def judge(
         if not ok:
             return Decision(False, f"segment:{i}:{reason}", tuple(reasons))
         if _changes_cwd(part) and not _cd_stays(part, cwd):
-            target = _cd_to_session_worktree(part, project_dir)
+            target = _cd_to_session_worktree(part, project_dir, agent_id)
             # Behind `||` the `cd` may be skipped while the rest still runs, and behind `|`
             # it runs in a subshell, so either way the shell may never reach `target`.
             reached = i == 0 or parsed.segments[i - 1].sep in ("&&", ";", "newline")

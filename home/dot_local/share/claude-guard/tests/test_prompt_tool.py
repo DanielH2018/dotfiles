@@ -106,7 +106,16 @@ def test_a_tool_use_id_that_is_not_a_plain_name_is_never_a_path(tmp_path):
     env = env_for(home_with(tmp_path, ASK_RM))
     prompt_tool.record_context(hook_payload("ls", "/tmp", "../../escape"), env)
     assert not (Path(env["HOME"]) / ".cache" / "escape.json").exists()
-    assert prompt_tool.take_context("../../escape", env) == ("", {})
+    assert prompt_tool.take_context("../../escape", env) == ("", {}, "")
+
+
+def test_a_subagents_id_is_recorded_and_handed_back_with_its_cwd(tmp_path):
+    env = env_for(home_with(tmp_path, ASK_RM))
+    payload = json.loads(hook_payload("git rebase origin/main", "/tmp", "toolu_agent"))
+    prompt_tool.record_context(json.dumps({**payload, "agent_id": "a41336082886a72e3"}), env)
+    prompt_tool.record_context(hook_payload("ls", "/tmp", "toolu_main"), env)
+    assert prompt_tool.take_context("toolu_agent", env)[::2] == ("/tmp", "a41336082886a72e3")
+    assert prompt_tool.take_context("toolu_main", env)[::2] == ("/tmp", "")
 
 
 def test_the_server_answers_initialize_list_and_call_over_stdio(tmp_path):
