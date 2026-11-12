@@ -2571,6 +2571,7 @@ def test_the_rootq_seam_named_without_running_rootq_is_no_decision(command):
 
 # --- a changed PATH or code-loading variable ahead of an allow-listed tool --------------------
 
+
 def _settings_home(home: Path, perms: dict) -> dict[str, str]:
     (home / ".claude").mkdir(parents=True)
     (home / ".claude" / "settings.json").write_text(json.dumps({"permissions": perms}))

@@ -46,8 +46,8 @@ follows a URL, so each call costs a prompt. A real run of this skill spent six p
 of them curl, every one expressible as `otelq`.
 
 Summarize sweep JSON with `jsonq`, or `jq` for a plain path extraction. Both are allowlisted.
-A `python3 -` heredoc is not, and the secrets hook blocks it outright — `jsonq` is the tool
-that exists to absorb that reflex, being a closed subset of Python syntax. Its one surprise
+Reach for `jsonq` rather than a `python3 -` heredoc: it is a closed subset of Python syntax,
+so it runs no code beyond the expression you give it. Its one surprise
 is that there is no attribute access: `items(d)` not `d.items()`, `get(d, k, default)` not
 `d.get(...)`, `values(d)` not `d.values()`. `jsonq --functions` prints everything callable.
 

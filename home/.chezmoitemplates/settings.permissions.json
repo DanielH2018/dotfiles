@@ -358,6 +358,17 @@
       "Bash(python3 --version)",
       "Bash(python -m pytest:*)",
       "Bash(python3 -m pytest:*)",
+      {{/* Code the session wrote is one class however the interpreter is spelled (dotfiles
+           #967, slice 2a). Refusing `python3 -c` stopped no code, since `uv run python -c`,
+           `uv run python <file>` and a written file all ran it. claude_guard's deny layer is
+           the control: it scans the command text, heredoc bodies included, whatever the
+           interpreter (secret-read-interpreter, pipe-to-shell, in-place edits), and it runs
+           before any allow rule. `python3 -` is the heredoc form's prefix, which
+           claude_guard.judge's python_heredoc_prefix judges in place of the segment. */}}
+      "Bash(python3 -c:*)",
+      "Bash(python -c:*)",
+      "Bash(python3 -)",
+      "Bash(python -)",
       "Bash(pytest:*)",
       "Bash(pip list)",
       "Bash(pip show:*)",
@@ -933,16 +944,11 @@
       {{/* -t is the short form of --show-token; either one prints the GitHub token into the transcript. `*-t*` matches both, because `--show-token` contains `-t`. */}}
       "Bash(gh auth status *-t*)",
       "Bash(node -e:*)",
-      "Bash(python3 -c:*)",
-      "Bash(python -c:*)",
       {{/* A hand-run playbook is a real deploy on the homelab server repo, bypassing that
            repo's scripts/deploy.sh and the lock it takes. These three prefix forms
-           (bare, uv run, and uv run --frozen) used to be reached only by accident: the
-           uv-python.sh hook prepended an inline `python3 -c '...'` stdio fixup ahead of
-           every ansible-playbook invocation, and that prefix matched the
-           `Bash(python3 -c:*)` ask rule above, so the whole compound command prompted
-           regardless of what followed it. The ask is named explicitly here so the
-           posture on a hand-run playbook does not depend on a prefix. claude_guard's ansible_readonly_safe()
+           (bare, uv run, and uv run --frozen) are named explicitly so the posture on a
+           hand-run playbook does not depend on a prefix: an inline `python3 -c '...'`
+           ahead of the playbook asks nothing on its own. claude_guard's ansible_readonly_safe()
            narrows this back to unprompted for the genuinely read-only invocation shapes
            (--check, --list-tasks, --list-tags, --list-hosts, --syntax-check with no
            file-valued -e/--extra-vars); everything else still asks. */}}

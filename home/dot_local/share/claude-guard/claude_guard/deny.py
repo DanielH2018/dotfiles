@@ -698,11 +698,7 @@ def _pipes_to_shell(command: str) -> bool:
         if after_pipe and bdb_re("|" + text, stage) and not _runs_script_file(seg.text):
             return True
         bare = _unquoted(seg.text)
-        whole = (
-            bare is None
-            or _SHELL_REPARSE.search(bare)
-            or _holds_substitution(seg.text)
-        )
+        whole = bare is None or _SHELL_REPARSE.search(bare) or _holds_substitution(seg.text)
         if whole and bdb_re(text, PIPE_TO_SHELL):
             return True
         stored_then_run = runs_code and _is_data_sink(seg.text, seg.sep)
@@ -1394,8 +1390,9 @@ def _past_uv_run(words: list[str]) -> list[str]:
     return words[i:]
 
 
-def _python_source(words: list[str], heredocs: tuple[str, ...]) -> str | None:
-    """The Python source of a segment whose words are one of the closed shapes, or None.
+def _python_program(words: list[str], heredocs: tuple[str, ...]) -> tuple[str, bool] | None:
+    """The Python source of a segment whose words are one of the closed shapes, and whether
+    it is the segment's heredoc, or None.
 
     The shapes are `python…` or `uv run python…` (`_past_uv_run`), then only value-free
     flags, then either `-c PROGRAM` or a program read from stdin (`-` or nothing) that is
@@ -1409,14 +1406,26 @@ def _python_source(words: list[str], heredocs: tuple[str, ...]) -> str | None:
         i += 1
     rest = words[i:]
     if rest and _PY_FLAG_THEN_C.fullmatch(rest[0]):
-        return rest[1] if len(rest) > 1 else None
+        return (rest[1], False) if len(rest) > 1 else None
     if rest and rest[0] == "-":
         rest = rest[1:]
     if not rest or rest[0] not in ("<<", "<<-") or len(heredocs) != 1:
         return None
     if sum("<" in w for w in words) != 1:
         return None
-    return heredocs[0]
+    return heredocs[0], True
+
+
+def _python_source(words: list[str], heredocs: tuple[str, ...]) -> str | None:
+    program = _python_program(words, heredocs)
+    return program[0] if program else None
+
+
+def python_reads_heredoc(words: list[str], heredocs: tuple[str, ...]) -> bool:
+    """Whether `words` are one of the closed Python shapes (`_python_program`) and read the
+    program from the segment's one heredoc."""
+    program = _python_program(words, heredocs)
+    return program is not None and program[1]
 
 
 def _script_arguments_start(argv: list[str]) -> int | None:

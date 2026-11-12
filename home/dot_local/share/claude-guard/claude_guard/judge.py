@@ -47,6 +47,7 @@ from claude_guard.checks.worktree_scratch import (
     worktree_rm_safe,
     worktree_stash_drop_safe,
 )
+from claude_guard.deny import python_reads_heredoc
 from claude_guard.gitread import git_read
 from claude_guard.rules import Rules
 from claude_guard.segment import parse
@@ -220,6 +221,43 @@ def heredoc_write_target(text: str) -> str | None:
     """:150-158. The write path of a quoted-delimiter `cat > path`/`cat >> path`, or None."""
     m = _HEREDOC_CAT_WRITE.match(text)
     return m.group("path") if m else None
+
+
+# An interpreter heredoc (dotfiles #967, slice 2a): plain words, then the heredoc operator and
+# a bare-identifier delimiter, as `_HEREDOC_CAT_WRITE` confines its own, with nothing after.
+_IDENT = "[A-Za-z_][A-Za-z0-9_]*"
+_PLAIN_WORD = "[A-Za-z0-9_./-]+"
+_PYTHON_HEREDOC = re.compile(
+    rf"^(?P<prefix>{_PLAIN_WORD}(?:[{WS}]+{_PLAIN_WORD})*)[{WS}]+<<(?P<dash>-?)[{WS}]*"
+    rf"""(?:'(?P<single>{_IDENT})'|"(?P<double>{_IDENT})"|(?P<bare>{_IDENT}))[{WS}]*$"""
+)
+
+
+def python_heredoc_prefix(text: str, heredocs: tuple[str, ...]) -> str | None:
+    """The command before the heredoc of a segment that runs Python on its heredoc, or None.
+
+    The judge admits such a segment by judging this prefix (`python3 -`, `uv run python -`)
+    against the allow list and never reads the program: the deny layer has already scanned
+    it, and its checks (`secret-read-interpreter`, pipe-to-shell, in-place edits) are the
+    control. The shape is `deny.python_reads_heredoc`'s closed list. An unquoted delimiter
+    is refused when the body holds `$`, a backtick or a backslash, since the shell would
+    expand it before Python runs. A body line equal to the delimiter means the segmenter
+    read the heredoc's end differently from bash, so that refuses too."""
+    m = _PYTHON_HEREDOC.match(text)
+    if m is None:
+        return None
+    prefix = m.group("prefix")
+    delimiter = m.group("single") or m.group("double") or m.group("bare")
+    operator = "<<" + m.group("dash")
+    if not python_reads_heredoc([*prefix.split(), operator, delimiter], heredocs):
+        return None
+    body = heredocs[0]
+    if m.group("bare") and re.search(r"[$`\\]", body):
+        return None
+    lines = body.split("\n")
+    if m.group("dash"):
+        lines = [line.lstrip("\t") for line in lines]
+    return None if delimiter in lines else prefix
 
 
 def _under_session_cwd_win(path: str, cwd: str) -> bool:
@@ -1303,9 +1341,11 @@ def judge(
 
     # :404-428. Three things stay conservative on purpose: a substitution is judged only
     # through `substitution.mask` (below); a heredoc body is never scanned for one, so any
-    # heredoc stays unjudgeable UNLESS it is the one carve-out PR #477 vets on its own
-    # terms — a quoted-delimiter `cat > path`/`cat >> path` write (heredoc_write_target,
-    # judged for real in judge_segment below); and a bare `&` still never reached judge()
+    # heredoc stays unjudgeable UNLESS it is one of two carve-outs vetted on their own
+    # terms — PR #477's quoted-delimiter `cat > path`/`cat >> path` write
+    # (heredoc_write_target, judged for real in judge_segment below), or a Python program
+    # read from the heredoc (python_heredoc_prefix, whose prefix the segment loop judges in
+    # the segment's place); and a bare `&` still never reached judge()
     # under the old splitter, backgrounding glued the next command onto the previous
     # one's approval and judge() cannot tell whether it finishes first. A newline is no
     # longer in that population (PR #477): outside a heredoc body it is exactly `;` to the
@@ -1345,8 +1385,10 @@ def judge(
         # enough — see the K1 comment beside `_HEREDOC_CAT_WRITE` and the one beside the
         # quoted-delimiter branch in `segment.py` for the two independent fixes this
         # relies on now, per the two-copies-drift hazard the J1/J2 marker above names.
-        if seg.heredocs and (
-            not all(seg.heredoc_quoted) or heredoc_write_target(_trim(seg.text)) is None
+        if (
+            seg.heredocs
+            and (not all(seg.heredoc_quoted) or heredoc_write_target(_trim(seg.text)) is None)
+            and python_heredoc_prefix(_trim(seg.text), seg.heredocs) is None
         ):
             return Decision(False, "unjudgeable:heredoc", ())
         if i < last and seg.sep == "&":
@@ -1395,6 +1437,8 @@ def judge(
         part = _trim(seg.text)
         if not part:
             continue
+        if seg.heredocs:
+            part = python_heredoc_prefix(part, seg.heredocs) or part
         loop_for = _LOOP_FOR.match(part)
         if loop_for and _carries_substitution(loop_for.group("tail") or "", carriers):
             carriers.add(loop_for.group("name"))

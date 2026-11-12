@@ -456,6 +456,7 @@ def test_deny_globs_leave_the_everyday_form_of_each_spawner_allowed(esc):
 
 # --- the real template ------------------------------------------------------------------------
 
+
 @pytest.fixture
 def real(tmp_path, template_permissions):
     """The real template's rules. The fixtures above are hand copies, and one had already
@@ -497,6 +498,29 @@ def test_the_real_template_refuses_each_execution_form(real, command):
 )
 def test_the_real_template_allows_an_argument_that_only_contains_a_flags_text(real, command):
     assert allowed(command, real)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # an unquoted delimiter lets the shell run what the body expands
+        "python3 - <<EOF\n$(touch /tmp/pwned)\nEOF",
+        # bash and the segmenter would end the body at different lines
+        "python3 - <<'EOF'\r\nprint(1)\nEOF\r\n./deploy.sh\n",
+        "python3 - <<\\EOF\nprint(1)\nEOF\n./deploy.sh",
+        # what runs beside the program is still judged
+        "python3 - <<'EOF'\nprint(1)\nEOF\n./deploy.sh",
+        "python3 - <<'EOF' > ~/.profile\nprint(1)\nEOF",
+        "PYTHONPATH=/tmp/x python3 - <<'EOF'\nprint(1)\nEOF",
+        'python3 -c "$(cat x)"',
+        # a heredoc fed to a script is data, not the program
+        "python3 script.py <<'EOF'\ndata\nEOF",
+        # `python3 -` is an exact rule, not a prefix
+        "python3 -m http.server",
+    ],
+)
+def test_the_real_template_refuses_an_interpreter_form_it_cannot_judge(real, command):
+    assert not allowed(command, real)
 
 
 def test_the_real_template_admits_the_pipe_the_show_substitution_nudge_recommends(real):

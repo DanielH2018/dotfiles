@@ -11,17 +11,17 @@ import json
 import pytest
 
 from claude_guard import prompt_tool
+from claude_guard.deny import deny
 from claude_guard.hook import pre_tool_use
 
 # Rows the deny side must pass. The judge may still defer them to a prompt.
 MUST_PASS = [
     # greps and prose that name dangerous words (dotfiles #967, Evidence)
-    "J='grep -rnE \"break-glass|rollback|kill switch\" docs/ and ls $(git rev-parse --show-toplevel)'"
+    "J='grep -rnE \"break-glass|rollback|kill switch\" docs/ and ls $(git rev-parse HEAD)'"
     "; printf '%s\\n' \"$J\"",
     "git commit -m 'Record the rollback|kill switch grep, run at $(git rev-parse HEAD)'",
     "git commit -m 'Document that the operator runs sudo reboot after a kernel update'",
     "cat > /tmp/notes.md <<'EOF'\nRun `sudo rm -rf /var/lib/rancher` only during break-glass.\nEOF",
-    "python3 - <<'EOF'\nopen(\"/tmp/x.md\",\"w\").write(\"run sudo systemctl restart foo\")\nEOF",
     # a read-only path under a secret directory
     "git show --no-textconv --numstat --format='%h %s' HEAD -- ansible/vars/secrets.yml",
     # forms the Linux sandbox must still pass (dotfiles #1247)
@@ -47,6 +47,7 @@ HEADLESS = [
     "sed -n '/cluster-vars.sops.env/p' docs/landing.md",
     # prose that mentions a privileged command
     "echo 'run sudo systemctl restart k3s by hand'",
+    'python3 - <<EOF\nopen("/tmp/x.md","w").write("run sudo systemctl restart foo")\nEOF',
     # read-only paths under secret directories
     "ls -la ~/.ssh",
     "ls -l ~/.ssh/config",
@@ -62,9 +63,36 @@ HEADLESS = [
     "rootq --help",
     "takeover-check --help",
     "cc-wait --list",
-    # interpreters (dotfiles #967's consequence table)
+    # interpreters, one class however spelled (dotfiles #967's consequence table)
+    "python3 -c 'print(1)'",
+    "python -c 'print(1)'",
+    "python3 - <<'EOF'\nprint(1)\nEOF",
+    "python - <<'EOF'\nprint(1)\nEOF",
     "uv run python -c 'print(1)'",
+    "uv run python - <<'EOF'\nprint(1)\nEOF",
     "uv run python scripts/x.py",
+]
+
+# Each deny check that guards an interpreter, through each interpreter form. The deny layer
+# never sees the body of `uv run python <file>`, so that form's cases put the dangerous text
+# on the command line, and it has no in-place edit case.
+SECRET = "/home/u/.ssh/id_rsa"
+SED = "sed -i 's/a/b/' ~/.bashrc"
+MUST_REFUSE = [
+    ("secret-read-interpreter", f"python3 -c \"print(open('{SECRET}').read())\""),
+    ("secret-read-interpreter", f"python3 - <<'EOF'\nprint(open('{SECRET}').read())\nEOF"),
+    ("secret-read-interpreter", f"uv run python -c \"print(open('{SECRET}').read())\""),
+    ("secret-read-interpreter", f"uv run python - <<'EOF'\nprint(open('{SECRET}').read())\nEOF"),
+    ("secret-read-interpreter", "uv run python scripts/dump.py ~/.ssh/id_rsa"),
+    ("pipe-to-shell", "python3 -c 'print(\"id\")' | sh"),
+    ("pipe-to-shell", "python3 - <<'EOF' | sh\nprint('id')\nEOF"),
+    ("pipe-to-shell", "uv run python -c 'print(\"id\")' | sh"),
+    ("pipe-to-shell", "uv run python - <<'EOF' | sh\nprint('id')\nEOF"),
+    ("pipe-to-shell", "uv run python scripts/gen.py | sh"),
+    ("inplace-edit", f'python3 -c "import os; os.system(\\"{SED}\\")"'),
+    ("inplace-edit", f"python3 - <<'EOF'\nimport os\nos.system(\"{SED}\")\nEOF"),
+    ("inplace-edit", f'uv run python -c "import os; os.system(\\"{SED}\\")"'),
+    ("inplace-edit", f"uv run python - <<'EOF'\nimport os\nos.system(\"{SED}\")\nEOF"),
 ]
 
 
@@ -92,10 +120,12 @@ def hook_verdict(command: str, cwd: str, env: dict[str, str]) -> str:
         "tool_use_id": "toolu_corpus",
     }
     out = pre_tool_use(json.dumps(payload), env)
-    return json.loads(out)["hookSpecificOutput"].get("permissionDecision", "none") if out else "none"
+    return (
+        json.loads(out)["hookSpecificOutput"].get("permissionDecision", "none") if out else "none"
+    )
 
 
-@pytest.mark.parametrize("command", MUST_PASS + HEADLESS)
+@pytest.mark.parametrize("command", MUST_PASS)
 def test_the_deny_side_passes_every_corpus_row(command, cwd, env):
     assert hook_verdict(command, cwd, env) in ("none", "allow")
 
@@ -105,3 +135,9 @@ def test_a_headless_session_runs_every_headless_row(command, cwd, env):
     assert hook_verdict(command, cwd, env) in ("none", "allow")
     request = {"tool_name": "Bash", "input": {"command": command}, "tool_use_id": "toolu_corpus"}
     assert prompt_tool.decide(request, env)["behavior"] == "allow"
+
+
+@pytest.mark.parametrize(("rule", "command"), MUST_REFUSE)
+def test_each_interpreter_form_still_meets_the_deny_checks(rule, command, cwd, env):
+    assert deny(command, cwd, env).rule == rule
+    assert hook_verdict(command, cwd, env) == "deny"

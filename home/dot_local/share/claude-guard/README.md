@@ -70,7 +70,12 @@ and `substitution.py` replaces it in the outer command with a placeholder. The p
 and any variable assigned from it, may stand only in a standalone assignment, a `for` word
 list, an argument to a command whose arguments cannot write or exec (`echo`, `cat`, `grep`,
 `diff`, …), or a `printf` argument after a literal format. A backtick, or a substitution
-inside `$(( ))` or `${ }`, stays `unjudgeable:substitution`. A redirect is found on the quote-masked text, so a quoted
+inside `$(( ))` or `${ }`, stays `unjudgeable:substitution`. A heredoc stays
+`unjudgeable:heredoc` unless it is a quoted-delimiter `cat > path` write or a Python
+program read from stdin (`python3 - <<'EOF'`, `uv run python - <<'EOF'`). The judge never
+reads that program, because the deny layer has already scanned it, and judges the command
+before the heredoc in the segment's place. An unquoted delimiter is admitted only when the
+body holds no `$`, backtick or backslash. A redirect is found on the quote-masked text, so a quoted
 `>` is an argument, and a `>`/`>>` into a scratch root is allowed when
 `checks/scratch.py`'s `write_confined()` vets the target and no segment of the chain can
 place a link there first. The two remote checks also run per segment,
@@ -286,3 +291,10 @@ From this directory, under uv's managed 3.14, without writing a `.venv` into the
     PYTHONPATH=. uv run --no-project --python 3.14 --with 'pytest>=8.0' pytest -p no:cacheprovider -q
 
 `tests/python-suites.test.js` at the repo root runs the same command as part of `node --test`.
+
+`tests/test_must_pass.py` is the must-pass corpus: commands claude-guard must never refuse,
+seeded from transcript denials, with a false-deny budget of zero. Every row goes through the
+PreToolUse hook against the real settings template, and a `HEADLESS` row also through the
+headless prompt tool. `MUST_REFUSE` holds a case for each deny check that guards an
+interpreter, through each interpreter form. To add a row, cut a real denial down to the
+shape that reproduced it.

@@ -198,9 +198,9 @@ def _python_json(stages, i) -> str | None:
     if "json" not in code:
         return None
     return (
-        "`python3 -c` over JSON costs a permission prompt; `jsonq` is allowlisted and "
-        "covers it. It is a closed Python subset with no attribute access: run "
-        "`jsonq --functions` for the callable names."
+        "`jsonq` covers `python3 -c` over JSON without running arbitrary code. It is a "
+        "closed Python subset with no attribute access: run `jsonq --functions` for the "
+        "callable names."
     )
 
 

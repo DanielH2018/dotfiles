@@ -145,20 +145,6 @@ test('the remote verbs homelab/SKILL.md sorts into allowed and prompting land wh
     assert.deepStrictEqual(wrong, []);
   });
 
-// otel-review also makes a negative claim: a `python3 -` heredoc is not allow-listed, so the
-// reflex the skill exists to absorb costs a prompt. (Its neighbouring claim about `curl` does
-// NOT hold -- claude_guard's curl_safe() auto-approves a plain GET to the Loki API -- and is
-// filed rather than asserted here, because pinning the skill's text would pin a verdict the
-// guard disagrees with.)
-test('the reflexes otel-review says cost a prompt still cost one', { skip }, (t) => {
-  const dir = scratch(os.tmpdir(), 'skill-claims-', t);
-  const home = homeWith(dir, permissions);
-  const data = xdgDataHome(dir);
-  for (const cmd of ["python3 - <<'PY'", 'python3 -c "print(1)"']) {
-    assert.ok(prompts(home, data, cmd), `${cmd} should still prompt`);
-  }
-});
-
 // The red half. Every assertion above is a green reading of the live model; this one removes
 // the single allow rule the otel-review claim rests on, in a copy, and asserts the verdict
 // flips. Without it a matcher that silently stopped matching would read the same as a model
