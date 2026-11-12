@@ -68,7 +68,9 @@ One warns about a host tool, the way footguns.py's ugrep-flag rule does:
      them exceed its complexity limit: grep prints an error to stderr, exits 2 and
      matches nothing, so a `| wc -l` after it reads as zero (measured 2026-11-12, ugrep
      7.8.4). A single class often passes, so this is a nudge, not a deny. `-P` compiles
-     the same pattern.
+     the same pattern. The Bash tool's `grep` is Claude Code's shell-snapshot function,
+     which runs the ugrep built into the claude binary even where PATH grep is GNU, so
+     the rule asks whether that binary exists, not only what PATH grep is.
 
 `nudge()` returns (rule, text) or None. The hook adds the text as additionalContext
 beside whatever the deny rules decided, and only once per session per rule: `claim()`
@@ -110,8 +112,10 @@ _STDIN_FROM = re.compile(r"^0?<(?![<&])(.*)$")
 # A word that sends stdout to a file, with its target glued on or in the next word.
 _STDOUT_TO = re.compile(r"^(?:1?>>?|&>>?)(.*)$")
 # A bounded negated class: `[^"]{0,80}` in ERE, `[^"]\{0,80\}` in BRE.
-_BOUNDED_NEGATED_ERE = re.compile(r"\[\^[^\]]*\]\{\d*,?\d*\}")
-_BOUNDED_NEGATED_BRE = re.compile(r"\[\^[^\]]*\]\\\{\d*,?\d*\\\}")
+# The class may open with a literal `]` and hold POSIX classes such as `[:space:]`.
+_NEGATED_CLASS = r"\[\^\]?(?:\[:[a-z]+:\]|[^\]])*\]"
+_BOUNDED_NEGATED_ERE = re.compile(_NEGATED_CLASS + r"\{\d*,?\d*\}")
+_BOUNDED_NEGATED_BRE = re.compile(_NEGATED_CLASS + r"\\\{\d*,?\d*\\\}")
 # Read renders these as images or pages, not as text the size of the file.
 _NON_TEXT_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"})
 
@@ -349,6 +353,19 @@ def _runlog(stages, i) -> str | None:
     )
 
 
+def _bash_tool_grep_is_ugrep() -> bool:
+    """Whether `grep` typed in the Bash tool runs ugrep, which PATH alone does not decide.
+
+    Claude Code's shell snapshot defines `grep` as a function that runs the ugrep built
+    into its own binary, `$CLAUDE_CODE_EXECPATH` or else `~/.local/bin/claude`, and falls
+    back to PATH grep only when neither is executable. This mirrors that fallback.
+    """
+    binary = os.environ.get("CLAUDE_CODE_EXECPATH", "")
+    if not os.access(binary, os.X_OK):
+        binary = str(Path.home() / ".local/bin/claude")
+    return os.access(binary, os.X_OK) or _grep_is_ugrep()
+
+
 def _ugrep_bounded_class(stages, i) -> str | None:
     stage = stages[i][0]
     if stage[0] not in ("grep", "egrep", "ugrep"):
@@ -360,10 +377,12 @@ def _ugrep_bounded_class(stages, i) -> str | None:
     bounded = _BOUNDED_NEGATED_ERE if extended else _BOUNDED_NEGATED_BRE
     if not any(bounded.search(w) for w in stage[1:]):
         return None
-    if stage[0] != "ugrep" and not _grep_is_ugrep():
+    if stage[0] == "grep" and not _bash_tool_grep_is_ugrep():
+        return None
+    if stage[0] == "egrep" and not _grep_is_ugrep():
         return None
     return (
-        "This host's grep is ugrep, which can refuse a bounded negated class such as "
+        "The Bash tool's grep is ugrep, which can refuse a bounded negated class such as "
         '`[^"]{0,200}` with "exceeds complexity limits". It then exits 2 and matches '
         "nothing, so a count after it reads as zero. Use `grep -P` for the same pattern, "
         "or drop the bound."

@@ -319,9 +319,23 @@ def test_the_rerun_nudge_names_the_raw_form_for_a_repo_the_account_does_not_own(
     assert "`gh-rerun-failed <run-id>" in text and "`gh run rerun --failed`" in text
 
 
+def _executable(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\n")
+    path.chmod(0o755)
+    return path
+
+
 @pytest.fixture
-def grep_is_ugrep(monkeypatch):
-    monkeypatch.setattr(nudges, "_grep_is_ugrep", lambda: True)
+def path_grep_is_gnu(monkeypatch):
+    monkeypatch.setattr(nudges, "_grep_is_ugrep", lambda: False)
+    monkeypatch.delenv("CLAUDE_CODE_EXECPATH", raising=False)
+
+
+@pytest.fixture
+def snapshot_grep_is_ugrep(tmp_path, monkeypatch, path_grep_is_gnu):
+    """daniel-box: PATH grep is GNU, and the snapshot's grep runs the claude binary."""
+    monkeypatch.setenv("CLAUDE_CODE_EXECPATH", str(_executable(tmp_path / "claude-2.1")))
 
 
 @pytest.mark.parametrize(
@@ -330,11 +344,20 @@ def grep_is_ugrep(monkeypatch):
         """grep -E 'x[^"]{0,20}y[^"]{0,20}z' log.txt | wc -l""",
         """grep -rhoE '"command":"[^"\\\\]{0,80}' ~/notes""",
         """grep 'x[^"]\\{0,80\\}y' f""",
+        """grep -E 'x[^[:space:]]{0,20}y' f""",
+        """grep -E 'x[^]"]{0,20}y' f""",
         """ugrep '[^a]{2,9}b' f""",
     ],
 )
-def test_a_bounded_negated_class_is_nudged_where_grep_is_ugrep(command, grep_is_ugrep):
+def test_a_bounded_negated_class_is_nudged_where_the_bash_tool_grep_is_ugrep(
+    command, snapshot_grep_is_ugrep
+):
     assert rule(command) == "ugrep-bounded-class"
+
+
+def test_the_snapshot_binary_falls_back_to_the_local_bin_claude(marker_home, path_grep_is_gnu):
+    _executable(marker_home / ".local/bin/claude")
+    assert rule("""grep -E 'x[^"]{0,20}y' f""") == "ugrep-bounded-class"
 
 
 @pytest.mark.parametrize(
@@ -346,10 +369,9 @@ def test_a_bounded_negated_class_is_nudged_where_grep_is_ugrep(command, grep_is_
         """grep '[^"]{0,8}' f""",
     ],
 )
-def test_a_pattern_ugrep_compiles_is_left_alone(command, grep_is_ugrep):
+def test_a_pattern_ugrep_compiles_is_left_alone(command, snapshot_grep_is_ugrep):
     assert rule(command) is None
 
 
-def test_a_bounded_negated_class_is_left_alone_on_gnu_grep(monkeypatch):
-    monkeypatch.setattr(nudges, "_grep_is_ugrep", lambda: False)
+def test_a_bounded_negated_class_is_left_alone_without_any_ugrep(path_grep_is_gnu):
     assert rule("""grep -E 'x[^"]{0,20}y[^"]{0,20}z' f""") is None
