@@ -66,6 +66,8 @@ function extractPaths(cmd, home) {
     let match;
     while ((match = re.exec(cmd)) !== null) {
         let tok = match[1] || match[2] || match[3];
+        // A bare name resolves through PATH or the cwd, so there is no file to check.
+        if (!/[/\\]/.test(tok)) continue;
         if (/\$(?!HOME\b)\{?\w+/.test(tok)) { unresolved.push(tok); continue; }
         tok = tok.replace(/\$\{?HOME\}?/g, home).replace(/^~(?=[/\\]|$)/, home);
         paths.push(tok);

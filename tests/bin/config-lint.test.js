@@ -51,6 +51,11 @@ test("extractPaths ignores non-script tokens", () => {
   assert.deepStrictEqual(m.extractPaths("echo hello && git status", "/home/d").paths, []);
 });
 
+test("extractPaths skips a bare script name inside a fallback's message", () => {
+  const cmd = '"/home/d/run-hook.sh" x || { echo "run-hook.sh x: missing"; }';
+  assert.deepStrictEqual(m.extractPaths(cmd, "/home/d").paths, ["/home/d/run-hook.sh"]);
+});
+
 test("parseIncludes finds @-include lines only", () => {
   const text = "# CLAUDE\nsome text\n@~/.claude/docs/orchestration.md\nnot @inline reference\n@~/.claude/CLAUDE.local.md\n";
   assert.deepStrictEqual(m.parseIncludes(text), ["~/.claude/docs/orchestration.md", "~/.claude/CLAUDE.local.md"]);

@@ -86,13 +86,15 @@ def enumerate_items(root: str, claude_dir: str, vault_dir: str) -> list[dict]:
 
     The deployed claude_dir is walked as well as the repo source, because the work
     overlay symlinks its own skills and agents in there; a source-only walk listed every
-    one of them as "not installed". Commands come from claude_dir and the vault, and
-    fire as Skill calls under their bare name.
+    one of them as "not installed". The root's own .claude/ is walked too, so run from a
+    project its skills and agents count. Commands come from claude_dir and the vault,
+    and fire as Skill calls under their bare name.
     """
     src = Path(root, "home", "private_dot_claude")
+    project = Path(root, ".claude")
     dirs = {
-        "skill": [src / "skills", Path(claude_dir, "skills")],
-        "agent": [src / "agents", Path(claude_dir, "agents")],
+        "skill": [src / "skills", Path(claude_dir, "skills"), project / "skills"],
+        "agent": [src / "agents", Path(claude_dir, "agents"), project / "agents"],
         "command": [
             Path(claude_dir, "commands"),
             Path(vault_dir, ".claude", "commands"),
