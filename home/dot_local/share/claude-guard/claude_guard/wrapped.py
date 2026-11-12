@@ -92,7 +92,9 @@ def verdict(
 ) -> tuple[str, str, str] | None:
     """(kind, rule, reason) for the first wrapper segment whose inner command claude-guard's
     deny rules or the settings lists decide, else None. A wrapper segment that does not parse
-    is an ask: its command cannot be shown to be anything in particular."""
+    is an ask: its command cannot be shown to be anything in particular. A segment with no
+    `--` word is the exception: both tools reject it as a usage error before running
+    anything, so `redproof --help` runs nothing to judge."""
     parsed = parse(command)
     if not parsed.ok:
         return None
@@ -100,6 +102,12 @@ def verdict(
         text = seg.text.strip()
         tool = tool_of(text.split())
         if tool is None:
+            continue
+        try:
+            words = shlex.split(text)
+        except ValueError:
+            words = ["--"]
+        if "--" not in words:
             continue
         inner = inner_command(text)
         if inner is None:

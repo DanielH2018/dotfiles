@@ -80,7 +80,16 @@ def test_pre_tool_use_applies_the_deny_and_ask_lists_to_the_inner_command(home, 
     assert _pre(f"{wrapper} git push {FORCE} origin main", home) == "deny"
     assert _pre(f"{wrapper} rm -rf build", home) == "ask"
     assert _pre(f"{wrapper} git status --short", home) is None
-    assert _pre(wrapper.removesuffix(" --") + " ls", home) == "ask"
+    assert _pre(f"{wrapper} runlog j -- ls", home) == "ask"
+
+
+@pytest.mark.parametrize("command", ["redproof --help 2>&1 | head -15", "runlog k ls"])
+def test_pre_tool_use_leaves_a_wrapper_call_with_no_double_dash_to_the_usual_rules(home, command):
+    assert _pre(command, home) is None
+
+
+def test_pre_tool_use_reads_a_quoted_double_dash_as_one(home):
+    assert _pre("redproof origin/main x.py '--' kubectl delete pod x", home) == "deny"
 
 
 def test_verdict_takes_the_first_decided_wrapper_segment_and_ignores_other_commands():
