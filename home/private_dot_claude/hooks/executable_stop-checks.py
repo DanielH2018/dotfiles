@@ -48,6 +48,14 @@ Checks:
       tests pass or the linter is clean, outside a fence and not marked unverified, and
       no Bash command in the session looks like a test or lint run.
 
+  phone-handoff (turn) -- the operator drives sessions from the phone, and the Claude
+      app pushes only for a permission dialog, an AskUserQuestion or a PushNotification
+      call. A reply whose last paragraph asks a question, or that hands the operator a
+      command to run, raises none of those, so the session waits with no alert on any
+      channel. The check fires only where a push can land: a Remote Control bridge
+      session, or an interactive one (remoteControlAtStartup connects it). Fan-out and
+      other headless SDK sessions are skipped.
+
   tests-for-source (session) -- CLAUDE.md "Write tests for any new code". The session
       created a source file (a Write whose result was "create") outside scratch space
       and edited no file on a test path. "Needs a test" is judgement; "no test file at
@@ -178,6 +186,7 @@ class Turn:
         path = payload.get("transcript_path")
         self.transcript = Path(path).expanduser() if isinstance(path, str) else None
         self._turn_feedback = None
+        self._turn_tools = None
         self._reply = None
         self._session = None
 
@@ -195,9 +204,10 @@ class Turn:
         return list(_records(lines))
 
     def _walk_turn(self) -> None:
-        """Collect this turn's Stop-hook feedback and assistant text, newest first."""
+        """Collect this turn's Stop-hook feedback, assistant text and tool names."""
         feedback: list[str] = []
         texts: list[str] = []
+        tools: set[str] = set()
         for record in reversed(self._tail_records()):
             if record.get("isSidechain"):
                 continue
@@ -208,8 +218,12 @@ class Turn:
                 content = message.get("content")
                 if isinstance(content, list):
                     for block in reversed(content):
-                        if isinstance(block, dict) and block.get("type") == "text":
+                        if not isinstance(block, dict):
+                            continue
+                        if block.get("type") == "text":
                             texts.append(block.get("text", ""))
+                        elif block.get("type") == "tool_use":
+                            tools.add(str(block.get("name")))
                 continue
             text = _user_text(record)
             if text is None:
@@ -221,6 +235,7 @@ class Turn:
                 continue
             break  # the operator's prompt that opened this turn
         self._turn_feedback = feedback
+        self._turn_tools = tools
         if self._reply is None:
             self._reply = next((t for t in texts if t.strip()), "")
 
@@ -239,6 +254,11 @@ class Turn:
         if self._turn_feedback is None:
             self._walk_turn()
         return any(tag in text for text in self._turn_feedback or [])
+
+    def called_this_turn(self, *names: str) -> bool:
+        if self._turn_tools is None:
+            self._walk_turn()
+        return any(name in (self._turn_tools or ()) for name in names)
 
     def session(self) -> Session:
         """The whole transcript's tool calls, parsed once for every session check."""
@@ -551,6 +571,52 @@ def evidence_for_claims(turn: Turn) -> str | None:
     )
 
 
+# ------------------------------------------------------------------ phone-handoff
+
+# A sentence that ends the reply's last paragraph on a question mark, allowing for
+# closing emphasis, quotes or brackets.
+ENDS_ON_QUESTION = re.compile(r"\?[*_\"')\]]*\s*$")
+HANDS_OVER = re.compile(
+    r"\b(?:in|from) your (?:own )?(?:terminal|shell)\b"
+    r"|\byou(?:'ll| will)? need to (?:run|approve|confirm|decide|choose|pick)\b"
+    r"|\b(?:please|can you|could you) "
+    r"(?:run|approve|confirm|paste|decide|choose|pick)\b"
+    r"|\bwaiting (?:on|for) you\b",
+    re.I,
+)
+PROMPT_TOOLS = ("PushNotification", "AskUserQuestion")
+
+
+def _push_reaches_phone(env: dict) -> bool:
+    """True when the session is one the Claude app can push for."""
+    if env.get("CLAUDE_CODE_BRIDGE_OWNER_ACCOUNT_UUID"):
+        return True
+    return env.get("CLAUDE_CODE_ENTRYPOINT") == "cli"
+
+
+def phone_handoff(turn: Turn) -> str | None:
+    if not _push_reaches_phone(turn.env):
+        return None
+    visible = outside_fences(turn.reply)
+    paragraphs = [p for p in re.split(r"\n[ \t]*\n", visible) if p.strip()]
+    if not paragraphs:
+        return None
+    asks = any(ENDS_ON_QUESTION.search(ln) for ln in paragraphs[-1].splitlines())
+    if not asks and not HANDS_OVER.search(visible):
+        return None
+    if turn.called_this_turn(*PROMPT_TOOLS):
+        return None
+    return (
+        "Your reply waits on the operator: it asks a question or hands them a command "
+        "to run. They follow sessions from the phone, and the app pushes only for a "
+        "permission dialog, an AskUserQuestion or a PushNotification call, so this "
+        "reply alone reaches them with no alert. Call PushNotification with one line "
+        "naming what you need (load it with ToolSearch `select:PushNotification` if "
+        "its schema is not loaded), or put a decision to them through AskUserQuestion. "
+        "Do not repeat the reply. If the reply asks nothing of them, stop again."
+    )
+
+
 # ------------------------------------------------------------------ tests-for-source
 
 SOURCE_EXT = re.compile(
@@ -724,6 +790,7 @@ CHECKS = [
     ("git-state", "turn", git_state),
     ("artifact-link-last", "turn", artifact_link_last),
     ("evidence-for-claims", "turn", evidence_for_claims),
+    ("phone-handoff", "turn", phone_handoff),
     ("tests-for-source", "session", tests_for_source),
     ("test-hygiene", "session", test_hygiene),
     ("migration", "session", migration),

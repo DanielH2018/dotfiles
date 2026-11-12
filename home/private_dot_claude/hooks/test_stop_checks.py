@@ -252,6 +252,48 @@ check(
     ),
 )
 
+# ---------------------------------------------------------------- phone-handoff
+
+BRIDGE = {**ENV, "CLAUDE_CODE_BRIDGE_OWNER_ACCOUNT_UUID": "u"}
+QUESTION = "Two fixes fit.\n\nWhich one do you want?"
+
+check(
+    "a bridge session's reply ending on a question blocks",
+    tagged(evaluate(QUESTION, [user("x")], env=BRIDGE), "phone-handoff"),
+)
+check(
+    "a command handed to the operator's terminal blocks",
+    tagged(
+        evaluate("Run `make deploy` in your terminal.\n\nDone here.", env=BRIDGE),
+        "phone-handoff",
+    ),
+)
+check(
+    "a reply that asks nothing passes",
+    not tagged(evaluate("Fixed and deployed.", env=BRIDGE), "phone-handoff"),
+)
+check(
+    "a question quoted inside a code fence does not count",
+    not tagged(
+        evaluate("The prompt reads:\n```\nContinue?\n```", env=BRIDGE),
+        "phone-handoff",
+    ),
+)
+check(
+    "a turn that already pushed passes",
+    not tagged(
+        evaluate(QUESTION, [user("x"), tool("PushNotification")], env=BRIDGE),
+        "phone-handoff",
+    ),
+)
+check(
+    "a headless session with no bridge passes",
+    not tagged(
+        evaluate(QUESTION, env={**ENV, "CLAUDE_CODE_ENTRYPOINT": "sdk-cli"}),
+        "phone-handoff",
+    ),
+)
+
 # ---------------------------------------------------------------- tests-for-source
 
 SRC = "/work/repo/src/ledger.py"
