@@ -289,3 +289,4 @@ Scripts/wslhost-interop-reaper
 .local/bin/.versions/sd
 .local/bin/.versions/curlie
 .local/bin/.versions/scrcpy
+.local/bin/stdio-blocking
