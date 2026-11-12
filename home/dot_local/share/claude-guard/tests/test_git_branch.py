@@ -223,6 +223,7 @@ def test_in_its_own_worktree_a_caller_may_reset_a_branch_and_rebase(shared):
             "git rebase --onto origin/main feature HEAD",
             "git rebase --continue",
             "git rebase --abort",
+            "git rebase --quit",
         ]:
             assert rebase_safe(command.split(), cwd, False, project_dir, agent_id), command
 
@@ -245,6 +246,13 @@ def test_rebase_forms_that_run_code_drop_commits_or_name_no_ref_are_refused(shar
 
 
 @only_owned
+def test_in_its_own_worktree_a_reset_to_an_invalid_branch_name_is_refused(shared):
+    primary, session, _, _ = shared
+    for command in ["git checkout -B bad..name origin/feature", "git switch -C bad..name"]:
+        assert not checkout_branch_safe(command.split(), session, False, primary), command
+
+
+@only_owned
 def test_the_judge_grants_the_pr_8004_command_only_to_the_agent_that_owns_the_tree(
     shared, tmp_path
 ):
@@ -252,7 +260,7 @@ def test_the_judge_grants_the_pr_8004_command_only_to_the_agent_that_owns_the_tr
     home = tmp_path / "home"
     (home / ".claude").mkdir(parents=True)
     (home / ".claude" / "settings.json").write_text(
-        '{"permissions": {"allow": ["Bash(tail:*)", "Bash(pwd)"], "ask": []}}'
+        '{"permissions": {"allow": ["Bash(tail:*)", "Bash(pwd)", "Bash(cd:*)"], "ask": []}}'
     )
     rules = load_rules(home=str(home), project_dir=None)
     roots = scratch_roots(str(home))
@@ -264,6 +272,10 @@ def test_the_judge_grants_the_pr_8004_command_only_to_the_agent_that_owns_the_tr
     assert d.allow and {"git-checkout-check", "git-rebase-check"} <= set(d.reasons), d
     assert not judge(command, rules, roots, agent_tree, primary, "", "a0000000000000000").allow
     assert not judge(command, rules, roots, primary, primary, "", AGENT).allow
+    # From another directory, a `cd` to the agent's own worktree root carries ownership over.
+    command = f"cd {agent_tree} && git checkout -B local-8004 origin/feature"
+    assert judge(command, rules, roots, primary, primary, "", AGENT).allow
+    assert not judge(command, rules, roots, primary, primary, "", "a0000000000000000").allow
     # A command that can rewrite the lock first gets none of the ownership grants.
     assert not judge(
         f"git worktree unlock {agent_tree}; git checkout -B x origin/feature",

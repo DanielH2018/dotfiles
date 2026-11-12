@@ -3,8 +3,11 @@
 import io
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 
+import pytest
 from test_git_reset import _make_repo
 
 from claude_guard import prompt_tool
@@ -118,6 +121,28 @@ def test_a_subagents_id_is_recorded_and_handed_back_with_its_cwd(tmp_path):
     assert (cwd, agent_id) == ("/tmp", "a41336082886a72e3")
     cwd, _, agent_id = prompt_tool.take_context("toolu_main", env)
     assert (cwd, agent_id) == ("/tmp", "")
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" or not os.path.exists("/proc/self/stat"),
+    reason="worktree ownership reads /proc and a POSIX `.claude/worktrees/` path",
+)
+def test_the_recorded_agent_id_decides_whether_a_subagent_owns_its_worktree(tmp_path):
+    env = env_for(home_with(tmp_path, {"allow": [], "deny": [], "ask": []}))
+    work = _make_repo(tmp_path)
+    agent = "a41336082886a72e3"
+    tree = os.path.join(work, ".claude", "worktrees", f"agent-{agent}")
+    subprocess.run(["git", "worktree", "add", "-q", "--detach", tree], cwd=work, check=True)
+    with open("/proc/self/stat") as fh:
+        start = fh.read().rpartition(")")[2].split()[19]
+    reason = f"claude agent agent-{agent} (pid {os.getpid()} start {start})"
+    subprocess.run(["git", "worktree", "lock", "--reason", reason, tree], cwd=work, check=True)
+    command = "git checkout -B fix origin/master"
+    payload = json.loads(hook_payload(command, tree, "toolu_agent"))
+    prompt_tool.record_context(json.dumps({**payload, "agent_id": agent}), env)
+    prompt_tool.record_context(hook_payload(command, tree, "toolu_main"), env)
+    assert prompt_tool.decide(request(command, "toolu_agent"), env)["behavior"] == "allow"
+    assert prompt_tool.decide(request(command, "toolu_main"), env)["behavior"] == "deny"
 
 
 def test_the_server_answers_initialize_list_and_call_over_stdio(tmp_path):
