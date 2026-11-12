@@ -1262,10 +1262,10 @@ def test_ansible_check_survives_the_stdio_blocking_prefix_and_trailing_tail_pipe
     # away from the `2>&1` ahead of it, leaving a bare `2>&1` that ansible_readonly_safe's
     # `_TRAILING` regex cannot match — it needs the pipe attached). The whole-command arm
     # hands ansible_readonly_safe the UNSPLIT command, exactly where its own leading/
-    # trailing strips (stdio-blocking.py's fixup prefix, the tail-bounding suffix) expect
+    # trailing strips (the tail-bounding suffix) expect
     # to find them. Both are the plan's named live production shape.
     assert allowed(
-        "stdio-blocking; uv run ansible-playbook ansible/deploy.yml --tags karakeep --check"
+        "uv run ansible-playbook ansible/deploy.yml --tags karakeep --check"
         " 2>&1 | tail -3",
         main,
     )

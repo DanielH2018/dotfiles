@@ -20,13 +20,8 @@ ALLOW = [
     "ansible-playbook site.yml --check --diff",
     "uv run ansible-playbook site.yml --check",
     "uv run --frozen ansible-playbook site.yml --list-tasks",
-    "stdio-blocking; ansible-playbook site.yml --check",
-    "stdio-blocking; uv run ansible-playbook site.yml --check --tags x",
     "ansible-playbook site.yml --check 2>&1 | tail -n 50",
-    "stdio-blocking; ansible-playbook site.yml --check 2>&1 | tail -n 12",
-    # The shape uv-python.sh actually produces on the homelab: a bare -N count.
-    "stdio-blocking; uv run ansible-playbook ansible/deploy.yml --tags karakeep "
-    "--check 2>&1 | tail -3",
+    "uv run ansible-playbook ansible/deploy.yml --tags karakeep --check 2>&1 | tail -3",
     "ansible-playbook site.yml --check -e foo=bar",
 ]
 
@@ -66,7 +61,7 @@ GAP_DEFER = [
 # space before the semicolon is a DIFFERENT string the bash's regex never matched, so it
 # reaches the tokenizer unstripped and dies on the bare `;`. ---
 HAZARD_DEFER = [
-    "stdio-blocking ; ansible-playbook site.yml --check",
+    "stdio-blocking; ansible-playbook site.yml --check",
 ]
 
 
@@ -85,10 +80,7 @@ def test_anything_not_provably_read_only_is_refused(command):
 
 
 def test_the_live_production_shape_from_uv_python_sh_is_allowed():
-    command = (
-        "stdio-blocking; uv run ansible-playbook ansible/deploy.yml "
-        "--tags karakeep --check 2>&1 | tail -3"
-    )
+    command = "uv run ansible-playbook ansible/deploy.yml --tags karakeep --check 2>&1 | tail -3"
     assert ansible_readonly_safe(command) is True
 
 

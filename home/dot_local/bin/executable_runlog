@@ -10,8 +10,7 @@ signal that killed it.
 
 Sessions captured output with hand-written redirects into seven-plus places, and two
 shapes failed outright: a variable target, which worktree isolation and headless
-claude-guard refuse, and an ansible run, which refuses the non-blocking stdio the
-Bash tool hands it. runlog resolves the directory itself, so the command text is
+claude-guard refuse. runlog resolves the directory itself, so the command text is
 literal words, and the child gets a regular file and /dev/null, both blocking.
 
 `<dir>` is `$CLAUDE_JOB_DIR/tmp` when CLAUDE_JOB_DIR resolves under ~/.claude/jobs,

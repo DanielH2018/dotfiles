@@ -21,7 +21,6 @@ extend-include = [
   "home/dot_local/bin/executable_retention-sweep",
   "home/dot_local/bin/executable_runlog",
   "home/dot_local/bin/executable_secretq",
-  "home/dot_local/bin/executable_stdio-blocking",
   "home/dot_local/bin/executable_streamdeck-usb-reset",
   "home/dot_local/bin/executable_takeover-check",
   "home/dot_local/bin/executable_tq",

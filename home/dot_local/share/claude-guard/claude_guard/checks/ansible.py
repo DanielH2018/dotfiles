@@ -11,30 +11,15 @@ command line. `-e @file.yml` / `--extra-vars @file.yml` loads that file's conten
 and this check cannot see what is in it, so a file-valued (`@...`) extra-vars anywhere in
 the command refuses the whole thing, even alongside --check (:29-33).
 
-Two invocation shapes this check must also see through, stripped by exact pattern before
-tokenizing so neither smuggles in extra shell structure: an optional leading
-`stdio-blocking; ` and an optional trailing `2>&1 | tail -n <N>` / `tail -<N>` (:37-43).
+One invocation shape this check must also see through, stripped by exact pattern before
+tokenizing so it smuggles in no extra shell structure: an optional trailing
+`2>&1 | tail -n <N>` / `tail -<N>`.
 """
 
 import re
 
 from claude_guard.checks.scratch import tokenize
 from claude_guard.tables import WS
-
-# :57-59. A literal prefix, matched on the RAW string before tokenizing. If it doesn't match
-# verbatim, the string is left untouched and the tokenizer below refuses whatever remains —
-# this is NOT a recognised leading token, so `stdio-blocking ;` (a space before the
-# semicolon) is a different string that never matches and dies on the bare `;` instead.
-# K3: `[{WS}]*`, not `\s*` — the run of IFS whitespace bash allows between the literal
-# `;` and the next word. Whether this one actually MATTERS is a closer call than the rest
-# of the sweep: `(.*)$` runs with `re.DOTALL`, so it captures the ENTIRE remainder of the
-# string regardless of how many leading whitespace bytes `[{WS}]*` consumes — nothing
-# past this prefix is ever discarded the way a `_HEREDOC_CAT_WRITE`-style strip discards
-# what it does not capture. Tightened anyway, for the same reason `_first_word`'s
-# docstring gives for going the other way: leaving one instance of the old, wider class
-# beside every other instance in this file that now reads narrower invites a future sweep
-# to "fix" it without checking whether it was already deliberate.
-_LEADING = re.compile(rf"^stdio-blocking;[{WS}]*(.*)$", re.DOTALL)
 
 # :60-62. Anchored at the end of the string, immediately after `2>&1`: `tail -n 50`,
 # `tail -n50` and a bare `tail -3` are the only three shapes accepted.
@@ -91,11 +76,8 @@ def ansible_readonly_safe(command: str) -> bool:
     if not command:
         return False
 
-    # :53-62. The two exact-pattern strips run on the RAW string, before tokenizing.
+    # The exact-pattern strip runs on the RAW string, before tokenizing.
     core = command
-    leading = _LEADING.match(core)
-    if leading:
-        core = leading.group(1)
     trailing = _TRAILING.match(core)
     if trailing:
         core = trailing.group(1)

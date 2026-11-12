@@ -165,20 +165,6 @@
            holds a canary in every value that must stay hidden, and mutants that drop either
            condition fail it. */}}
       "Bash(envq:*)",
-      {{/* stdio-blocking exists so the homelab server repo's uv-python.sh hook can clear
-           O_NONBLOCK on the Bash tool's stdio without its prefix landing on the
-           `Bash(python3 -c:*)` ask rule — that inline form is arbitrary code execution and
-           belongs there, but the whole point of this fixup is that it runs before EVERY
-           ansible invocation, so an ask rule on it prompted for the whole compound chain
-           (64 prompts in 7 days, 16 of them read-only shapes). The blanket allow is
-           defensible for the same reason jsonq's is: an absence, not a check. The script
-           takes no arguments (a stray one is a usage error, checked before anything else
-           runs) and touches nothing but os.set_blocking on fds 0, 1 and 3 of its own
-           process — no path, no network, no subprocess, nothing caller-controlled reaches
-           it because there is nothing for caller data to modify. tests/stdio-blocking.test.js
-           pins both: that an argument is refused, and that the fds it targets end up
-           blocking. */}}
-      "Bash(stdio-blocking)",
       {{/* otelq queries the local Loki/Prometheus stack. curl is ask-listed because it takes an arbitrary URL and can write the response to disk; otelq exposes neither — the host is a hardcoded 127.0.0.1 constant, not a flag, the method is always GET, and output only goes to stdout. LogQL/PromQL cannot spawn a process or read a file, so a free-form query argument stays inert. tests/otelq.test.js pins the loopback bases, the absence of any --host/--url/--output flag, and the GET-only construction. */}}
       "Bash(otelq:*)",
       {{/* CLAUDE.md sends every wait through cc-wait, so a prompt on it is a prompt on
@@ -955,10 +941,8 @@
            uv-python.sh hook prepended an inline `python3 -c '...'` stdio fixup ahead of
            every ansible-playbook invocation, and that prefix matched the
            `Bash(python3 -c:*)` ask rule above, so the whole compound command prompted
-           regardless of what followed it. Moving that fixup out to the standalone
-           stdio-blocking script above removes the accidental guard, so it is named
-           explicitly here instead — the posture on a hand-run playbook must not change
-           just because the prefix in front of it did. claude_guard's ansible_readonly_safe()
+           regardless of what followed it. The ask is named explicitly here so the
+           posture on a hand-run playbook does not depend on a prefix. claude_guard's ansible_readonly_safe()
            narrows this back to unprompted for the genuinely read-only invocation shapes
            (--check, --list-tasks, --list-tags, --list-hosts, --syntax-check with no
            file-valued -e/--extra-vars); everything else still asks. */}}

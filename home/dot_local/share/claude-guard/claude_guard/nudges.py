@@ -331,8 +331,7 @@ def _runlog(stages, i) -> str | None:
     return (
         "To capture a command's output to a file, `runlog <name> -- <command> [args…]` "
         "writes stdout and stderr to a log it names, then prints the path, the tail and "
-        "the exit code. It gives the command blocking stdio and `/dev/null` as stdin, "
-        "which `ansible-playbook` needs to start."
+        "the exit code. It gives the command blocking stdio and `/dev/null` as stdin."
     )
 
 
