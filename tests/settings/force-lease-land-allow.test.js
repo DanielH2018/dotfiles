@@ -1,8 +1,6 @@
 // The 2026-11-01 auto-mode audit found the classifier refusing two force-with-lease pushes to
-// fan-out branches and one `land.sh --arm-merge`, and three `ssh daniel-server` runs of a
-// tagged initial_setup.yml. Those runs now go through server#6881's owed_run.py, whose
-// allow entry replaces the soft_deny's clearance for a hand-typed run. Neither the push nor
-// the land.sh entry is host-gated: sessions on every host push branches and land PRs.
+// fan-out branches and one `land.sh --arm-merge`. Neither the push nor the land.sh entry is
+// host-gated: sessions on every host push branches and land PRs.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
@@ -39,13 +37,8 @@ test('every host allows land.sh on the session\'s own PR, excluding --any-author
   }
 });
 
-test('an owed manual_plane line clears through owed_run.py, never a hand-typed run', { skip }, () => {
+test('no auto-mode entry clears owed_run.py or a playbook listing, both deleted from the server repo', { skip }, () => {
   const { allow, soft_deny } = autoMode('daniel-box');
-  const hits = allow.filter((e) => e.startsWith('`uv run python scripts/deploy_tools/owed_run.py <role>`'));
-  assert.strictEqual(hits.length, 1);
-  assert.ok(hits[0].includes("another session's PR"), hits[0]);
-  const deploy = soft_deny.filter((e) => e.startsWith('Running `scripts/deploy.sh`'));
-  assert.strictEqual(deploy.length, 1);
-  assert.ok(deploy[0].includes('owed_run.py'), deploy[0]);
-  assert.ok(!deploy[0].includes('ssh daniel-server'), deploy[0]);
+  assert.ok(!allow.some((e) => e.includes('owed_run.py') || e.includes('`--list-tasks`')));
+  assert.ok(!soft_deny.some((e) => e.includes('owed_run.py')));
 });

@@ -89,3 +89,10 @@ test('the deploy --dry-run exemption lapses when the session edits what it rests
   assert.strictEqual(hits.length, 1);
   assert.ok(hits[0].includes('unless this session edited `deploy.sh`, or removed or changed a `when: not k8s_dry_run` guard'), hits[0]);
 });
+
+test('the protected IaC scope names the read-only RBAC template, not the deleted setup role', { skip }, () => {
+  const hits = autoMode().environment.filter((e) => e.startsWith('Protected IaC scopes'));
+  assert.strictEqual(hits.length, 1);
+  assert.ok(hits[0].includes('ansible/roles/k8s/cluster-base/templates/readonly-rbac.yaml.j2'), hits[0]);
+  assert.ok(!hits[0].includes('ansible/roles/setup/'), hits[0]);
+});
