@@ -14,12 +14,6 @@
 # code to ~/.zshrc, which is zsh-only and correspondingly ungated.
 [ -r "$HOME/.config/shell/env.sh" ] && . "$HOME/.config/shell/env.sh"
 
-# Read by `ctw` when this host is the target of `cts --ssh` — it lists git repos directly
-# under these roots (colon-separated). Must live in .zshenv, not .zshrc: a non-interactive
-# `ssh host ctw …` sources only .zshenv. $HOME because repos (e.g. ~/server) sit right under
-# home; the tool's own default is ~/Repositories.
-export CTS_REMOTE_ROOTS="$HOME"
-
 # A shell with no controlling terminal has nowhere to prompt for a sudo password, so sudo
 # refuses outright: "sudo: a terminal is required to read the password". That covers every
 # non-interactive path — Claude Code's `!` commands, `ssh host cmd`, systemd --user units — and

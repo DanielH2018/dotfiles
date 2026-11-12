@@ -61,10 +61,6 @@ keep builds inside the sandbox working after `uv.lock` moves DuckDB to a new
 version, re-run prefetch. A build outside the sandbox fetches the extension on
 its own.
 
-The index is written in DuckDB's v1.1.0 storage format, not 2.x's default. The
-claude-sandbox image reads it with its own baked DuckDB, which changes only on
-`claude-sandbox --rebuild-base`, so it can lag the host by a major version.
-
 ## Usage
 
 ```sh
@@ -86,12 +82,6 @@ the ingest and maintenance commands each run an incremental build step.
 
 Incremental builds re-embed only changed chunks (~0s when nothing changed, a few
 seconds otherwise). Run `--full` only after changing the model or chunking logic.
-
-## Docker / cron
-
-For scheduled builds that run in the claude-sandbox image, bake the caches into
-the image so cron never touches the network — see
-[`docker/prefetch.Dockerfile.snippet`](docker/prefetch.Dockerfile.snippet).
 
 ## Tests
 

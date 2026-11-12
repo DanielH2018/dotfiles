@@ -37,7 +37,7 @@ function staged(files) {
 test('python: tq adapters + digest unit tests', { skip }, () => {
   // Exit code alone cannot tell a green suite from an empty one: unittest exits 0 whether
   // it discovered every test or none. Same reasoning python-suites.test.js applies to the
-  // sandbox suites — the guard just never reached the largest one. Capture rather than
+  // standalone suites. Capture rather than
   // pipe, because unittest writes its summary to stderr, which is why execFileSync (it
   // returns stdout) could not see the count.
   //

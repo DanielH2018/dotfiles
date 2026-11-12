@@ -116,8 +116,7 @@ jobs:
           uv python install "${TOOLCHAIN_PYTHON}"
           # The pinned, checksum-verified chezmoi release rather than the vendor's installer
           # script: that script installs whatever is current on the day the run happens, and
-          # chezmoi renders every template this suite then asserts against. Same shape as the
-          # sandbox image's chezmoi layer.
+          # chezmoi renders every template this suite then asserts against.
           base="https://github.com/twpayne/chezmoi/releases/download/v${TOOLCHAIN_CHEZMOI}"
           file="chezmoi_${TOOLCHAIN_CHEZMOI}_linux_amd64.tar.gz"
           curl -fsSL -o "$RUNNER_TEMP/$file" "$base/$file"

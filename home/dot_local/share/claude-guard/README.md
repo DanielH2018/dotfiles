@@ -196,8 +196,8 @@ the settings ask, which the operator can approve. `gh run rerun --failed` and a
 `> file 2>&1` capture are not refused, because `gh-rerun-failed` serves only repos the
 account owns and a redirect is often what is wanted; `claude_guard/nudges.py` names those
 wrappers once per session instead. Each of
-those is refused only when its wrapper is on the PATH that `env` carries, because the
-claude-sandbox image ships `gh` and `docker` without the wrappers. `find -exec`, `-execdir`,
+those is refused only when its wrapper is on the PATH that `env` carries, so a host that has
+`gh` or `docker` without the wrappers keeps the raw form. `find -exec`, `-execdir`,
 `-ok` and `-okdir` are refused everywhere, with `rg` and `xargs -0` named instead. Writes such
 as `gh pr comment` and `docker build` are left to the settings rules.
 
@@ -218,8 +218,7 @@ approve them from either hook. Its failure contract is the OPPOSITE
 of the PermissionRequest shim's: cannot run → it prints `ask` itself, without Python, the
 posture the bash took on a missing `jq`. An exception inside Python prints the same `ask` from
 `hook.py`. A `uv python find` or a judge that hangs is cut off by `run_bounded` (2s and 6s,
-inside the hook's 10s) and takes the same `ask` (#660). In the sandbox `CLAUDE_GUARD_FAIL_CLOSED=1` turns that `ask` into a `deny` with exit
-2, because `--dangerously-skip-permissions` skips an ask (see the shim's header).
+inside the hook's 10s) and takes the same `ask` (#660).
 
 `bypass.py` denies a call that sets `dangerouslyDisableSandbox` when the command would run
 inside the sandbox unchanged. That means the sandbox is enabled, `judge()` allows the

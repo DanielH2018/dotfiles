@@ -232,7 +232,7 @@ ssh_extension_install_mode = "always_install"
 reuse_existing_control_master = true
 
 [warpify.subshells]
-added_subshell_commands = ["claude-sandbox", "toolbox enter", "podman exec"]
+added_subshell_commands = ["toolbox enter", "podman exec"]
 
 [session]
 {{- if eq .chezmoi.os "windows" }}

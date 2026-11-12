@@ -7,8 +7,8 @@
 // git. Nothing announces it: chezmoi's executable_ prefix sets the DEPLOYED mode,
 // so a 100644 source still lands as 0755 in ~/.local/bin and the script runs fine.
 //
-// executable_jsonq sat at 100644 and was never ruff-checked. executable_claude-sandbox
-// and 14 other shell scripts were invisible to shellcheck the same way — which is how
+// executable_jsonq sat at 100644 and was never ruff-checked. Fifteen shell scripts
+// were invisible to shellcheck the same way — which is how
 // a malformed `shellcheck` directive reached main in #179 with a green gate.
 //
 // A gate needs two conditions of an extensionless script: a +x bit, and a name in the

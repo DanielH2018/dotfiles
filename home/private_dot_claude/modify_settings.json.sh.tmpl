@@ -30,8 +30,7 @@ trap 'rm -f "$BASE" "$PRIOR" "$FLOOR"' EXIT
 # A plain quoted pathspec is already a wildmatch, so no :(glob) magic is wanted here — and
 # it would be the wrong tool if reached for. Adding :(glob) makes `*` stop at a `/`, which
 # is NARROWER than the default: bare `home/*settings.base.json` matches
-# home/.chezmoitemplates/settings.base.json AND the sandbox's own copy under
-# private_dot_claude/, while the :(glob) form matches neither. The pattern below is anchored
+# home/.chezmoitemplates/settings.base.json, while the :(glob) form does not. The pattern below is anchored
 # on a literal .chezmoitemplates/ prefix, so the loose `*` costs nothing: the only paths it
 # can reach are inside that directory, and over-matching there would mean refusing on an
 # extra file rather than deploying an unreviewed one.

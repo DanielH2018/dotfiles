@@ -5,8 +5,8 @@
 #   timeout: 10
 #   order: 60
 #   description: Give the model a clickable link to an HTML artifact it wrote
-# PostToolUse (Edit|Write): when a browser-openable artifact is written to /artifacts
-# (sandbox) or ~/.claude/artifacts (host), inject a clickable file:// link into the
+# PostToolUse (Edit|Write): when a browser-openable artifact is written to
+# ~/.claude/artifacts, inject a clickable link into the
 # MODEL's context (additionalContext) so the assistant relays it to the user in its
 # reply. The message also tells the user the gesture, which is Warp's: Warp opens a link
 # on Cmd+click (macOS) or Ctrl+click (Linux, Windows), and holding Shift sends a mouse
@@ -18,17 +18,9 @@
 # Linux host is usually reached over SSH from a Mac. So every branch except the local macOS
 # one names both platforms' gestures.
 #
-# Why additionalContext and not systemMessage: in the wrapped/child sandbox session a
-# hook's systemMessage does NOT surface to the user, but additionalContext reliably
-# reaches the model. The assistant also carries a standing preference to state the link
-# in its reply, so delivery does not depend on this hook alone. No-op on every other write.
-#
-# Host-path resolution: prefer the launcher-exported CLAUDE_ARTIFACTS_HOST_DIR; else
-# derive the bind-mount source from /proc/self/mountinfo; else fall back to the path.
-# In the sandbox, ~/.claude is itself a bind-mount of the host state dir, so an
-# artifact written under ~/.claude/artifacts (e.g. by a skill that hardcodes that
-# path) is on the host at $CLAUDE_STATE_HOST_DIR/artifacts — translate it too, or the
-# emitted file:// URI would point at the unreachable in-container /home/... path.
+# additionalContext reliably reaches the model, and the assistant also carries a standing
+# preference to state the link in its reply, so delivery does not depend on this hook alone.
+# No-op on every other write.
 
 set -u
 
@@ -40,40 +32,16 @@ hook_read_input
 path=$(hook_field '.tool_input.file_path // .tool_response.filePath // empty')
 [ -z "$path" ] && exit 0
 
-# In the sandbox, ~/.claude/artifacts is a symlink to the /artifacts bind-mount, so
-# resolve symlinks first — that collapses a ~/.claude/artifacts write onto the real
-# /artifacts path and routes it through the per-instance host translation below.
-# Gated to in-container (CLAUDE_STATE_HOST_DIR set) so host path emission is untouched.
-if [ -n "${CLAUDE_STATE_HOST_DIR:-}" ]; then
-  rp=$(readlink -f "$path" 2>/dev/null) && [ -n "$rp" ] && path="$rp"
-fi
-
 case "$path" in
   *.html|*.htm|*.pdf|*.svg|*.png|*.jpg|*.jpeg|*.gif|*.md) ;;
   *) exit 0 ;;
 esac
 
-resolve_artifacts_host() {
-  if [ -n "${CLAUDE_ARTIFACTS_HOST_DIR:-}" ]; then printf '%s' "${CLAUDE_ARTIFACTS_HOST_DIR%/}"; return 0; fi
-  awk '$5=="/artifacts"{print $4; exit}' /proc/self/mountinfo 2>/dev/null | sed 's#^/#/Users/#'
-}
-
-host=""
 case "$path" in
-  /artifacts/*)
-    base=$(resolve_artifacts_host)
-    if [ -n "$base" ]; then host="${base%/}/${path#/artifacts/}"; else host="$path"; fi ;;
-  */.claude/artifacts/*)
-    # In-container: ~/.claude/artifacts is the state bind-mount; map to its host source.
-    # On the host (env unset): the path is already a real host path — emit verbatim.
-    if [ -n "${CLAUDE_STATE_HOST_DIR:-}" ]; then
-      host="${CLAUDE_STATE_HOST_DIR%/}/artifacts/${path#*/.claude/artifacts/}"
-    else
-      host="$path"
-    fi ;;
-  *)
-    exit 0 ;;
+  */.claude/artifacts/*) ;;
+  *) exit 0 ;;
 esac
+art_rel="${path#*/.claude/artifacts/}"
 
 # Record which repository this session was working in, so the artifact browser
 # (artifact-server/, started by serve-artifacts.sh) can filter and sort by it. The hook runs
@@ -84,10 +52,6 @@ esac
 if common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && [ -n "$common" ]; then
   repo_name=$(basename "${common%/.git}")
   repo_name="${repo_name%.git}"
-  case "$path" in
-    /artifacts/*) art_rel="${path#/artifacts/}" ;;
-    *) art_rel="${path#*/.claude/artifacts/}" ;;
-  esac
   repos_file="$ARTIFACT_REPOS_FILE"
   if mkdir -p "${repos_file%/*}" 2>/dev/null; then
     last=$(awk -F'\t' -v r="$art_rel" '$1 == r { last = $2 } END { print last }' "$repos_file" 2>/dev/null)
@@ -97,9 +61,9 @@ if common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) &
   fi
 fi
 
-# Fallback (the sandbox, and any write outside ~/.claude/artifacts): a file:// link,
-# opened with Warp's gesture. The macOS branch below overrides this for artifacts.
-url="file://$host"
+# Fallback (a host that is neither Linux nor macOS): a file:// link, opened with Warp's
+# gesture.
+url="file://$path"
 msg="An artifact was written. Include this link verbatim as the LAST line of your reply, with nothing after it, and tell the user to open it with Shift+Cmd+click on macOS, Shift+Ctrl+click on Linux and Windows — Shift is needed because the Claude Code TUI captures the mouse, and Shift sends the click to Warp's link handler instead. Link: "
 
 # Linux host (WSL / VS Code Remote-SSH): a file:// link resolves on the LOCAL client,
@@ -118,36 +82,28 @@ msg="An artifact was written. Include this link verbatim as the LAST line of you
 # is the only way an artifact renders inside the app rather than in an external
 # browser. Warp is unaffected: it opens either scheme on Shift+Cmd+click.
 #
-# Both gated to the non-sandbox host (CLAUDE_STATE_HOST_DIR unset) and to
-# ~/.claude/artifacts writes; the sandbox keeps file://.
-#
 # The host is 127.0.0.1, NOT localhost: serve-artifacts.sh binds IPv4 loopback only,
 # but Windows resolves localhost to ::1 first, so a browser on the Windows side hangs
 # on the IPv6 attempt and the artifact never renders (measured: localhost:8181 times
 # out from Windows, 127.0.0.1:8181 returns 200). Naming the address family skips the
 # resolution entirely and works from both sides.
 uname_s=$(uname -s)
-if [ -z "${CLAUDE_STATE_HOST_DIR:-}" ] && { [ "$uname_s" = "Linux" ] || [ "$uname_s" = "Darwin" ]; }; then
-  case "$path" in
-    */.claude/artifacts/*)
-      PORT="${CLAUDE_ARTIFACTS_PORT:-8181}"
-      rel="${path#*/.claude/artifacts/}"
-      url="http://127.0.0.1:${PORT}/${rel}"
-      # Two modifiers, not one: Shift bypasses mouse reporting, needed because the TUI
-      # captures the mouse (alt screen since v2.1.89), and Cmd or Ctrl is Warp's own
-      # open-link modifier. See the header for the Warp docs that state both.
-      if [ "$uname_s" = "Darwin" ]; then
-        # Two surfaces share this host. In Warp the gesture is Shift+Cmd+click, the
-        # macOS half of the file:// branch above. In the Claude desktop app a plain click opens the
-        # EXTERNAL browser — the app has no in-app viewer for a clicked link, and its
-        # native preview handles only .pdf/.doc(x)/.ppt(x)/.xls(x), never .html. Rendering
-        # in-app is a separate action the assistant takes: load the URL in the Browser pane.
-        msg="An artifact was written. Include this link verbatim as the LAST line of your reply, with nothing after it. In the Claude desktop app, ALSO open it in the Browser pane so it renders in-app — a click alone only opens the external browser. In Warp, tell the user to open it with Shift+Cmd+click (Shift is needed because the TUI captures the mouse). Link: "
-      else
-        msg="An artifact was written. Include this link verbatim as the LAST line of your reply, with nothing after it, and tell the user to open it with Shift+Cmd+click on macOS, Shift+Ctrl+click on Linux and Windows (Shift is needed because the Claude Code TUI captures the mouse) — it opens rendered in the browser. Link: "
-      fi
-      ;;
-  esac
+if [ "$uname_s" = "Linux" ] || [ "$uname_s" = "Darwin" ]; then
+  PORT="${CLAUDE_ARTIFACTS_PORT:-8181}"
+  url="http://127.0.0.1:${PORT}/${art_rel}"
+  # Two modifiers, not one: Shift bypasses mouse reporting, needed because the TUI
+  # captures the mouse (alt screen since v2.1.89), and Cmd or Ctrl is Warp's own
+  # open-link modifier. See the header for the Warp docs that state both.
+  if [ "$uname_s" = "Darwin" ]; then
+    # Two surfaces share this host. In Warp the gesture is Shift+Cmd+click, the
+    # macOS half of the file:// branch above. In the Claude desktop app a plain click opens the
+    # EXTERNAL browser — the app has no in-app viewer for a clicked link, and its
+    # native preview handles only .pdf/.doc(x)/.ppt(x)/.xls(x), never .html. Rendering
+    # in-app is a separate action the assistant takes: load the URL in the Browser pane.
+    msg="An artifact was written. Include this link verbatim as the LAST line of your reply, with nothing after it. In the Claude desktop app, ALSO open it in the Browser pane so it renders in-app — a click alone only opens the external browser. In Warp, tell the user to open it with Shift+Cmd+click (Shift is needed because the TUI captures the mouse). Link: "
+  else
+    msg="An artifact was written. Include this link verbatim as the LAST line of your reply, with nothing after it, and tell the user to open it with Shift+Cmd+click on macOS, Shift+Ctrl+click on Linux and Windows (Shift is needed because the Claude Code TUI captures the mouse) — it opens rendered in the browser. Link: "
+  fi
 fi
 
 # Homelab hosts (daniel-box / daniel-server): the artifacts trees are also served in-cluster
@@ -164,15 +120,10 @@ fi
 # link there resolves immediately, but daniel-server's artifacts arrive by an rsync cron on
 # daniel-box (every 5 min). The loopback server stays installed as the fallback for that
 # window and for whenever the cluster route is down.
-if [ -z "${CLAUDE_STATE_HOST_DIR:-}" ] && [ -n "${CLAUDE_ARTIFACTS_BASE_URL:-}" ]; then
-  case "$path" in
-    */.claude/artifacts/*)
-      rel="${path#*/.claude/artifacts/}"
-      arthost="${CLAUDE_ARTIFACTS_HOST:-$(hostname -s)}"
-      url="${CLAUDE_ARTIFACTS_BASE_URL%/}/a/${arthost}/${rel}"
-      msg="An artifact was written. Include this link verbatim as the LAST line of your reply, with nothing after it, and tell the user it opens rendered in the browser (Shift+Cmd+click on macOS, Shift+Ctrl+click on Linux and Windows), behind the usual SSO login. Link: "
-      ;;
-  esac
+if [ -n "${CLAUDE_ARTIFACTS_BASE_URL:-}" ]; then
+  arthost="${CLAUDE_ARTIFACTS_HOST:-$(hostname -s)}"
+  url="${CLAUDE_ARTIFACTS_BASE_URL%/}/a/${arthost}/${art_rel}"
+  msg="An artifact was written. Include this link verbatim as the LAST line of your reply, with nothing after it, and tell the user it opens rendered in the browser (Shift+Cmd+click on macOS, Shift+Ctrl+click on Linux and Windows), behind the usual SSO login. Link: "
 fi
 
 # A Markdown artifact with no HTML companion is the standing preference going unmet.

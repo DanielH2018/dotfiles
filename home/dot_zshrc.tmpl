@@ -93,9 +93,7 @@ fi
 # =============================================================================
 # COMPLETION SYSTEM
 # =============================================================================
-# fpath must be set BEFORE compinit. ~/.claude/sandbox holds our sandbox-tool completions
-# (_cts, _claude-sandbox) and is needed on every platform; Homebrew's site-functions is macOS-only.
-fpath=("$HOME/.claude/sandbox" $fpath)
+# fpath must be set BEFORE compinit. Homebrew's site-functions is macOS-only.
 {{- if eq .chezmoi.os "darwin" }}
 fpath=("$BREW_PREFIX/share/zsh/site-functions" $fpath)
 # Docker Desktop's CLI completions; folded in here (not appended near EOF) so the

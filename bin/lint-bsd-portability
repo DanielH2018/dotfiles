@@ -56,9 +56,8 @@
 //     the repo — including in this file — and none of it runs.
 //   * `sha256sum`, `md5sum`, `nproc`, `base64 -w` and friends, which macOS also lacks. They were
 //     considered with pattern 4 and dropped for cost: claude_guard/tables.py lists those
-//     names as DATA inside allowlist alternations, and the
-//     sandbox Dockerfile/image scripts use them inside container builds that are Linux by
-//     construction. The exclusion list would end up longer than the rule.
+//     names as DATA inside allowlist alternations, so the exclusion list would end up longer
+//     than the rule.
 //   * `stat -c` without a fallback. Every occurrence here already pairs it with `stat -f`, so
 //     there is no evidence to write the rule against — and a rule with no true positive is a
 //     false-positive generator waiting for its first one.

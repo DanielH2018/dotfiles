@@ -86,13 +86,3 @@ HEAD and deploys to `$HOME`, which is the operator's live config, so don't put a
 bench on your own initiative. Asked to, though, you run it — `bin/try --dry-run` and
 `bin/try --diff` are there for showing what a bench would do, which is a better answer than
 handing over a command to paste.
-
-## Two different "sandboxes" — don't conflate
-
-- **OS sandbox**: the `sandbox` block *inside* the generated `~/.claude/settings.json`
-  (Seatbelt on macOS). Governs what the **Bash tool** can read/write/reach in a normal host
-  session.
-- **`claude-sandbox`**: a separate **Docker** tool under `home/private_dot_claude/sandbox/`
-  (deployed to `~/.claude/sandbox/`) — a containerized Claude Code with its **own**
-  `settings.base.json`, `sandbox-CLAUDE.md`, and entrypoint. Unrelated to the OS-sandbox
-  block above; editing one does not affect the other.

@@ -1,8 +1,7 @@
 // Everything this repo resolves at build or apply time has to resolve to the same answer on two
 // machines and on two dates. Before these pins, it did not: CI installed a bare `uv tool install
-// prek` while a laptop installed another, actions rode mutable `@v4` tags, the runner was the
-// rolling `ubuntu-latest`, and the sandbox image took `@anthropic-ai/claude-code@latest` as
-// resolved on the host, once a day.
+// prek` while a laptop installed another, actions rode mutable `@v4` tags, and the runner was
+// the rolling `ubuntu-latest`.
 //
 // The failure is silent in every case — a floating install produces a green run, just not a
 // repeatable one — so each case below names the exact literal that has to be there.
@@ -19,7 +18,6 @@ const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
 const repoRoot = path.resolve(__dirname, '..');
 const ci = fs.readFileSync(path.join(repoRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
 const tools = fs.readFileSync(srcPath('.chezmoidata', 'tools.toml'), 'utf8');
-const sandbox = (f) => fs.readFileSync(srcPath('private_dot_claude', 'sandbox', f), 'utf8');
 
 // tools.toml's [toolchain] table, parsed the way .github/workflows/ci.yml's awk step parses it.
 function toolchain() {
@@ -185,38 +183,4 @@ test('the uv installer is fetched from its versioned URL', () => {
     srcPath('.chezmoiscripts', 'os-unix', 'run_onchange_after_install-python-tools.sh.tmpl'), 'utf8');
   assert.match(body, /astral\.sh\/uv\/\{\{ \.toolchain\.uv \}\}\/install\.sh/,
     'the bare astral.sh/uv/install.sh installs whatever Astral released most recently');
-});
-
-// --- The sandbox image -----------------------------------------------------------------------
-
-test('the sandbox installs a pinned Claude Code, never @latest', () => {
-  const launcher = sandbox('executable_claude-sandbox');
-  const dockerfile = sandbox('Dockerfile.base');
-  assert.doesNotMatch(launcher, /@latest/,
-    'the launcher must not resolve or fall back to the newest release');
-  assert.match(dockerfile, /^ARG CLAUDE_CODE_VERSION=\d+\.\d+\.\d+$/m,
-    'Dockerfile.base must carry the concrete version, as the one source the launcher reads');
-});
-
-test('the sandbox pins the toolchains its per-repo layers install', () => {
-  const image = sandbox('executable_sandbox-image.sh');
-  const dockerfile = sandbox('Dockerfile.base');
-  assert.match(image, /^RUST_TOOLCHAIN="\d+\.\d+\.\d+"$/m,
-    '`--default-toolchain stable` resolves at build time, so a rebuild moves the compiler');
-  assert.doesNotMatch(image, /--default-toolchain stable/);
-  assert.match(dockerfile, /^ARG NODE_PKG_VERSION=\d+\.\d+\.\d+-\S+$/m,
-    'NodeSource installs whatever nodejs its repo carries that day without an exact package version');
-  assert.doesNotMatch(dockerfile, /deb\.nodesource\.com\/setup_/,
-    "the setup script is whatever NodeSource published on the build date");
-});
-
-test('the sandbox image and tools.toml agree on chezmoi and uv', () => {
-  // Two places, deliberately: Dockerfile.base is deployed as-is, with no render step that could
-  // read tools.toml. That makes drift the risk, and this is what catches it.
-  const dockerfile = sandbox('Dockerfile.base');
-  const pins = toolchain();
-  assert.match(dockerfile, new RegExp(`^ARG CHEZMOI_VERSION=${pins.chezmoi}$`, 'm'),
-    `the image must carry the chezmoi tools.toml pins (${pins.chezmoi})`);
-  assert.match(dockerfile, new RegExp(`^ARG UV_VERSION=${pins.uv}$`, 'm'),
-    `the image must carry the uv tools.toml pins (${pins.uv})`);
 });

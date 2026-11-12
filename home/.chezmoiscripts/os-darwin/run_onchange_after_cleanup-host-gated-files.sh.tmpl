@@ -6,7 +6,7 @@
 # cannot do this: a target BOTH ignored (home/.chezmoiignore) and listed there is a silent
 # no-op, verified against a scratch --destination before this script was written. See the
 # matching os-linux and os-windows scripts for the other two platforms' share of the same
-# cleanup — the desktop-only, sandbox and Warp cleanups there have no darwin counterpart:
+# cleanup — the desktop-only and Warp cleanups there have no darwin counterpart:
 # darwin was never in their target host set.
 #
 # Idempotent: every removal is skip-if-absent, and prints only what it actually took.

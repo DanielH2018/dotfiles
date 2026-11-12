@@ -5,8 +5,7 @@
 #     carries a runtime value forward only when the template does not set it.
 #   - modelSettings.<model>.effortLevel, which `/effort` writes on Opus 5.5 instead. It
 #     overrides the top-level key for that model until the next `chezmoi apply` drops it.
-# Editing either here is equivalent to `/effort`, and lets a fresh `claude-sandbox` launch
-# pick it up via resolve-sandbox-settings.sh.
+# Editing either here is equivalent to `/effort`.
 set -euo pipefail
 
 SETTINGS="$HOME/.claude/settings.json"

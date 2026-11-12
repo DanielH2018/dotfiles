@@ -7,8 +7,7 @@
 # ships 3.6a) because ~/.local/bin is ahead of /usr/bin on PATH. Needed because Claude Code's
 # fullscreen TUI ("tui": "fullscreen") blanks / goes stale on a tmux pane-split until you scroll:
 # tmux only implements synchronized output (DECSET 2026) from 3.7, with the end-of-update redraw
-# fix in 3.7b. The cts/av sandbox launchers are tmux-native, so upgrading tmux beats dropping to
-# "tui":"default".
+# fix in 3.7b. Upgrading tmux beats dropping to "tui":"default".
 # run_onchange_after_: re-runs whenever this script's rendered content changes — bump TMUX_VERSION
 # to pull a newer build. Linux + non-minimal only (the Pi opts out; macOS gets tmux via Brewfile).
 # A sudo-less run defers the build-deps and exits 1 so chezmoi retries next apply, but the after_

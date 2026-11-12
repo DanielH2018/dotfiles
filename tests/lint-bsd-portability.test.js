@@ -234,7 +234,7 @@ test('--list reaches the templates, the githooks and the extensionless scripts',
   assert.ok(listed.length > 300, `expected the repo's script surface, saw ${listed.length}`);
   for (const expected of [
     '.githooks/pre-push',
-    'home/private_dot_claude/sandbox/executable_claude-sandbox',
+    'home/dot_local/bin/executable_cc-wait',
     'home/.chezmoitemplates/is-wsl',
     'home/dot_bashrc',
     'tests/mx-ergo-resync.test.js',

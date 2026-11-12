@@ -47,14 +47,10 @@ const readAllowlist = () => fs.readFileSync(ALLOWLIST, 'utf8')
 // whether the host had applied the removal yet (#620's retired test files failed it here).
 //
 // `--config` pins `.profile` to "workstation", the same value CI's own "Pin the chezmoi
-// profile" step in .github/workflows/ci.yml uses and for the same reason: every path on this
-// allowlist was host-invariant until the desktop/server split landed a profile-conditional
-// sandbox directory (`.claude/sandbox/**`, ignored under `.profile == "server"`). Left
-// unpinned, this test passes on CI (always "workstation") but fails on a real server host's
-// own config — daniel-box and daniel-server both set `profile = "server"` in
-// ~/.config/chezmoi/chezmoi.toml, which would otherwise make every sandbox test path on the
-// allowlist read as "removed (listed but no longer deploying)" whenever someone runs
-// `node --test` directly on one of them.
+// profile" step in .github/workflows/ci.yml uses and for the same reason: daniel-box and
+// daniel-server set `profile = "server"` in ~/.config/chezmoi/chezmoi.toml, and a
+// profile-conditional test path would otherwise read as "removed (listed but no longer
+// deploying)" whenever someone runs `node --test` directly on one of them.
 //
 // `--override-data` pins `.chezmoi.hostname` to "daniel-box" for the same reason, and only
 // that flag can: `--config` data cannot replace a `.chezmoi.*` key. home/.chezmoiexternal.toml.tmpl

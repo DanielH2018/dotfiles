@@ -123,9 +123,6 @@ written `-- SC[0-9]+` silently parses as a flag and undercounts. Two related tra
 line starting with the word "shellcheck" parses as a directive, and a `disable=` directive placed
 before the first command is file-wide, not scoped.
 
-The zsh completions `sandbox/_claude-sandbox` and `_cts` cannot be covered — ShellCheck supports
-sh/bash/dash/ksh only and errors SC1071 on zsh.
-
 ## Concurrent sessions
 
 Other sessions move this repo constantly, so re-read `git rev-parse HEAD` rather than trusting a

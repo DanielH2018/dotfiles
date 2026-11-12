@@ -2721,7 +2721,7 @@ def test_a_write_quoted_text_or_remote_command_is_not_routed(command, wrappers_e
 
 
 def test_a_raw_form_is_left_alone_where_its_wrapper_is_not_on_path():
-    # The claude-sandbox image ships gh and docker but neither wrapper.
+    # A host can have gh and docker without either wrapper.
     assert d.deny("gh pr view 12", "", ENV).kind == "none"
     assert d.deny("docker ps", "", {**ENV, "PATH": "/usr/bin"}).kind == "none"
 

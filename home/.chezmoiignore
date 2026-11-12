@@ -26,24 +26,6 @@ Brewfile
 # so no machine needs a deployed copy.
 .config/fastfetch/trim-logos.js
 
-{{ if eq .chezmoi.os "windows" }}
-.local/bin/ct
-.local/bin/cts
-.local/bin/ctw
-.local/bin/claude-sandbox
-.claude/sandbox
-{{ end }}
-
-{{ if eq .profile "server" }}
-# claude-sandbox is the Docker tool (see this repo's CLAUDE.md on the two different
-# "sandboxes"), and daniel-box and daniel-server have no Docker at all — the k3s migration
-# completed 2026-08-14, and neither box ever had Docker before it. ct/cts/ctw stay deployed:
-# ctw is the remote end of `cts --ssh`, so a server still needs it to accept a sandbox session
-# forwarded from a machine that does run Docker.
-.local/bin/claude-sandbox
-.claude/sandbox
-{{ end }}
-
 {{ if ne .chezmoi.os "windows" }}
 .config/windows-provisioning
 .wslconfig
@@ -409,8 +391,7 @@ AppData
 # ~/.claude/hooks, where none of them can run: each finds its subject by the SOURCE tree's
 # executable_-prefixed name, which chezmoi strips before deploying. tests/python-suites.test.js
 # already runs every one of them from the repo (git ls-files-derived), never from the deployed
-# copy, so nothing loses coverage. _sandbox_testlib.py is unrelated and stays deployed: it falls
-# back to the deployed name (_sandbox_testlib.py:40-42).
+# copy, so nothing loses coverage.
 .claude/hooks/test_*.py
 .claude/hooks/_testkit.py
 
@@ -424,8 +405,8 @@ AppData
 # profile, its git identity and signers, its ssh directory and its own user CLAUDE.md, which
 # imports this repo's copy from a subdirectory. It has no sudo, so the sudo shim and the askpass
 # helper do nothing for it. The changelog, telemetry-sweep, savings-rollup and retention timers
-# run once per host under the operator, and the RC resume, sandbox and PR dashboard tools are
-# the operator's own.
+# run once per host under the operator, and the RC resume and PR dashboard tools are the
+# operator's own.
 {{ if includeTemplate "is-agent" . }}
 .profile
 .bash_profile
@@ -442,9 +423,6 @@ AppData
 .local/bin/retention-sweep
 .local/bin/claude-rc-resume
 .local/bin/pr-dash
-.local/bin/ct
-.local/bin/cts
-.local/bin/ctw
 .local/share/pr-dash
 .config/systemd/user/claude-changelog-watch.*
 .config/systemd/user/otel-sweep-watch.*

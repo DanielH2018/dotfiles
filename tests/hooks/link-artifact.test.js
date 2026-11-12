@@ -11,16 +11,16 @@ const { srcPath } = require('../lib/paths');
 
 const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_link-artifact.sh');
 
-// A host-mode artifact link is platform-dependent: a Linux host (VS Code Remote / WSL,
-// where file:// can't reach the client) gets http://127.0.0.1:PORT/<rel> served by
-// serve-artifacts.sh; macOS gets file://<abs>. Mirror the hook's `uname` split.
+// An artifact link is platform-dependent: a Linux host (VS Code Remote / WSL, where
+// file:// can't reach the client) gets http://127.0.0.1:PORT/<rel> served by
+// serve-artifacts.sh. Mirror the hook's `uname` split.
 // The literal 127.0.0.1 is load-bearing — see the hook for why `localhost` hangs on
 // the Windows side of WSL.
 const PORT = process.env.CLAUDE_ARTIFACTS_PORT || shConst(HOOK, 'PORT');
 // darwin joins linux on the loopback URL, for a different reason: the Claude desktop app
 // refuses to grant any path under its own ~/.claude tree, so a file:// link into the
 // artifacts dir never resolves there, and its Browser pane — the only in-app renderer for
-// .html — loads http:// but not file://. Windows and the sandbox keep file://.
+// .html — loads http:// but not file://. Windows keeps file://.
 const hostLink = (absPath, rel) =>
   process.platform === 'linux' || process.platform === 'darwin'
     ? `http://127.0.0.1:${PORT}/${rel}`
@@ -39,8 +39,6 @@ function run(filePath, env = {}, cwd = undefined) {
   // matters most: it is SET in the environment on daniel-box and daniel-server, so leaving it
   // through would make the loopback and file:// cases below assert against the cluster URL on
   // exactly the machines this suite usually runs on.
-  delete e.CLAUDE_ARTIFACTS_HOST_DIR;
-  delete e.CLAUDE_STATE_HOST_DIR;
   delete e.CLAUDE_ARTIFACTS_BASE_URL;
   delete e.CLAUDE_ARTIFACTS_HOST;
   e.CLAUDE_ARTIFACT_STATE_DIR = STATE_DIR;
@@ -52,21 +50,7 @@ function run(filePath, env = {}, cwd = undefined) {
   return JSON.parse(out).hookSpecificOutput.additionalContext;
 }
 
-test('container /artifacts -> translated via CLAUDE_ARTIFACTS_HOST_DIR', () => {
-  const ctx = run('/artifacts/plan.html', { CLAUDE_ARTIFACTS_HOST_DIR: '/Users/d/.claude/sandbox/artifacts/repo-abc' });
-  assert.ok(ctx.includes('file:///Users/d/.claude/sandbox/artifacts/repo-abc/plan.html'),
-    `translates /artifacts to host bind-mount source; got: ${ctx}`);
-});
-
-test('container ~/.claude/artifacts -> translated via CLAUDE_STATE_HOST_DIR (the bug fix)', () => {
-  const ctx = run('/home/claudebot/.claude/artifacts/proc-review.html',
-    { CLAUDE_STATE_HOST_DIR: '/Users/d/.claude/sandbox/state' });
-  assert.ok(ctx.includes('file:///Users/d/.claude/sandbox/state/artifacts/proc-review.html'),
-    `translates container-home artifact to host state dir; got: ${ctx}`);
-  assert.ok(!ctx.includes('/home/claudebot'), 'never leaks the in-container /home path');
-});
-
-test('host ~/.claude/artifacts, no sandbox env -> the platform\'s clickable link', () => {
+test('~/.claude/artifacts -> the platform\'s clickable link', () => {
   const ctx = run('/Users/d/.claude/artifacts/local.html');
   assert.ok(ctx.includes(hostLink('/Users/d/.claude/artifacts/local.html', 'local.html')),
     `host path emitted as the platform's clickable link; got: ${ctx}`);
@@ -127,13 +111,6 @@ test('base URL preserves a nested relative path', () => {
     `keeps the path below the artifacts root; got: ${ctx}`);
 });
 
-test('base URL is ignored in the sandbox, which has no route to the cluster', () => {
-  const ctx = run('/home/claudebot/.claude/artifacts/plan.html',
-    { CLAUDE_ARTIFACTS_BASE_URL: BASE, CLAUDE_STATE_HOST_DIR: '/Users/d/.claude/sandbox/state' });
-  assert.ok(!ctx.includes(BASE), `container mode keeps its host translation; got: ${ctx}`);
-  assert.ok(ctx.includes('file:///Users/d/.claude/sandbox/state/artifacts/plan.html'), ctx);
-});
-
 test('base URL does not suppress the missing-HTML-companion nudge', () => {
   const dir = artifactsDir(['findings.md']);
   const ctx = run(path.join(dir, 'findings.md'), { CLAUDE_ARTIFACTS_BASE_URL: BASE });
@@ -141,7 +118,7 @@ test('base URL does not suppress the missing-HTML-companion nudge', () => {
 });
 
 test('non-openable extension -> no-op', () => {
-  assert.strictEqual(run('/artifacts/data.json', { CLAUDE_ARTIFACTS_HOST_DIR: '/Users/d/x' }), '',
+  assert.strictEqual(run('/Users/d/.claude/artifacts/data.json'), '',
     'non-openable extension is a no-op');
 });
 
@@ -149,13 +126,9 @@ test('write outside any artifacts dir -> no-op', () => {
   assert.strictEqual(run('/workspace/src/index.html'), '', 'non-artifact write is a no-op');
 });
 
-// symlink resolution is gated to in-container (mirrors ~/.claude/artifacts -> /artifacts).
-//    A symlinked ~/.claude/artifacts dir: on the host (env unset) the path is emitted
-//    verbatim; in-container (CLAUDE_STATE_HOST_DIR set) readlink -f collapses it to the
-//    real target first, so it no longer matches an artifacts branch here (in a real
-//    container it would resolve to /artifacts and hit case 1's translation).
+// A symlinked ~/.claude/artifacts dir is linked by the path as written, not its target.
 // Creating a symlink needs privilege on Windows (EPERM), so this Unix-host case is skipped there.
-test('symlink resolution gated to in-container', () => {
+test('a symlinked artifacts dir is not resolved', () => {
   if (process.platform !== 'win32') {
     const fs = require('node:fs');
     const os = require('node:os');
@@ -167,9 +140,7 @@ test('symlink resolution gated to in-container', () => {
     const linked = path.join(home, '.claude', 'artifacts', 'report.html');
 
     assert.ok(run(linked).includes(hostLink(linked, 'report.html')),
-      'host mode emits the platform link for the ~/.claude/artifacts path (no resolution)');
-    assert.strictEqual(run(linked, { CLAUDE_STATE_HOST_DIR: '/Users/d/.claude/sandbox/state' }), '',
-      'container mode resolves the symlink before matching');
+      'emits the platform link for the ~/.claude/artifacts path (no resolution)');
   }
 });
 

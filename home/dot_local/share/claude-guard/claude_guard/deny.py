@@ -3438,7 +3438,7 @@ def loader_env(command: str, env: Mapping[str, str] | None) -> Verdict | None:
 # --- a raw form a wrapper replaces (dotfiles #1210) -------------------------------------------
 
 # Each refusal names the wrapper, so no prose has to. A gh or docker read is refused only
-# where its wrapper is on PATH: the claude-sandbox image ships gh and neither wrapper.
+# where its wrapper is on PATH, so a host with gh but no wrapper keeps the raw form.
 _GH_READS = {
     "pr": frozenset({"view", "list", "checks", "diff"}),
     "issue": frozenset({"view", "list"}),

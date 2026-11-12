@@ -57,8 +57,7 @@ const SUITES = standaloneSuites();
 // A derivation that finds nothing passes for free. The floor is a named member, so the
 // failure says which file went missing rather than that a count moved.
 test('the derived standalone suite list is not empty and holds a known member', () => {
-  assert.ok(SUITES.length >= 14, `expected at least the six sandbox and eight hooks suites, derived ${SUITES.length}: ${SUITES.join(', ')}`);
-  assert.ok(SUITES.some((rel) => rel.endsWith('/test_exec_stream.py')), 'sandbox/test_exec_stream.py is a standalone suite and must be derived');
+  assert.ok(SUITES.length >= 8, `expected at least the eight hooks suites, derived ${SUITES.length}: ${SUITES.join(', ')}`);
   assert.ok(SUITES.some((rel) => rel.endsWith('/hooks/test_prune_worktrees.py')), 'hooks/test_prune_worktrees.py is a standalone suite and must be derived');
   assert.ok(!SUITES.some((rel) => rel.startsWith('tests/tq/')), 'tests/tq is one unittest suite under run.py, not standalone files');
   assert.ok(!SUITES.some((rel) => rel.includes('claude-guard/') || rel.includes('claude-worktree/')), 'a pytest project\'s tests are not standalone suites');
@@ -101,7 +100,7 @@ test('the opt-out marker excludes a file, and its absence includes one', () => {
 // declare a test:
 //
 //   - module-level `test_*` functions, run by a `__main__` globals() scan
-//     (the sandbox suites);
+//     (memory-consolidation's test_memory_survey.py);
 //   - `check(name, condition)` calls, one printed `ok  `/`FAIL` line each,
 //     counted by the helper itself (the hooks suites). The helper lives in
 //     hooks/_testkit.py and is imported by name, `from _testkit import check`,

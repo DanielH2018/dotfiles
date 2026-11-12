@@ -47,9 +47,7 @@ export CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000
 # ways: the escape written inside the wrap changed nothing, and the same escape written to the
 # pane's own pty renamed the row immediately.
 #
-# What this gives up is reattaching after a dropped ssh connection or a closed window. `ct`
-# (dot_local/bin/executable_ct) is the deliberate opt-in: it runs claude under a named
-# `tmux new-session -A`, so a session worth protecting is one command away.
+# What this gives up is reattaching after a dropped ssh connection or a closed window.
 claude() {
   # On daniel-box, a session started in the homelab checkout runs as the dedicated `claude`
   # user (see claude-agents below). An audit on 2026-10-15 found every session since

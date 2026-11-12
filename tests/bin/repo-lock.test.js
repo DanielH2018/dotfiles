@@ -1,8 +1,7 @@
 // Regression guard for bin/lib/repo-lock.sh's mkdir fallback, the lock land and try take
 // where there is no flock(1) -- every stock Mac. That path used to run the command
 // UNLOCKED (#581), so two landings could move main under each other. flock is hidden with
-// a `command -v` shim, the same way the sandbox suites hide a tool, so this runs on a Linux
-// host too. The flock path itself is covered by try.test.js.
+// a `command -v` shim, so this runs on a Linux host too. The flock path itself is covered by try.test.js.
 //
 // A directory lock survives a killed holder, so staleness is the half that needs proving:
 // each stale case is paired with the live case it must not be confused with.

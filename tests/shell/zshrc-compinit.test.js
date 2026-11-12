@@ -35,7 +35,7 @@ test('no bare unconditional compinit call remains (only the guarded -d/-C pair)'
 });
 
 test('the Docker completions fpath entry folds into the Phase-2 fpath block, not near EOF', () => {
-  const fpathBlock = raw.slice(raw.indexOf('fpath=("$HOME/.claude/sandbox"'), raw.indexOf('autoload -Uz compinit'));
+  const fpathBlock = raw.slice(raw.indexOf('fpath must be set BEFORE compinit'), raw.indexOf('autoload -Uz compinit'));
   assert.match(fpathBlock, /fpath=\("\$HOME\/\.docker\/completions" \$fpath\)/, 'docker completions fpath must live in the Phase-2 block (A14-09)');
 
   const sdkmanIdx = raw.indexOf('SDKMAN TO WORK');

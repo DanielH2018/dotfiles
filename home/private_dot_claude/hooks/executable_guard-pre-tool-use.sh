@@ -12,7 +12,7 @@
 # of settings.base.json has the exit-gate numbers). Contract when it cannot run: the shim
 # prints `ask` itself -- the same posture the bash took on a missing jq -- never
 # silence, because this is the deny side. Registered at the same 10 s timeout the
-# bash carried, which the sandbox's own settings.base.json registers too.
+# bash carried.
 # guard-pre-tool-use.sh — PreToolUse/Bash shim for the claude-guard package.
 #
 # The one Python process before a Bash call. Besides the deny rules it runs the chezmoi
@@ -35,22 +35,8 @@
 # command: the `--force`→`--force-with-lease` upgrade became a deny in dotfiles #701.
 # Slice 4 shipped this shim with a CLAUDE_GUARD_DENY_SHADOW switch that computed the verdict,
 # logged it against the deployed block-dangerous-bash.sh and decided nothing; slice 6 deleted
-# that bash hook (the sandbox port, #508, had moved its last runner onto this shim) and the
-# switch with it, so there is no bash left to compare against and no value here to get wrong.
-#
-# CLAUDE_GUARD_FAIL_CLOSED=1 (the sandbox sets it; see sandbox/executable_claude-sandbox and
-# sandbox/settings.base.json) replaces the ask above with a deny and exit 2. The ask is
-# fail-closed on the host, where it stops the call and waits for a human. It is NOT
-# fail-closed in the sandbox: that CMD is `claude --dangerously-skip-permissions`, which
-# skips an ask, so a container missing uv, the managed 3.15 or the package would run with no
-# deny check and nothing would say so. Exit 2 is what closes it -- hooks.md, "Exit code 2
-# behavior per event": exit 2 blocks whether or not you print JSON, and even a JSON
-# permissionDecision of "allow" cannot override it. The JSON is still printed because
-# Claude Code still reads stdout on that path, and the reason also goes to stderr, which is
-# exit 2's own documented feedback channel; whichever the harness surfaces, the reason
-# survives. Writing to stderr here does not contradict the stderr note below: that discards
-# PYTHON's stderr, where a traceback could quote the command text. This reason is a fixed
-# string containing no command text.
+# that bash hook and the switch with it, so there is no bash left to compare against and no
+# value here to get wrong.
 #
 # The interpreter is lib/guard-python.sh's: uv's managed 3.15, its lookup flags, and the
 # cache that saves a `uv python find` per call. `-S` skips site-packages;
@@ -67,27 +53,17 @@
 # Both children run through run_bounded (#581, #660); guard_python bounds the lookup. They
 # used to run bare, so a uv or a Python that hung instead of failing never reached `fail`. The
 # harness killed the hook at its timeout, and a killed PreToolUse hook is a non-blocking
-# error: the call ran with no deny check, and in the sandbox without the exit-2 deny either.
+# error: the call ran with no deny check.
 # The bounds are 2s for the lookup and 7s for the judge, inside the 10s. The judge's share
 # holds the apply guard's own chezmoi bounds, 2s for source-path and 4s for status, so a slow
-# status reaches its own named ask rather than this shim's generic one. The 10s is a ceiling
-# that must not move up on the host alone: claude-sandbox registers this shim at 10s in its
-# own settings, and a hook the harness kills at its timeout lets the call run unchecked.
+# status reaches its own named ask rather than this shim's generic one. A hook the harness
+# kills at its timeout lets the call run unchecked, so the 10s is a ceiling.
 # CLAUDE_GUARD_TIMEOUT_S sets both, for the tests. Any RB_STATUS other than `ok` is could-not-evaluate and takes `fail`, and so does a
 # non-zero exit from either child. A missing run-bounded.sh is `fail` too: the judge cannot
-# run bounded, so it does not run. The sandbox mounts lib/ beside this file for that
-# reason (sandbox/executable_claude-sandbox), and a missing guard-python.sh is `fail` the same
-# way.
+# run bounded, so it does not run. A missing guard-python.sh is `fail` the same way.
 set -u
-: "${CLAUDE_GUARD_FAIL_CLOSED:=0}"
 ASK='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"claude-guard: the dangerous-command rules could not be evaluated (interpreter or package unavailable). Review this command yourself."}}'
-DENY_REASON='claude-guard: the dangerous-command rules could not be evaluated (interpreter or package unavailable). This container fails closed, so the command was blocked without being run.'
 fail() {
-  if [ "$CLAUDE_GUARD_FAIL_CLOSED" = 1 ]; then
-    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$DENY_REASON"
-    printf '%s\n' "$DENY_REASON" >&2
-    exit 2
-  fi
   printf '%s\n' "$ASK"
   exit 0
 }

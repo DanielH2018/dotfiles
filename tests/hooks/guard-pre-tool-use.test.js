@@ -1,12 +1,9 @@
-// The PreToolUse/Bash shim's failure contract, which differs by host and sandbox.
+// The PreToolUse/Bash shim's failure contract.
 //
-// On the host an unevaluable deny list prints `ask` and exits 0: the call stops and waits for
-// a human. In the sandbox that is fail-OPEN, because the CMD is
-// `claude --dangerously-skip-permissions` and an ask is skipped under that flag. So the
-// sandbox sets CLAUDE_GUARD_FAIL_CLOSED=1 and the same shim denies with exit 2 instead.
-// Nothing else in the tree pins either branch, and both are reached only when uv, the managed
-// 3.15 or the package is missing -- a path no ordinary run exercises, so a regression here
-// would be invisible until the day it mattered.
+// An unevaluable deny list prints `ask` and exits 0: the call stops and waits for a human.
+// Nothing else in the tree pins this branch, and it is reached only when uv, the managed 3.15
+// or the package is missing -- a path no ordinary run exercises, so a regression here would be
+// invisible until the day it mattered.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { spawnSync } = require('node:child_process');
@@ -41,29 +38,18 @@ function decisionOf(stdout) {
   return JSON.parse(stdout).hookSpecificOutput.permissionDecision;
 }
 
-test('unevaluable rules ask and exit 0 by default, so the host prompt stands', () => {
-  const r = runHook({ CLAUDE_GUARD_FAIL_CLOSED: '0' });
+test('unevaluable rules ask and exit 0, so the prompt stands', () => {
+  const r = runHook({});
   assert.strictEqual(r.status, 0);
   assert.strictEqual(decisionOf(r.stdout), 'ask');
-});
-
-test('CLAUDE_GUARD_FAIL_CLOSED=1 denies and exits 2, because the sandbox skips an ask', () => {
-  const r = runHook({ CLAUDE_GUARD_FAIL_CLOSED: '1' });
-  // Exit 2 is what actually blocks under --dangerously-skip-permissions (hooks.md, "Exit code
-  // 2 behavior per event": it blocks whether or not JSON is printed). The JSON and the stderr
-  // line are the two channels the reason can reach the user by, and which one the harness
-  // surfaces on this path is not documented -- hence both.
-  assert.strictEqual(r.status, 2);
-  assert.strictEqual(decisionOf(r.stdout), 'deny');
-  assert.match(r.stderr, /fails closed/);
 });
 
 test('a stale CLAUDE_GUARD_DENY_SHADOW in the env changes nothing', () => {
   // Slice 4's shadow switch made the shim print nothing on failure when set to anything but
   // "0". Slice 6 retired it with the bash hook it shadowed; a settings.json regenerated
-  // before that, or a container image built from one, may still export the old value, and
-  // it must not turn the ask back into silence.
-  const r = runHook({ CLAUDE_GUARD_FAIL_CLOSED: '0', CLAUDE_GUARD_DENY_SHADOW: '1' });
+  // before that may still export the old value, and it must not turn the ask back into
+  // silence.
+  const r = runHook({ CLAUDE_GUARD_DENY_SHADOW: '1' });
   assert.strictEqual(r.status, 0);
   assert.strictEqual(decisionOf(r.stdout), 'ask');
 });
@@ -90,16 +76,12 @@ function echoPackage(decision) {
   return home;
 }
 
-test('a missing hook-input.sh asks on the host and denies in the sandbox, like a missing interpreter', needsPy, () => {
+test('a missing hook-input.sh asks, like a missing interpreter', needsPy, () => {
   // A working package, so the library is the only thing missing. The pre-#565 shim never
   // sourced it, reaches Python here, and answers with the stand-in's own `allow`.
-  const env = { CLAUDE_GUARD_HOME: echoPackage('allow'), HOOK_INPUT_LIB: '/nonexistent/hook-input.sh' };
-  const host = runHook({ ...env, CLAUDE_GUARD_FAIL_CLOSED: '0' });
-  assert.strictEqual(host.status, 0);
-  assert.strictEqual(decisionOf(host.stdout), 'ask');
-  const sandbox = runHook({ ...env, CLAUDE_GUARD_FAIL_CLOSED: '1' });
-  assert.strictEqual(sandbox.status, 2);
-  assert.strictEqual(decisionOf(sandbox.stdout), 'deny');
+  const r = runHook({ CLAUDE_GUARD_HOME: echoPackage('allow'), HOOK_INPUT_LIB: '/nonexistent/hook-input.sh' });
+  assert.strictEqual(r.status, 0);
+  assert.strictEqual(decisionOf(r.stdout), 'ask');
 });
 
 test('the payload reaches the Python side byte-for-byte, with no jq on PATH', needsPy, () => {
@@ -115,7 +97,7 @@ test('the payload reaches the Python side byte-for-byte, with no jq on PATH', ne
   const r = spawnSync('/bin/bash', [HOOK], {
     encoding: 'utf8',
     input: payload,
-    env: { ...process.env, CLAUDE_GUARD_HOME: home, CLAUDE_GUARD_FAIL_CLOSED: '1', PATH: bin },
+    env: { ...process.env, CLAUDE_GUARD_HOME: home, PATH: bin },
   });
   assert.strictEqual(r.status, 0, r.stderr);
   assert.strictEqual(JSON.parse(r.stdout).hookSpecificOutput.permissionDecisionReason, payload);
@@ -123,8 +105,8 @@ test('the payload reaches the Python side byte-for-byte, with no jq on PATH', ne
 
 // Nothing the shim starts may run unbounded (#581, #660). A hung `uv python find` or judge
 // used to hold the hook until the harness killed it at 10s, and a killed PreToolUse hook is a
-// non-blocking error: the call ran with no deny check, and in the sandbox without the exit-2
-// deny. A stub `uv` on PATH hands back a stub interpreter, so no real uv or Python is needed.
+// non-blocking error: the call ran with no deny check. A stub `uv` on PATH hands back a stub
+// interpreter, so no real uv or Python is needed.
 const STUB = scratch(os.tmpdir(), 'guard-pre-tool-use-stub-');
 const STUB_BIN = path.join(STUB, 'bin');
 const STUB_SHARE = path.join(STUB, 'share');
@@ -159,34 +141,27 @@ function runStubbed(env) {
 
 test('the stub judge is heard when nothing hangs', () => {
   // The control for the three below: the same fixture, unhung, reaches the stub's `allow`.
-  const r = runStubbed({ CLAUDE_GUARD_FAIL_CLOSED: '0' });
+  const r = runStubbed({});
   assert.strictEqual(r.status, 0, r.stderr);
   assert.strictEqual(decisionOf(r.stdout), 'allow');
 });
 
-test('a hung uv python find asks within 10s on the host, at the default bound', () => {
-  const r = runStubbed({ CLAUDE_GUARD_FAIL_CLOSED: '0', STUB_UV_SLOW: '1' });
+test('a hung uv python find asks within 10s, at the default bound', () => {
+  const r = runStubbed({ STUB_UV_SLOW: '1' });
   assert.ok(r.seconds < 10, `took ${r.seconds}s`);
   assert.strictEqual(r.status, 0);
   assert.strictEqual(decisionOf(r.stdout), 'ask');
 });
 
-test('a hung uv python find denies with exit 2 when failing closed', () => {
-  const r = runStubbed({ CLAUDE_GUARD_FAIL_CLOSED: '1', STUB_UV_SLOW: '1' });
-  assert.ok(r.seconds < 10, `took ${r.seconds}s`);
-  assert.strictEqual(r.status, 2);
-  assert.strictEqual(decisionOf(r.stdout), 'deny');
-});
-
 test('a hung judge is cut off and asks', () => {
-  const r = runStubbed({ CLAUDE_GUARD_FAIL_CLOSED: '0', STUB_PY_SLOW: '1', CLAUDE_GUARD_TIMEOUT_S: '1' });
+  const r = runStubbed({ STUB_PY_SLOW: '1', CLAUDE_GUARD_TIMEOUT_S: '1' });
   assert.ok(r.seconds < 8, `took ${r.seconds}s`);
   assert.strictEqual(r.status, 0);
   assert.strictEqual(decisionOf(r.stdout), 'ask');
 });
 
 test('a missing run-bounded.sh asks rather than running the judge unbounded', () => {
-  const r = runStubbed({ CLAUDE_GUARD_FAIL_CLOSED: '0', RUN_BOUNDED_LIB: path.join(STUB, 'no-such-lib.sh') });
+  const r = runStubbed({ RUN_BOUNDED_LIB: path.join(STUB, 'no-such-lib.sh') });
   assert.strictEqual(r.status, 0);
   assert.strictEqual(decisionOf(r.stdout), 'ask');
 });

@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "Every version this repo pins, kept current by one grouped PR a week. The Monday window's ordinary bumps arrive together as the `weekly pins` PR, so landing them runs the CI `gate` job once instead of once per bump. Nothing here automerges, and landing does not deploy (chezmoi apply is a separate step), so the cost of a batch is that one bad bump holds up the rest. To drop such a bump, revert it on the group branch, or exclude it with a matchPackageNames + `enabled: false` rule before the next window: Renovate cannot close one dependency inside a group PR. The shape follows the homelab repo's renovate.json: one custom manager per pinned file, each anchored to that file, and tests/renovate-config.test.js asserts that every `# renovate:` annotation in the tree is matched by one of them. enabledManagers is a closed list, so a manager Renovate adds later cannot start opening PRs unreviewed. It names the five that cover a pin here: the CI actions, the pre-commit revs, the claude-otel compose images, the sandbox base image digest and the annotated pins. Left out on purpose: npm (pr-dash declares only caret ranges) and pep621 (every Python dependency here is a >= floor).",
+  "description": "Every version this repo pins, kept current by one grouped PR a week. The Monday window's ordinary bumps arrive together as the `weekly pins` PR, so landing them runs the CI `gate` job once instead of once per bump. Nothing here automerges, and landing does not deploy (chezmoi apply is a separate step), so the cost of a batch is that one bad bump holds up the rest. To drop such a bump, revert it on the group branch, or exclude it with a matchPackageNames + `enabled: false` rule before the next window: Renovate cannot close one dependency inside a group PR. The shape follows the homelab repo's renovate.json: one custom manager per pinned file, each anchored to that file, and tests/renovate-config.test.js asserts that every `# renovate:` annotation in the tree is matched by one of them. enabledManagers is a closed list, so a manager Renovate adds later cannot start opening PRs unreviewed. It names the four that cover a pin here: the CI actions, the pre-commit revs, the claude-otel compose images and the annotated pins. Left out on purpose: npm (pr-dash declares only caret ranges) and pep621 (every Python dependency here is a >= floor).",
   "extends": [
     "config:recommended",
     ":dependencyDashboard",
@@ -20,18 +20,11 @@
     "github-actions",
     "pre-commit",
     "docker-compose",
-    "dockerfile",
     "custom.regex"
   ],
   "pre-commit": {
     "description": "Renovate ships this manager with `enabled: false` (lib/modules/manager/pre-commit defaultConfig), and listing it in enabledManagers does not override that. Without this block neither the gitleaks rev nor the ruff-pre-commit rev is ever read, and the config validator cannot see the gap: it checks the schema, not coverage.",
     "enabled": true
-  },
-  "dockerfile": {
-    "description": "The sandbox base image, FROM debian:stable-slim@sha256:<index digest>. Renovate keeps the tag and opens a digest PR each time Debian republishes it, so two builds of one commit start from the same image. Renovate's default patterns already match Dockerfile.base; this entry is added to them and names the file this manager exists for. The `# syntax=docker/dockerfile:1` directive is extracted too, but a bare major with no pinned digest produces no PR.",
-    "managerFilePatterns": [
-      "/^home/private_dot_claude/sandbox/Dockerfile\\.base$/"
-    ]
   },
   "customManagers": [
     {
@@ -42,26 +35,6 @@
       ],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n[^\\n]*\"(?<currentValue>[^\"\\n]+)\"[ }]*\\n"
-      ]
-    },
-    {
-      "description": "The sandbox image's ARG pins: chezmoi, uv, @anthropic-ai/claude-code and the NodeSource channel. NODE_PKG_VERSION deliberately carries no annotation (no datasource serves a NodeSource deb), so the node-version pin here is split out below.",
-      "customType": "regex",
-      "managerFilePatterns": [
-        "/^home/private_dot_claude/sandbox/Dockerfile\\.base$/"
-      ],
-      "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\nARG [A-Z_]+=(?<currentValue>\\S+)\\n"
-      ]
-    },
-    {
-      "description": "sandbox-image.sh: the Rust toolchain the image build installs. A shell assignment rather than a TOML key, because the file deploys as-is and is not a template.",
-      "customType": "regex",
-      "managerFilePatterns": [
-        "/^home/private_dot_claude/sandbox/executable_sandbox-image\\.sh$/"
-      ],
-      "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n[A-Z_]+=\"(?<currentValue>[^\"\\n]+)\"\\n"
       ]
     },
     {
@@ -78,18 +51,17 @@
   ],
   "packageRules": [
     {
-      "description": "The weekly batch: every bump from an enabled manager joins one `weekly pins` PR, the sandbox base image digest and the monorepo groups config:recommended defines among them. This rule must stay first. A later rule's groupName wins, so the named groups below (ruff, the gitleaks and host-pin lockstep groups, the sandbox node channel) keep their own PRs, and tests/renovate-config.test.js fails if the batch rule moves after them. A major update still gets its own `major-` group PR, because separateMajorMinor stays at its default.",
+      "description": "The weekly batch: every bump from an enabled manager joins one `weekly pins` PR, the monorepo groups config:recommended defines among them. This rule must stay first. A later rule's groupName wins, so the named groups below (ruff and the gitleaks and host-pin lockstep groups) keep their own PRs, and tests/renovate-config.test.js fails if the batch rule moves after them. A major update still gets its own `major-` group PR, because separateMajorMinor stays at its default.",
       "matchManagers": [
         "github-actions",
         "pre-commit",
         "docker-compose",
-        "dockerfile",
         "custom.regex"
       ],
       "groupName": "weekly pins"
     },
     {
-      "description": "A github-releases pin written without a leading `v` (tools.toml's uv and chezmoi, the Dockerfile ARGs) must stay without one. The upstream tag is `v2.71.1`; the pin is `2.71.1`, and the installers prepend the `v` themselves. Pins that store the tag verbatim (the [releases] table) carry their `v` and are left alone by this rule.",
+      "description": "A github-releases pin written without a leading `v` (tools.toml's uv and chezmoi) must stay without one. The upstream tag is `v2.71.1`; the pin is `2.71.1`, and the installers prepend the `v` themselves. Pins that store the tag verbatim (the [releases] table) carry their `v` and are left alone by this rule.",
       "matchDatasources": [
         "github-releases"
       ],
@@ -105,16 +77,6 @@
         "actions/node-versions"
       ],
       "extractVersion": "^(?<version>\\d+\\.\\d+\\.\\d+)-\\d+$"
-    },
-    {
-      "description": "The sandbox's NODE_VERSION is a NodeSource channel (a bare major, `22`), paired with NODE_PKG_VERSION, which no datasource serves and which is bumped by hand. Renovate can move the channel but not its partner, so the PR it opens is half the change. The group name says so, the same convention the homelab repo uses for a manual half.",
-      "matchFileNames": [
-        "home/private_dot_claude/sandbox/Dockerfile.base"
-      ],
-      "matchDepNames": [
-        "node"
-      ],
-      "groupName": "sandbox node channel (manual — also bump NODE_PKG_VERSION from the NodeSource index)"
     },
     {
       "description": "ruff is pinned twice: the ruff-pre-commit rev the lint gate runs and the [toolchain] ruff the machines install. They drifted apart once (v0.16.0 against 0.16.1), so one PR moves both.",

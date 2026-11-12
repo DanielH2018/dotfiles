@@ -41,7 +41,7 @@ test('the settings templates are found at all', () => {
 
 // The guard passes its paths to `git status --porcelain --`, where a quoted pathspec is a
 // wildmatch. `*` there crosses `/` — verified: `git ls-files -- "home/*settings.base.json"`
-// returns both .chezmoitemplates/settings.base.json and the sandbox's own copy. This uses
+// returns .chezmoitemplates/settings.base.json. This uses
 // `[^/]*`, which is deliberately STRICTER: it can only report a template as uncovered that
 // git would in fact cover, never the reverse, so the failure mode is a false alarm a human
 // reads rather than a gap that ships. A pathspec needing more than one `*` should be read

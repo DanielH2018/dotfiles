@@ -49,7 +49,7 @@ const managers = config.customManagers;
 const read = (f) => fs.readFileSync(repoPath(f), 'utf8');
 
 test('every custom manager finds at least one file and one pin', () => {
-  assert.ok(managers.length >= 4, `expected the four annotated files' managers, found ${managers.length}`);
+  assert.ok(managers.length >= 2, `expected the two annotated files' managers, found ${managers.length}`);
   for (const mgr of managers) {
     const files = tracked.filter((f) => mgr.managerFilePatterns.some((p) => filePattern(p).test(f)));
     assert.ok(files.length > 0, `no tracked file matches ${mgr.managerFilePatterns}`);
@@ -68,8 +68,6 @@ test('every # renovate: annotation in the tree is consumed by a manager', () => 
   });
   // Non-vacuity: name the files the census must find, so a moved file fails by name.
   for (const f of ['home/.chezmoidata/tools.toml',
-    'home/private_dot_claude/sandbox/Dockerfile.base',
-    'home/private_dot_claude/sandbox/executable_sandbox-image.sh',
     'home/.chezmoiscripts/os-linux/run_onchange_after_install-tmux.sh.tmpl']) {
     assert.ok(annotated.includes(f), `the census no longer finds ${f}`);
   }
@@ -86,8 +84,6 @@ test('the managers extract the pin value, not a neighbouring string', () => {
   const want = {
     'eza-community/eza': /^v\d+\.\d+\.\d+$/,
     prek: /^\d+\.\d+\.\d+$/,
-    '@anthropic-ai/claude-code': /^\d+\.\d+\.\d+$/,
-    'rust-lang/rust': /^\d+\.\d+\.\d+$/,
     'tmux/tmux': /^\d+\.\d+[a-z]?$/,
   };
   for (const [name, shape] of Object.entries(want)) {
@@ -167,31 +163,6 @@ test('the gitleaks rev matches the homelab repo', async (t) => {
   assert.strictEqual(problem, null, `${problem} (${src.from}); bump the one that is behind`);
 });
 
-// --- The sandbox base image ------------------------------------------------------------------
-//
-// A floating `FROM debian:stable-slim` gives two builds of one commit different bases, and no
-// Renovate manager can bump a tag that names no version. The pin is the tag plus the index
-// digest, which the dockerfile manager moves each time Debian republishes the tag.
-
-const DIGEST_FROM = /^FROM [\w./-]+:[\w.-]+@sha256:[0-9a-f]{64}$/;
-
-test('the digest-pin shape rejects a floating or tagless FROM', () => {
-  assert.match('FROM debian:stable-slim@sha256:' + 'a'.repeat(64), DIGEST_FROM);
-  assert.doesNotMatch('FROM debian:stable-slim', DIGEST_FROM);
-  assert.doesNotMatch('FROM debian@sha256:' + 'a'.repeat(64), DIGEST_FROM,
-    'a digest with no tag leaves Renovate nothing to follow');
-});
-
-test('the sandbox base image is digest-pinned and Renovate reads it', () => {
-  const file = 'home/private_dot_claude/sandbox/Dockerfile.base';
-  const froms = read(file).split('\n').filter((l) => /^FROM /.test(l));
-  assert.ok(froms.length > 0, `${file} has no FROM line`);
-  for (const from of froms) assert.match(from, DIGEST_FROM);
-  assert.ok(config.enabledManagers.includes('dockerfile'),
-    'enabledManagers is a closed list, so without dockerfile the digest never moves');
-  assert.ok(config.dockerfile.managerFilePatterns.some((p) => filePattern(p).test(file)));
-});
-
 // --- The canary's setup-node pin -------------------------------------------------------------
 //
 // Renovate reads setup-node's `node-version` from actions/node-versions, whose tags carry a build
@@ -244,8 +215,6 @@ const NAMED = [
   [{ manager: 'custom.regex', packageName: 'python', depName: 'python' }, /lockstep — land after the homelab/],
   [{ manager: 'pre-commit', packageName: 'astral-sh/ruff-pre-commit', depName: 'astral-sh/ruff-pre-commit' }, /^ruff$/],
   [{ manager: 'custom.regex', packageName: 'ruff', depName: 'ruff' }, /^ruff$/],
-  [{ manager: 'custom.regex', packageName: 'node', depName: 'node',
-    packageFile: 'home/private_dot_claude/sandbox/Dockerfile.base' }, /^sandbox node channel \(manual/],
 ];
 
 // The named-group dependencies the batch rule swallows, given a packageRules list.
@@ -263,8 +232,6 @@ test('the batch rule covers every enabled manager', () => {
     { manager: 'custom.regex', packageName: 'junegunn/fzf', depName: 'junegunn/fzf' },
     { manager: 'custom.regex', packageName: 'astral-sh/uv', depName: 'astral-sh/uv' },
     { manager: 'custom.regex', packageName: 'prek', depName: 'prek' },
-    { manager: 'dockerfile', packageName: 'debian', depName: 'debian',
-      packageFile: 'home/private_dot_claude/sandbox/Dockerfile.base' },
   ]) assert.strictEqual(ruleValue(dep, 'groupName'), BATCH, `${dep.packageName} is not batched`);
 });
 

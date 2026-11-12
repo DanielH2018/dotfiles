@@ -306,7 +306,7 @@ def test_a_form_the_wrapper_does_not_replace_is_left_alone(command, wrappers_on_
 
 
 def test_a_wrapper_nudge_needs_the_wrapper_on_path(tmp_path, monkeypatch):
-    # The claude-sandbox image ships gh without either wrapper.
+    # A host can have gh without either wrapper.
     monkeypatch.setenv("PATH", str(tmp_path))
     assert rule("gh run rerun 4567 --failed") is None
     assert rule("make > out.log 2>&1") is None

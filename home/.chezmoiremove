@@ -290,3 +290,50 @@ Scripts/wslhost-interop-reaper
 .local/bin/.versions/curlie
 .local/bin/.versions/scrcpy
 .local/bin/stdio-blocking
+
+# 2026-11-12: claude-sandbox, the Docker tool, and the ct/cts/ctw tmux launchers. Only the
+# files chezmoi deployed are listed. The launcher also wrote session state, transcripts, audit
+# logs and credentials under ~/.claude/sandbox (state/, state-private/, sessions/, audit/,
+# artifacts/, repo-snapshots/, dockerfiles/), and the operator deletes those by hand.
+.local/bin/ct
+.local/bin/cts
+.local/bin/ctw
+.local/bin/claude-sandbox
+.claude/sandbox/Dockerfile.base
+.claude/sandbox/_claude-sandbox
+.claude/sandbox/_cts
+.claude/sandbox/_sandbox_testlib.py
+.claude/sandbox/claude.json
+.claude/sandbox/.dockerignore
+.claude/sandbox/audit.sh
+.claude/sandbox/claude-sandbox
+.claude/sandbox/compact-session.py
+.claude/sandbox/docker-create-filter.py
+.claude/sandbox/entrypoint.sh
+.claude/sandbox/exec-stream.py
+.claude/sandbox/gen-vault-index.py
+.claude/sandbox/gh-pr-guard.sh
+.claude/sandbox/resolve-sandbox-settings.sh
+.claude/sandbox/sandbox-auth.sh
+.claude/sandbox/sandbox-compact.sh
+.claude/sandbox/sandbox-image.sh
+.claude/sandbox/sandbox-lib.sh
+.claude/sandbox/sandbox-mounts.sh
+.claude/sandbox/sandbox-proxy.sh
+.claude/sandbox/sandbox-session.sh
+.claude/sandbox/sandbox-worktree-gc.sh
+.claude/sandbox/sandbox-worktree-ops.sh
+.claude/sandbox/sandbox-worktree.sh
+.claude/sandbox/vault-search
+.claude/sandbox/filter_policy.py
+.claude/sandbox/gitconfig
+.claude/sandbox/sandbox-CLAUDE.md
+.claude/sandbox/settings.base.json
+.claude/sandbox/test_compact_session.py
+.claude/sandbox/test_docker_create_filter.py
+.claude/sandbox/test_exec_stream.py
+.claude/sandbox/test_filter_policy.py
+.claude/sandbox/test_gen_vault_index.py
+.claude/sandbox/test_gh_pr_guard.py
+.claude/sandbox/vault-allowlist.txt
+.claude/sandbox/vault-sensitive.txt

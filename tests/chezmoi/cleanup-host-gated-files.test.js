@@ -36,7 +36,6 @@ const DESKTOP_ONLY_MARKERS = [
   '.local/share/applications', '.local/share/kwin', '.local/share/sounds',
   '.config/warp-terminal',
 ];
-const SANDBOX_MARKERS = ['claude-sandbox', '.claude/sandbox'];
 const DARWIN_HELPER_MARKERS = ['mac-askpass'];
 const HEADLESS_ONLY_MARKERS = ['tmux-askpass', 'claude-rc-resume'];
 const HOOKS_MARKER = 'test_*.py';
@@ -44,9 +43,9 @@ const HOOKS_MARKER = 'test_*.py';
 // whole render would pass with the removal code gone. Hooks checks read code lines only.
 const codeOnly = (s) => s.split('\n').filter((l) => !l.trim().startsWith('#')).join('\n');
 
-test('a server removes the desktop utilities, the sandbox, the darwin helper, and the hooks tests', { skip }, () => {
+test('a server removes the desktop utilities, the darwin helper, and the hooks tests', { skip }, () => {
   const rendered = linuxServer();
-  for (const m of [...DESKTOP_ONLY_MARKERS, ...SANDBOX_MARKERS, ...DARWIN_HELPER_MARKERS]) {
+  for (const m of [...DESKTOP_ONLY_MARKERS, ...DARWIN_HELPER_MARKERS]) {
     assert.ok(rendered.includes(m), `daniel-box/daniel-server must clean up ${m}`);
   }
   for (const m of HEADLESS_ONLY_MARKERS) {
@@ -59,9 +58,6 @@ test('a workstation removes only the headless helpers, the darwin helper and the
   const rendered = linuxWorkstation();
   for (const m of DESKTOP_ONLY_MARKERS) {
     assert.ok(!rendered.includes(m), `a desktop must keep using ${m}, not clean it up`);
-  }
-  for (const m of SANDBOX_MARKERS) {
-    assert.ok(!rendered.includes(m), `a workstation is not profile=="server", so it must not touch ${m}`);
   }
   for (const m of DARWIN_HELPER_MARKERS) {
     assert.ok(rendered.includes(m), `Linux is never darwin, so ${m} is cleaned up on every Linux host`);
@@ -90,7 +86,6 @@ test('on a server, the cleanup keeps another program\'s files in the shared XDG 
     '.local/share/applications/discord.desktop',
     '.local/share/sounds/ocean/stereo/bell.oga',
     '.config/wireplumber/wireplumber.conf.d/51-discord-no-restore-props.conf',
-    '.claude/sandbox/Dockerfile.base',
   ];
   const foreign = [
     '.local/share/applications/claude-code-url-handler.desktop',
@@ -114,7 +109,7 @@ test('Windows cleans up the darwin helper and the hooks tests, and nothing else'
     assert.ok(rendered.includes(m), `Windows is never darwin, so ${m} is cleaned up`);
   }
   assert.ok(codeOnly(rendered).includes(HOOKS_MARKER));
-  for (const m of [...DESKTOP_ONLY_MARKERS, ...SANDBOX_MARKERS]) {
+  for (const m of DESKTOP_ONLY_MARKERS) {
     assert.ok(!rendered.includes(m), `${m} was never gated for Windows, so it has nothing to clean up`);
   }
 });
@@ -128,7 +123,7 @@ test('Windows renders empty off Windows, and the Linux/darwin scripts render emp
 test('darwin cleans up only the hooks tests', { skip }, () => {
   const rendered = darwinAs();
   assert.ok(codeOnly(rendered).includes(HOOKS_MARKER));
-  for (const m of [...DESKTOP_ONLY_MARKERS, ...SANDBOX_MARKERS, ...DARWIN_HELPER_MARKERS]) {
+  for (const m of [...DESKTOP_ONLY_MARKERS, ...DARWIN_HELPER_MARKERS]) {
     assert.ok(!rendered.includes(m), `darwin was never gated out of ${m} (or keeps it on purpose), so it has nothing to clean up`);
   }
 });

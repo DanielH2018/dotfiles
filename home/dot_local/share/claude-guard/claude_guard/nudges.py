@@ -51,7 +51,7 @@ tool_input for the `read-nudge` hook entry instead:
      context as text.
 
 Two point at a wrapper where a deny would refuse legitimate calls (dotfiles #1223). Each
-fires only where its wrapper is on PATH, since the claude-sandbox image ships neither:
+fires only where its wrapper is on PATH, since a host may have gh without either:
 
   9. gh-rerun-failed: `gh run rerun … --failed`. The wrapper refuses a repo the
      logged-in account does not own, and the command text does not name the owner, so a
