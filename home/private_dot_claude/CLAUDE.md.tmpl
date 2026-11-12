@@ -43,10 +43,10 @@ to memory files and status lines as much as to docs.
 
 ## Config & dotfiles management (chezmoi)
 
-My dotfiles and Claude config are managed across **two repos**. Edit the *source*, never the deployed copy under `~`; `chezmoi source-path <file>` names it, and `chezmoi-guard.sh` resyncs or warns after an edit to a deployed file.
+Edit the *source*, never the deployed copy under `~`; `chezmoi source-path <file>` names it.
 
-- **Personal / general** → chezmoi, source `~/.local/share/chezmoi` (remote `DanielH2018/dotfiles`, `.chezmoiroot=home`). Owns most of `~/.claude` as **real files** under `home/private_dot_claude/`. `~/.claude/settings.json` is **generated** from `home/.chezmoitemplates/settings.base.json`. To change settings or permissions, edit that base template, then `chezmoi apply ~/.claude/settings.json`.
-- **Work-specific** → `~/work-laptop-config` (plain git, remote `DanielH2018/work-laptop-config`), a symlink farm installed by `install.sh`. Owns `CLAUDE.local.md`, `docs/{integrations,enforcement}.md`, work agents, and PCI/redaction hooks — these appear as **symlinks** in `~/.claude`.
+- **Personal** → chezmoi (`DanielH2018/dotfiles`), which owns most of `~/.claude`. `~/.claude/settings.json` is generated: to change settings or permissions, edit `home/.chezmoitemplates/settings.base.json`, then `chezmoi apply ~/.claude/settings.json`.
+- **Work** → `~/work-laptop-config` (`DanielH2018/work-laptop-config`), whose files appear as **symlinks** in `~/.claude`: `CLAUDE.local.md`, work agents, PCI/redaction hooks.
 
 ## Working in isolation
 
@@ -61,9 +61,7 @@ answering happen in place, and a session inside `.claude/worktrees/` is already 
 
 ## Pull requests
 
-- A PR body exists to stop the reviewer re-deriving what you already worked out. Open on the measured symptom, name the alternatives you rejected and why, and quote real command output for every verification claim.
-- Fill a repo's `.github/pull_request_template.md` when one exists rather than replacing its sections.
-- The long form is the `pr-authoring` skill, which also owns diff size and commit history{{ if .work }}; `gh-stack` owns splitting{{ end }}.
+Load the `pr-authoring` skill before writing any PR title or body{{ if .work }}; `gh-stack` owns splitting{{ end }}.
 
 ## GitHub
 
@@ -78,15 +76,14 @@ the place the repo already keeps tests for that kind of change. Verify however y
 working, but a scratch script or a quick check is not a test — don't promote it into an extra
 permanent test file. This governs extras only: every behaviour the task asks for gets its test.
 
-When a change adds tests, apply the `test-scenario-hygiene` skill to the test diff
-before you stop; `stop-checks.py` blocks once if you don't. Read its *Anti-patterns* section
-before you write a stub or a textual assertion.
+When a change adds tests, apply the `test-scenario-hygiene` skill to the test diff before you
+stop.
 
 ## Verification & self-checking
 
 Don't dispatch a review subagent on your own initiative to double-check work you already finished. User instructions take precedence over skills, and this is the instruction. Asked for a review, run one. A review stage that a tool runs as a fixed step is not your initiative, so this rule does not cover it. The homelab fan-out's review phase (`fanout.py place launch` reviews every batch unless given `--no-review`) is that kind of stage: let it run, and act on its findings.
 
-**Evidence before claims.** Say tests pass, the linter is clean or a bug is fixed only when you ran that command in this session and read its output; otherwise say the status is unverified. To call a failure pre-existing, run `redproof <default branch> <changed paths> -- <failing test>` and quote its last line: `RED` means the test also fails without your change.
+**Evidence before claims.** Say tests pass, the linter is clean or a bug is fixed only when you ran that command in this session and read its output; otherwise say the status is unverified. To call a failure pre-existing, or to prove a new check can go red, run `redproof <ref> <changed paths> -- <test>` and quote its last line: `RED` means the test fails without your change.
 
 ## Module design
 
@@ -101,7 +98,7 @@ These rules govern the modules a change creates or changes. They also govern a m
 
 ## Code comments
 
-The default is no implementation comment. Add one only when a maintainer who has the code, but not the PR or this conversation, would get something wrong without it. Write it for that maintainer, not the reviewer: what changed and why goes in the commit message or the PR, never in the code. One line is the budget. `rules/comments.md` carries the full rules, and these three hold even before it loads.
+The default is no implementation comment; what changed and why goes in the commit message, never the code. `rules/comments.md` loads with code files and carries the rest.
 
 ## Code review
 
@@ -115,7 +112,7 @@ Finishing the whole thing has two failure modes that look finished. **Reverse st
 
 ## Specs, plans & written deliverables
 
-- When you produce a document for me to read — an implementation plan, a spec, a findings or review write-up, an audit, a handoff meant for me rather than for a successor agent — also render it as an HTML artifact for readability, in addition to the written version, not instead of it. Load the `artifact-design` skill first. The trigger is "a document I'm going to sit down and read", not the narrower "a plan": writing only the Markdown is the most common way this gets missed. The skill holds the rest: local by default, never published unasked, the link last, and the artifact never the record.
+- When you produce a document I'm going to sit down and read (a plan, spec, findings or review write-up, audit, or a handoff meant for me), also render it as an HTML artifact, in addition to the written version. Load the `artifact-design` skill first; it holds the rest.
 - **Docs change in the same PR as the code they describe.** A README, a docstring or a role's `CLAUDE.md` updated in a follow-up is a doc that stays wrong until someone notices. Generated pages are the exception — their generator is the thing to change.
 - **Plan in vertical slices, not horizontal layers.** Sequence a non-trivial feature as thin end-to-end slices I can exercise (curl, browser, a real test), middle-out: API contract and mock data, UI against the mock, service layer, DB migrations, business logic, error handling. Stack-order planning leaves nothing runnable until the end; slices let me resteer at 100-200 lines.
 
@@ -125,7 +122,6 @@ Prefer the one command that answers the question over three that circle it. Each
 prints its flags with `--help`.
 
 - To ask claude-guard how it judges a command, write the commands as JSONL `{"command": "…"}` records with the Write tool and run `claude-guard replay <file> --deny`.
-- To prove a new check can go red, run `redproof <ref> <path>… -- <test command>` and quote its last line in the PR body.
 - To wait on anything (a landing, CI, a file, a process, a unit, a rollout, a time), run `cc-wait <source>`; `--list` names the sources and `--budget S` bounds the wait. Exit 75 means the budget elapsed with the wait still open: re-run the command it prints. A backgrounded wait has returned only once its output file ends with `[exited with code N]`, because the harness can report `completed` while it still runs.
 
 ## Delegating to subagents
@@ -134,7 +130,7 @@ Delegate a search that would take 3+ exploratory calls, and keep only the findin
 
 ## Compaction policy
 
-`pre-compact.sh` re-injects branch and push state, files modified, test commands run, and the "preserve corrections and error strings verbatim" reminder, so don't restate them. Carry across what the hook *cannot* derive: test **pass/fail results**, architectural decisions, and next steps. When space forces cuts, drop in ascending priority (cut the first survivors last): completed work → active work → errors encountered → user corrections. A user correction is the last thing to go.
+`pre-compact.sh` re-injects git state, files modified and test commands run. Carry across what it cannot derive: test **pass/fail results**, architectural decisions, and next steps. When space forces cuts, drop completed work first, then active work, then errors; a user correction is the last thing to go.
 
 Don't reach for `/compact` yourself. Auto-compaction fires at about 600k tokens.
 
