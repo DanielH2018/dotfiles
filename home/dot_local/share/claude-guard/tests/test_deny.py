@@ -461,6 +461,8 @@ QUOTED_PIPE_TEXT = [
     'grep -rn "| sh\\*" --include=*.md --include=*.sh .',
     'echo "the glob \\`* | sh*\\` denies a pipe"',
     "cat > /tmp/has_sh.sh <<'EOF'\ncat f | sh\nEOF",
+    # a `$(` in single quotes is text, so it puts no stage in the quoted pipe (2026-11-12)
+    "git commit -m 'refuse cat f | sh, as $(git log -1) shows'",
     # a shell that runs a named script reads the pipe as that script's data (2026-10-24)
     "printf '%s' '{\"a\":1}' | bash /home/u/.claude/hooks/guard-pre-tool-use.sh",
     "sort -u < /tmp/gap.txt | bash -e /tmp/sz.sh | sort",
@@ -551,6 +553,8 @@ KILL_ALLOW = [
     'echo "use killall as a last resort" >> notes.md',
     # `|kill` inside a quoted grep alternation is no pipeline stage (2026-10-24)
     "f=$(readlink -f x); grep -n -iE 'break.glass|rollback|kill switch' notes.md",
+    # nor beside a `$(` that single quotes leave as text (2026-11-12)
+    "git commit -m 'grep for rollback|kill switch, run at $(git rev-parse HEAD)'",
     # killown signals only this session's processes (2026-10-25)
     "killown 'pytest -q -n 2 -p no:cacheprovider'; sleep 1; git rebase origin/master",
 ]
@@ -2567,9 +2571,6 @@ def test_the_rootq_seam_named_without_running_rootq_is_no_decision(command):
 
 # --- a changed PATH or code-loading variable ahead of an allow-listed tool --------------------
 
-TEMPLATE = REPO / "home" / ".chezmoitemplates" / "settings.permissions.json"
-
-
 def _settings_home(home: Path, perms: dict) -> dict[str, str]:
     (home / ".claude").mkdir(parents=True)
     (home / ".claude" / "settings.json").write_text(json.dumps({"permissions": perms}))
@@ -2577,12 +2578,10 @@ def _settings_home(home: Path, perms: dict) -> dict[str, str]:
 
 
 @pytest.fixture
-def real_env(tmp_path):
+def real_env(tmp_path, template_permissions):
     """A HOME whose settings are settings.permissions.json as written, so the tool names come
     from the real allow list rather than from a copy here."""
-    text = re.sub(r"\{\{/\*.*?\*/\}\}", "", TEMPLATE.read_text(), flags=re.DOTALL)
-    text = re.sub(r"\{\{-?\s*(if\b[^}]*|end)\s*-?\}\}", "", text)
-    perms = json.loads(text)
+    perms = template_permissions
     assert "Bash(ghread:*)" in perms["allow"] and "Bash(jsonq:*)" in perms["allow"]
     return _settings_home(tmp_path, perms)
 

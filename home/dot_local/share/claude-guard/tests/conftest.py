@@ -1,9 +1,14 @@
+import json
 import os
+import re
 import shutil
 import sys
 import tempfile
+from pathlib import Path
 
 import pytest
+
+TEMPLATE = Path(__file__).resolve().parents[4] / ".chezmoitemplates" / "settings.permissions.json"
 
 
 @pytest.fixture
@@ -26,3 +31,12 @@ def scratch_dir():
     d = tempfile.mkdtemp(dir=base)
     yield d
     shutil.rmtree(d)
+
+
+@pytest.fixture
+def template_permissions() -> dict:
+    """settings.permissions.json as written, with its `{{/* */}}` comments removed and its
+    `{{ if }}` guards opened, which is the view every host but daniel-box renders."""
+    text = re.sub(r"\{\{/\*.*?\*/\}\}", "", TEMPLATE.read_text(), flags=re.DOTALL)
+    text = re.sub(r"\{\{-?\s*(if\b[^}]*|end)\s*-?\}\}", "", text)
+    return json.loads(text)

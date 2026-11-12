@@ -75,7 +75,7 @@ from claude_guard.gitargv import (
 from claude_guard.gitread import config_read
 from claude_guard.inert_python import inert
 from claude_guard.rules import load_rules
-from claude_guard.segment import Segment, mask_substitutions, parse
+from claude_guard.segment import Segment, mask_substitutions, parse, substitution_spans
 
 
 @dataclass(frozen=True, slots=True)
@@ -641,9 +641,12 @@ def _unquoted(s: str) -> str | None:
     return None if q else "".join(out)
 
 
-# `segment.parse` returns a substitution body cut at its pipes, so a segment holding one is
-# matched whole, as before #801.
-_SUBSTITUTION = re.compile(r"\$\(|`|<\(|>\(")
+def _holds_substitution(text: str) -> bool:
+    """Whether the segment `text` holds a substitution the shell runs. `segment.parse` returns a
+    substitution body cut at its pipes, so such a segment is matched whole, as before #801. A
+    `$(` in single quotes is text, and text the parser refuses counts."""
+    spans = substitution_spans(text)
+    return spans is None or bool(spans)
 
 
 _SCRIPT_PATH = re.compile(r"[\w.~/+-]*[\w~]")
@@ -698,7 +701,7 @@ def _pipes_to_shell(command: str) -> bool:
         whole = (
             bare is None
             or _SHELL_REPARSE.search(bare)
-            or _SUBSTITUTION.search(seg.text.replace("\\`", ""))
+            or _holds_substitution(seg.text)
         )
         if whole and bdb_re(text, PIPE_TO_SHELL):
             return True
@@ -787,7 +790,7 @@ def _pipes_to_kill(command: str, depth: int = 0) -> bool:
         text = normalize(seg.text)
         if after_pipe and bdb_re("|" + text, "^" + _PIPE_KILL):
             return True
-        whole = _runs_code(seg.text) or _SUBSTITUTION.search(seg.text.replace("\\`", ""))
+        whole = _runs_code(seg.text) or _holds_substitution(seg.text)
         if whole and bdb_re(text, _PIPE_KILL):
             return True
         if not _is_data_sink(seg.text, seg.sep) and any(

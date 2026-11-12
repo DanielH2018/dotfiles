@@ -456,17 +456,11 @@ def test_deny_globs_leave_the_everyday_form_of_each_spawner_allowed(esc):
 
 # --- the real template ------------------------------------------------------------------------
 
-TEMPLATE = Path(__file__).resolve().parents[4] / ".chezmoitemplates" / "settings.permissions.json"
-
-
 @pytest.fixture
-def real(tmp_path):
-    """settings.permissions.json as written, with its `{{/* */}}` comments removed and its
-    `{{ if }}` guards opened, which is the view every host but daniel-box renders. The
-    fixtures above are hand copies, and one had already drifted from the file."""
-    text = re.sub(r"\{\{/\*.*?\*/\}\}", "", TEMPLATE.read_text(), flags=re.DOTALL)
-    text = re.sub(r"\{\{-?\s*(if\b[^}]*|end)\s*-?\}\}", "", text)
-    rules = rules_for(tmp_path, json.loads(text))
+def real(tmp_path, template_permissions):
+    """The real template's rules. The fixtures above are hand copies, and one had already
+    drifted from the file."""
+    rules = rules_for(tmp_path, template_permissions)
     # Named members, so a template that parses to nothing fails here by name.
     assert parse_rule("find:*") in rules.allow and parse_rule("git push:*") in rules.allow
     assert parse_rule("find * -delete") in rules.deny
