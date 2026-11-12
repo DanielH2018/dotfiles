@@ -523,6 +523,13 @@ def test_the_real_template_refuses_an_interpreter_form_it_cannot_judge(real, com
     assert not allowed(command, real)
 
 
+def test_a_namespace_ahead_of_kubectls_verb_is_judged_as_the_verb(real):
+    assert allowed("kubectl -n observability logs deploy/loki --tail=50", real)
+    assert allowed("kubectl --namespace=flux-system get pods", real)
+    assert judge("kubectl -n default delete pod web", real, ROOTS, CWD).rule == "segment:0:deny"
+    assert not allowed("kubectl -n default exec web -- id", real)
+
+
 def test_the_real_template_admits_the_pipe_the_show_substitution_nudge_recommends(real):
     loop = "for f in $(git ls-tree --name-only origin/main w); do git show origin/main:$f; done"
     assert judge(loop, real, ROOTS, CWD).rule.endswith("substitution:consumer")

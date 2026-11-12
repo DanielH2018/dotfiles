@@ -61,7 +61,8 @@ ask, or when the whole command passes one of `checks/remote.py`'s `readonly_remo
 `checks/git_reset.py`'s `clean_reset_safe()`. Before a segment is judged, the judge reads
 past a loop keyword (`for … in`, `while`, `until`, `do`, `done`) and a literal leading
 `NAME=value` whose name `assignments.py` allows, and `git -C <path> <sub>` is judged as
-`git <sub>` run in `<path>`. A path that is one double-quoted word of literal text and
+`git <sub>` run in `<path>`. `kubectl -n <ns> <verb>` is judged as `kubectl <verb> -n <ns>`,
+which kubectl treats the same, so the rules that name the verb first apply to it. A path that is one double-quoted word of literal text and
 `$NAME` references (`git -C "$d" status`) is admitted only for a read. A git read the allow
 list cannot express safely goes through `gitread.py`, a table of subcommands that read with
 some arguments and write with others (`symbolic-ref`, `ls-remote`, `range-diff`,

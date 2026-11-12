@@ -1,9 +1,11 @@
 """The must-pass corpus: commands claude-guard must never refuse, seeded from transcript denials.
 
 Each row goes through the PreToolUse hook as Claude Code sends it, against the real settings
-template, and the false-deny budget is zero: a deny or an ask fails the row. A HEADLESS row
-must also pass the headless prompt tool, which answers the prompt a `claude -p` session cannot.
-To add a row, cut a real denial down to the shape that reproduced it.
+template, and the false-deny budget is zero: a deny or an ask fails the row. Every row also
+states its verdict in a headless session, where the prompt tool answers the prompt a
+`claude -p` session cannot. A HEADLESS row must pass there. A PROMPTED row must be refused
+there, and carries the reason its prompt is deliberate; a row with no such reason belongs in
+HEADLESS. To add a row, cut a real denial down to the shape that reproduced it.
 """
 
 import json
@@ -14,29 +16,30 @@ from claude_guard import prompt_tool
 from claude_guard.deny import deny
 from claude_guard.hook import pre_tool_use
 
-# Rows the deny side must pass. The judge may still defer them to a prompt.
-MUST_PASS = [
-    # greps and prose that name dangerous words (dotfiles #967, Evidence)
+PROMPTED = {
+    # a grep that names dangerous words (dotfiles #967, Evidence)
     "J='grep -rnE \"break-glass|rollback|kill switch\" docs/ and ls $(git rev-parse HEAD)'"
-    "; printf '%s\\n' \"$J\"",
+    "; printf '%s\\n' \"$J\"": "`J` is not on claude_guard.assignments' standalone allowlist",
+    # forms the Linux sandbox must still pass (dotfiles #1247)
+    "sudo -n /usr/local/sbin/homelab-takeover-check": (
+        "the template denies sudo on every host but daniel-box; `takeover-check` is the"
+        " headless form"
+    ),
+    "scripts/deploy_tools/land.sh --pr 123 --arm-merge --await-merge --detach": (
+        "landing merges a PR, which a session does only when asked"
+    ),
+    "land.sh --detach && cc-wait land": (
+        "landing merges a PR, and `land` is a repo-defined wait source, which runs that repo's code"
+    ),
+    "openssl rand -base64 32 | jq -Rc . | sops set --value-stdin ansible/vars/secrets.yml"
+    " '[\"grafana_token\"]'": "/add-secret says to expect a prompt before a secret is written",
+}
+
+HEADLESS = [
+    # greps and prose that name dangerous words
     "git commit -m 'Record the rollback|kill switch grep, run at $(git rev-parse HEAD)'",
     "git commit -m 'Document that the operator runs sudo reboot after a kernel update'",
     "cat > /tmp/notes.md <<'EOF'\nRun `sudo rm -rf /var/lib/rancher` only during break-glass.\nEOF",
-    # a read-only path under a secret directory
-    "git show --no-textconv --numstat --format='%h %s' HEAD -- ansible/vars/secrets.yml",
-    # forms the Linux sandbox must still pass (dotfiles #1247)
-    "sudo -n /usr/local/sbin/homelab-takeover-check",
-    "scripts/deploy_tools/land.sh --pr 123 --arm-merge --await-merge --detach",
-    "land.sh --detach && cc-wait land",
-    "cc-wait pr 123",
-    "kubectl -n observability logs deploy/loki --tail=50 | grep -i error",
-    "openssl rand -base64 32 | jq -Rc . | sops set --value-stdin ansible/vars/secrets.yml"
-    " '[\"grafana_token\"]'",
-]
-
-# Rows that must pass end to end in a headless session.
-HEADLESS = [
-    # greps that name dangerous words
     'grep -rnE "break-glass|rollback|kill switch" docs/',
     'grep -rn "\\.env" docs/',
     "git grep -n -E 'pkill|killall' -- docs",
@@ -53,16 +56,19 @@ HEADLESS = [
     "ls -l ~/.ssh/config",
     "ls ~/.config/sops/age",
     "stat -c '%a %U' ~/.ssh/id_ed25519",
+    "git show --no-textconv --numstat --format='%h %s' HEAD -- ansible/vars/secrets.yml",
     # piped and compound ssh and kubectl
     "ssh daniel-server 'journalctl -u k3s --since -1h --no-pager' | tail -20",
     "ssh daniel-pi uptime && ssh daniel-server uptime",
     "ssh daniel-server 'systemctl is-active k3s; df -h /'",
     "kubectl get pods -A | grep -v Running",
     "kubectl get nodes && kubectl get pods -n flux-system",
+    "kubectl -n observability logs deploy/loki --tail=50 | grep -i error",
     # forms the Linux sandbox must still pass
     "rootq --help",
     "takeover-check --help",
     "cc-wait --list",
+    "cc-wait gh-pr 123",
     # interpreters, one class however spelled (dotfiles #967's consequence table)
     "python3 -c 'print(1)'",
     "python -c 'print(1)'",
@@ -125,16 +131,22 @@ def hook_verdict(command: str, cwd: str, env: dict[str, str]) -> str:
     )
 
 
-@pytest.mark.parametrize("command", MUST_PASS)
-def test_the_deny_side_passes_every_corpus_row(command, cwd, env):
-    assert hook_verdict(command, cwd, env) in ("none", "allow")
+def headless_verdict(command: str, cwd: str, env: dict[str, str]) -> str:
+    """The deny side's verdict, then the prompt tool's: "allow" only when both pass."""
+    if hook_verdict(command, cwd, env) not in ("none", "allow"):
+        return "denied by the hook"
+    request = {"tool_name": "Bash", "input": {"command": command}, "tool_use_id": "toolu_corpus"}
+    return prompt_tool.decide(request, env)["behavior"]
 
 
 @pytest.mark.parametrize("command", HEADLESS)
 def test_a_headless_session_runs_every_headless_row(command, cwd, env):
-    assert hook_verdict(command, cwd, env) in ("none", "allow")
-    request = {"tool_name": "Bash", "input": {"command": command}, "tool_use_id": "toolu_corpus"}
-    assert prompt_tool.decide(request, env)["behavior"] == "allow"
+    assert headless_verdict(command, cwd, env) == "allow"
+
+
+@pytest.mark.parametrize("command", PROMPTED)
+def test_a_prompted_row_passes_the_hook_and_is_left_to_its_prompt(command, cwd, env):
+    assert headless_verdict(command, cwd, env) == "deny", PROMPTED[command]
 
 
 @pytest.mark.parametrize(("rule", "command"), MUST_REFUSE)

@@ -627,6 +627,13 @@ _WORKTREE_GRANTS = frozenset(
 # `git -C <path> <rest>`: git runs `<rest>` as if started in `<path>`.
 _GIT_DASH_C = re.compile(rf"^git[{WS}]+-C[{WS}]+(?P<path>[^{WS}]+)[{WS}]+(?P<rest>.+)$")
 
+# `kubectl -n <ns> <verb> <tail>`: kubectl reads a flag anywhere before `--`, so this is
+# `kubectl <verb> -n <ns> <tail>`. The namespace is a plain DNS label.
+_KUBECTL_NAMESPACE = re.compile(
+    rf"^kubectl[{WS}]+(?:-n|--namespace)(?:[{WS}]+|=)(?P<ns>[a-z0-9][a-z0-9.-]*)"
+    rf"[{WS}]+(?P<verb>[a-z][a-z-]*)(?P<tail>(?:[{WS}].*)?)$"
+)
+
 # One double-quoted word of literal text and `$NAME` references: no `${`, which reaches
 # arithmetic, no backslash, no substitution.
 _QUOTED_PATH = re.compile(r'"(?:[^"\\`$]|\$[A-Za-z_][A-Za-z0-9_]*)*"')
@@ -1143,6 +1150,23 @@ def judge_segment(
             git_cwd = ""
         return judge_segment(
             rest, rules, roots, git_cwd, cwd_changed, project_dir, scratch_ok, job_dir, agent_id
+        )
+
+    # The allow, deny and ask rules name kubectl's verb first (`kubectl logs:*`,
+    # `kubectl delete:*`), so a namespace flag ahead of the verb is moved behind it.
+    namespaced = _KUBECTL_NAMESPACE.match(part) if word == "kubectl" else None
+    if namespaced:
+        verb, ns, tail = namespaced.group("verb", "ns", "tail")
+        return judge_segment(
+            f"kubectl {verb} -n {ns}{tail}",
+            rules,
+            roots,
+            cwd,
+            cwd_changed,
+            project_dir,
+            scratch_ok,
+            job_dir,
+            agent_id,
         )
 
     if word == "curl" and curl_safe(part):
