@@ -8,9 +8,12 @@ import sys
 import pytest
 
 from claude_guard.checks.worktree_scratch import (
+    shares_session_worktrees,
+    worktree_clean_safe,
     worktree_git_rm_safe,
     worktree_restore_safe,
     worktree_rm_safe,
+    worktree_stash_drop_safe,
 )
 from claude_guard.judge import judge
 from claude_guard.rules import load_rules
@@ -528,6 +531,28 @@ def test_a_subagent_cleans_its_own_worktree_and_keeps_its_parents(repo):
     assert worktree_rm_safe("rm .git-pr-body.md", wt, False, main, "a41336082886a72e3")
 
 
+@only_posix_allow
+@only_proc
+def test_every_cleanup_check_reads_the_subagents_own_lock(repo):
+    main, wt = repo
+    _lock(main, wt, os.getpid(), _start_time(os.getpid()), "agent-a41336082886a72e3", "agent")
+    _stashes(main, wt)
+    for check, command in [
+        (worktree_restore_safe, "git restore src/app.py"),
+        (worktree_git_rm_safe, "git rm -q src/app.py"),
+        (worktree_clean_safe, "git clean -f .git-pr-body.md"),
+        (worktree_stash_drop_safe, "git stash drop stash@{1}"),
+    ]:
+        assert check(command, wt, False, main, "a41336082886a72e3"), command
+        assert not check(command, wt, False, main, "a0000000000000000"), command
+
+
+def test_an_unreadable_repository_counts_as_shared(tmp_path):
+    # Callers refuse a shared repository, so a probe failure must not read as a plain one.
+    assert shares_session_worktrees(str(tmp_path))
+    assert shares_session_worktrees("relative")
+
+
 @only_proc
 def test_no_worktree_grant_holds_in_a_command_that_names_a_lock(repo, tmp_path):
     main, wt = repo
@@ -536,6 +561,7 @@ def test_no_worktree_grant_holds_in_a_command_that_names_a_lock(repo, tmp_path):
     for command in [
         f"git worktree unlock {wt} && rm .git-pr-body.md",
         "cat .git/worktrees/fanout-1/locked; rm .git-pr-body.md",
+        f"git worktree unlock {wt}; git rm -q src/app.py",
     ]:
         d = judge(command, rules, roots, wt, wt)
         assert not d.allow and d.reasons[-1] == "worktree:lock-named", command

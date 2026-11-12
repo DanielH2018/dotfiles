@@ -577,6 +577,7 @@ _WORKTREE_GRANTS = frozenset(
     {
         "worktree-rm-check",
         "worktree-restore-check",
+        "worktree-git-rm-check",
         "worktree-clean-check",
         "worktree-stash-drop-check",
         "git-checkout-check",
