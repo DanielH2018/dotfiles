@@ -25,12 +25,12 @@
 {{ end }}
 {{ if and (has .chezmoi.hostname (list "daniel-box" "daniel-server" "daniel-pi")) (not (includeTemplate "is-agent" .)) }}
     {{/* sudo run from a `!` command has no terminal to prompt on, so without an askpass
-         helper it just refuses. ~/.zshenv sets this too, but that only reaches shells that
-         read it: the Bash tool spawns its own shell per command and sudo saw nothing there
-         (measured on daniel-box — sudo's "a terminal is required ... or configure an
+         helper it just refuses. ~/.config/shell/env.sh sets this too, but that only reaches
+         shells that read it: the Bash tool spawns its own shell per command and sudo saw
+         nothing there (measured on daniel-box — sudo's "a terminal is required ... or configure an
          askpass helper"). This block does reach it, which is why the setting lives here
          rather than only in the shell. Headless hosts only — a desktop keeps ksshaskpass,
-         which ~/.zshenv prefers when there is a graphical session to draw on. */}}
+         which env.sh prefers when there is a graphical session to draw on. */}}
     "SUDO_ASKPASS": "{{ .chezmoi.homeDir }}/.local/bin/tmux-askpass",
 {{ end }}
 {{ if has .chezmoi.hostname (list "daniel-box" "daniel-server") }}
