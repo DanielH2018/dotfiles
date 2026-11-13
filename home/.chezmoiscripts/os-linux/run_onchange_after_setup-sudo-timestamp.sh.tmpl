@@ -12,7 +12,7 @@
 # survives this, because it is the only one keyed on neither tty nor ppid. After: CACHED.
 #
 # Do not confuse this with the *other* sudo-in-Claude annoyance. ksshaskpass (which
-# shell/env.sh wires up as SUDO_ASKPASS under a graphical session) draws a "Remember password"
+# shell/askpass.sh wires up as SUDO_ASKPASS under a graphical session) draws a "Remember password"
 # checkbox on that prompt which silently does nothing: it shows the box whenever KWallet is
 # up, but only writes to the keychain for prompts its regexes parse, and sudo's is not one.
 # Nothing here changes that, deliberately — the only way to make that checkbox honest is to

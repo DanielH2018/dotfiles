@@ -25,9 +25,10 @@ const ASKPASS = srcPath('dot_local', 'bin', 'executable_tmux-askpass');
 // which is the harness reporting a missing tool, not the helper misbehaving.
 //
 // Gated rather than made portable because the helper only ever runs on the headless Linux hosts:
-// settings.base.json sets SUDO_ASKPASS to it for those hosts only, ~/.config/shell/env.sh
+// settings.base.json sets SUDO_ASKPASS to it for those hosts only, ~/.config/shell/askpass.sh
 // prefers ksshaskpass wherever a graphical session exists, and .chezmoiignore keeps the sudo
-// shim that pairs with it off every other machine. A BSD fallback would be code for a call site that does not exist.
+// shim that pairs with it off every other machine. A BSD fallback would be code for a call site
+// that does not exist.
 // Four tests stay live everywhere and keep this from being a blanket file skip: the two
 // loud-exit paths return before the read, and the FIFO-cleanup and absolute-path ones assert
 // state the helper leaves behind whatever the read's exit status was.

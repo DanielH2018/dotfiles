@@ -373,7 +373,7 @@ AppData
 {{ end }}
 
 {{ if ne .chezmoi.os "darwin" }}
-# mac-askpass is macOS-only. Its only consumer is the SUDO_ASKPASS block in shell/env.sh, guarded by
+# mac-askpass is macOS-only. Its only consumer is shell/askpass.sh, guarded by
 # `[ "$(uname)" = Darwin ]`-equivalent Aqua detection. It has never run on Linux or Windows,
 # and it deployed there anyway until this gate excluded it.
 .local/bin/mac-askpass

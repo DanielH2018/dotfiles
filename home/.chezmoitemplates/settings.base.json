@@ -22,15 +22,19 @@
          macOS. Windows is left out because Claude Code runs Git Bash there regardless and
          /bin/bash is no Windows path. */}}
     "CLAUDE_CODE_SHELL": "/bin/bash",
+    {{/* Each Bash tool command runs as `bash -c` on the snapshot, which reads no startup file
+         and carries PATH but no other variable, so SUDO_ASKPASS from env.sh never reaches it.
+         bash reads BASH_ENV in every non-interactive shell, the way zsh reads ~/.zshenv. */}}
+    "BASH_ENV": "{{ .chezmoi.homeDir }}/.config/shell/askpass.sh",
 {{ end }}
 {{ if and (has .chezmoi.hostname (list "daniel-box" "daniel-server" "daniel-pi")) (not (includeTemplate "is-agent" .)) }}
     {{/* sudo run from a `!` command has no terminal to prompt on, so without an askpass
-         helper it just refuses. ~/.config/shell/env.sh sets this too, but that only reaches
-         shells that read it: the Bash tool spawns its own shell per command and sudo saw
-         nothing there (measured on daniel-box — sudo's "a terminal is required ... or configure an
-         askpass helper"). This block does reach it, which is why the setting lives here
-         rather than only in the shell. Headless hosts only — a desktop keeps ksshaskpass,
-         which env.sh prefers when there is a graphical session to draw on. */}}
+         helper it just refuses. ~/.config/shell/askpass.sh sets this too, but under zsh
+         that only reached shells that read ~/.zshenv, and sudo saw nothing in the Bash tool
+         (measured on daniel-box — sudo's "a terminal is required ... or configure an
+         askpass helper"). This block does reach it, and askpass.sh keeps a helper it
+         inherits. Headless hosts only — a desktop keeps ksshaskpass, which askpass.sh
+         prefers when there is a graphical session to draw on. */}}
     "SUDO_ASKPASS": "{{ .chezmoi.homeDir }}/.local/bin/tmux-askpass",
 {{ end }}
 {{ if has .chezmoi.hostname (list "daniel-box" "daniel-server") }}

@@ -1,6 +1,6 @@
 #!/bin/sh
 # SUDO_ASKPASS helper for hosts with no graphical session — the headless counterpart to
-# the ksshaskpass branch in ~/.config/shell/env.sh, and wired up by the same `if`.
+# the ksshaskpass branch in ~/.config/shell/askpass.sh, and wired up by the same `if`.
 #
 # The problem is identical: a shell with no controlling terminal (Claude Code's `!`
 # commands, `ssh host cmd`) has nowhere to prompt, so sudo refuses outright rather than
@@ -45,7 +45,7 @@ fi
 #
 # What it does need is an attached client. A live server is not the same as someone
 # looking at it: with none attached the popup goes nowhere, and an empty answer reads to
-# sudo as a wrong password — so fail loudly, for the same reason shell/env.sh leaves
+# sudo as a wrong password — so fail loudly, for the same reason shell/askpass.sh leaves
 # SUDO_ASKPASS unset where no helper can work.
 if [ -z "$(tmux list-clients -F '#{client_name}' 2>/dev/null)" ]; then
     echo "tmux-askpass: no attached tmux client to prompt on" >&2

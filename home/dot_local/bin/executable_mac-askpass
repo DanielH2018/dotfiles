@@ -1,6 +1,6 @@
 #!/bin/sh
 # SUDO_ASKPASS helper for macOS — the Aqua counterpart to the ksshaskpass branch (Plasma)
-# and tmux-askpass (headless) in ~/.config/shell/env.sh, wired up by the same `if`.
+# and tmux-askpass (headless) in ~/.config/shell/askpass.sh, wired up by the same `if`.
 #
 # The problem is identical on every host: a shell with no controlling terminal (Claude
 # Code's `!` commands, `ssh host cmd`, launchd agents) has nowhere to prompt, so sudo
