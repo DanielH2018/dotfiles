@@ -291,7 +291,14 @@ program stays out of reach. The rule also reads what the program is given: whate
 segment redirects in, and every earlier segment of the command, which may be the program
 itself or its arguments under `xargs`. Reading every earlier segment needs no model of
 pipes, groups or descriptors, and costs a writer refused after an unrelated segment that
-names a protected file. Over 27,268 distinct commands from this host's transcripts the rule
+names a protected file. An earlier segment is not read as the program when the
+interpreter's segment fills stdin itself and the program comes from stdin, so a read-only
+heredoc after `grep -c foo ~/.bashrc` passes (dotfiles #1288). The segment fills stdin
+itself when a heredoc, a here-string or a `<` file redirect lands on stdin, and the segment
+holds no redirect on a numbered descriptor, no duplication such as `<&3` and no process
+substitution as a redirect's target. A program piped in from an earlier segment is still
+refused when any earlier segment names a protected file, read-only or not, because the rule
+reads that segment's shell text as the program. Over 27,268 distinct commands from this host's transcripts the rule
 refused 77 (2026-11-14), 12 of them probes of the guard itself. Most of the rest were
 edit scripts that rewrite a file under `.claude/hooks/`, or whose replaced text names
 `secrets.yml` or `.bashrc`; the denial points those at the Edit tool.

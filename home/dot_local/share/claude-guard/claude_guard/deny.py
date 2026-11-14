@@ -2241,8 +2241,14 @@ def inplace_edit(sc: Scan, target: str) -> Verdict | None:
 # segment of the command. The last covers a pipe, a group, a descriptor an `exec` opened
 # and a leader that turns its stdin into arguments, as `xargs` does, without reading how
 # the segments connect. Its cost is a writer refused after an unrelated segment that names
-# a target. Each input is the program itself when the interpreter reads its program from
-# stdin, a numbered descriptor or a `<(…)` operand.
+# a target.
+#
+# Each input is also a candidate program when the interpreter reads its program from stdin,
+# a numbered descriptor or a `<(…)` operand. The one exception: an earlier segment is no
+# candidate for a program read from stdin when the interpreter's segment fills stdin itself
+# (`_without_redirects`), because no earlier segment can reach the interpreter then. Without
+# the exception the shell text of `grep -c foo ~/.bashrc` is read as a program that is not
+# Python, and a read-only heredoc after it is refused (dotfiles #1288).
 #
 # Residual: the program a script file holds (`python3 fix.py ~/.bashrc`), and one that
 # reaches the path with no segment naming it (`'.bash' + 'rc'`, a file of paths). The
@@ -2253,19 +2259,30 @@ _PYTHON_NAMES_TARGET = rf"{_INTERPRETER_WORD}.*{WRITE_TARGETS}"
 _PY_VALUE_OPTS = "WX"
 # An operand that makes Python read its program from a descriptor the shell filled.
 _PY_DESCRIPTOR = re.compile(r"-|<\(|/dev/stdin|/dev/fd/\d+|/proc/(self|\d+)/fd/\d+")
+_PY_STDIN = re.compile(r"-|/dev/stdin|/dev/fd/0|/proc/self/fd/0")
+_FILLS_STDIN = ("<", "<<", "<<<")
 _PUNCTUATION = re.compile(r"[()<>|&;]+")
 
 
-def _without_redirects(words: list[str]) -> tuple[list[str], list[str]]:
+def _without_redirects(words: list[str]) -> tuple[list[str], list[str], bool]:
     """`words` less each redirect (its operator, its target and a file descriptor before
-    it), and the targets of the redirects that feed input.
+    it), the targets of the redirects that feed input, and whether the segment fills its
+    own stdin.
 
     A process substitution's words are dropped through its closing `)`. One that is an
-    operand, not a redirect's target, leaves its opening `<(` in place of the operand."""
+    operand, not a redirect's target, leaves its opening `<(` in place of the operand.
+
+    The segment fills its own stdin when a heredoc, a here-string or a file redirect lands
+    on stdin and nothing else in the segment can put another descriptor there. A redirect
+    on a numbered descriptor, a duplication such as `<&3` and a process substitution as
+    the target each count as something else, since the words alone do not say which
+    descriptor they move or what an earlier segment left open on it."""
     kept: list[str] = []
     inputs: list[str] = []
     operator = ""
     depth = 0
+    fills_stdin = False
+    shares_stdin = False
     for w in words:
         punctuation = _PUNCTUATION.fullmatch(w) is not None
         if depth:
@@ -2275,41 +2292,58 @@ def _without_redirects(words: list[str]) -> tuple[list[str], list[str]]:
             depth = 1
             if not operator:
                 kept.append(w)
+            shares_stdin |= "<" in operator
             operator = ""
         elif operator:
             if "<" in operator:
                 inputs.append(w)
             operator = ""
         elif _REDIRECT_WORD.fullmatch(w):
-            if kept and kept[-1].isdigit():
-                kept.pop()
+            descriptor = kept.pop() if kept and kept[-1].isdigit() else ""
+            if w in _FILLS_STDIN and descriptor in ("", "0"):
+                fills_stdin = True
+            elif "<" in w or descriptor == "0":
+                shares_stdin = True
             operator = w
         else:
             kept.append(w)
-    return kept, inputs
+    return kept, inputs, fills_stdin and not shares_stdin
 
 
-def _command_line_programs(args: list[str], stdin: list[str]) -> list[tuple[str, list[str]]]:
+def _command_line_programs(
+    args: list[str], redirected: list[str], earlier: list[str], fills_stdin: bool
+) -> list[tuple[str, list[str]]]:
     """The programs a Python interpreter runs from its command line, each with the texts it
     can read a path from.
 
     Args:
         args: The words after the interpreter, redirects removed (`_without_redirects`).
-        stdin: The texts a descriptor of the interpreter may carry: the heredoc bodies,
-            input redirect targets and process substitutions of its segment, and the
-            earlier segments of the command.
+        redirected: The texts the interpreter's segment puts on a descriptor: its heredoc
+            bodies, input redirect targets and process substitutions.
+        earlier: The earlier segments of the command, which may reach a descriptor of the
+            interpreter through a pipe, a group or an `exec`.
+        fills_stdin: Whether the segment fills its own stdin (`_without_redirects`).
 
     Returns:
-        The `-c` program with the words after it and `stdin`, or each of `stdin` as the
-        program when the interpreter reads its program from a descriptor
-        (`_PY_DESCRIPTOR`). Empty for a script file and for `-m`, whose later words belong
-        to the script or the module.
+        The `-c` program with the words after it, `redirected` and `earlier`. When the
+        interpreter reads its program from a descriptor (`_PY_DESCRIPTOR`), each of
+        `redirected` as the program, with the words after the operand and `earlier`; each
+        of `earlier` is a program too, unless the descriptor is stdin and `fills_stdin`.
+        Empty for a script file and for `-m`, whose later words belong to the script or
+        the module.
     """
+
+    def read_from(operand: str, rest: list[str]) -> list[tuple[str, list[str]]]:
+        own = fills_stdin and _PY_STDIN.fullmatch(operand) is not None
+        programs = redirected if own else redirected + earlier
+        return [(text, rest + earlier) for text in programs]
+
+    stdin = redirected + earlier
     i = 0
     while i < len(args):
         w = args[i]
         if _PY_DESCRIPTOR.fullmatch(w):
-            return [(text, args[i + 1 :]) for text in stdin]
+            return read_from(w, args[i + 1 :])
         if not w.startswith("-"):
             return []
         if w.startswith("--"):
@@ -2328,7 +2362,7 @@ def _command_line_programs(args: list[str], stdin: list[str]) -> list[tuple[str,
                 i += not glued
                 break
         i += 1
-    return [(text, []) for text in stdin]
+    return read_from("-", [])
 
 
 def _changes_target(program: str, inputs: list[str]) -> bool:
@@ -2359,14 +2393,16 @@ def _python_changes_target(text: str, depth: int = 0) -> bool:
             if bdb_re(normalize("\n".join((seg.text, *seg.heredocs))), _PYTHON_NAMES_TARGET):
                 return True
             continue
-        args, redirected = _without_redirects(words)
+        args, redirected, fills_stdin = _without_redirects(words)
         substituted = p.substitutions if "<(" in words else ()
-        stdin = [*seg.heredocs, *redirected, *earlier, *substituted]
+        redirected = [*seg.heredocs, *redirected, *substituted]
         programs: set[str] = set()
         for i, w in enumerate(args):
             if not _PYTHON_WORD.fullmatch(posixpath.basename(w)):
                 continue
-            for program, inputs in _command_line_programs(args[i + 1 :], stdin):
+            for program, inputs in _command_line_programs(
+                args[i + 1 :], redirected, earlier, fills_stdin
+            ):
                 if _changes_target(program, inputs):
                     return True
                 programs.add(program)

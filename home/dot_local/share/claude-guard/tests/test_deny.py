@@ -1578,6 +1578,14 @@ PYTHON_WRITE_DENY = [
     f"echo \"open('{BASHRC}','w')\" |& python3",
     f"{{ echo \"open('{BASHRC}','w')\"; }} | python3",
     "python3 -c \"import sys; open(sys.stdin.readline().strip(), 'w')\" < <(echo ~/.zshrc)",
+    # a segment that fills its own stdin still takes a path from an earlier segment
+    "echo ~/.zshrc | xargs python3 - <<'EOF'\nimport sys\nopen(sys.argv[1], 'w')\nEOF",
+    # stdin, or the descriptor the program is read from, is not the segment's own
+    f"exec 3<<< \"open('{BASHRC}','w')\"; python3 <<< 'print(1)' <&3",
+    f"exec 3<<< \"open('{BASHRC}','w')\"; python3 <<< 'print(1)' 0>&3",
+    f"exec 3<<< \"open('{BASHRC}','w')\"; python3 /dev/fd/3 <<< 'print(1)'",
+    f"exec 3<<< \"open('{BASHRC}','w')\"; python3 < <(cat <&3)",
+    f"echo \"open('{BASHRC}','w')\" | python3 3<<< 'print(1)'",
     # text the parser refuses, and a program the shell rewrites first
     f"python3 -c \"open('{BASHRC}','w')",
     "python3 -c \"print(open('$HOME/.bashrc').read())\"",
@@ -1596,6 +1604,11 @@ PYTHON_WRITE_ALLOW = [
     'cat ~/.claude/settings.json | python3 -c "import json, sys; print(json.load(sys.stdin))"',
     "python3 -c \"open('out.txt','w').write('x')\"; cat ~/.bashrc",
     'python3 -c "import sys; print(len(sys.stdin.read()))" < <(cat ~/.bashrc)',
+    # #1288: a segment that fills its own stdin reads no program from an earlier segment
+    "grep -c foo ~/.bashrc; python3 - <<'EOF'\nprint(1)\nEOF",
+    "grep -c foo ~/.bashrc; python3 <<< 'print(1)'",
+    "grep -c foo ~/.bashrc; python3 /dev/stdin 0<<'EOF'\nprint(1)\nEOF",
+    "cat ~/.bashrc | python3 - <<'EOF'\nimport sys\nprint(len(sys.stdin.read()))\nEOF",
 ]
 
 
