@@ -376,8 +376,9 @@ one word that may be that option's value, so a gap in the list refuses here too.
 interpreter's name counts with a version suffix (`ruby3.2`, `perl5.36`) and as `nodejs`.
 One program shape passes although it names a protected file: a single perl substitution
 that runs no code, as in `perl -pi -e 's/secrets.yml/x/' docs/a.md`. Its text names no
-file, which `inplace_edit` already holds for an in-place perl. A substitution with the `e`
-flag, or one that evaluates code inside its pattern or replacement, is refused.
+file, which `inplace_edit` already holds for an in-place perl. The pattern and
+the replacement must be literal text, with no `$`, `@`, `\` or `(`, since perl evaluates
+code through each of those. A substitution with the `e` flag is refused as well.
 
 A script file's program stays out of reach. `python_write` also reads what the program is given: whatever its
 segment redirects in, and every earlier segment of the command, which may be the program

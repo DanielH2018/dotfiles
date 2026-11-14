@@ -1893,6 +1893,11 @@ OTHER_INLINE_WRITE_DENY = [
     f"perl -pi -e \"unlink('{BASHRC}')\" docs/a.md",
     f"perl -pi -e 's/x/unlink(q({BASHRC}))/e' docs/a.md",
     f"perl -pi -e 's/x/@{{[unlink q({BASHRC})]}}/' docs/a.md",
+    # a subscript that perl evaluates when it interpolates, in each half and on stdin
+    f"perl -pe 's#x#$h{{unlink(q({BASHRC}))}}#' docs/a.md",
+    f"perl -pe 's#$h{{unlink(q({BASHRC}))}}#y#' docs/a.md",
+    f"perl -pe 's#x#$a[unlink(q({BASHRC}))]#' docs/a.md",
+    f"echo 's#x#$h{{unlink(q({BASHRC}))}}#' | perl -p",
     # an interpreter named with a version, and Debian's name for node
     f"ruby3.2 -e \"File.write('{BASHRC}', 'x')\"",
     f"/usr/bin/perl5.36 -e \"unlink('{BASHRC}')\"",

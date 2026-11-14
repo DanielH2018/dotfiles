@@ -2954,11 +2954,14 @@ def python_write(sc: Scan, target: str) -> Verdict | None:
     return None
 
 
-# One perl substitution that runs no code: three delimiters, flags without `e`, and none of
-# the forms that evaluate inside a pattern or a replacement (`@{[…]}`, `${\…}`, `(?{…})`).
-# Its text names no file, as `_inplace_edits_only_safe_files` holds for `perl -pi -e`.
+# One perl substitution that runs no code: three delimiters, flags without `e`, and a
+# pattern and a replacement of literal text. Perl evaluates code through a `$` or `@`
+# interpolation, a `\` escape and a `(?{…})` group, so the text holds no `$`, `@`, `\` or
+# `(` at all. Its text names no file, as `_inplace_edits_only_safe_files` holds for
+# `perl -pi -e`.
+_PERL_LITERAL = r"(?:(?!(?P=d))[^$@\\(])*"
 _PERL_SUBSTITUTION = re.compile(
-    r"(?!.*(@|\$\{|\(\?\??\{))s(?P<d>[/#|,!])((?!(?P=d)).)*(?P=d)((?!(?P=d)).)*(?P=d)[gimsxnpadlur]*;?",
+    rf"s(?P<d>[/#|,!]){_PERL_LITERAL}(?P=d){_PERL_LITERAL}(?P=d)[gimsxnpadlur]*;?",
     re.DOTALL,
 )
 
