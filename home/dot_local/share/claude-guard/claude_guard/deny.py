@@ -1403,7 +1403,7 @@ def secret_interpreter(sc: Scan, target: str) -> Verdict | None:
         return None
     sc = _without_python_attributes(_without_stored_heredocs(sc))
     if bdb_re(sc.scan, rf"{_INTERPRETER_WORD}.*{SECRET_PATHS}") or _runs_python_program(
-        sc.command, _names_secret, SECRET_PATHS
+        sc.command, _names_secret, SECRET_PATHS, other_matches=_stdin_program_names_secret
     ):
         return Verdict(
             "deny",
@@ -2299,6 +2299,10 @@ def inplace_edit(sc: Scan, target: str) -> Verdict | None:
 # words after each, for a secret path: its own pattern needs an interpreter word before the
 # path, and a program on stdin comes before that word or with none.
 #
+# `node`, `perl`, `ruby` and the other `_INTERPRETER_WORD` names read a program from stdin
+# too (dotfiles #1324). Only `secret_interpreter` reads those programs. `python_write` does
+# not: its read-only proof is a proof about Python source.
+#
 # Residual: the program a script file holds (`python3 fix.py ~/.bashrc`), and one that
 # reaches the path with no segment naming it (`'.bash' + 'rc'`, a file of paths). The
 # guard never reads a file it did not see written.
@@ -2313,6 +2317,69 @@ _FILLS_STDIN = ("<<", "<<<")
 # The word before a redirect operator that names its descriptor: `3<f`, `{fd}<f`.
 _DESCRIPTOR_WORD = re.compile(r"[0-9]+|\{\w+\}")
 _PUNCTUATION = re.compile(r"[()<>|&;]+")
+
+
+@dataclass(frozen=True)
+class _StdinCli:
+    """How an interpreter other than Python says where its program comes from.
+
+    Attributes:
+        inline: An option that gives the program on the command line, such as `-e`.
+        valued: An option whose value is the next word.
+        flags: An option that takes no further word.
+        subcommands: The first words that still leave the program to an operand or to
+            stdin, such as the `run` of `deno run -`.
+    """
+
+    inline: str
+    valued: str
+    flags: str
+    subcommands: tuple[str, ...] = ()
+
+
+_LONG_WITH_VALUE = r"--[\w-]+=.*"
+_PERL_SWITCHES = r"(?:[acnpsStTuUwWX]|0[0-7]*|l[0-7]*)"
+_RUBY_SWITCHES = r"[acdlnpsSvwyU]"
+# An option missing from an entry is read as leaving the program on stdin, so a short list
+# costs a refusal and never a pass.
+_STDIN_CLI = {
+    "node": _StdinCli(
+        inline=r"-e|-p|-pe|--eval|--print|--(eval|print)=.*",
+        valued=r"-r|--require|--import|-C|--conditions|--loader|--experimental-loader",
+        flags=rf"-i|--interactive|-c|--check|--no-[\w-]+|--experimental-[\w-]+|{_LONG_WITH_VALUE}",
+    ),
+    "deno": _StdinCli(
+        inline=r"(?!)",
+        valued=r"-c|--config|--import-map|-L|--log-level",
+        flags=rf"-A|-q|--quiet|--allow-[\w-]+|--no-[\w-]+|--unstable[\w-]*|{_LONG_WITH_VALUE}",
+        subcommands=("run", "repl"),
+    ),
+    "bun": _StdinCli(
+        inline=r"-e|-p|--eval|--print|--(eval|print)=.*",
+        valued=r"-r|--preload|--cwd|-c|--config",
+        flags=rf"-b|--bun|--smol|--silent|--no-[\w-]+|{_LONG_WITH_VALUE}",
+        subcommands=("run",),
+    ),
+    "perl": _StdinCli(
+        inline=rf"-{_PERL_SWITCHES}*[eE].*",
+        valued=r"-I",
+        flags=rf"-{_PERL_SWITCHES}+|-[IMmCdDFix].+|-[ix]",
+    ),
+    "ruby": _StdinCli(
+        inline=rf"-{_RUBY_SWITCHES}*e.*",
+        valued=r"-[CEFIr]",
+        flags=rf"-{_RUBY_SWITCHES}+|-[CEFIrKTWx0i].+|-[ixW]|{_LONG_WITH_VALUE}",
+    ),
+    # `-f` names the script in the next word, which is then read as the operand.
+    "php": _StdinCli(
+        inline=r"-r|--run|-[BRE]",
+        valued=r"-d|--define|-c|--php-ini|-z|--zend-extension",
+        flags=rf"-f|--file|-a|--interactive|-[nqCH]|{_LONG_WITH_VALUE}",
+    ),
+    "Rscript": _StdinCli(inline=r"-e|--expression=.*", valued=r"(?!)", flags=r"--[\w-]+(=.*)?"),
+    "osascript": _StdinCli(inline=r"-e", valued=r"-l", flags=r"-i|-s[hseo]*"),
+}
+_INTERPRETER_NAME = re.compile("|".join((_PYTHON_WORD.pattern, *_STDIN_CLI)))
 
 
 def _without_redirects(words: list[str]) -> tuple[list[str], list[str], str]:
@@ -2397,12 +2464,57 @@ def _piped_programs(
     """
     if stdin == "own":
         return []
-    direct = bool(args) and _PYTHON_WORD.fullmatch(posixpath.basename(args[0])) is not None
+    direct = bool(args) and _INTERPRETER_NAME.fullmatch(posixpath.basename(args[0])) is not None
     if stdin == "inherited" and direct and previous is not None and previous.sep == "|":
         program = _printed_program(previous)
         if program is not None:
             return [program]
     return earlier
+
+
+def _descriptor_programs(
+    operand: str,
+    redirected: list[str],
+    piped: list[str],
+    substituted: list[str],
+    earlier: list[str],
+) -> list[str]:
+    """The texts that may be the program an interpreter reads from the descriptor `operand`
+    (`_PY_DESCRIPTOR`). The other arguments are those of `_command_line_programs`."""
+    if operand == "<(":
+        return redirected + substituted
+    if _PY_STDIN.fullmatch(operand):
+        return redirected + piped
+    return redirected + earlier
+
+
+def _program_descriptor(cli: _StdinCli, args: list[str]) -> str | None:
+    """The descriptor an interpreter other than Python reads its program from.
+
+    Args:
+        cli: The interpreter's options.
+        args: The words after the interpreter, redirects removed.
+
+    Returns:
+        The operand that names the descriptor (`_PY_DESCRIPTOR`), or `-` when the words
+        name no program, which leaves it to stdin. `-` too at an option `cli` does not
+        list, `--` among them, since the word after it may be its value and not a script.
+        None when an inline option or a script file gives the program.
+    """
+    i = 1 if args[:1] and args[0] in cli.subcommands else 0
+    while i < len(args):
+        w = args[i]
+        if _PY_DESCRIPTOR.fullmatch(w):
+            return w
+        if not w.startswith("-") or re.fullmatch(cli.inline, w, re.DOTALL):
+            return None
+        if re.fullmatch(cli.valued, w):
+            i += 2
+        elif re.fullmatch(cli.flags, w, re.DOTALL):
+            i += 1
+        else:
+            break
+    return "-"
 
 
 def _command_line_programs(
@@ -2438,12 +2550,7 @@ def _command_line_programs(
     """
 
     def read_from(operand: str, rest: list[str]) -> list[tuple[str, list[str], list[str]]]:
-        if operand == "<(":
-            programs = redirected + substituted
-        elif _PY_STDIN.fullmatch(operand):
-            programs = redirected + piped
-        else:
-            programs = redirected + earlier
+        programs = _descriptor_programs(operand, redirected, piped, substituted, earlier)
         return [(text, rest, earlier) for text in programs]
 
     stdin = redirected + earlier
@@ -2492,6 +2599,20 @@ def _python_arguments(args: list[str]) -> list[list[str]]:
     return found
 
 
+def _other_interpreter_arguments(args: list[str]) -> list[tuple[_StdinCli, list[str]]]:
+    """The options of each interpreter other than Python that `args` may start, with the
+    words after it. An interpreter is a word whose basename is a `_STDIN_CLI` name,
+    wherever it sits."""
+    named = ((_STDIN_CLI.get(posixpath.basename(w)), args[i + 1 :]) for i, w in enumerate(args))
+    return [(cli, after) for cli, after in named if cli is not None]
+
+
+def _stdin_program_names_secret(program: str) -> bool:
+    """Whether a program another interpreter reads from a descriptor names a SECRET_PATHS
+    path. Nothing is masked: the text is not known to be Python source."""
+    return bdb_re(normalize(program), SECRET_PATHS)
+
+
 def _names_secret(program: str, arguments: list[str], fed: list[str]) -> bool:
     """Whether a Python `program` names a SECRET_PATHS path, its attribute accesses masked
     as `_changes_target` masks them, or one of the `arguments` after it does. The other
@@ -2513,9 +2634,14 @@ def _changes_target(program: str, arguments: list[str], fed: list[str]) -> bool:
 
 
 def _runs_python_program(
-    text: str, matches: Callable[[str, list[str], list[str]], bool], paths: str, depth: int = 0
+    text: str,
+    matches: Callable[[str, list[str], list[str]], bool],
+    paths: str,
+    depth: int = 0,
+    other_matches: Callable[[str], bool] | None = None,
 ) -> bool:
-    """Whether `text` runs a Python program from a command line that `matches` accepts.
+    """Whether `text` runs a Python program from a command line that `matches` accepts, or
+    feeds another interpreter a program that `other_matches` accepts.
 
     A word that holds a whole command line, as `bash -c` and ssh take, a substitution body
     and a heredoc body are each read in turn, except a word or body already read as the
@@ -2529,7 +2655,13 @@ def _runs_python_program(
             splitter refuses is accepted when a Python launch comes before one of them,
             because no program can be read out of it.
         depth: How many command lines deep `text` sits.
+        other_matches: Called with each program an interpreter other than Python reads
+            from a descriptor (`_program_descriptor`). None leaves those programs unread.
     """
+
+    def within(nested: str) -> bool:
+        return _runs_python_program(nested, matches, paths, depth + 1, other_matches)
+
     unreadable = rf"{_PYTHON_LAUNCH}.*{paths}"
     p = parse(text)
     if not p.ok or depth > 4:
@@ -2559,13 +2691,19 @@ def _runs_python_program(
                 if matches(*found):
                     return True
                 programs.add(found[0])
+        for cli, after in _other_interpreter_arguments(args) if other_matches else ():
+            operand = _program_descriptor(cli, after)
+            if operand is None:
+                continue
+            for program in _descriptor_programs(operand, redirected, piped, substituted, earlier):
+                if other_matches(program):
+                    return True
+                programs.add(program)
         nested = [w for w in words if any(c.isspace() for c in w)] + list(seg.heredocs)
-        if any(
-            _runs_python_program(t, matches, paths, depth + 1) for t in nested if t not in programs
-        ):
+        if any(within(t) for t in nested if t not in programs):
             return True
         earlier += [seg.text, *seg.heredocs]
-    return any(_runs_python_program(t, matches, paths, depth + 1) for t in p.substitutions)
+    return any(within(t) for t in p.substitutions)
 
 
 def python_write(sc: Scan, target: str) -> Verdict | None:

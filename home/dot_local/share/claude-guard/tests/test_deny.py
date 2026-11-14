@@ -1770,6 +1770,52 @@ def test_uv_run_of_a_harmless_program_or_another_command_is_allowed():
     assert kinds(UV_STDIN_ALLOW) == ["none"] * len(UV_STDIN_ALLOW)
 
 
+# dotfiles #1324: every interpreter `secret_interpreter` names reads a program from stdin, and
+# a piped program comes before the interpreter word.
+READS_KEY = "echo \"print(open('/x/server.key').read())\""
+OTHER_INTERPRETERS = ["node", "deno", "bun", "perl", "ruby", "php", "Rscript", "osascript"]
+OTHER_STDIN_SECRET_DENY = [
+    *(f"{READS_KEY} | {name}" for name in OTHER_INTERPRETERS),
+    # each interpreter's operand for a program on stdin
+    f"{READS_KEY} | node -",
+    f"{READS_KEY} | perl -",
+    f"{READS_KEY} | ruby /dev/stdin",
+    f"{READS_KEY} | deno run -",
+    f"{READS_KEY} | bun run -",
+    # options before the operand, one with a value, and one no table lists
+    f"{READS_KEY} | node --require ./hook.js --no-warnings",
+    f"{READS_KEY} | perl -Ilib -w",
+    f"{READS_KEY} | ruby -rjson -W0",
+    f"{READS_KEY} | php -d display_errors=1",
+    f"{READS_KEY} | node --title x",
+    # a leader in front, a path-spelled interpreter and a command line another command runs
+    f"{READS_KEY} | timeout 5 node",
+    f"{READS_KEY} | /usr/bin/perl",
+    'bash -c "echo \\"open(F, q(/x/server.key))\\" | perl"',
+    # a program that also parses as Python keeps its `q(server.key)` unmasked
+    'echo "print(q(server.key))" | perl',
+]
+OTHER_STDIN_ALLOW = [
+    "echo 'console.log(1)' | node",
+    # the program is on the command line or in a script file, so stdin is its data
+    "git log --oneline -- server.key | perl -pe 's/a/b/'",
+    "git log --oneline -- server.key | ruby -ne 'puts $_'",
+    "git log --oneline -- server.key | node -e 'process.stdin.pipe(process.stdout)'",
+    "git log --oneline -- server.key | node --no-warnings count.js",
+    "git log --oneline -- server.key | php -f count.php",
+    "git log --oneline -- server.key | deno fmt -",
+]
+
+
+def test_a_secret_named_in_a_program_piped_to_another_interpreter_is_refused():
+    expected = ["secret-read-interpreter"] * len(OTHER_STDIN_SECRET_DENY)
+    assert rules(OTHER_STDIN_SECRET_DENY) == expected
+
+
+def test_a_secret_named_in_the_data_piped_to_another_interpreter_is_allowed():
+    assert kinds(OTHER_STDIN_ALLOW) == ["none"] * len(OTHER_STDIN_ALLOW)
+
+
 # --- terraform / tofu / terragrunt (:1086-1118) -----------------------------------------------
 
 TF_DENY = [

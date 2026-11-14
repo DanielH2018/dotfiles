@@ -328,8 +328,13 @@ interpreter is any word whose basename is `python…`, so a path-spelled interpr
 `uv run --script -` run the program on stdin with no `python` word, so a `uv` runner whose
 command word is `-` or another descriptor counts as an interpreter too (dotfiles #1286).
 `secret_interpreter` reads the same programs, and the words after each, for a secret
-path: its pattern needs an interpreter word before the path. A script file's program
-stays out of reach. The rule also reads what the program is given: whatever its
+path: its pattern needs an interpreter word before the path. It reads the program piped
+to `node`, `deno`, `bun`, `perl`, `ruby`, `php`, `Rscript` or `osascript` too (dotfiles
+#1324). Each of those reads stdin as its program when its words give no inline program
+(`-e`) and no script file. `_STDIN_CLI` lists each interpreter's options, and an option the
+list lacks leaves the program on stdin, so a gap in the list refuses and never passes.
+`python_write` leaves those programs alone, because its read-only proof reads Python
+source. A script file's program stays out of reach. The rule also reads what the program is given: whatever its
 segment redirects in, and every earlier segment of the command, which may be the program
 itself or its arguments under `xargs`. Reading every earlier segment needs no model of
 pipes, groups or descriptors, and costs a writer refused after an unrelated segment that
