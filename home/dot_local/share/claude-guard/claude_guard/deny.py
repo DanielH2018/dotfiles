@@ -329,24 +329,19 @@ def _inert_source(seg: Segment) -> str | None:
     return source if _inert_program(source, expands) else None
 
 
-def _runs_nothing_written(p: Parsed) -> list[bool] | None:
-    """Per segment of `p`, whether it is an inert Python program (`_inert_source`) or a
-    reader or printer `segment_reads_or_prints` proves, so it cannot run text that another
-    segment writes or prints. None when the command holds a substitution, which can."""
-    if p.substitutions:
-        return None
-    return [_inert_source(s) is not None or segment_reads_or_prints(s) for s in p.segments]
-
-
 def _contained_inert_sources(p: Parsed) -> list[str | None] | None:
     """Per segment of `p`, its inert Python program (`_inert_source`), else None. The whole
-    result is None unless every segment runs nothing another one writes
-    (`_runs_nothing_written`): anything else may run the text an inert program only writes
-    or prints."""
-    quiet = _runs_nothing_written(p)
-    if quiet is None or not all(quiet):
+    result is None unless every segment is such a program or a reader or printer
+    `segment_reads_or_prints` proves, with no substitution: anything else may run the text
+    an inert program only writes or prints."""
+    if p.substitutions:
         return None
-    return [_inert_source(s) for s in p.segments]
+    sources = [_inert_source(s) for s in p.segments]
+    contained = all(
+        source is not None or segment_reads_or_prints(seg)
+        for source, seg in zip(sources, p.segments, strict=True)
+    )
+    return sources if contained else None
 
 
 def _rm_members(sc: Scan) -> list[str]:
@@ -2966,14 +2961,16 @@ def _heredocs_run_as_lines(p: Parsed) -> list[str]:
     holds one (`{ bash; } <<EOF`), or stored by a data sink in a command that runs code
     (`cat > x.sh <<EOF; bash x.sh`). An interpreter's program has no command position, so
     each of its lines is read as one: `os.system('git push --force')` runs the push. The
-    one program left out is a Python program that starts no process
-    (`_contained_inert_sources`), whose lines only name the text."""
+    one program left out is a Python program that starts no process (`_inert_source`),
+    whose lines only name the text. It is left out only when every other segment is a
+    reader or a printer `segment_reads_or_prints` proves and the command holds no
+    substitution, since anything else, another Python program included, may run a file
+    the program writes."""
     segments = p.segments
-    inert_sources = _contained_inert_sources(p) or itertools.repeat(None)
-    quiet = _runs_nothing_written(p) or [False] * len(segments)
+    reads_or_prints = [segment_reads_or_prints(s) for s in segments]
     runs_code = any(_runs_code(s.text) for s in segments)
     bodies: list[str] = []
-    for i, (seg, inert_source) in enumerate(zip(segments, inert_sources, strict=False)):
+    for i, seg in enumerate(segments):
         if not seg.heredocs:
             continue
         readers = [seg]
@@ -2988,7 +2985,10 @@ def _heredocs_run_as_lines(p: Parsed) -> list[str]:
         if closer == "esac":
             texts = [_CASE_ARM_HEAD.sub("", t, count=1) for t in texts]
         stored_then_run = runs_code and _is_data_sink(seg.text, seg.sep)
-        output_may_run = not all(quiet[:i] + quiet[i + 1 :])
+        output_may_run = bool(p.substitutions) or not all(
+            reads_or_prints[:i] + reads_or_prints[i + 1 :]
+        )
+        inert_source = None if output_may_run else _inert_source(seg)
         if stored_then_run or any(
             _runs_heredoc_lines(t) or _reads_program(t, output_may_run) for t in texts
         ):

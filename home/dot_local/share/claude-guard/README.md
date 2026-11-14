@@ -287,11 +287,11 @@ A body that a data sink stores counts too when the command runs code. A body tha
 interpreter reads counts as well, because `os.system('git push --force')` in a heredoc
 program runs the push (dotfiles #1314). Three Python shapes are left out. A program
 that `inert_python.inert` proves starts no process only names the text, so
-`python3 <<'EOF'` with a `print` of push text passes. That holds only when every other
-segment is a reader or a printer, as for `rm_root`. A literal `.py` script reads the
-body as data, and so does a `-c` program that starts no process. Both hold under the
-same condition, because either can copy the body to a file that a later segment runs.
-Every other
+`python3 <<'EOF'` with a `print` of push text passes. A literal `.py` script reads the
+body as data, and so does a `-c` program that starts no process. All three hold only
+when every other segment is a reader or a printer and the command has no substitution.
+Any other segment, another Python program included, may run a file the first one
+wrote. Every other
 interpreter has no such proof: `node <<'EOF'` with a `console.log` of push text is
 refused. A body fed to any other command is data, so
 `grep -c x <<'EOF'` over push text passes. A stored heredoc is stripped before that. A flag such as
