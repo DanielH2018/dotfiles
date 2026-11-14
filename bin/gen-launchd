@@ -8,9 +8,9 @@
 // schema (documented at the top of gen-launchd-lib.js), shared with work-laptop-config's
 // launchd.json, instead of in hand-written XML.
 //
-// Only the jobs in the manifest are generated. The other scheduled/ templates are still
-// hand-written until each one is migrated; a template that carries the generated header but
-// has no manifest entry is an error, since nothing would keep it current.
+// Every scheduled/*.plist.tmpl is generated. A template with no manifest entry is an error,
+// whether it carries the generated header or was written by hand, since nothing would keep
+// it current.
 //
 // Usage:
 //   gen-launchd            rewrite every template the manifest names
@@ -46,10 +46,8 @@ function main() {
   for (const name of fs.readdirSync(SCHEDULED)) {
     const rel = `scheduled/${name}`;
     if (!name.endsWith('.plist.tmpl') || listed.has(rel)) continue;
-    if (fs.readFileSync(path.join(SCHEDULED, name), 'utf8').includes(lib.GENERATED_MARK)) {
-      process.stderr.write(`gen-launchd: ${rel} says it is generated, but scheduled/launchd.json has no entry for it.\n`);
-      ok = false;
-    }
+    process.stderr.write(`gen-launchd: ${rel} has no entry in scheduled/launchd.json; add it there and run bin/gen-launchd.\n`);
+    ok = false;
   }
   if (!ok) process.exit(1);
 }

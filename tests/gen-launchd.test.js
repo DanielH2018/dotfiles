@@ -3,8 +3,8 @@
 // an array of one, an omitted RunAtLoad against false), that a chezmoi action survives
 // unescaped, and the manifest errors that would otherwise drop a field in silence. The
 // end-to-end trio runs the real binary green against the committed tree, red against a
-// hand-edited template, and red against a generated template with no manifest entry.
-// tests/scheduled-launchd.test.js still checks every rendered definition, generated or not.
+// hand-edited template, and red against a template with no manifest entry.
+// tests/scheduled-launchd.test.js checks every rendered definition.
 const { test } = require('node:test');
 const { execFileSync, spawnSync } = require('node:child_process');
 const assert = require('node:assert');
@@ -58,6 +58,13 @@ test('a note renders as a comment above its key, env notes included', () => {
   assert.match(text, /\t\t<!-- port -->\n\t\t<key>P<\/key>/);
 });
 
+test('watch_paths, low_priority_io and nice render WatchPaths, LowPriorityIO and Nice', () => {
+  const text = lib.renderJob(job({ watch_paths: ['/w/sock'], low_priority_io: true, nice: 10 }));
+  assert.match(keyThen(text, 'WatchPaths'), /^<array>\n\t\t<string>\/w\/sock<\/string>\n\t<\/array>/);
+  assert.match(keyThen(text, 'LowPriorityIO'), /^<true\/>/);
+  assert.match(keyThen(text, 'Nice'), /^<integer>10<\/integer>/);
+});
+
 test('renderJob rejects a manifest that would drop or corrupt a field', () => {
   const cases = [
     [job({ keepalive: true }), /unknown key\(s\) keepalive/],
@@ -67,6 +74,7 @@ test('renderJob rejects a manifest that would drop or corrupt a field', () => {
     [job({ calendar: [{ hour: 8, minit: 5 }] }), /unknown calendar key 'minit'/],
     [job({ notes: { KeepAlive: ['x'] } }), /a note names 'KeepAlive'/],
     [job({ why: ['a -- b'] }), /cannot contain "--"/],
+    [job({ watch_paths: '/w/sock' }), /watch_paths must be a non-empty array/],
   ];
   for (const [bad, err] of cases) assert.throws(() => lib.renderJob(bad), err);
 });
@@ -107,13 +115,13 @@ test('gen-launchd --check fails on a hand edit to a generated template', (t) => 
   assert.match(r.stderr, /committed: .*<integer>11<\/integer>/);
 });
 
-test('gen-launchd --check fails on a generated template the manifest does not list', (t) => {
+test('gen-launchd --check fails on a hand-written template the manifest does not list', (t) => {
   const dir = stage(t);
-  fs.copyFileSync(
-    path.join(dir, 'scheduled', 'com.danielhunter.pr-dash.plist.tmpl'),
+  fs.writeFileSync(
     path.join(dir, 'scheduled', 'com.daniel.orphan.plist.tmpl'),
+    '<plist version="1.0"><dict><key>Label</key><string>com.daniel.orphan</string></dict></plist>\n',
   );
   const r = spawnSync('node', [path.join(dir, 'bin', 'gen-launchd'), '--check'], { encoding: 'utf8' });
   assert.strictEqual(r.status, 1, r.stdout + r.stderr);
-  assert.match(r.stderr, /com\.daniel\.orphan\.plist\.tmpl says it is generated/);
+  assert.match(r.stderr, /com\.daniel\.orphan\.plist\.tmpl has no entry in scheduled\/launchd\.json/);
 });
