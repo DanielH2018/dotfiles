@@ -8,6 +8,7 @@ every segment and each segment is one of:
                               `--pre`, `--hostname-bin` and `--search-zip`
     echo                      any arguments
     printf                    a format first, never an option (`-v NAME` assigns a variable)
+                              and never a glob, which could expand to one
     head tail wc cat cut tr nl    any arguments
 
 Anything else is False: a command name spelled as a path or behind an assignment, any
@@ -241,7 +242,10 @@ def _segment_reads_or_prints(text: str) -> bool:
     if name == "rg":
         return _rg_reads_only(args)
     if name == "printf":
-        return not args or args[0][0] == "--" or not args[0][0].startswith("-")
+        if not args:
+            return True
+        first, first_glob = args[0]
+        return not first_glob and (first == "--" or not first.startswith("-"))
     return False
 
 

@@ -35,6 +35,7 @@ NOT_PROVEN = [
     "rg 'git push --force' *",
     "rg -e * 'git push --force'",
     "printf -v PATH '%s' /tmp/e",
+    "printf [-]v PATH /tmp/e",
     # a redirect that is not a whole unquoted /dev/null or fd word
     "echo 'git push --force' > x.sh",
     "echo 'git push --force' >'x.sh'",

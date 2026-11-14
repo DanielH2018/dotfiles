@@ -301,6 +301,7 @@ QUOTED_PUSH_DENY = [
     "./grep -n 'git push --force' README.md",
     "PATH=/tmp/e grep -n 'git push --force' README.md",
     "printf -v PATH '%s' /tmp/e; grep -n 'git push --force' README.md",
+    "printf [-]v PATH /tmp/e; grep -n 'git push --force' README.md",
     "rg --pre 'git push --force' x docs",
     "rg -z 'git push --force' docs",
     "git grep -n 'git push --force'",
