@@ -543,10 +543,16 @@ def test_a_nested_or_lookalike_tests_dir_is_not_read_as_the_root_one():
     with _tmp() as tmp_path:
         root = _repo(tmp_path, "tests/conftest.py")
         nested = _memfile(tmp_path, "n.md", "See scripts/dev/tests/conftest.py.\n")
+        top = _memfile(tmp_path, "t.md", "See scripts/tests/conftest.py.\n")
+        deep = _memfile(tmp_path, "d.md", "See scripts/a/b/tests/conftest.py.\n")
         lookalike = _memfile(tmp_path, "l.md", "See pytests/conftest.py.\n")
-        result = _enforcement([nested, lookalike], root)
+        result = _enforcement([nested, top, deep, lookalike], root)
         assert result["enforced"] == []
-        assert "scripts/dev/tests/conftest.py" in result["dangling"][0]
+        assert result["dangling"] == [
+            "n.md -> scripts/dev/tests/conftest.py",
+            "t.md -> scripts/tests/conftest.py",
+            "d.md -> scripts/a/b/tests/conftest.py",
+        ]
         assert result["unenforced"] == ["l.md"]
 
 
