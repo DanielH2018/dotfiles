@@ -2012,6 +2012,16 @@ _RUN = "import subprocess; subprocess.run"
             "node <<'EOF'\nrequire('child_process').spawnSync('git', // x\n ['push', '-f'])\nEOF",
             "force-push-flag",
         ),
+        # In a `$'…'` program a line ends in the two characters backslash and n.
+        (
+            "python3 -c $'import subprocess\\n"
+            'subprocess.run(["git", # x\\n "push",\\n\\t"--force"])\'',
+            "force-push-flag",
+        ),
+        (
+            'node -e $\'require("child_process").spawnSync("git", // x\\n ["push", "-f"])\'',
+            "force-push-flag",
+        ),
     ],
 )
 def test_a_push_an_interpreter_starts_from_an_argument_list_is_denied(command, rule):
