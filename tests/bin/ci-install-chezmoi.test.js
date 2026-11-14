@@ -26,17 +26,17 @@ const pin = /^chezmoi = "([^"]+)"$/m.exec(
 function release(t, asset, { badSum } = {}) {
   const root = scratch(os.tmpdir(), 'ci-install-chezmoi-', t);
   const stage = path.join(root, 'stage');
-  const rel = path.join(root, 'release');
+  const releaseDir = path.join(root, 'release');
   fs.mkdirSync(stage);
-  fs.mkdirSync(rel);
+  fs.mkdirSync(releaseDir);
   fs.writeFileSync(path.join(stage, 'chezmoi'), `#!/bin/sh\necho "fake chezmoi ${asset}"\n`, { mode: 0o755 });
-  execFileSync('tar', ['-czf', path.join(rel, asset), '-C', stage, 'chezmoi']);
-  const sum = badSum || crypto.createHash('sha256').update(fs.readFileSync(path.join(rel, asset))).digest('hex');
-  fs.writeFileSync(path.join(rel, `chezmoi_${pin}_checksums.txt`), `${sum}  ${asset}\n`);
-  return { root, rel };
+  execFileSync('tar', ['-czf', path.join(releaseDir, asset), '-C', stage, 'chezmoi']);
+  const sum = badSum || crypto.createHash('sha256').update(fs.readFileSync(path.join(releaseDir, asset))).digest('hex');
+  fs.writeFileSync(path.join(releaseDir, 'checksums.txt'), `${sum}  ${asset}\n`);
+  return { root, releaseDir };
 }
 
-function run(root, rel, { system, machine }) {
+function run(root, releaseDir, { system, machine }) {
   const stubs = path.join(root, 'stubs');
   fs.mkdirSync(stubs);
   fs.writeFileSync(path.join(stubs, 'curl'), `#!/bin/sh
@@ -48,7 +48,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 echo "$url" >> "${root}/urls"
-cp "${rel}/\${url##*/}" "$out"
+case "$url" in
+  *_checksums.txt) cp "${releaseDir}/checksums.txt" "$out" ;;
+  *) cp "${releaseDir}/\${url##*/}" "$out" ;;
+esac
 `, { mode: 0o755 });
   fs.writeFileSync(path.join(stubs, 'uname'), `#!/bin/sh
 case "$1" in -s) echo ${system} ;; -m) echo ${machine} ;; esac
@@ -63,8 +66,8 @@ case "$1" in -s) echo ${system} ;; -m) echo ${machine} ;; esac
 
 test('installs the pinned release asset for the runner OS and arch', { skip }, (t) => {
   const asset = `chezmoi_${pin}_darwin_arm64.tar.gz`;
-  const { root, rel } = release(t, asset);
-  const r = run(root, rel, { system: 'Darwin', machine: 'arm64' });
+  const { root, releaseDir } = release(t, asset);
+  const r = run(root, releaseDir, { system: 'Darwin', machine: 'arm64' });
   assert.strictEqual(r.status, 0, r.stderr);
   assert.match(r.urls, new RegExp(`/download/v${pin.replace(/\./g, '\\.')}/${asset}$`, 'm'));
   assert.strictEqual(execFileSync(path.join(r.bindir, 'chezmoi'), { encoding: 'utf8' }).trim(), `fake chezmoi ${asset}`);
@@ -72,8 +75,8 @@ test('installs the pinned release asset for the runner OS and arch', { skip }, (
 
 test('refuses an asset whose digest is not the one checksums.txt lists', { skip }, (t) => {
   const asset = `chezmoi_${pin}_linux_amd64.tar.gz`;
-  const { root, rel } = release(t, asset, { badSum: '0'.repeat(64) });
-  const r = run(root, rel, { system: 'Linux', machine: 'x86_64' });
+  const { root, releaseDir } = release(t, asset, { badSum: '0'.repeat(64) });
+  const r = run(root, releaseDir, { system: 'Linux', machine: 'x86_64' });
   assert.notStrictEqual(r.status, 0);
   assert.match(r.stderr, /checksum mismatch/);
   assert.ok(!fs.existsSync(path.join(r.bindir, 'chezmoi')), 'a mismatched binary must not be installed');
