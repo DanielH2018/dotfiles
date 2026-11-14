@@ -9,15 +9,17 @@ argv and reads the payload's `permission_mode`, and asks only in a mode that pro
 
 `verdict()` asks when a top-level segment or `$( )` body runs `gh workflow run` on a workflow
 named `promote`, `promote.yml` or `promote.yaml`, by bare name or by path, with `-R`/`--repo`,
-`-r`/`--ref` and the field flags read wherever they sit. Known residuals: a numeric workflow
-ID, which cannot be resolved offline; and a dispatch inside `bash -c '…'` or an ssh payload,
-which `_stage_argvs` does not open. `gh api -X POST …/dispatches` already asks through
-`deny.gh_api`.
+`-r`/`--ref` and the field flags read wherever they sit. It reads past the wrappers that
+`gitargv.unwrap` skips (`timeout`, `nohup`, `nice`, `time`, `xargs`, `sudo`, ...). Known
+residuals: a numeric workflow ID, which cannot be resolved offline; and a dispatch inside
+`bash -c '…'` or an ssh payload, which `_stage_argvs` does not open. `gh api -X POST
+…/dispatches` already asks through `deny.gh_api`.
 """
 
 import posixpath
 
 from claude_guard.deny import _stage_argvs
+from claude_guard.gitargv import unwrap
 
 RULE = "promote-dispatch"
 # Modes in which Claude Code itself prompts. Auto, bypassPermissions and dontAsk are left out,
@@ -47,10 +49,12 @@ def _positionals(args: list[str]) -> list[str]:
 
 
 def dispatches_promote(argv: list[str]) -> bool:
-    """Whether `argv`, a command word and its arguments, runs `gh workflow run` on `promote`."""
-    if not argv or argv[0] != "gh":
+    """Whether `argv`, a command word and its arguments, runs `gh workflow run` on `promote`,
+    directly or behind wrappers such as `timeout 60` or `nohup`."""
+    found = unwrap(argv, "gh")
+    if found is None:
         return False
-    words = _positionals(argv[1:])
+    words = _positionals(found[0][1:])
     if words[:2] != ["workflow", "run"] or len(words) < 3:
         return False
     return posixpath.basename(words[2]).lower() in _NAMES

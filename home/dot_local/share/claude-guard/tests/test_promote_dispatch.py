@@ -18,6 +18,10 @@ DISPATCHES = [
     "gh workflow run -r master -F sha=abc123 .github/workflows/promote.yaml",
     "cd /repo && gh workflow run promote.yml -f sha=abc123",
     "env GH_REPO=DanielH2018/server gh workflow run promote.yml",
+    "timeout 60 gh workflow run promote.yml -f sha=abc123",
+    "nohup nice -n 5 gh workflow run promote.yml",
+    "time gh workflow run promote.yml",
+    "xargs gh workflow run promote.yml < /dev/null",
 ]
 NOT_DISPATCHES = [
     "gh workflow view promote.yml",

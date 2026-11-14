@@ -91,16 +91,16 @@ def strip_env(argv: list[str]) -> list[str]:
     return argv[i:]
 
 
-def _unwrap(argv: list[str]) -> tuple[list[str], dict[str, str]] | None:
-    """(the git argv, the assignments before it) when `argv` runs git, else None. A wrapper's
-    own options and their values are skipped without a table: the first word named git after
-    only wrappers, assignments and option-shaped words is the git that runs."""
+def unwrap(argv: list[str], tool: str) -> tuple[list[str], dict[str, str]] | None:
+    """(the `tool` argv, the assignments before it) when `argv` runs `tool`, else None. A
+    wrapper's own options and their values are skipped without a table: the first word named
+    `tool` after only wrappers, assignments and option-shaped words is the one that runs."""
     env: dict[str, str] = {}
     i, wrapped = 0, False
     while i < len(argv):
         word = argv[i]
         name = os.path.basename(word)
-        if name == "git":
+        if name == tool:
             return argv[i:], env
         if _ASSIGNMENT.match(word):
             key, _, value = word.partition("=")
@@ -160,7 +160,7 @@ def _read_globals(argv: list[str]) -> tuple[int, list[str], list[tuple[str, str 
 
 def invocation(argv: list[str]) -> Invocation | None:
     """The git a command's argv runs, read as git reads it, or None when it runs no git."""
-    found = _unwrap(argv)
+    found = unwrap(argv, "git")
     if found is None:
         return None
     git, env = found
