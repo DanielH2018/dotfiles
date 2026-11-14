@@ -48,12 +48,17 @@ holds every value the command gives it, and a later `$x` or `${x}` is expanded o
 each, in a `$( )` body and an unquoted heredoc body too. The check over-reads here as it
 does for a pipe: `x='systemctl start homelab-reconcile'; x=uptime; ssh host "$x"` asks.
 
+The check drops no value and no nested text to bound its work. A command that nests shells
+past `_DEPTH`, or whose variables expand to more text than `_WORK` allows, asks as a write
+does, with `UNREAD_REASON`.
+
 Known residuals: a numeric workflow ID, which cannot be resolved offline; and a variable
 set any other way, such as by `read`, a `for` loop, a `${x:-default}` or the environment.
 `gh api -X POST …/dispatches` already asks through `deny.gh_api`.
 """
 
 import itertools
+import math
 import posixpath
 import re
 import shlex
@@ -82,6 +87,11 @@ RECONCILE_REASON = (
     "outside the merge-to-master path. Approve it only if the user asked for this reconcile."
 )
 
+UNREAD_REASON = (
+    "This command nests shells more deeply, or gives its variables more values, than the "
+    "homelab-deploy check reads. Approve it only if it writes nothing to the live homelab."
+)
+
 _GH_VALUED = frozenset({"-R", "--repo", "-r", "--ref", "-f", "--raw-field", "-F", "--field"})
 _WORKFLOWS = frozenset({"promote", "promote.yml", "promote.yaml"})
 _BOOTSTRAP = "bootstrap-host.sh"
@@ -99,7 +109,8 @@ _ENABLE_VERBS = frozenset({"enable", "reenable"})
 _UNITS = frozenset({"homelab-reconcile", "homelab-reconcile.service"})
 # Bounds the recursion: a variable can hold an `eval` of itself.
 _DEPTH = 8
-_ALTERNATIVES = 8
+# How many expansions of a text one command may ask for, a long text counting for more.
+_WORK = 5000
 # The word a substitution is replaced by before the command is lexed is this, a number no
 # other substitution has, then `_SUBSTITUTION_END`, so no such word is a prefix of another.
 _SUBSTITUTION = "/dev/fd/claude-guard-substitution-"
@@ -290,34 +301,72 @@ def _substituted(text: str, variables: dict[str, str]) -> str:
     return _REFERENCE.sub(lambda ref: variables.get(ref[1] or ref[2], ref[0]), text)
 
 
+class _Unread(Exception):
+    """The command needs more work than the check does, so the check has not read it all."""
+
+
+@dataclass(slots=True)
+class _Work:
+    """The expansions one command may still ask for.
+
+    Attributes:
+        left: how many remain.
+    """
+
+    left: int = _WORK
+
+    def spend(self, cost: int) -> None:
+        """Take `cost` expansions.
+
+        Raises:
+            _Unread: fewer than `cost` remain.
+        """
+        self.left -= cost
+        if self.left < 0:
+            raise _Unread
+
+
 def _alternatives(
     text: str,
     variables: dict[str, tuple[str, ...]],
     expand: Callable[[str, dict[str, str]], str],
+    work: _Work,
 ) -> list[str]:
     """`text` expanded by `expand` once for each choice of a value for the variables it
-    names, the values assigned last first, `_ALTERNATIVES` texts at most."""
+    names.
+
+    Raises:
+        _Unread: the expansions cost more than `work` has left.
+    """
     names = sorted({ref[1] or ref[2] for ref in _REFERENCE.finditer(text)} & variables.keys())
-    choices = itertools.product(*(reversed(variables[name]) for name in names))
-    return [
-        expand(text, dict(zip(names, choice, strict=True)))
-        for choice in itertools.islice(choices, _ALTERNATIVES)
-    ]
+    if not names:
+        return [expand(text, {})]
+    work.spend(math.prod(len(variables[name]) for name in names))
+    out = []
+    for choice in itertools.product(*(variables[name] for name in names)):
+        out.append(expand(text, dict(zip(names, choice, strict=True))))
+        work.spend(len(out[-1]) // 50)
+    return out
 
 
-def _assign(text: str, variables: dict[str, tuple[str, ...]]) -> None:
+def _assign(text: str, variables: dict[str, tuple[str, ...]], work: _Work) -> None:
     """Add to `variables` every value a `NAME=value` or `NAME+=value` word of the segment
-    `text` assigns. A variable keeps its earlier values, `_ALTERNATIVES` at most."""
+    `text` assigns. A variable keeps its earlier values.
+
+    Raises:
+        _Unread: the values cost more than `work` has left.
+    """
     for word in _words(text) or []:
         assigned = _ASSIGNED.fullmatch(word)
         if assigned is None:
             continue
         name = assigned[1]
-        values = _alternatives(assigned[3], variables, _substituted)
+        values = _alternatives(assigned[3], variables, _substituted, work)
         if assigned[2]:
-            values = [old + value for old in variables.get(name, ("",)) for value in values]
-        kept = dict.fromkeys(variables.get(name, ()) + tuple(values))
-        variables[name] = tuple(kept)[-_ALTERNATIVES:]
+            earlier = variables.get(name, ("",))
+            work.spend(len(earlier) * len(values))
+            values = [old + value for old in earlier for value in values]
+        variables[name] = tuple(dict.fromkeys(variables.get(name, ()) + tuple(values)))
 
 
 def _expanded(text: str, variables: dict[str, str]) -> str:
@@ -439,6 +488,7 @@ def _read(
     depth: int = 0,
     stdin: _Stream | None = None,
     variables: dict[str, tuple[str, ...]] | None = None,
+    work: _Work | None = None,
 ) -> tuple[list[list[str]], _Stream]:
     """Every argv `command` runs, with redirections dropped, and what `command` writes to
     stdout. A script file fed to a stage that executes it appears as a one-word argv naming
@@ -450,7 +500,12 @@ def _read(
         stdin: what `command` itself reads on stdin, nothing when omitted. Every stage
           that heads a pipeline reads it.
         variables: the values each variable can hold when `command` starts.
+        work: the expansions the whole command may still ask for, `_WORK` when omitted.
+
+    Raises:
+        _Unread: `command` nests shells past `_DEPTH`, or costs more than `work` has left.
     """
+    work = work or _Work()
     stdin = stdin or _Stream()
     variables = dict(variables or {})
     spans = substitution_spans(command)
@@ -471,8 +526,9 @@ def _read(
     masked = _ANSI_QUOTE.sub("", masked + command[last:])
 
     def nested(text: str, read: _Stream, known: dict[str, tuple[str, ...]] | None = None) -> None:
-        if depth < _DEPTH:
-            out.extend(_read(text, depth + 1, read, known)[0])
+        if depth >= _DEPTH:
+            raise _Unread
+        out.extend(_read(text, depth + 1, read, known, work)[0])
 
     written = _Stream()
     piped = stdin
@@ -480,16 +536,16 @@ def _read(
         if not seg.text.strip():
             continue  # `|&` parses as `|` then an empty `&` segment
         for word in [word for word in bodies if word in seg.text]:
-            argvs, feeds[word] = _read(bodies.pop(word), depth, variables=variables)
+            argvs, feeds[word] = _read(bodies.pop(word), depth, None, variables, work)
             out.extend(argvs)
-        _assign(seg.text, variables)
+        _assign(seg.text, variables, work)
         heredocs = tuple(
             text
             for body, quoted in zip(seg.heredocs, seg.heredoc_quoted, strict=True)
-            for text in ([body] if quoted else _alternatives(body, variables, _substituted))
+            for text in ([body] if quoted else _alternatives(body, variables, _substituted, work))
         )
         stdout = _Stream()
-        for text in _alternatives(seg.text, variables, _expanded):
+        for text in _alternatives(seg.text, variables, _expanded, work):
             words, fed = _redirects(_segment_argv(text) or [])
             read = fed + _Stream(texts=heredocs) + piped
             if words:
@@ -516,14 +572,14 @@ def _read(
             operands = tuple(word for word in words[1:] if not word.startswith("-"))
             stdout += (_Stream(operands, _printed(words)) + read).resolved(feeds)
         for sink in [sink for sink in sinks if sink in seg.text]:
-            out.extend(_read(sinks.pop(sink), depth, stdout, variables)[0])
+            out.extend(_read(sinks.pop(sink), depth, stdout, variables, work)[0])
         if seg.sep == "|":
             piped = stdout
         else:
             piped = stdin
             written += stdout
     for body in (bodies | sinks).values():
-        out.extend(_read(body, depth, variables=variables)[0])
+        out.extend(_read(body, depth, None, variables, work)[0])
     return out, written
 
 
@@ -532,8 +588,13 @@ def route(command: str) -> str | None:
 
     The write is a `promote` dispatch, a `bootstrap-host.sh` run or a start of
     `homelab-reconcile`, run locally or inside an `ssh`, `hl`, `sh -c` or `eval` payload.
+    A command the check cannot read to the end is asked about as a write is.
     """
-    for argv in _read(command)[0]:
+    try:
+        argvs = _read(command)[0]
+    except _Unread:
+        return UNREAD_REASON
+    for argv in argvs:
         if _dispatches_promote(argv):
             return PROMOTE_REASON
         if _runs_bootstrap(argv):

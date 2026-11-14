@@ -7,6 +7,7 @@ permissions, as the harness sends a payload carrying `permission_mode`.
 """
 
 import json
+import shlex
 
 import pytest
 
@@ -118,8 +119,30 @@ RECONCILES = [
     "x='systemctl start homelab-reconcile'; y=${x}; ssh daniel-pi \"$y\"",
     "x=$'systemctl start homelab-reconcile'; ssh daniel-pi \"$x\"",
     "x=systemctl; x+=' start homelab-reconcile'; ssh daniel-pi \"$x\"",
+    "x='systemctl start homelab-reconcile'; "
+    + "".join(f"x=v{i}; " for i in range(40))
+    + 'ssh daniel-pi "$x"',
+    "a='systemctl start homelab-reconcile'; a=uptime; "
+    + "".join(f"b=v{i}; " for i in range(40))
+    + 'ssh daniel-pi "$a" "$b"',
 ]
-WRITES = DISPATCHES + BOOTSTRAPS + RECONCILES
+
+
+def nested_shells(levels: int) -> str:
+    command = "true"
+    for _ in range(levels):
+        command = "ssh daniel-pi " + shlex.quote(command)
+    return command
+
+
+# Commands that cost the check more than it spends, so it asks without reading them.
+UNREAD = [
+    "".join(f"{name}={i}; " for name in "abcd" for i in range(10)) + 'echo "$a$b$c$d"',
+    "x=aaaaaaaa; " + "x=$x$x; " * 30 + "echo done",
+    'x=\'eval "$x"\'; eval "$x"',
+    nested_shells(10),
+]
+WRITES = DISPATCHES + BOOTSTRAPS + RECONCILES + UNREAD
 NOT_WRITES = [
     "gh workflow view promote.yml",
     "gh workflow run ci.yml -f ref=promote.yml",
@@ -155,6 +178,8 @@ NOT_WRITES = [
     "unit=homelab-reconcile; ssh daniel-pi sh <<'EOF'\nsystemctl start $unit\nEOF",
     "x='systemctl status homelab-reconcile'; ssh daniel-pi \"$x\"",
     'ssh daniel-pi "echo $(date)"',
+    "".join(f"x=v{i}; " for i in range(40)) + 'echo "$x"',
+    nested_shells(8),
 ]
 # Payloads to a trusted ssh host, which the judge's trusted-host arm would otherwise allow.
 TRUSTED_HOST_WRITES = [

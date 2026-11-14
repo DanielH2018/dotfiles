@@ -271,7 +271,9 @@ stage that carries it, so `bash -c 'sh' < hosts/bootstrap-host.sh` matches. `eva
 its arguments as script text. A `$( )` in them, in a remote text or in a `-c` string
 stands for the stdout of its body. A variable is expanded to every value the same command
 assigns it, whether or not the shell reaches the assignment, so
-`x='systemctl start homelab-reconcile'; ssh host "$x"` matches. It asks only when the payload's
+`x='systemctl start homelab-reconcile'; ssh host "$x"` matches. A command that nests
+shells or expands variables past what the check reads asks too, since the check drops
+nothing to bound its work. It asks only when the payload's
 `permission_mode` is `default`, `manual`, `acceptEdits` or `plan`. Auto mode is left to the
 `soft_deny` prose, which clears the dispatch the server repo's post-merge procedure prints.
 A settings `ask` rule cannot make that split, because Claude Code honours an ask rule in
