@@ -46,6 +46,8 @@ BOOTSTRAPS = [
     "cat hosts/bootstrap-host.sh | head -n 500 | ssh daniel-pi sh",
     "head -n 500 < hosts/bootstrap-host.sh | ssh daniel-pi sh",
     "ssh daniel-pi bash -s 1 < hosts/bootstrap-host.sh",
+    "ssh daniel-pi bash -s < hosts/bootstrap-host.sh 3< /dev/null",
+    "cat hosts/bootstrap-host.sh | ssh daniel-pi bash 3< /dev/null",
     "bash <(cat hosts/bootstrap-host.sh) daniel-pi",
     "bash < <(sed '' hosts/bootstrap-host.sh)",
     "ssh daniel-pi 'bash <(cat hosts/bootstrap-host.sh)'",

@@ -215,14 +215,17 @@ def _is_redirect(word: str) -> bool:
     return bool(word) and set(word) <= set("<>&|") and ("<" in word or ">" in word)
 
 
-def _redirects(argv: list[str]) -> tuple[list[str], str | None, str | None]:
-    """`argv` split into its words without redirections, the file a `<` feeds its stdin,
-    and the text of a `<<<` herestring. The lexer splits `2>/dev/null` into `2`, `>`,
-    `/dev/null`, so a digit word before an operator is dropped as its fd. The lexer also
-    drops the space that tells `-n 5 < file` from `5< file`, so every `<` and `<<<` is read
-    as feeding stdin."""
+def _redirects(argv: list[str]) -> tuple[list[str], _Stream]:
+    """`argv` split into its words without redirections, and what its `<` and `<<<`
+    redirections can feed its stdin.
+
+    The lexer splits `2>/dev/null` into `2`, `>`, `/dev/null`, so a digit word before an
+    operator is dropped as its fd. The lexer also drops the space that tells `-n 5 < file`
+    from `5< file`, so the stream carries the target of every `<` and `<<<`, whatever its
+    fd.
+    """
     words: list[str] = []
-    source = herestring = None
+    fed = _Stream()
     i = 0
     while i < len(argv):
         word = argv[i]
@@ -230,16 +233,15 @@ def _redirects(argv: list[str]) -> tuple[list[str], str | None, str | None]:
             i += 1
             continue
         if _is_redirect(word):
-            target = argv[i + 1] if i + 1 < len(argv) else None
-            if word == "<":
-                source = target
-            elif word == "<<<":
-                herestring = target
+            if i + 1 < len(argv) and word == "<":
+                fed += _Stream(files=(argv[i + 1],))
+            elif i + 1 < len(argv) and word == "<<<":
+                fed += _Stream(texts=(argv[i + 1],))
             i += 2
             continue
         words.append(word)
         i += 1
-    return words, source, herestring
+    return words, fed
 
 
 def _past_ssh_options(args: list[str], i: int) -> int:
@@ -308,11 +310,8 @@ def _read(command: str, depth: int = 0) -> tuple[list[list[str]], _Stream]:
         if not seg.text.strip():
             continue  # `|&` parses as `|` then an empty `&` segment
         argv = _segment_argv(seg.text)
-        words, source, herestring = _redirects(argv) if argv else ([], None, None)
-        stdin = _Stream(
-            (source,) if source else piped.files,
-            (*seg.heredocs, *([herestring] if herestring else [])) or piped.texts,
-        )
+        words, fed = _redirects(argv) if argv else ([], _Stream())
+        stdin = fed + _Stream(texts=seg.heredocs) + piped
         if words:
             add(words)
             script = _script(words)
