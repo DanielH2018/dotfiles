@@ -52,4 +52,18 @@ if [ -x "$FNM" ] || command -v fnm >/dev/null 2>&1; then
     "$FNM" default lts-latest
   fi
 fi
+
+# 3. Node's prebuilt Linux binary links libatomic.so.1, which a minimal Debian/Ubuntu or Fedora
+#    install lacks; without it every node call, including the settings.json merge, exits 127.
+if [ "$(uname -s)" = "Linux" ] && ! PATH="$PATH:/usr/sbin:/sbin" ldconfig -p 2>/dev/null | grep -q 'libatomic\.so\.1'; then
+  if command -v apt-get >/dev/null 2>&1; then
+    echo "install-fnm: installing libatomic1, which node needs ..." >&2
+    sudo apt-get install -y libatomic1 || { sudo apt-get update -qq && sudo apt-get install -y libatomic1; }
+  elif command -v dnf >/dev/null 2>&1; then
+    echo "install-fnm: installing libatomic, which node needs ..." >&2
+    sudo dnf install -y libatomic
+  else
+    echo "install-fnm: libatomic.so.1 is missing and no known package manager can install it; node will not run" >&2
+  fi
+fi
 {{ end -}}

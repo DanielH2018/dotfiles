@@ -393,3 +393,44 @@ test('install-docker-engine adds its apt repo via the shared helper', { skip }, 
     assert.ok(!readLog(logFile).includes('uv tool install'), 'no tool install should be attempted without uv');
   });
 }
+
+// 2e. os-unix/run_once_before_install-fnm.sh.tmpl ----------------------------------------------
+// fnm and a default node are already present, so only the libatomic step runs. ldconfig's
+// stubbed cache decides whether libatomic.so.1 is installed.
+{
+  const FNM_SRC = path.join(SCRIPTS_DIR, 'os-unix', 'run_once_before_install-fnm.sh.tmpl');
+
+  function fnmSandbox({ libatomic }) {
+    const dir = tmpdir('install-fnm-');
+    const logFile = path.join(dir, 'log.txt');
+    fs.writeFileSync(logFile, '');
+    fs.writeFileSync(path.join(dir, 'sudo'), SUDO_STUB, { mode: 0o755 });
+    fs.writeFileSync(path.join(dir, 'uname'), '#!/bin/sh\necho Linux\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(dir, 'fnm'), '#!/bin/sh\necho "fnm $*" >> "$STUB_LOG"\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(dir, 'apt-get'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    const cache = libatomic ? '\tlibatomic.so.1 (libc6,x86-64) => /usr/lib/x86_64-linux-gnu/libatomic.so.1\n' : '';
+    fs.writeFileSync(path.join(dir, 'ldconfig'), `#!/bin/sh\nprintf '1 libs found in cache\\n${cache}'\n`, { mode: 0o755 });
+    for (const b of ['grep', 'sh']) fs.symlinkSync(realBin(b), path.join(dir, b));
+    fs.mkdirSync(path.join(dir, 'fnm-home', 'aliases', 'default'), { recursive: true });
+    const scriptFile = path.join(dir, 'rendered.sh');
+    fs.writeFileSync(scriptFile, renderFile(FNM_SRC));
+    const env = { PATH: dir, HOME: dir, FNM_DIR: path.join(dir, 'fnm-home'), STUB_LOG: logFile };
+    return { scriptFile, env, logFile };
+  }
+
+  test('install-fnm.sh.tmpl: libatomic.so.1 missing on apt -> installs libatomic1', { skip }, () => {
+    const { scriptFile, env, logFile } = fnmSandbox({ libatomic: false });
+    const { status } = runSh(scriptFile, env);
+    const log = readLog(logFile);
+    assert.strictEqual(status, 0, `expected success, log:\n${log}`);
+    assert.match(log, /^sudo apt-get install -y libatomic1$/m, `node cannot run without libatomic1:\n${log}`);
+  });
+
+  test('install-fnm.sh.tmpl: libatomic.so.1 present -> installs nothing', { skip }, () => {
+    const { scriptFile, env, logFile } = fnmSandbox({ libatomic: true });
+    const { status } = runSh(scriptFile, env);
+    const log = readLog(logFile);
+    assert.strictEqual(status, 0, `expected success, log:\n${log}`);
+    assert.ok(!log.includes('sudo'), `nothing should be installed when the library is there:\n${log}`);
+  });
+}
