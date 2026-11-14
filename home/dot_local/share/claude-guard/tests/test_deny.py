@@ -317,6 +317,22 @@ QUOTED_PUSH_DENY = [
     "python3 -c \"import os; os.system('git push --force origin feat')\"",
     "trap 'git push --force' EXIT",
     "tmux send-keys 'git push --force' Enter",
+    # #1289: the flag ends at the `)` or `;` that closed a quoted program.
+    "python3 -c \"import os; os.system('git push --force')\"",
+    "perl -e 'system(\"git push --force\")'",
+    "awk 'BEGIN { system(\"git push --force\") }'",
+    "node -e \"require('child_process').execSync('git push --force')\"",
+    "bash -c '(git push --force)'",
+    "bash -c '(git push --mirror)'",
+    "bash -c '(git push --no-verify)'",
+    # #1289: a heredoc body that a shell, make or cron runs.
+    "bash <<'EOF'\ngit push --force origin feat\nEOF",
+    "make -f - <<'EOF'\nall:\n\tgit push --force origin feat\nEOF",
+    "crontab - <<'EOF'\n* * * * * git push --force origin feat\nEOF",
+    "bash <<'EOF'\ngit push \\\n  --force origin feat\nEOF",
+    "bash <<'EOF'\ngit -C 'a b' push -f origin feat\nEOF",
+    "bash <<'EOF'\ngit push origin main\nEOF",
+    "bash <<'EOF'\ngit push --no-verify origin feat\nEOF",
 ]
 
 
@@ -1733,6 +1749,10 @@ def test_a_force_push_chained_with_a_dangerous_command_is_still_denied():
         "git push -ofix origin feature-x",
         "git push origin feature-x && ls -uf",
         "git push origin feature-x; echo +1",
+        # #1289: each heredoc line is its own command, and a closing `)` is not a flag.
+        "bash <<'EOF'\ngit push origin feature-x\nls -f\nEOF",
+        "bash -c '(git push --force-with-lease)'",
+        "cat > notes.md <<'EOF'\ngit push --force origin feat\nEOF",
     ],
 )
 def test_a_push_without_a_force_is_no_decision(command):

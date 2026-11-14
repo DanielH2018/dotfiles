@@ -266,7 +266,12 @@ match every path under `.ssh/`, and a write to a `.pub` file stays refused.
 
 The push rules (`force_push`, `push_main`, `force_push_flag`, `push_config`,
 `push_no_verify`, `config_write`) match `git push` and `git config` as text anywhere in a
-segment, so that `bash -c '…'` and an ssh payload stay covered. `deny` skips them for a
+segment, so that `bash -c '…'` and an ssh payload stay covered. Each line of a heredoc
+body is a member of the segment set too, so the rules read a body that a shell, make or
+cron runs (dotfiles #1289). A stored heredoc is stripped before that. A flag such as
+`--force` ends at any character that cannot continue the word, because a flag that closes
+a quoted program is followed by `)` or `;` once the quotes are removed. `deny` skips the
+push rules for a
 command that `inert_shell.only_reads_or_prints` proves runs nothing it names, so
 `grep -n 'git push --force' README.md` passes (dotfiles #1249). That proof is an allowlist.
 Every segment must be grep, rg with options from a fixed list, echo, printf with a format

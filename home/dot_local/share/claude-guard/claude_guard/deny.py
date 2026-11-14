@@ -13,7 +13,8 @@ Three subjects, as the bash has them (:238-317):
              a body `deny` strips because it is only stored (`_without_stored_heredocs`).
     scanset  BDB_SCANSET — SCAN, then one normalised line per segment.parse segment and per
              substitution body. The command-position-anchored families read this, so a
-             command after a newline is in command position.
+             command after a newline is in command position. Not the bash's: one more line
+             per line of a heredoc body, which a shell, make or cron runs as a command.
     segset   BDB_SEGSET — the same set without SCAN, for the pair rules that need both halves
              from ONE command. When the parse refuses, both collapse to SCAN alone, which is
              the bash's degradation path: a refusal lands on the whole-string rules, never on
@@ -218,6 +219,9 @@ def build_scan(command: str) -> Scan:
     members += [
         normalize(line) for text in texts for line in canonical_lines(text, PUSH_SUBCOMMANDS)
     ]
+    for body in (b for seg in p.segments for b in seg.heredocs):
+        for line in body.replace("\\\n", " ").split("\n"):
+            members += [normalize(t) for t in (line, *canonical_lines(line, PUSH_SUBCOMMANDS))]
     gits = tuple(inv for text in texts for inv in invocations(text))
     scanset = "\n".join([scan, *members])
     segset = "\n".join(members) if members else scan
@@ -379,7 +383,10 @@ def rm_root(sc: Scan, target: str) -> Verdict | None:
 
 # --- git push (:669-728) ---------------------------------------------------------------------
 
-_FORCE_WORD = r"(--force([ ]|$)|[ ]-f([ ]|$))"
+# What ends a flag: anything that cannot continue the word. `normalize` deletes quote
+# characters, so a flag closing a quoted program is followed by `)` or `;`, not a space.
+_FLAG_END = r"([^[:alnum:]_-]|$)"
+_FORCE_WORD = rf"(--force{_FLAG_END}|[ ]-f{_FLAG_END})"
 _FORCE_FLAG = rf"git\s+push.*{_FORCE_WORD}"
 _LEASE = r"\-\-force-with-lease"
 _MAIN_DEST_F = r"(^|[[:space:]]|:)(main|master)([[:space:]]|:|\)|`|$)"
@@ -2491,7 +2498,7 @@ def terraform(sc: Scan, target: str) -> Verdict | None:
 _FORCE_ANY = rf"{GIT_PUSH_AT}.*{_FORCE_WORD}"
 _FORCE_CLUSTER = rf"{GIT_PUSH_AT}.*\s-[vqdnu46]*f"
 _PLUS_REFSPEC = rf"{GIT_PUSH_AT}.*\s\+[^\s]"
-_MIRROR = rf"{GIT_PUSH_AT}.*\s--mirror([ ]|=|$)"
+_MIRROR = rf"{GIT_PUSH_AT}.*\s--mirror{_FLAG_END}"
 
 
 def force_push_flag(sc: Scan, target: str) -> Verdict | None:
@@ -2554,7 +2561,7 @@ _PUSH_CONFIG_TEXT = (
 # write rule has seen. Read from the whole command, since `export X=…; git push` sets it too.
 _CONFIG_FILE_ENV = r"(^|[\s;&|(`])(GIT_CONFIG_GLOBAL|GIT_CONFIG_SYSTEM|XDG_CONFIG_HOME|HOME)="
 _HIDDEN_ALIAS_TEXT = r"git\s[^;&|]*--config-env[\s=]+alias\."
-_NO_VERIFY_TEXT = r"(\s--no-veri(f|fy)?([ ]|=|$)|core\.hookspath)"
+_NO_VERIFY_TEXT = rf"(\s--no-veri(f|fy)?{_FLAG_END}|core\.hookspath)"
 
 
 def _config_forces(key: str, value: str | None) -> bool:
