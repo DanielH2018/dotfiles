@@ -329,8 +329,10 @@ file, because the rule reads that producer's shell text as the program. So is a 
 behind a leader such as `xargs` or `timeout`, a printer inside a group, and an `echo`
 whose operand holds a backslash. A `<(…)` operand narrows the candidates only when every
 substitution of the command is a printer, because a substitution such as `<(cat)` reads
-the stdin it inherits. No segment is read as a printer after an earlier segment that
-defines a function named `echo`, `printf` or `cat`, or any alias.
+the stdin it inherits. A printer is read only at the top level of the command, and only
+when every segment before it is a reader or a printer that `inert_shell.py` proves. Any
+other earlier segment could rebind the printer's name, so the rule then reads every
+earlier segment as a candidate program again.
 
 Over 27,268 distinct commands from this
 host's transcripts the rule refused 77 (2026-11-14), 12 of them probes of the guard itself. Most of the rest were
