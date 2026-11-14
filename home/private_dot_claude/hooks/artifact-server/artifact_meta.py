@@ -29,7 +29,7 @@ from pathlib import Path
 EXCERPT_CHARS = int(os.environ.get("ARTIFACTS_EXCERPT_CHARS", "2000"))
 
 # The service names artifacts are matched against. The server repo's
-# ansible/roles/k8s/artifacts/templates/configmap.yaml.j2 renders them from containers_list,
+# k8s/roles/artifacts/templates/configmap.yaml.j2 renders them from containers_list,
 # daniel-pi's compose_services, and the platform and retired names older documents still
 # discuss. Absent in a unit test, where the fixtures pass their own list.
 SERVICES_FILE = Path(

@@ -154,7 +154,7 @@ def get(url, timeout=15):
 # every node, so it answers wherever the pod is.
 #
 # Fixed constants, matching otelq's own list and the pinned clusterIP in
-# ansible/roles/k8s/claude-otel/templates/. Nothing here is caller-supplied, and
+# k8s/roles/observability/defaults/main.yml. Nothing here is caller-supplied, and
 # the RFC1918 check below still refuses anything that is not a private address.
 CLUSTER_IP = {
     "loki": "10.43.99.158",

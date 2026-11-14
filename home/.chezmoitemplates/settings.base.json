@@ -39,7 +39,7 @@
 {{ end }}
 {{ if has .chezmoi.hostname (list "daniel-box" "daniel-server") }}
     {{/* The cluster serves every host's ~/.claude/artifacts behind Authelia (server repo,
-         ansible/roles/k8s/artifacts), so link-artifact.sh emits a real hostname here rather
+         k8s/roles/artifacts), so link-artifact.sh emits a real hostname here rather
          than the 127.0.0.1:8181 loopback link, which only that host's own terminal can open.
 
          Set ONLY on the two k3s nodes: every other machine keeps the loopback and file://
@@ -56,11 +56,11 @@
          client with no route to the LAN portal needs. */}}
     "CLAUDE_ARTIFACTS_BASE_URL": "https://artifacts.daniel-hunter.com",
     {{/* An agent user's tree mounts beside the operator's as <host>-<user> (server repo,
-         ansible/roles/k8s/artifacts), so its links name that segment. */}}
+         k8s/roles/artifacts), so its links name that segment. */}}
     "CLAUDE_ARTIFACTS_HOST": "{{ .chezmoi.hostname }}{{ if includeTemplate "is-agent" . }}-{{ .chezmoi.username }}{{ end }}",
 {{ if eq .chezmoi.hostname "daniel-box" }}
     {{/* The star list the cluster's artifact browser writes (server repo,
-         ansible/roles/k8s/artifacts, artifacts_stars_file). retention-sweep keeps every
+         k8s/roles/artifacts, artifacts_stars_file). retention-sweep keeps every
          artifact it stars under this host's label, and reads this path from settings.json
          because its timer never sees this block. It sits outside /home/ubuntu so an agent
          user can read it too. daniel-server keeps the default path, because that is
@@ -533,11 +533,11 @@
            names like production/release/gh-pages. Here `master` IS the deploy trigger. */}}
       "Sensitive remote targets: pushing or merging to `master` in DanielH2018/server is a PRODUCTION DEPLOY — after master CI passes, `promote` and Flux apply the merge to the live cluster, the host packages carry it to the hosts, and `land.sh` follows the deploy. Arming GitHub auto-merge (`gh pr merge --auto`) on a PR the user asked to ship is allowed; the repo's CLAUDE.md then has the session run land.sh to deploy it. The sanctioned write paths to the live homelab hosts are `land.sh` and the soft_deny's post-merge deploy clearance; reads over ssh and read-only kubectl are routine and are not a production deploy. Also any namespace, host or container carrying `prod`/`production` as a whole word, and Longhorn PVCs plus their B2 backups, which are destructive-risk targets despite not being prod-named",
       "Protected deployment namespaces / environments: the `homelab` and `longhorn-system` k8s namespaces",
-      "Protected IaC scopes: IAM/RBAC, networking, quota and node-pool resources; anything named or tagged prod/production; the k3s read-only ServiceAccount RBAC boundary (ansible/roles/k8s/cluster-base/templates/readonly-rbac.yaml.j2, and the `k3s_readonly_crd_api_groups` list in ansible/roles/k8s/cluster-base/defaults/main.yml that its ClusterRole reads); and CrowdSec/Traefik/Authelia auth-plane config",
+      "Protected IaC scopes: IAM/RBAC, networking, quota and node-pool resources; anything named or tagged prod/production; the k3s read-only ServiceAccount RBAC boundary (k8s/roles/cluster-base/templates/readonly-rbac.yaml.j2, and the `k3s_readonly_crd_api_groups` list in k8s/roles/cluster-base/defaults/main.yml that its ClusterRole reads); and CrowdSec/Traefik/Authelia auth-plane config",
       {{/* Without this, a PUBLIC repo plus a sensitive-path entry makes every routine commit that
            touches secrets.yml look like credential leakage. The distinction is ciphertext vs
            plaintext, which the classifier cannot infer from the filename. */}}
-      "Secrets management: SOPS + age. ansible/vars/secrets.yml is age-encrypted CIPHERTEXT, committed to the public repo by design — editing or committing it in encrypted form is routine, not a leak. The sensitive artifacts are: the DECRYPTED plaintext of that file, anything under ansible/inventory/ carrying an inline secret value (that directory is not auto-encrypted), and the age private keys at ~/.config/sops/age/keys.txt or any .agekey file, which must never be committed, printed or transmitted",
+      "Secrets management: SOPS + age. secrets/secrets.yml is age-encrypted CIPHERTEXT, committed to the public repo by design — editing or committing it in encrypted form is routine, not a leak. The sensitive artifacts are: the DECRYPTED plaintext of that file, anything under inventory/ carrying an inline secret value (that directory is not auto-encrypted), and the age private keys at ~/.config/sops/age/keys.txt or any .agekey file, which must never be committed, printed or transmitted",
       "Sensitive data locations & audiences: the age private keys and any decrypted secret plaintext — share with no audience. Internal package registry: none configured. Internal sharing / snippet hosting: none — treat public paste and gist services as outside the trust boundary. Trusted cloud buckets: none beyond the Longhorn backup targets named above"
     ],
 
@@ -605,7 +605,7 @@
            plaintext out of the session and says what it does not cover. claude_guard's
            sops-editor-override and sops-decrypt rules deny those forms before the classifier
            runs; this keeps the prose from contradicting them. */}}
-      "Changing ansible/vars/secrets.yml with `sops set <file> '[\"key\"]' '\"value\"'`, or with a plain `sops <file>` or `sops edit <file>` that sets none of SOPS_EDITOR, EDITOR or VISUAL, is routine: it is the sanctioned way to change a secret, and the file stays encrypted at rest. This entry does NOT cover a sops run that sets one of those variables, which chooses what reads the decrypted file, or one that decrypts (`-d`, `decrypt`, `--output`, `--extract`, `exec-env`, `exec-file`)",
+      "Changing secrets/secrets.yml with `sops set <file> '[\"key\"]' '\"value\"'`, or with a plain `sops <file>` or `sops edit <file>` that sets none of SOPS_EDITOR, EDITOR or VISUAL, is routine: it is the sanctioned way to change a secret, and the file stays encrypted at rest. This entry does NOT cover a sops run that sets one of those variables, which chooses what reads the decrypted file, or one that decrypts (`-d`, `decrypt`, `--output`, `--extract`, `exec-env`, `exec-file`)",
       {{/* Sessions here manage their own worktrees end to end; the permission tiers cover the
            tool calls, this covers the shell half so the classifier doesn't hesitate on cleanup.
            Naming `-D` was not enough on its own: on 2026-08-21 it was still denied, five days

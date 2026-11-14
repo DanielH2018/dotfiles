@@ -58,8 +58,8 @@ PROG = "otelq"
 # first, then the ClusterIP, which is routed on every node and so answers
 # whichever node the pod is running on today.
 #
-# The ClusterIPs are pinned in the manifests that create these Services
-# (ansible/roles/k8s/claude-otel/templates/ in the server repo), which is what
+# The server repo pins these Services' ClusterIPs in
+# k8s/roles/observability/defaults/main.yml, which is what
 # lets them be constants here — a Service that is deleted and recreated would
 # otherwise draw a fresh address and strand this list.
 LOKI_BASES = ("http://127.0.0.1:3100", "http://10.43.99.158:3100")

@@ -24,7 +24,7 @@
 # .html inside the app — loads http:// but refuses file:// even for an in-session file.
 #
 # The server is artifact-server/artifact_server.py, vendored from the homelab's artifacts
-# role (DanielH2018/Server ansible/roles/k8s/artifacts). It serves a searchable index at /,
+# role (DanielH2018/Server k8s/roles/artifacts). It serves a searchable index at /,
 # each artifact at /a/<host>/<relpath>, and the same file at the bare /<relpath> that
 # link-artifact.sh emits. Its docstring lists where it differs from upstream.
 #

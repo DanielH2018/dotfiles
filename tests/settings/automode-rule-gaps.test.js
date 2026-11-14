@@ -21,7 +21,7 @@ function autoMode() {
 }
 
 test('the sops allow names sops set and excludes every editor variable', { skip }, () => {
-  const hits = autoMode().allow.filter((e) => e.includes('ansible/vars/secrets.yml') && e.includes('`sops set'));
+  const hits = autoMode().allow.filter((e) => e.includes('secrets/secrets.yml') && e.includes('`sops set'));
   assert.strictEqual(hits.length, 1);
   for (const name of ['SOPS_EDITOR', 'EDITOR', 'VISUAL', '`exec-env`', '`--output`']) {
     assert.ok(hits[0].includes(name), name);
@@ -93,6 +93,6 @@ test('the deploy --dry-run exemption lapses when the session edits what it rests
 test('the protected IaC scope names the read-only RBAC template, not the deleted setup role', { skip }, () => {
   const hits = autoMode().environment.filter((e) => e.startsWith('Protected IaC scopes'));
   assert.strictEqual(hits.length, 1);
-  assert.ok(hits[0].includes('ansible/roles/k8s/cluster-base/templates/readonly-rbac.yaml.j2'), hits[0]);
+  assert.ok(hits[0].includes('k8s/roles/cluster-base/templates/readonly-rbac.yaml.j2'), hits[0]);
   assert.ok(!hits[0].includes('ansible/roles/setup/'), hits[0]);
 });

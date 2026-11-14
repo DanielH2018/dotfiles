@@ -31,7 +31,7 @@ PROMPTED = {
     "land.sh --detach && cc-wait land": (
         "landing merges a PR, and `land` is a repo-defined wait source, which runs that repo's code"
     ),
-    "openssl rand -base64 32 | jq -Rc . | sops set --value-stdin ansible/vars/secrets.yml"
+    "openssl rand -base64 32 | jq -Rc . | sops set --value-stdin secrets/secrets.yml"
     " '[\"grafana_token\"]'": "/add-secret says to expect a prompt before a secret is written",
 }
 
@@ -56,7 +56,7 @@ HEADLESS = [
     "ls -l ~/.ssh/config",
     "ls ~/.config/sops/age",
     "stat -c '%a %U' ~/.ssh/id_ed25519",
-    "git show --no-textconv --numstat --format='%h %s' HEAD -- ansible/vars/secrets.yml",
+    "git show --no-textconv --numstat --format='%h %s' HEAD -- secrets/secrets.yml",
     # piped and compound ssh and kubectl
     "ssh daniel-server 'journalctl -u k3s --since -1h --no-pager' | tail -20",
     "ssh daniel-pi uptime && ssh daniel-server uptime",
