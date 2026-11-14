@@ -17,17 +17,26 @@ the argv and reads the payload's `permission_mode`, and asks only in a mode that
 `gitargv.unwrap` skips (`timeout`, `nohup`, `nice`, `time`, `xargs`, `sudo`, ...). It also
 reads the remote text of an `ssh` or `hl` call and the text of a `bash -c` / `sh -c`, two
 levels deep. A stage that executes its stdin runs what it reads there: a `< file`, a heredoc
-or herestring body, or a `cat` piped into it. Such a stage is a shell given no script or
+or herestring body, or the stage piped into it. Such a stage is a shell given no script or
 `-s`, or an ssh or hl call whose remote command is empty or such a shell. The
 PermissionRequest judge refuses its trusted-host allow for a command `route()` matches, so
 the ask this check raises reaches the user.
 
-Known residuals: a numeric workflow ID, which cannot be resolved offline; and a script fed
-to a shell by anything but `<`, a heredoc, a herestring or `cat` (`bash <(cat …)`,
-`tee … | sh`). `gh api -X POST …/dispatches` already asks through `deny.gh_api`.
+A stage that feeds a pipe is read as writing every file it names and everything its own
+stdin carries (dotfiles #1342). The check does not model what `sed`, `head` or `tee` do
+with their operands. It over-reads instead: `grep -c x hosts/bootstrap-host.sh | sh` asks,
+and no filter between the script and the shell hides the script. A `<( )` stands for the
+stdout of its body wherever a file can stand: as a shell's script, after `<`, or as an
+operand of a stage that feeds a pipe.
+
+Known residuals: a numeric workflow ID, which cannot be resolved offline; a script whose
+text is the argument of an `echo` or `printf` that feeds a shell (dotfiles #1346); and a
+shell inside a `>( )` that reads the stage's output, or a script run by `source` or `.`
+(dotfiles #1347). `gh api -X POST …/dispatches` already asks through `deny.gh_api`.
 """
 
 import posixpath
+from dataclasses import dataclass
 
 from claude_guard.deny import _segment_argv, _stage_argvs
 from claude_guard.gitargv import unwrap
@@ -66,6 +75,8 @@ _RUN_VERBS = frozenset(
 _ENABLE_VERBS = frozenset({"enable", "reenable"})
 _UNITS = frozenset({"homelab-reconcile", "homelab-reconcile.service"})
 _DEPTH = 2
+# The word a `<( )` is replaced by before the command is lexed, followed by its index.
+_PROCSUB = "/dev/fd/claude-guard-procsub-"
 
 
 def _positionals(args: list[str], valued: frozenset[str]) -> list[str]:
@@ -136,16 +147,18 @@ def _shell_operand(args: list[str]) -> tuple[str, str] | None:
     return ("script", args[i])
 
 
+def _script(argv: list[str]) -> str | None:
+    """The script file a shell `argv` runs, or None when `argv` runs none."""
+    args = _shell_args(argv)
+    operand = _shell_operand(args) if args is not None else None
+    return operand[1] if operand and operand[0] == "script" else None
+
+
 def _runs_bootstrap(argv: list[str]) -> bool:
     if unwrap(argv, _BOOTSTRAP) is not None:
         return True
-    args = _shell_args(argv)
-    operand = _shell_operand(args) if args is not None else None
-    return (
-        operand is not None
-        and operand[0] == "script"
-        and (posixpath.basename(operand[1]) == _BOOTSTRAP)
-    )
+    script = _script(argv)
+    return script is not None and posixpath.basename(script) == _BOOTSTRAP
 
 
 def _starts_reconcile(argv: list[str]) -> bool:
@@ -229,19 +242,6 @@ def _redirects(argv: list[str]) -> tuple[list[str], str | None, str | None]:
     return words, source, herestring
 
 
-def _cat_output(argv: list[str], files: list[str], texts: list[str]) -> tuple[list[str], list[str]]:
-    """The files and texts `argv` writes to stdout when it is a `cat` whose stdin carries
-    `files` and `texts`, else two empty lists."""
-    found = unwrap(argv, "cat")
-    if found is None:
-        return [], []
-    operands = [w for w in found[0][1:] if w == "-" or not w.startswith("-")]
-    if not operands:
-        return files, texts
-    named = [w for w in operands if w != "-"]
-    return (named + files, texts) if "-" in operands else (named, [])
-
-
 def _past_ssh_options(args: list[str], i: int) -> int:
     """The index of the first word at or after `i` that is not an ssh option. ssh reads
     options after the host too, and `--` ends them."""
@@ -252,42 +252,89 @@ def _past_ssh_options(args: list[str], i: int) -> int:
     return i
 
 
-def _argvs(command: str, depth: int = 0) -> list[list[str]]:
-    """Every argv `command` runs, with redirections dropped. A script file fed to a stage
-    that executes its stdin appears as a one-word argv naming that file."""
-    parsed = parse(command)
-    if not parsed.ok:
-        return []
+@dataclass(frozen=True, slots=True)
+class _Stream:
+    """What a stage reads on stdin or writes to stdout.
+
+    Attributes:
+        files: the files whose content the stream carries. One can be a `_PROCSUB` word.
+        texts: the script texts the stream carries.
+    """
+
+    files: tuple[str, ...] = ()
+    texts: tuple[str, ...] = ()
+
+    def __add__(self, other: _Stream) -> _Stream:
+        return _Stream(self.files + other.files, self.texts + other.texts)
+
+    def resolved(self, feeds: dict[str, _Stream]) -> _Stream:
+        """This stream with each `_PROCSUB` word replaced by the stream `feeds` holds for it."""
+        out = _Stream(texts=self.texts)
+        for path in self.files:
+            out += feeds.get(path, _Stream((path,)))
+        return out
+
+
+def _read(command: str, depth: int = 0) -> tuple[list[list[str]], _Stream]:
+    """Every argv `command` runs, with redirections dropped, and what `command` writes to
+    stdout. A script file fed to a stage that executes it appears as a one-word argv naming
+    that file."""
+    spans = substitution_spans(command)
+    if spans is None:
+        return [], _Stream()
     out: list[list[str]] = []
+    feeds: dict[str, _Stream] = {}
+    masked = ""
+    last = 0
+    for span in spans:
+        argvs, stdout = _read(command[span.body : span.end - 1], depth)
+        out.extend(argvs)
+        if span.kind == "procsub" and command[span.start] == "<":
+            word = f"{_PROCSUB}{len(feeds)}"
+            feeds[word] = stdout
+            masked += command[last : span.start] + word
+            last = span.end
+    masked += command[last:]
 
     def add(words: list[str]) -> None:
         out.append(words)
         inner = _inner_text(words) if depth < _DEPTH else None
         if inner:
-            out.extend(_argvs(inner, depth + 1))
+            out.extend(_read(inner, depth + 1)[0])
 
-    piped_files: list[str] = []
-    piped_texts: list[str] = []
-    for seg in parsed.segments:
+    written = _Stream()
+    piped = _Stream()
+    for seg in parse(masked).segments:
         if not seg.text.strip():
             continue  # `|&` parses as `|` then an empty `&` segment
         argv = _segment_argv(seg.text)
         words, source, herestring = _redirects(argv) if argv else ([], None, None)
-        files = [source] if source else piped_files
-        texts = [*seg.heredocs, *([herestring] if herestring else [])] or piped_texts
+        stdin = _Stream(
+            (source,) if source else piped.files,
+            (*seg.heredocs, *([herestring] if herestring else [])) or piped.texts,
+        )
         if words:
             add(words)
+            script = _script(words)
             if _runs_stdin(words):
-                out.extend([path] for path in files)
-                if depth < _DEPTH:
-                    for text in texts:
-                        out.extend(_argvs(text, depth + 1))
-        piped_files, piped_texts = (
-            _cat_output(words, files, texts) if seg.sep == "|" and words else ([], [])
-        )
-    for span in substitution_spans(command) or ():
-        out.extend(_argvs(command[span.body : span.end - 1], depth))
-    return out
+                executed = stdin
+            elif script in feeds:
+                executed = _Stream((script,))
+            else:
+                executed = _Stream()
+            executed = executed.resolved(feeds)
+            out.extend([path] for path in executed.files)
+            if depth < _DEPTH:
+                for text in executed.texts:
+                    out.extend(_read(text, depth + 1)[0])
+        operands = tuple(word for word in words[1:] if not word.startswith("-"))
+        stdout = (_Stream(operands) + stdin).resolved(feeds)
+        if seg.sep == "|":
+            piped = stdout
+        else:
+            piped = _Stream()
+            written += stdout
+    return out, written
 
 
 def route(command: str) -> str | None:
@@ -296,7 +343,7 @@ def route(command: str) -> str | None:
     The write is a `promote` dispatch, a `bootstrap-host.sh` run or a start of
     `homelab-reconcile`, run locally or inside an `ssh`, `hl` or `sh -c` payload.
     """
-    for argv in _argvs(command):
+    for argv in _read(command)[0]:
         if _dispatches_promote(argv):
             return PROMOTE_REASON
         if _runs_bootstrap(argv):

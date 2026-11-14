@@ -1,4 +1,4 @@
-"""A hand-run homelab write asks outside auto mode (dotfiles #1321, #1326, #1334).
+"""A hand-run homelab write asks outside auto mode (dotfiles #1321, #1326, #1334, #1342).
 
 Driven through `hook.pre_tool_use` with a temp HOME whose settings hold the template's
 permissions, as the harness sends a payload carrying `permission_mode`.
@@ -41,6 +41,13 @@ BOOTSTRAPS = [
     "cat hosts/bootstrap-host.sh |& ssh daniel-pi sh",
     "echo $(ssh daniel-pi bash -s < hosts/bootstrap-host.sh)",
     "x=$(cat hosts/bootstrap-host.sh | ssh daniel-pi sh)",
+    "sed '' hosts/bootstrap-host.sh | ssh daniel-pi sh",
+    "tee /tmp/copy.sh < hosts/bootstrap-host.sh | ssh daniel-pi bash -s",
+    "cat hosts/bootstrap-host.sh | head -n 500 | ssh daniel-pi sh",
+    "bash <(cat hosts/bootstrap-host.sh) daniel-pi",
+    "bash < <(sed '' hosts/bootstrap-host.sh)",
+    "cat <(cat hosts/bootstrap-host.sh) | ssh daniel-pi sh",
+    "ssh daniel-pi 'bash <(cat hosts/bootstrap-host.sh)'",
 ]
 # No sudo form: the sudo boundary in deny.py already denies it, locally and over ssh.
 RECONCILES = [
@@ -56,6 +63,8 @@ RECONCILES = [
     "ssh daniel-pi sh <<'EOF'\nsystemctl start homelab-reconcile\nEOF",
     "cat <<'EOF' | ssh daniel-pi bash\nsystemctl start homelab-reconcile\nEOF",
     "bash <<< 'systemctl start homelab-reconcile'",
+    "sed 's/^ //' <<'EOF' | ssh daniel-pi bash\n systemctl start homelab-reconcile\nEOF",
+    "bash <(cat <<'EOF'\nsystemctl start homelab-reconcile\nEOF\n)",
 ]
 WRITES = DISPATCHES + BOOTSTRAPS + RECONCILES
 NOT_WRITES = [
@@ -75,6 +84,10 @@ NOT_WRITES = [
     "bash lint.sh < hosts/bootstrap-host.sh",
     "ssh daniel-pi 'cat > /tmp/b.sh' < hosts/bootstrap-host.sh",
     "cat > x.sh <<'EOF'\nsystemctl start homelab-reconcile\nEOF",
+    "sed '' hosts/bootstrap-host.sh | head",
+    "diff <(cat hosts/bootstrap-host.sh) <(ssh daniel-pi cat /tmp/bootstrap-host.sh)",
+    "bash lint.sh <(cat hosts/bootstrap-host.sh)",
+    "cat hosts/bootstrap-host.sh; ssh daniel-pi sh",
 ]
 # Payloads to a trusted ssh host, which the judge's trusted-host arm would otherwise allow.
 TRUSTED_HOST_WRITES = [
