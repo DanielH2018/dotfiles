@@ -1,6 +1,6 @@
 """A hand-run homelab write asks outside auto mode.
 
-Dotfiles #1321, #1326, #1334, #1342, #1346 and #1347.
+Dotfiles #1321, #1326, #1334, #1342, #1346, #1347, #1354 and #1355.
 
 Driven through `hook.pre_tool_use` with a temp HOME whose settings hold the template's
 permissions, as the harness sends a payload carrying `permission_mode`.
@@ -60,6 +60,14 @@ BOOTSTRAPS = [
     "source hosts/bootstrap-host.sh",
     ". hosts/bootstrap-host.sh daniel-pi",
     "source <(cat hosts/bootstrap-host.sh)",
+    "bash -c 'sh' < hosts/bootstrap-host.sh",
+    "ssh daniel-pi 'cd /srv && sh' < hosts/bootstrap-host.sh",
+    'eval "$(cat hosts/bootstrap-host.sh)"',
+    "eval `cat hosts/bootstrap-host.sh`",
+    'echo "$(cat hosts/bootstrap-host.sh)" | ssh daniel-pi sh',
+    'script=$(cat hosts/bootstrap-host.sh); eval "$script"',
+    'script=hosts/bootstrap-host.sh; bash "$script" daniel-pi',
+    "export script=hosts/bootstrap-host.sh && ssh daniel-pi sh < ${script}",
 ]
 # No sudo form: the sudo boundary in deny.py already denies it, locally and over ssh.
 RECONCILES = [
@@ -89,6 +97,18 @@ RECONCILES = [
     "dd if=/dev/zero of=>(systemctl start homelab-reconcile)",
     "foo --out=>(ssh daniel-pi systemctl start homelab-reconcile)",
     "echo 'systemctl start homelab-reconcile' > >(ssh daniel-pi sh)",
+    "bash -c 'sh' <<< 'systemctl start homelab-reconcile'",
+    "ssh daniel-pi 'bash -c sh' <<'EOF'\nsystemctl start homelab-reconcile\nEOF",
+    "eval systemctl start homelab-reconcile",
+    "eval 'ssh daniel-pi \"systemctl start homelab-reconcile\"'",
+    "x='systemctl start homelab-reconcile'; echo \"$x\" | ssh daniel-pi sh",
+    "x='systemctl start homelab-reconcile'; ssh daniel-pi \"$x\"",
+    "x='systemctl start homelab-reconcile'; ssh daniel-pi $x",
+    "x='systemctl start homelab-reconcile'; $x",
+    "x='systemctl start homelab-reconcile'; out=$(ssh daniel-pi \"$x\")",
+    'x=\'systemctl start homelab-reconcile\'; y="cd / && $x"; ssh daniel-pi "$y"',
+    'x=\'ssh daniel-pi "systemctl start homelab-reconcile"\'; bash -c "$x"',
+    "unit=homelab-reconcile; ssh daniel-pi sh <<EOF\nsystemctl start $unit\nEOF",
 ]
 WRITES = DISPATCHES + BOOTSTRAPS + RECONCILES
 NOT_WRITES = [
@@ -117,6 +137,14 @@ NOT_WRITES = [
     "tee >(wc -l) < hosts/bootstrap-host.sh",
     "sh lint.sh > >(tee log.txt) < hosts/bootstrap-host.sh",
     "source lint.sh hosts/bootstrap-host.sh",
+    "bash -c 'cat > /tmp/b.sh' < hosts/bootstrap-host.sh",
+    "bash -c 'sh lint.sh' < hosts/bootstrap-host.sh",
+    'eval "$(ssh-agent -s)"',
+    'echo "$(cat hosts/bootstrap-host.sh)"',
+    "x='systemctl start homelab-reconcile'; echo \"$x\"",
+    "x='systemctl start homelab-reconcile'; echo '$x' | ssh daniel-pi sh",
+    "unit=homelab-reconcile; ssh daniel-pi sh <<'EOF'\nsystemctl start $unit\nEOF",
+    "x='systemctl status homelab-reconcile'; ssh daniel-pi \"$x\"",
 ]
 # Payloads to a trusted ssh host, which the judge's trusted-host arm would otherwise allow.
 TRUSTED_HOST_WRITES = [

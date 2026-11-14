@@ -15,12 +15,13 @@ the argv and reads the payload's `permission_mode`, and asks only in a mode that
 
 `route()` reads every top-level segment and `$( )` body, past the wrappers that
 `gitargv.unwrap` skips (`timeout`, `nohup`, `nice`, `time`, `xargs`, `sudo`, ...). It also
-reads the remote text of an `ssh` or `hl` call and the text of a `bash -c` / `sh -c`, two
+reads the remote text of an `ssh` or `hl` call and the text of a `bash -c` / `sh -c`, three
 levels deep. A stage that executes its stdin runs what it reads there: a `< file`, a heredoc
 or herestring body, or the stage piped into it. Such a stage is a shell given no script or
-`-s`, or an ssh or hl call whose remote command is empty or such a shell. The
-PermissionRequest judge refuses its trusted-host allow for a command `route()` matches, so
-the ask this check raises reaches the user.
+`-s`, or an ssh or hl call whose remote command is empty. The remote text and the `-c` text
+read the stdin of the stage that carries them, so a shell inside either executes it
+(dotfiles #1354). The PermissionRequest judge refuses its trusted-host allow for a command
+`route()` matches, so the ask this check raises reaches the user.
 
 A stage that feeds a pipe is read as writing every file it names and everything its own
 stdin carries (dotfiles #1342). The check does not model what `sed`, `head` or `tee` do
@@ -35,17 +36,29 @@ format is filled with its arguments in order, every conversion as `%s` is.
 
 `source` and `.` run a script file as a shell does (dotfiles #1347).
 
-Known residuals: a numeric workflow ID, which cannot be resolved offline; a shell inside a
-`-c` string that reads the outer stage's stdin (dotfiles #1354); and a script that `eval`
-runs or a variable carries (dotfiles #1355). `gh api -X POST …/dispatches` already asks through
-`deny.gh_api`.
+`eval` runs its arguments as script text. A `$( )` or a backtick pair stands for the stdout
+of its body wherever its text lands: in the arguments of an `eval`, in what an `echo` or
+`printf` writes, or as an operand of a stage that feeds a pipe (dotfiles #1355).
+
+A variable is followed when the same command assigns it (dotfiles #1355). The assignment
+is a segment of its own (`x='...'`) or an argument of `export`, `declare`, `typeset`,
+`local` or `readonly`, and its value is literal, another such variable, or a `$( )`. Every
+later `$x` and `${x}` is expanded before the segment is read, in a `$( )` body and an
+unquoted heredoc body too.
+
+Known residuals: a numeric workflow ID, which cannot be resolved offline; and a variable
+set any other way, such as by `read`, a `for` loop, a `${x:-default}` or the environment.
+`gh api -X POST …/dispatches` already asks through `deny.gh_api`.
 """
 
+import itertools
 import posixpath
 import re
+import shlex
 from dataclasses import dataclass
 
-from claude_guard.deny import _segment_argv, _stage_argvs
+from claude_guard.assignments import split_assignments
+from claude_guard.deny import _segment_argv
 from claude_guard.gitargv import unwrap
 from claude_guard.segment import parse, substitution_spans
 
@@ -82,11 +95,16 @@ _RUN_VERBS = frozenset(
 )
 _ENABLE_VERBS = frozenset({"enable", "reenable"})
 _UNITS = frozenset({"homelab-reconcile", "homelab-reconcile.service"})
-_DEPTH = 2
-# The word a `<( )` or `>( )` is replaced by before the command is lexed is this, its index,
-# then `_PROCSUB_END`, so no such word is a prefix of another.
-_PROCSUB = "/dev/fd/claude-guard-procsub-"
-_PROCSUB_END = "-end"
+_DECLARES = ("export", "declare", "typeset", "local", "readonly")
+_DEPTH = 3
+# The word a substitution is replaced by before the command is lexed is this, a number no
+# other substitution has, then `_SUBSTITUTION_END`, so no such word is a prefix of another.
+_SUBSTITUTION = "/dev/fd/claude-guard-substitution-"
+_SUBSTITUTION_END = "-end"
+_substitution_ids = itertools.count()
+_NAME = r"[A-Za-z_][A-Za-z0-9_]*"
+_REFERENCE = re.compile(rf"\$(?:({_NAME})|\{{({_NAME})\}})")
+_DECLARED = re.compile(rf"({_NAME})=(.*)", re.DOTALL)
 _CONVERSION = re.compile(r"%%|%[-+ #0]*[\d*]*(?:\.[\d*]+)?[a-zA-Z]")
 
 
@@ -255,14 +273,59 @@ def _inner_text(argv: list[str]) -> str | None:
     return operand[1] if operand and operand[0] == "command" else None
 
 
+def _evaluated(argv: list[str]) -> tuple[str, ...]:
+    """The script text an `eval` `argv` runs, or none for another command."""
+    found = unwrap(argv, "eval")
+    text = " ".join(found[0][1:]) if found is not None else ""
+    return (text,) if text else ()
+
+
+def _substituted(text: str, variables: dict[str, str]) -> str:
+    """`text` with each `$NAME` and `${NAME}` that `variables` holds replaced by its value,
+    as the shell expands a heredoc body or an assigned value: no quoting, no splitting."""
+    return _REFERENCE.sub(lambda ref: variables.get(ref[1] or ref[2], ref[0]), text)
+
+
+def _expanded(text: str, variables: dict[str, str]) -> str:
+    """`text` with each `$NAME` and `${NAME}` that `variables` holds replaced by its value,
+    as the shell expands a command.
+
+    A reference inside single quotes stays. One inside double quotes becomes part of that
+    word. One outside quotes becomes a word for each field of the value.
+    """
+    out: list[str] = []
+    quote = ""
+    i = 0
+    while i < len(text):
+        char = text[i]
+        if quote == "'":
+            if char == "'":
+                quote = ""
+        elif char == "\\":
+            out.append(text[i : i + 2])
+            i += 2
+            continue
+        elif (ref := _REFERENCE.match(text, i)) and (ref[1] or ref[2]) in variables:
+            value = variables[ref[1] or ref[2]]
+            if quote:
+                out.append(re.sub(r'(["\\])', r"\\\1", value))
+            else:
+                out.append(" ".join(shlex.quote(field) for field in value.split()))
+            i = ref.end()
+            continue
+        elif char in "'\"":
+            quote = "" if quote == char else quote or char
+        out.append(char)
+        i += 1
+    return "".join(out)
+
+
 def _runs_stdin(argv: list[str]) -> bool:
     """Whether `argv` executes what it reads on stdin: a shell reading its commands there,
-    or an ssh or hl call whose remote command is empty or such a shell."""
+    or an ssh or hl call with no remote command."""
     remote = _remote_text(argv)
     if remote is not None:
-        return not remote.strip() or any(
-            _runs_stdin(_redirects(inner)[0]) for inner in _stage_argvs(remote)
-        )
+        return not remote.strip()
     args = _shell_args(argv)
     operand = _shell_operand(args) if args is not None else None
     return operand is not None and operand[0] == "stdin"
@@ -316,8 +379,9 @@ class _Stream:
     """What a stage reads on stdin or writes to stdout.
 
     Attributes:
-        files: the files whose content the stream carries. One can be a `_PROCSUB` word.
-        texts: the script texts the stream carries.
+        files: the files whose content the stream carries. One can be a `_SUBSTITUTION`
+          word.
+        texts: the script texts the stream carries. One can hold a `_SUBSTITUTION` word.
     """
 
     files: tuple[str, ...] = ()
@@ -327,15 +391,20 @@ class _Stream:
         return _Stream(self.files + other.files, self.texts + other.texts)
 
     def resolved(self, feeds: dict[str, _Stream]) -> _Stream:
-        """This stream with each `_PROCSUB` word replaced by the stream `feeds` holds for it."""
-        out = _Stream(texts=self.texts)
-        for path in self.files:
-            out += feeds.get(path, _Stream((path,)))
+        """This stream with the stream `feeds` holds for each `_SUBSTITUTION` word put in
+        place of a file that is the word, and added for a file or text that contains it."""
+        out = _Stream(tuple(path for path in self.files if path not in feeds), self.texts)
+        for word, feed in feeds.items():
+            if any(word in item for item in self.files + self.texts):
+                out += feed
         return out
 
 
 def _read(
-    command: str, depth: int = 0, stdin: _Stream | None = None
+    command: str,
+    depth: int = 0,
+    stdin: _Stream | None = None,
+    variables: dict[str, str] | None = None,
 ) -> tuple[list[list[str]], _Stream]:
     """Every argv `command` runs, with redirections dropped, and what `command` writes to
     stdout. A script file fed to a stage that executes it appears as a one-word argv naming
@@ -346,70 +415,84 @@ def _read(
         depth: how many shells deep `command` sits inside the command the check was given.
         stdin: what `command` itself reads on stdin, nothing when omitted. Every stage
           that heads a pipeline reads it.
+        variables: the value of each variable assigned before `command` runs.
     """
     stdin = stdin or _Stream()
+    variables = dict(variables or {})
     spans = substitution_spans(command)
     if spans is None:
         return [], _Stream()
     out: list[list[str]] = []
     feeds: dict[str, _Stream] = {}
+    bodies: dict[str, str] = {}
     sinks: dict[str, str] = {}
     masked = ""
     last = 0
-    for i, span in enumerate(spans):
-        body = command[span.body : span.end - 1]
-        if span.kind != "procsub":
-            out.extend(_read(body, depth)[0])
-            continue
-        word = f"{_PROCSUB}{i}{_PROCSUB_END}"
-        if command[span.start] == "<":
-            argvs, feeds[word] = _read(body, depth)
-            out.extend(argvs)
-        else:
-            sinks[word] = body
+    for span in spans:
+        word = f"{_SUBSTITUTION}{next(_substitution_ids)}{_SUBSTITUTION_END}"
+        target = sinks if command[span.start] == ">" else bodies
+        target[word] = command[span.body : span.end - 1]
         masked += command[last : span.start] + word
         last = span.end
     masked += command[last:]
 
-    def add(words: list[str]) -> None:
-        out.append(words)
-        inner = _inner_text(words) if depth < _DEPTH else None
-        if inner:
-            out.extend(_read(inner, depth + 1)[0])
+    def nested(text: str, read: _Stream, known: dict[str, str] | None = None) -> None:
+        if depth < _DEPTH:
+            out.extend(_read(text, depth + 1, read, known)[0])
 
     written = _Stream()
     piped = stdin
     for seg in parse(masked).segments:
         if not seg.text.strip():
             continue  # `|&` parses as `|` then an empty `&` segment
-        argv = _segment_argv(seg.text) or []
+        for word in [word for word in bodies if word in seg.text]:
+            argvs, feeds[word] = _read(bodies.pop(word), depth, variables=variables)
+            out.extend(argvs)
+        assigned = split_assignments(seg.text)
+        if assigned is not None and not assigned.rest:
+            for assignment in assigned.assignments:
+                variables[assignment.name] = _substituted(assignment.value, variables)
+        argv = _segment_argv(_expanded(seg.text, variables)) or []
         words, fed = _redirects(argv)
-        read = fed + _Stream(texts=seg.heredocs) + piped
+        heredocs = tuple(
+            body if quoted else _substituted(body, variables)
+            for body, quoted in zip(seg.heredocs, seg.heredoc_quoted, strict=True)
+        )
+        read = fed + _Stream(texts=heredocs) + piped
         if words:
-            add(words)
+            out.append(words)
+            if words[0] in _DECLARES:
+                for declared in filter(None, map(_DECLARED.fullmatch, words[1:])):
+                    variables[declared[1]] = declared[2]
+            inner = _inner_text(words)
+            if inner:
+                nested(inner, read)
             script = _script(words)
+            evaluated = _evaluated(words)
             if _runs_stdin(words):
                 executed = read
             elif script in feeds:
                 executed = _Stream((script,))
             else:
                 executed = _Stream()
-            executed = executed.resolved(feeds)
+            executed = (executed + _Stream(texts=evaluated)).resolved(feeds)
             out.extend([path] for path in executed.files)
-            if depth < _DEPTH:
-                for text in executed.texts:
-                    out.extend(_read(text, depth + 1)[0])
+            for text in executed.texts:
+                if text in evaluated:
+                    nested(text, read, variables)
+                else:
+                    nested(text, _Stream())
         operands = tuple(word for word in words[1:] if not word.startswith("-"))
         stdout = (_Stream(operands, _printed(words)) + read).resolved(feeds)
         for sink in [sink for sink in sinks if sink in seg.text]:
-            out.extend(_read(sinks.pop(sink), depth, stdout)[0])
+            out.extend(_read(sinks.pop(sink), depth, stdout, variables)[0])
         if seg.sep == "|":
             piped = stdout
         else:
             piped = stdin
             written += stdout
-    for body in sinks.values():
-        out.extend(_read(body, depth)[0])
+    for body in (bodies | sinks).values():
+        out.extend(_read(body, depth, variables=variables)[0])
     return out, written
 
 
@@ -417,7 +500,7 @@ def route(command: str) -> str | None:
     """The reason to ask when `command` runs a hand write to the live homelab, else None.
 
     The write is a `promote` dispatch, a `bootstrap-host.sh` run or a start of
-    `homelab-reconcile`, run locally or inside an `ssh`, `hl` or `sh -c` payload.
+    `homelab-reconcile`, run locally or inside an `ssh`, `hl`, `sh -c` or `eval` payload.
     """
     for argv in _read(command)[0]:
         if _dispatches_promote(argv):

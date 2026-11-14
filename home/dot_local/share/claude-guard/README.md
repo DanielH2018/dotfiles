@@ -256,7 +256,7 @@ check. When the payload's `agent_type` names an agent whose frontmatter under
 roots, a command that changes files outside them, a shell or `eval`, and any git or gh verb
 outside a read-only set. Its module docstring says why the rest is a denylist.
 
-`checks/homelab_deploy.py` (dotfiles #1321, #1326, #1334, #1342, #1346, #1347) asks on a hand-run write to the
+`checks/homelab_deploy.py` (dotfiles #1321, #1326, #1334, #1342, #1346, #1347, #1354, #1355) asks on a hand-run write to the
 live homelab. It matches three commands: a `gh workflow run` of the server repo's `promote`
 workflow, wherever `-R` sits in the argv; a run of `hosts/bootstrap-host.sh`; and a
 `systemctl start` or `restart` of `homelab-reconcile`. It reads each one locally and inside
@@ -266,7 +266,11 @@ or a `cat` piped into it. So `ssh host bash -s < hosts/bootstrap-host.sh` matche
 `echo` or `printf` piped into it writes its arguments as script text, a `printf` format
 filled with its arguments. A shell inside a
 `>( )` reads the stdout of the stage that names it. `source` and `.` run a script file as
-a shell does. It asks only when the payload's
+a shell does. A shell inside an ssh remote text or a `-c` string executes the stdin of the
+stage that carries it, so `bash -c 'sh' < hosts/bootstrap-host.sh` matches. `eval` runs
+its arguments as script text, and a `$( )` in them stands for the stdout of its body. A
+variable is expanded when the same command assigns it a literal value or a `$( )`, so
+`x='systemctl start homelab-reconcile'; ssh host "$x"` matches. It asks only when the payload's
 `permission_mode` is `default`, `manual`, `acceptEdits` or `plan`. Auto mode is left to the
 `soft_deny` prose, which clears the dispatch the server repo's post-merge procedure prints.
 A settings `ask` rule cannot make that split, because Claude Code honours an ask rule in
