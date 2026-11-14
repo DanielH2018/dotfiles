@@ -96,3 +96,14 @@ test('the protected IaC scope names the read-only RBAC template, not the deleted
   assert.ok(hits[0].includes('k8s/roles/cluster-base/templates/readonly-rbac.yaml.j2'), hits[0]);
   assert.ok(!hits[0].includes('ansible/roles/setup/'), hits[0]);
 });
+
+test('the secrets entry names the server repo paths that replaced ansible/', { skip }, () => {
+  const mode = autoMode();
+  const hits = mode.environment.filter((e) => e.startsWith('Secrets management'));
+  assert.strictEqual(hits.length, 1);
+  for (const path of ['secrets/secrets.yml', 'anything under inventory/']) {
+    assert.ok(hits[0].includes(path), path);
+  }
+  const stale = Object.values(mode).flat().filter((e) => /\bansible\/(vars|inventory|roles)\//.test(e));
+  assert.deepStrictEqual(stale, []);
+});
