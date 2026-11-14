@@ -58,13 +58,13 @@ test('a non-interactive login bash gets SUDO_ASKPASS through env.sh', {
   assert.strictEqual(out, path.join(bin, 'tmux-askpass'));
 });
 
-test('askpass.sh keeps an inherited helper that exists, and survives a caller\'s set -u', {
+test('askpass.sh keeps an inherited helper that exists, and replaces one that does not', {
   skip: !have('bash') && 'bash unavailable',
 }, () => {
   const { home, bin } = headlessHome();
   const inherited = path.join(bin, 'other-askpass');
   fs.writeFileSync(inherited, '#!/bin/sh\n', { mode: 0o755 });
-  const script = `set -u; . "${home}/.config/shell/askpass.sh"; printf %s "$SUDO_ASKPASS"`;
+  const script = `. "${home}/.config/shell/askpass.sh"; printf %s "$SUDO_ASKPASS"`;
   const keep = execFileSync('bash', ['-c', script], {
     encoding: 'utf8',
     env: { HOME: home, PATH: `${bin}:/usr/bin:/bin`, SUDO_ASKPASS: inherited },
@@ -75,4 +75,24 @@ test('askpass.sh keeps an inherited helper that exists, and survives a caller\'s
     env: { HOME: home, PATH: `${bin}:/usr/bin:/bin`, SUDO_ASKPASS: path.join(bin, 'gone') },
   });
   assert.strictEqual(replace, path.join(bin, 'tmux-askpass'));
+});
+
+// The display variables are read only once /usr/bin/ksshaskpass exists, which it does on no
+// headless host, so the copy points that path at a scratch helper.
+test('askpass.sh survives a caller\'s set -u with SUDO_ASKPASS and the display variables unset', {
+  skip: !have('bash') && 'bash unavailable',
+}, () => {
+  const { home, bin } = headlessHome();
+  const kssh = path.join(bin, 'ksshaskpass');
+  fs.writeFileSync(kssh, '#!/bin/sh\n', { mode: 0o755 });
+  const askpass = path.join(home, '.config', 'shell', 'askpass.sh');
+  const seamed = fs.readFileSync(askpass, 'utf8').replaceAll('/usr/bin/ksshaskpass', kssh);
+  assert.ok(seamed.includes(`[ -x ${kssh} ]`));
+  fs.writeFileSync(askpass, seamed);
+  const run = (env) => execFileSync('bash', ['-c', `set -u; . "${askpass}"; printf %s "$SUDO_ASKPASS"`], {
+    encoding: 'utf8',
+    env: { HOME: home, PATH: `${bin}:/usr/bin:/bin`, ...env },
+  });
+  assert.strictEqual(run({}), path.join(bin, 'tmux-askpass'));
+  assert.strictEqual(run({ DISPLAY: ':0' }), kssh);
 });
