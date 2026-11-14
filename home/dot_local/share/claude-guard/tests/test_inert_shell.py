@@ -2,7 +2,7 @@
 
 import pytest
 
-from claude_guard.inert_shell import only_reads_or_prints
+from claude_guard.inert_shell import only_reads_or_prints, printed
 
 READS_OR_PRINTS = [
     "grep -n 'git push --force' README.md",
@@ -66,3 +66,34 @@ def test_a_command_of_listed_readers_and_printers_is_proven(command):
 @pytest.mark.parametrize("command", NOT_PROVEN)
 def test_anything_outside_the_list_is_not_proven(command):
     assert not only_reads_or_prints(command)
+
+
+PRINTED = [
+    ("echo 'print(1)'", "print(1)"),
+    ('echo -n "a = 1" b', "a = 1 b"),
+    ("printf '%s\\n' 'a = 1' 'print(a)'", "a = 1\nprint(a)\n"),
+    ("printf '%s' 'a\\n'", "a\\n"),
+    ("printf 'a = 1\\nprint(a)\\n'", "a = 1\nprint(a)\n"),
+]
+NOT_READ = [
+    # another command, and a printer the words do not start with
+    "cat f",
+    "echo 'print(1)' )",
+    # a word the shell or the printer may rewrite
+    'echo "print($x)"',
+    "echo *.py",
+    "echo 'a\\nb'",
+    "printf 'a\\tb'",
+    "printf 'a%%b'",
+    "printf '%s %s' a b",
+]
+
+
+@pytest.mark.parametrize(("command", "text"), PRINTED)
+def test_the_text_an_echo_or_a_printf_writes_is_read_from_its_words(command, text):
+    assert printed(command) == text
+
+
+@pytest.mark.parametrize("command", NOT_READ)
+def test_a_segment_whose_output_the_words_do_not_give_prints_nothing_readable(command):
+    assert printed(command) is None
