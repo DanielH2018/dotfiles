@@ -424,8 +424,8 @@ jobs:
   # The macOS half of `bootstrap`, so the os-darwin and os-unix run_ scripts execute rather than
   # only render. `render` covers macOS with `apply --dry-run`, which runs no run_ script. `server`
   # keeps the job within a hosted runner's reach, as it does for bootstrap-windows: Brewfile.tmpl
-  # gates its casks, `mas` and `vscode` rows on workstation, so brew bundle installs the CLI
-  # toolchain and nothing that needs an App Store sign-in or a GUI session.
+  # gates its casks, `mas` and `vscode` rows on workstation except 1Password, which commit signing
+  # needs, so brew bundle installs the CLI toolchain and nothing that needs an App Store sign-in.
   #
   # The runner is not a bare Mac. It ships Homebrew, node, python and gh. Homebrew is checked
   # first because install-brew-bundle defers without it, which would fail the apply for a
@@ -477,6 +477,8 @@ jobs:
           brew list --formula util-linux >/dev/null 2>&1 || missing="$missing util-linux(install-brew-bundle)"
           [ -x "$HOME/.local/bin/claude" ] || missing="$missing claude(install-claude)"
           [ -x "$HOME/.local/bin/ruff" ] || missing="$missing ruff-via-uv-tool(install-python-tools)"
+          [ -e "$HOME/.local/share/fnm/aliases/default" ] || missing="$missing fnm-default-node(install-brew-bundle)"
+          [ -d /Applications/1Password.app ] || missing="$missing 1Password.app(install-brew-bundle)"
           login_shell="$(dscl . -read "/Users/$(id -un)" UserShell | awk '{print $2}')"
           [ "$login_shell" = /bin/zsh ] || missing="$missing zsh-login-shell(set-default-shell,got:$login_shell)"
           [ -z "$missing" ] || { echo "::error::bootstrap left these missing:$missing"; exit 1; }

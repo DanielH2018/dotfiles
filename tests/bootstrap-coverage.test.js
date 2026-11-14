@@ -59,12 +59,13 @@ test('CI runs chezmoi init --apply from zero on a macOS runner', () => {
 });
 
 // bootstrap-macos applies profile=server on a runner with no App Store sign-in and no GUI session.
-test('the Brewfile installs casks, App Store apps and editor extensions on a workstation only', { skip: chezmoiAvailable ? false : 'chezmoi not on PATH' }, () => {
-  const gui = /^(cask|mas|vscode) /m;
+test('the Brewfile installs 1Password on every profile, other GUI apps on a workstation only', { skip: chezmoiAvailable ? false : 'chezmoi not on PATH' }, () => {
+  const gui = /^(cask "(?!1password)|mas |vscode )/m;
   const server = renderFile(srcPath('Brewfile.tmpl'), { profile: 'server' });
   const workstation = renderFile(srcPath('Brewfile.tmpl'), { profile: 'workstation' });
   assert.doesNotMatch(server, gui);
   assert.match(server, /^brew "util-linux"$/m);
+  assert.match(server, /^cask "1password"$/m, 'dot_gitconfig.tmpl signs every darwin commit with op-ssh-sign');
   assert.match(workstation, /^cask "visual-studio-code"$/m);
   assert.match(workstation, /^mas "Keynote"/m);
   assert.match(workstation, /^vscode "/m);

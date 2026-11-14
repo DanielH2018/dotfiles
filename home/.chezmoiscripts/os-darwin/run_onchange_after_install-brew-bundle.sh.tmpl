@@ -68,4 +68,17 @@ if ! brew bundle --file="$BREWFILE"; then
   echo "$TAG: if the failure is a 'mas' row, sign in to the App Store and re-run." >&2
   exit 1
 fi
+
+# The default LTS Node under fnm. os-unix/run_once_before_install-fnm.sh.tmpl does this on Linux,
+# but it runs before this script installs fnm, so on a fresh Mac it finds no fnm and is recorded
+# done. FNM_DIR is the directory install-fnm and modify_settings.json.sh.tmpl read.
+FNM_DIR="${FNM_DIR:-$HOME/.local/share/fnm}"
+export FNM_DIR
+if command -v fnm >/dev/null 2>&1 && [ ! -e "$FNM_DIR/aliases/default" ]; then
+  echo "$TAG: installing the latest LTS node under fnm ..." >&2
+  if ! { fnm install --lts && fnm default lts-latest; }; then
+    echo "$TAG: fnm could not install a default node — deferring (retries next apply)." >&2
+    exit 1
+  fi
+fi
 {{ end -}}

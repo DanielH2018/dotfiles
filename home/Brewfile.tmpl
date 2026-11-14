@@ -44,14 +44,15 @@ brew "pulumi/tap/pulumi"
 {{- range .tools }}{{ if .brew }}
 brew "{{ .brew }}"
 {{- end }}{{- end }}
+# Every profile: dot_gitconfig.tmpl signs every commit on darwin with 1Password's op-ssh-sign.
+cask "1password"
+cask "1password-cli"
 # GUI applications, App Store apps and editor extensions install on a workstation only, the
 # same split the Windows installer makes for its winget GUI inventory. A server-profile Mac
 # gets the CLI toolchain, which is the scope CI's bootstrap-macos job can complete: a `mas`
 # row fails on a machine signed out of the App Store, and the `vscode` rows need the
 # visual-studio-code cask.
 {{ if eq .profile "workstation" -}}
-cask "1password"
-cask "1password-cli"
 cask "firefox"
 cask "font-fira-code-nerd-font"
 cask "font-hack-nerd-font"

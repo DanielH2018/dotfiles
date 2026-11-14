@@ -10,7 +10,8 @@ set -eu
 BIN_DIR="$HOME/.local/bin"                       # already on PATH via dot_zshrc.tmpl
 FNM_DIR="${FNM_DIR:-$HOME/.local/share/fnm}"
 
-# 1. Install the fnm binary if missing — Linux only (macOS gets it from the Brewfile).
+# 1. Install the fnm binary if missing — Linux only (macOS gets it from the Brewfile, and its
+#    default node from os-darwin/run_onchange_after_install-brew-bundle.sh.tmpl).
 if ! command -v fnm >/dev/null 2>&1 && [ ! -x "$BIN_DIR/fnm" ] && [ "$(uname -s)" = "Linux" ]; then
   case "$(uname -m)" in
     x86_64|amd64)  asset="fnm-linux" ;;
