@@ -81,7 +81,7 @@ cuts nothing: the rejected alternatives and the verification output still have t
 <opener: measured symptom and outcome>
 
 <details>
-<summary>Claude Opus 5.5 (high effort): full write-up</summary>
+<summary><model> (<effort> effort): full write-up</summary>
 
 ## Why the cheaper fix fails
 ...

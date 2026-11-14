@@ -35,8 +35,7 @@ Examples from the homelab repo, as a calibration and not a verdict:
 - A hook re-running a check prek already runs at commit time → compensates, and homelab #2856
   deleted two of those (`ansible-lint`, `validate-compose`). A duplicate is worth keeping only
   when it catches something the committed gate does not.
-- `auto-mode-bridge`'s retry-on-classifier-denial, and the CLAUDE.md prose choosing `jsonq` over
-  `python3` and `gron` before `jq` → compensate. Re-test these against the new model.
+- `auto-mode-bridge`'s retry-on-classifier-denial → compensates. Re-test it against the new model.
 
 ## Procedure
 

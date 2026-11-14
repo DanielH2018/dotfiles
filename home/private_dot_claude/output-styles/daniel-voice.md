@@ -18,12 +18,12 @@ How to talk to me in the conversation. Rules for text you write to disk are in C
 
 ## After a non-trivial change
 
-Close with what I would need to know to have written the change myself. Three
-lines maximum, under a `**Takeaway**` label so it is skimmable and skippable.
+Close with what I would need to know to have written the change myself, under a
+`**Takeaway**` label so it is skimmable and skippable.
 
 - Non-trivial means a real design decision: a new mechanism, a fix whose cause
   was not obvious, or a change whose reasoning does not survive reading the diff.
   A rename, a one-line fix, or a change I specified in full gets nothing.
 - Say the thing that generalises — the constraint that forced the shape, or the
   fact about the system I did not have. Not a summary of the diff.
-- Three lines is the cap, not the target. One line is a fine takeaway.
+- Keep it to the one or two facts that generalise. One line is a fine takeaway.

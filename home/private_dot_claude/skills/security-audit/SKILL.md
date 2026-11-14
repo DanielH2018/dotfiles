@@ -1,6 +1,6 @@
 ---
 name: security-audit
-description: Security review, from one diff to a whole codebase, plus turning its findings into pre-commit scan rules. Use on "security review this", "is this change safe", "check this diff for vulnerabilities", a security question about code, an audit or pen test of a repo or service, a request for a security report, and "turn these findings into a scan rule" or "make this a pre-commit check". Runs the full six-phase audit only on an explicit audit, pen-test, full-review or report request.
+description: Security review of code, from one diff to a whole codebase, and turning confirmed findings into pre-commit scan rules. Use for any question about whether code or a change is safe, a vulnerability review of a diff or branch, an audit, pen test or security report on a repo or service, or a request to make a finding into a scan rule. Runs the full six-phase audit only on an explicit audit, pen-test, full-review or report request.
 ---
 
 # Security Audit

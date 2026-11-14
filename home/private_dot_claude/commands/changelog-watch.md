@@ -57,6 +57,8 @@ Assign each surfaced feature a verdict:
 - **Consider** — plausibly useful but needs a judgment call or has a tradeoff. State the tradeoff.
 - **Skip** — recorded so it isn't re-proposed; one-line reason.
 
+A changelog entry that introduces a new default model also gets a **Consider** line naming `scaffolding-delete-pass` and `memory-consolidation` as the follow-up.
+
 Be terse and specific — cite the changelog version and the exact config target (`file:setting`). Do not invent capabilities; if unsure what a changelog line means, say so rather than guessing. If nothing in the new entries is worth adopting or considering, say that in one line (don't manufacture proposals).
 
 STEP 5 — Write proposals + update state + auto-commit
