@@ -1912,12 +1912,39 @@ OTHER_INLINE_WRITE_DENY = [
     f"ruby -e 'x = 1' -e \"File.write('{BASHRC}', 'x')\"",
     f'timeout 5 node -e "{NODE_WRITES_BASHRC}"',
     f'bash -c "ruby -e \\"File.write(\'{BASHRC}\', 1)\\""',
+    # dotfiles #1362: the operands of `deno eval` are the program, after an option or split
+    f"deno eval \"Deno.writeTextFileSync('{BASHRC}', 'x')\"",
+    f"deno eval --ext ts \"Deno.writeTextFileSync('{BASHRC}', 'x')\"",
+    f"deno eval 'Deno.writeTextFileSync(' \"'{BASHRC}', 'x')\"",
+]
+# DECIDED (dotfiles #1363, operator ruling 2026-11-14): a node, perl or ruby program given a
+# protected path as an operand is refused when it calls a write API or edits in place.
+NODE_WRITES_ARGUMENT = "require('fs').writeFileSync(process.argv[1], 'x')"
+OTHER_OPERAND_WRITE_DENY = [
+    f'node -e "{NODE_WRITES_ARGUMENT}" ~/.bashrc',
+    "node -e \"require('fs').createWriteStream(process.argv[1]).end('x')\" ~/.zshrc",
+    f'echo "{NODE_WRITES_ARGUMENT}" | node - ~/.bashrc',
+    "perl -e 'open(my $f, \">>\", $ARGV[0]); print $f 1' ~/.bashrc",
+    "perl -e 'rename $ARGV[0], $ARGV[1]' /tmp/x ~/.gitconfig",
+    "ruby -e 'File.write(ARGV[0], 1)' ~/.bashrc",
+    "ruby -e 'File.open(ARGV[0], \"a\") { |f| f.puts 1 }' ~/.zshrc",
+    "ruby -rfileutils -e 'FileUtils.cp(ARGV[0], ARGV[1])' /tmp/x ~/.gitconfig",
+    # an in-place flag makes a program with no write call a writer
+    "ruby -pi -e '$_.upcase!' ~/.gitconfig",
+    "ruby -i.bak -pe '$_.upcase!' ~/.zshrc",
 ]
 OTHER_WRITE_ALLOW = [
     "node -e 'console.log(process.env.HOME)'",
     "ruby -e 'puts 1'",
     # the path is a file the program reads as data, or belongs to a script file
     "perl -ne 'print if /PATH/' ~/.zshrc",
+    "ruby -ne 'puts $_' ~/.gitconfig",
+    "node -e \"console.log(require('fs').readFileSync(process.argv[1], 'utf8'))\" ~/.bashrc",
+    "perl -e 'open(my $f, \"<\", $ARGV[0]); print readline($f)' ~/.bashrc",
+    "ruby -e 'File.open(ARGV[0]) { |f| puts f.read }' ~/.zshrc",
+    # a write call whose operands name no protected file
+    f'node -e "{NODE_WRITES_ARGUMENT}" out.txt',
+    "deno eval 'console.log(1)'",
     "node count.js -e ~/.bashrc",
     "cat ~/.bashrc | perl -ne 'print if /PATH/'",
     # one plain perl substitution runs no code, so the path in it is text
@@ -1935,6 +1962,11 @@ def test_a_program_piped_to_another_interpreter_that_names_a_protected_file_is_r
 def test_an_inline_program_of_another_interpreter_that_names_a_protected_file_is_refused():
     expected = ["interpreter-write"] * len(OTHER_INLINE_WRITE_DENY)
     assert rules(OTHER_INLINE_WRITE_DENY) == expected
+
+
+def test_a_writing_program_of_another_interpreter_given_a_protected_file_is_refused():
+    expected = ["interpreter-write"] * len(OTHER_OPERAND_WRITE_DENY)
+    assert rules(OTHER_OPERAND_WRITE_DENY) == expected
 
 
 def test_another_interpreter_whose_program_names_no_protected_file_is_allowed():

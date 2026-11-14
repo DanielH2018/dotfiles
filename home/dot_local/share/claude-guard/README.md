@@ -366,10 +366,18 @@ source. `interpreter_write` covers them instead (dotfiles #1344). It refuses a p
 of those interpreters reads from stdin or a descriptor, or takes inline with `-e` or its
 equivalent, when the program names a secrets, shell-startup or git config/hook file. No
 read-only proof exists for those languages, so the rule refuses a program that only reads
-the file as well. The operator accepted that over-refusal on 2026-11-14. The rule reads the
-program text only. A path in the words after the program passes, because
-`perl -ne 'print' ~/.zshrc` reads its operand as data. The program of `deno eval` is not
-read either.
+the file as well. The operator accepted that over-refusal on 2026-11-14. The words after
+`deno eval` are an inline program too (dotfiles #1362).
+
+A node, perl or ruby program can take the path from the words after it. The rule refuses
+such a program only when it can write (dotfiles #1363, operator ruling 2026-11-14). Either
+the command carries an in-place edit flag (`-i`, `-i.bak`), or the program text calls a
+write API from the list in `_STDIN_CLI`: node's `writeFileSync` and its relatives, perl's
+`open` with a `>` mode, `rename`, `copy` and `move`, ruby's `File.write`, `IO.write`,
+`FileUtils` and `File.open` with a `w` or `a` mode. So `perl -ne 'print' ~/.zshrc`, which
+reads its operand as data, passes. A program that builds the API name at run time passes
+too, and the ruling accepts that. For `bun`, `deno`, `php`, `Rscript` and `osascript` the
+rule reads the program text only.
 
 The rule reads an inline program after an option `_STDIN_CLI` does not list, and past the
 one word that may be that option's value, so a gap in the list refuses here too. An

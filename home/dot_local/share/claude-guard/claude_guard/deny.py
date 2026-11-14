@@ -2370,15 +2370,21 @@ def inplace_edit(sc: Scan, target: str) -> Verdict | None:
 # not: its read-only proof is a proof about Python source.
 #
 # DECIDED (dotfiles #1344, operator ruling 2026-11-14): `interpreter_write` refuses a
-# program one of those interpreters reads from a descriptor or takes inline (`-e`) when the
-# program names a WRITE_TARGETS path, read-only or not. No read-only proof exists for those
-# languages, so the over-refusal is accepted.
+# program one of those interpreters reads from a descriptor or takes inline (`-e`, or the
+# words after `deno eval`) when the program names a WRITE_TARGETS path, read-only or not. No
+# read-only proof exists for those languages, so the over-refusal is accepted.
+#
+# DECIDED (dotfiles #1363, operator ruling 2026-11-14): a node, perl or ruby program whose
+# operands name a WRITE_TARGETS path is refused only when it can write: the command carries
+# an in-place edit flag (`_StdinCli.inplace`), or the program text calls a write API from a
+# short list (`_StdinCli.writes`). `perl -ne 'print if /x/' ~/.zshrc` reads its operand as
+# data and passes. A program that builds the API name at run time, as
+# `fs['write' + 'FileSync']` does, is an accepted residual.
 #
 # Residual: the program a script file holds (`python3 fix.py ~/.bashrc`), and one that
 # reaches the path with no segment naming it (`'.bash' + 'rc'`, a file of paths). The
-# guard never reads a file it did not see written. For an interpreter other than Python,
-# also a path the program takes from the words after it (`perl -ne 'print' ~/.zshrc` is a
-# read) and the program of `deno eval`.
+# guard never reads a file it did not see written. For an interpreter other than node,
+# perl, ruby and Python, also a path the program takes from the words after it.
 _PYTHON_WORD = re.compile(r"python[0-9.]*")
 _PYTHON_LAUNCH = rf"({_INTERPRETER_WORD}|\buv\s+run\b)"
 # CPython's options that take a value: the rest of the word, or the next word.
@@ -2392,6 +2398,9 @@ _DESCRIPTOR_WORD = re.compile(r"[0-9]+|\{\w+\}")
 _PUNCTUATION = re.compile(r"[()<>|&;]+")
 
 
+_NEVER = r"(?!)"
+
+
 @dataclass(frozen=True)
 class _StdinCli:
     """How an interpreter other than Python says where its program comes from.
@@ -2402,12 +2411,19 @@ class _StdinCli:
         flags: An option that takes no further word.
         subcommands: The first words that still leave the program to an operand or to
             stdin, such as the `run` of `deno run -`.
+        inline_subcommand: The subcommand whose operands are the program, as the `eval`
+            of `deno eval CODE`.
+        inplace: An option that makes the interpreter edit its operands in place.
+        writes: A call in a program's text that writes, renames or copies a file.
     """
 
     inline: str
     valued: str
     flags: str
     subcommands: tuple[str, ...] = ()
+    inline_subcommand: str | None = None
+    inplace: str = _NEVER
+    writes: str = _NEVER
 
 
 _LONG_WITH_VALUE = r"--[\w-]+=.*"
@@ -2421,12 +2437,14 @@ _STDIN_CLI = {
         inline=r"-e|-p|-pe|--eval|--print|--(eval|print)=.*",
         valued=r"-r|--require|--import|-C|--conditions|--loader|--experimental-loader",
         flags=rf"-i|--interactive|-c|--check|--no-[\w-]+|{_LONG_WITH_VALUE}",
+        writes=r"(write|append)File(Sync)?|createWriteStream|copyFileSync|renameSync",
     ),
     "deno": _StdinCli(
-        inline=r"(?!)",
+        inline=_NEVER,
         valued=r"-c|--config|--import-map|-L|--log-level",
         flags=rf"-A|-q|--quiet|--allow-[\w-]+|--no-[\w-]+|--unstable[\w-]*|{_LONG_WITH_VALUE}",
         subcommands=("run", "repl"),
+        inline_subcommand="eval",
     ),
     "bun": _StdinCli(
         inline=r"-e|-p|--eval|--print|--(eval|print)=.*",
@@ -2438,11 +2456,20 @@ _STDIN_CLI = {
         inline=rf"-{_PERL_SWITCHES}*[eE].*",
         valued=r"-I",
         flags=rf"-{_PERL_SWITCHES}+|-[IMmCdDFix].+|-[ix]",
+        inplace=rf"-{_PERL_SWITCHES}*i.*",
+        # `open` with a quoted mode that starts `>`, `>>`, `+>` or `+<`
+        writes=r"\bopen\b[^;]*[\"'](\+?>|\+<)|\b(rename|copy|move)\b",
     ),
     "ruby": _StdinCli(
         inline=rf"-{_RUBY_SWITCHES}*e.*",
         valued=r"-[CEFIr]",
         flags=rf"-{_RUBY_SWITCHES}+|-[CEFIrKTWx0i].+|-[ixW]|{_LONG_WITH_VALUE}",
+        inplace=rf"-{_RUBY_SWITCHES}*i.*",
+        # `File.open` with a quoted mode that starts `w` or `a`
+        writes=(
+            r"\b(File|IO)\.write\b|\bFileUtils\b"
+            r"|\bFile\.open\b[^;\n]*[\"'][wa][bt+]*[\"']"
+        ),
     ),
     # `-f` names the script in the next word, which is then read as the operand.
     "php": _StdinCli(
@@ -2452,7 +2479,7 @@ _STDIN_CLI = {
     ),
     "Rscript": _StdinCli(
         inline=r"-e|--expression=.*",
-        valued=r"(?!)",
+        valued=_NEVER,
         flags=rf"--vanilla|--verbose|--quiet|--silent|--no-[\w-]+|{_LONG_WITH_VALUE}",
     ),
     "osascript": _StdinCli(inline=r"-e", valued=r"-[ls]", flags=r"-i|-l.+|-s[hseo]+"),
@@ -2717,13 +2744,17 @@ def _inline_programs(cli: _StdinCli, args: list[str]) -> list[str]:
         `--eval=…` and perl's `-e…` do. The words do not say which, so the word after a
         self-contained option is returned too. A word after an option `cli` does not list
         may be that option's value and not the operand, so the reading goes on past that
-        one word.
+        one word. When the first operand is `cli.inline_subcommand`, every word after it:
+        deno joins the operands of `eval` into one program, and an option there may hold
+        a value.
     """
     found: list[str] = []
     value_or_operand = False
     i = 1 if args[:1] and args[0] in cli.subcommands else 0
     while i < len(args):
         w = args[i]
+        if w == cli.inline_subcommand:
+            return found + args[i + 1 :]
         if re.fullmatch(cli.inline, w, re.DOTALL):
             found += args[i : i + 2]
             value_or_operand = True
@@ -2837,7 +2868,7 @@ def _other_interpreter_arguments(args: list[str]) -> list[tuple[_StdinCli, list[
     return [(cli, after) for cli, after in named if cli is not None]
 
 
-def _stdin_program_names_secret(cli: _StdinCli, program: str) -> bool:
+def _stdin_program_names_secret(cli: _StdinCli, program: str, operands: list[str]) -> bool:
     """Whether a program another interpreter reads from a descriptor names a SECRET_PATHS
     path. Nothing is masked: the text is not known to be Python source."""
     return bdb_re(normalize(program), SECRET_PATHS)
@@ -2868,7 +2899,7 @@ def _runs_python_program(
     matches: Callable[[str, list[str], list[str]], bool],
     paths: str,
     depth: int = 0,
-    other_matches: Callable[[_StdinCli, str], bool] | None = None,
+    other_matches: Callable[[_StdinCli, str, list[str]], bool] | None = None,
 ) -> bool:
     """Whether `text` runs a Python program from a command line that `matches` accepts, or
     gives another interpreter a program that `other_matches` accepts.
@@ -2885,9 +2916,10 @@ def _runs_python_program(
             splitter refuses is accepted when a Python launch comes before one of them,
             because no program can be read out of it.
         depth: How many command lines deep `text` sits.
-        other_matches: Called with each interpreter other than Python and a program it reads
-            from a descriptor (`_program_descriptor`) or takes inline (`_inline_programs`).
-            None leaves those programs unread.
+        other_matches: Called with each interpreter other than Python, a program it reads
+            from a descriptor (`_program_descriptor`) or takes inline (`_inline_programs`),
+            and the words after the interpreter that hold no inline program. None leaves
+            those programs unread.
     """
 
     def within(nested: str) -> bool:
@@ -2924,10 +2956,11 @@ def _runs_python_program(
         for cli, after in _other_interpreter_arguments(args) if other_matches else ():
             operand = _program_descriptor(cli, after)
             given = _inline_programs(cli, after)
+            operands = [w for w in after if w not in given]
             if operand is not None:
                 given += _descriptor_programs(operand, redirected, piped, substituted, earlier)
             for program in given:
-                if other_matches(cli, program):
+                if other_matches(cli, program, operands):
                     return True
                 programs.add(program)
         nested = [w for w in words if any(c.isspace() for c in w)] + list(seg.heredocs)
@@ -2967,28 +3000,46 @@ _PERL_SUBSTITUTION = re.compile(
 )
 
 
-def _names_write_target(cli: _StdinCli, program: str) -> bool:
-    """Whether a program an interpreter other than Python runs names a WRITE_TARGETS path.
-    A program perl runs as one plain substitution (`_PERL_SUBSTITUTION`) names none."""
-    if cli is _STDIN_CLI["perl"] and _PERL_SUBSTITUTION.fullmatch(program.strip()):
+def _may_write_target(cli: _StdinCli, program: str, operands: list[str]) -> bool:
+    """Whether a program an interpreter other than Python runs may change a WRITE_TARGETS
+    path.
+
+    Args:
+        cli: The interpreter's options.
+        program: The program's text.
+        operands: The words after the interpreter that hold no inline program.
+
+    Returns:
+        True when the program names the path, unless perl runs it as one plain
+        substitution (`_PERL_SUBSTITUTION`), which names no file. True too when an operand
+        names the path and the program can write it: an operand is an in-place edit flag
+        (`cli.inplace`), or the program calls a write API (`cli.writes`).
+    """
+    plain = cli is _STDIN_CLI["perl"] and _PERL_SUBSTITUTION.fullmatch(program.strip())
+    if not plain and bdb_re(program, WRITE_TARGETS):
+        return True
+    if not any(bdb_re(w, WRITE_TARGETS) for w in operands):
         return False
-    return bdb_re(program, WRITE_TARGETS)
+    edits_in_place = any(re.fullmatch(cli.inplace, w, re.DOTALL) for w in operands)
+    return edits_in_place or re.search(cli.writes, program) is not None
 
 
 def interpreter_write(sc: Scan, target: str) -> Verdict | None:
     """A program that `node`, `perl`, `ruby` or another `_STDIN_CLI` interpreter reads from
-    a descriptor or takes inline, and that names a WRITE_TARGETS path (#1344)."""
+    a descriptor or takes inline, and that names a WRITE_TARGETS path (#1344) or can write
+    one its operands name (#1363)."""
     if _runs_python_program(
-        sc.command, lambda *_: False, WRITE_TARGETS, other_matches=_names_write_target
+        sc.command, lambda *_: False, WRITE_TARGETS, other_matches=_may_write_target
     ):
         return Verdict(
             "deny",
             "interpreter-write",
             "Blocked: a node, perl, ruby or other interpreter program, piped in or given "
-            "inline, that names a secrets, shell-startup, or git config/hook file. The "
-            "guard cannot prove such a program read-only, so it refuses one that only "
-            "reads as well. To read the file, use the Read tool or `cat`, and pipe the "
-            f"text to the program. Ask the user before changing the file itself.{EDIT_TOOL_HINT}",
+            "inline, that names a secrets, shell-startup, or git config/hook file, or that "
+            "writes a file and is given one as an argument. The guard cannot prove a "
+            "program that names the file read-only, so it refuses one that only reads as "
+            "well. To read the file, use the Read tool or `cat`, and pipe the text to the "
+            f"program. Ask the user before changing the file itself.{EDIT_TOOL_HINT}",
         )
     return None
 
