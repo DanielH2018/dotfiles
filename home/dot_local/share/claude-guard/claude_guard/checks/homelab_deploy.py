@@ -51,6 +51,7 @@ _GH_VALUED = frozenset({"-R", "--repo", "-r", "--ref", "-f", "--raw-field", "-F"
 _WORKFLOWS = frozenset({"promote", "promote.yml", "promote.yaml"})
 _BOOTSTRAP = "bootstrap-host.sh"
 _SHELLS = ("bash", "sh", "dash", "zsh")
+_SHELL_LONG_VALUED = frozenset({"--rcfile", "--init-file"})
 _SSH_VALUED = frozenset(f"-{letter}" for letter in "BbcDEeFIiJLlmOoPpQRSWw")
 _SYSTEMCTL_VALUED = frozenset(
     {"-H", "--host", "-M", "--machine", "-t", "--type", "-p", "--property", "-s", "--signal"}
@@ -97,14 +98,44 @@ def _shell_args(argv: list[str]) -> list[str] | None:
     return None
 
 
+def _shell_operand(args: list[str]) -> tuple[str, str] | None:
+    """What a shell given `args` runs: `("command", text)` for a `-c` string, `("script",
+    path)` for a script file, or None when it runs neither or only checks syntax (`-n`).
+
+    A short-option cluster is read letter by letter, so `-lc` is `-l -c`; a cluster ending
+    in `o` or `O` takes the next word as its value (`-o pipefail`).
+    """
+    command = syntax_only = False
+    i = 0
+    while i < len(args):
+        word = args[i]
+        if word in ("--", "-"):
+            i += 1
+            break
+        if word.startswith("--"):
+            i += 2 if word in _SHELL_LONG_VALUED else 1
+        elif word[:1] in "-+" and len(word) > 1:
+            if word[0] == "-":
+                command |= "c" in word
+                syntax_only |= "n" in word
+            i += 2 if word[-1] in "oO" else 1
+        else:
+            break
+    if syntax_only or i >= len(args):
+        return None
+    return ("command" if command else "script", args[i])
+
+
 def _runs_bootstrap(argv: list[str]) -> bool:
     if unwrap(argv, _BOOTSTRAP) is not None:
         return True
     args = _shell_args(argv)
-    if args is None or "-c" in args or "-n" in args:
-        return False
-    script = next((a for a in args if not a.startswith("-")), "")
-    return posixpath.basename(script) == _BOOTSTRAP
+    operand = _shell_operand(args) if args is not None else None
+    return (
+        operand is not None
+        and operand[0] == "script"
+        and (posixpath.basename(operand[1]) == _BOOTSTRAP)
+    )
 
 
 def _starts_reconcile(argv: list[str]) -> bool:
@@ -128,15 +159,21 @@ def _inner_text(argv: list[str]) -> str | None:
     found = unwrap(argv, "ssh")
     if found is not None:
         args = found[0][1:]
-        i = 0
-        while i < len(args) and args[i].startswith("-"):
-            i += 2 if args[i] in _SSH_VALUED else 1
-        return " ".join(args[i + 1 :]) or None
+        host = _past_ssh_options(args, 0)
+        return " ".join(args[_past_ssh_options(args, host + 1) :]) or None
     args = _shell_args(argv)
-    if args is not None and "-c" in args:
-        rest = args[args.index("-c") + 1 :]
-        return rest[0] if rest else None
-    return None
+    operand = _shell_operand(args) if args is not None else None
+    return operand[1] if operand and operand[0] == "command" else None
+
+
+def _past_ssh_options(args: list[str], i: int) -> int:
+    """The index of the first word at or after `i` that is not an ssh option. ssh reads
+    options after the host too, and `--` ends them."""
+    while i < len(args) and args[i].startswith("-"):
+        if args[i] == "--":
+            return i + 1
+        i += 2 if args[i] in _SSH_VALUED else 1
+    return i
 
 
 def _argvs(command: str, depth: int = 0) -> list[list[str]]:

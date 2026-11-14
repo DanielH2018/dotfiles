@@ -30,6 +30,8 @@ BOOTSTRAPS = [
     "nohup sh -x /tmp/bootstrap-host.sh daniel-pi",
     "ssh daniel-pi 'sh /tmp/bootstrap-host.sh daniel-pi'",
     "bash -c 'hosts/bootstrap-host.sh daniel-pi'",
+    "bash -lc 'hosts/bootstrap-host.sh daniel-pi'",
+    "bash -e -o pipefail hosts/bootstrap-host.sh daniel-pi",
 ]
 # No sudo form: the sudo boundary in deny.py already denies it, locally and over ssh.
 RECONCILES = [
@@ -40,6 +42,8 @@ RECONCILES = [
     "ssh -o BatchMode=yes -p 22 daniel-pi 'cd /; systemctl start --no-block homelab-reconcile'",
     "hl systemctl start homelab-reconcile.service",
     "timeout 30 ssh daniel-pi systemctl try-restart homelab-reconcile",
+    "ssh daniel-pi -- systemctl start homelab-reconcile",
+    "ssh daniel-pi -t 'systemctl start homelab-reconcile'",
 ]
 WRITES = DISPATCHES + BOOTSTRAPS + RECONCILES
 NOT_WRITES = [
@@ -49,6 +53,7 @@ NOT_WRITES = [
     "echo gh workflow run promote.yml",
     "shellcheck hosts/bootstrap-host.sh",
     "bash -n hosts/bootstrap-host.sh",
+    "bash -xn hosts/bootstrap-host.sh",
     "git log -- hosts/bootstrap-host.sh",
     "ssh daniel-server systemctl status homelab-reconcile",
     "ssh daniel-server journalctl -u homelab-reconcile",
@@ -60,6 +65,9 @@ TRUSTED_HOST_WRITES = [
     "ssh daniel-server systemctl start homelab-reconcile",
     "ssh daniel-pi hosts/bootstrap-host.sh daniel-pi",
     "ssh daniel-server gh workflow run promote.yml",
+    "ssh daniel-server -- systemctl start homelab-reconcile",
+    "ssh daniel-server -t 'systemctl start homelab-reconcile'",
+    "ssh daniel-server 'cd /srv && bash -e -o pipefail hosts/bootstrap-host.sh daniel-pi'",
 ]
 
 
