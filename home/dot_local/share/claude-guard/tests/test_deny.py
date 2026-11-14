@@ -1448,9 +1448,9 @@ def test_decrypting_a_secret_is_denied():
     ]
 
 
-def test_the_git_diff_refusal_names_a_decrypting_diff_driver_as_a_condition():
+def test_the_git_diff_refusal_does_not_say_a_sops_diff_driver_is_installed():
     reason = d.deny("git diff secrets/secrets.yml", "", ENV).reason
-    assert "where git is configured with a diff driver that decrypts" in reason
+    assert "the sops diff driver" not in reason
 
 
 def test_editing_or_naming_a_secret_without_decrypting_is_allowed():
@@ -1936,6 +1936,11 @@ OTHER_OPERAND_WRITE_DENY = [
     "ruby -e 'File.open(ARGV[0], \"a\") { |f| f.puts 1 }' ~/.zshrc",
     "ruby -e 'File.open(ARGV[0], \"wb:UTF-8\") { |f| f.puts 1 }' ~/.bashrc",
     "ruby -rfileutils -e 'FileUtils.cp(ARGV[0], ARGV[1])' /tmp/x ~/.gitconfig",
+    "ruby -e 'File.rename(ARGV[0], ARGV[1])' /tmp/x ~/.gitconfig",
+    "node -e \"require('fs').rename(process.argv[1], process.argv[2], () => {})\""
+    " /tmp/x ~/.gitconfig",
+    "node -e \"require('fs').copyFile(process.argv[1], process.argv[2], () => {})\""
+    " /tmp/x ~/.gitconfig",
     # an in-place flag makes a program with no write call a writer
     "ruby -pi -e '$_.upcase!' ~/.gitconfig",
     "ruby -i.bak -pe '$_.upcase!' ~/.zshrc",
@@ -1950,6 +1955,9 @@ OTHER_OPERAND_DELETE_DENY = [
     "ruby -e 'File.unlink(ARGV[0])' ~/.zshrc",
     "ruby -e 'File.truncate(ARGV[0], 0)' ~/.gitconfig",
     "ruby -rfileutils -e 'FileUtils.rm_f(ARGV[0])' ~/.bashrc",
+    # an open that truncates
+    "node -e \"require('fs').openSync(process.argv[1], 'w')\" ~/.bashrc",
+    "echo 'Deno.createSync(Deno.args[0])' | deno run -A - ~/.bashrc",
 ]
 BUN_PHP_DENO_OPERAND_WRITE_DENY = [
     f'bun -e "{NODE_WRITES_ARGUMENT}" ~/.bashrc',
@@ -1968,6 +1976,11 @@ BUN_PHP_DENO_OPERAND_WRITE_DENY = [
     "echo 'Deno.copyFileSync(Deno.args[0], Deno.args[1])' | deno run -A - /tmp/x ~/.gitconfig",
     "echo 'Deno.removeSync(Deno.args[0])' | deno run -A - ~/.bashrc",
     "echo 'Deno.truncateSync(Deno.args[0])' | deno run -A - ~/.zshrc",
+    # each runtime's other file API: bun's own, and node's under deno
+    "bun -e \"Bun.write(process.argv[1], 'x')\" ~/.bashrc",
+    "echo \"import {writeFileSync} from 'node:fs'; writeFileSync(Deno.args[0], 'x')\""
+    " | deno run -A - ~/.bashrc",
+    'php -r \'$f = fopen($argv[1], "r+"); fwrite($f, "x");\' ~/.bashrc',
 ]
 # No list of write calls exists for these, so the program text is not read.
 UNLISTED_INTERPRETER_OPERAND_DENY = [
@@ -1985,6 +1998,7 @@ OTHER_WRITE_ALLOW = [
     "perl -e 'open(my $f, \"<\", $ARGV[0]); print readline($f)' ~/.bashrc",
     "ruby -e 'File.open(ARGV[0]) { |f| puts f.read }' ~/.zshrc",
     "bun -e \"console.log(require('fs').readFileSync(process.argv[1], 'utf8'))\" ~/.bashrc",
+    "node -e \"require('fs').openSync(process.argv[1], 'r')\" ~/.bashrc",
     "php -r 'echo file_get_contents($argv[1]);' ~/.bashrc",
     "php -r '$f = fopen($argv[1], \"r\"); echo fgets($f);' ~/.zshrc",
     "echo 'console.log(Deno.readTextFileSync(Deno.args[0]))' | deno run -A - ~/.bashrc",

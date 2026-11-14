@@ -393,16 +393,18 @@ refuses such a program only when it can write (dotfiles #1363 and #1365, operato
 program text calls an API from the interpreter's `writes` list in `_STDIN_CLI`. A call
 that deletes or truncates a file counts as a write. The lists:
 
-- node and bun: `writeFile`, `appendFile`, `createWriteStream`, `copyFileSync`,
-  `renameSync`, `unlink`, `rm` and `truncate`, with their `Sync` forms.
+- node: `writeFile`, `appendFile`, `createWriteStream`, `copyFile`, `rename`, `unlink`,
+  `rm` and `truncate`, with their `Sync` forms, and `open` with a `w`, `a` or `r+` flag.
+- bun: node's list, `Bun.write` and a `.writer()` call.
 - perl: `open` with a `>` mode, `rename`, `copy`, `move`, `unlink` and `truncate`.
 - ruby: `File.write`, `IO.write`, `FileUtils`, `File.open` with a `w` or `a` mode,
-  `File.delete`, `File.unlink` and `File.truncate`.
-- php: `file_put_contents`, `fopen` with a `w`, `a`, `x` or `c` mode, `rename`, `copy`,
-  `unlink` and `ftruncate`.
-- deno: `Deno.writeFile`, `Deno.writeTextFile`, `Deno.rename`, `Deno.copyFile`,
-  `Deno.remove` and `Deno.truncate`, with their `Sync` forms, and `Deno.open` in a
-  program that holds a `write`, `append`, `create`, `createNew` or `truncate` option.
+  `File.delete`, `File.unlink`, `File.truncate` and `File.rename`.
+- php: `file_put_contents`, `fopen` with a mode that starts `w`, `a`, `x` or `c` or
+  holds `+`, `rename`, `copy`, `unlink` and `ftruncate`.
+- deno: node's list, which a `node:fs` import reaches, `Deno.writeFile`,
+  `Deno.writeTextFile`, `Deno.rename`, `Deno.copyFile`, `Deno.remove`, `Deno.truncate`
+  and `Deno.create`, with their `Sync` forms, and `Deno.open` in a program that holds a
+  `write`, `append`, `create`, `createNew` or `truncate` option.
 
 So `perl -ne 'print' ~/.zshrc`, which reads its operand as data, passes. A program that
 builds the API name at run time passes too, and the rulings accept that. An interpreter

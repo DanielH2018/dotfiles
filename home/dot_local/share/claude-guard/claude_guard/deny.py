@@ -2441,9 +2441,11 @@ class _StdinCli:
 
 
 _LONG_WITH_VALUE = r"--[\w-]+=.*"
+# `open` counts with a quoted flag that writes: `w`, `a`, `r+` and their `x`, `s` forms.
 _NODE_WRITES = (
-    r"(write|append)File(Sync)?|createWriteStream|copyFileSync|renameSync"
-    r"|unlink(Sync)?|\brm(Sync)?\b|truncate"
+    r"(write|append)File|createWriteStream|copyFile|\brename"
+    r"|unlink|\brm(Sync)?\b|truncate"
+    r"|\bopen(Sync)?\b[^;]*[\"']([wa][sx+]*|rs?\+)[\"']"
 )
 _DENO_OPEN_WRITES = r"\b(write|append|create|createNew|truncate)\s*:"
 _PERL_SWITCHES = r"(?:[acnpsStTuUwWX]|0[0-7]*|l[0-7]*)"
@@ -2465,9 +2467,11 @@ _STDIN_CLI = {
         subcommands=("run", "repl"),
         inline_subcommand="eval",
         # `Deno.open` counts when the program holds a write option, in the call or not.
+        # Deno runs node's `fs` API through a `node:fs` import.
         writes=(
-            r"\bDeno\.(write(Text)?File|rename|copyFile|remove|truncate)"
+            r"\bDeno\.(write(Text)?File|rename|copyFile|remove|truncate|create)"
             rf"|\bDeno\.open(?s:.*){_DENO_OPEN_WRITES}|{_DENO_OPEN_WRITES}(?s:.*)\bDeno\.open"
+            rf"|{_NODE_WRITES}"
         ),
     ),
     "bun": _StdinCli(
@@ -2475,7 +2479,7 @@ _STDIN_CLI = {
         valued=r"-r|--preload|--cwd|-c|--config",
         flags=rf"-b|--bun|--smol|--silent|--no-[\w-]+|{_LONG_WITH_VALUE}",
         subcommands=("run",),
-        writes=_NODE_WRITES,
+        writes=rf"{_NODE_WRITES}|\bBun\.write\b|\.writer\(",
     ),
     "perl": _StdinCli(
         inline=rf"-{_PERL_SWITCHES}*[eE].*",
@@ -2492,7 +2496,7 @@ _STDIN_CLI = {
         inplace=rf"-{_RUBY_SWITCHES}*i.*",
         # `File.open` with a quoted `w` or `a` mode, an encoding after it or not: `"w:UTF-8"`
         writes=(
-            r"\b(File|IO)\.write\b|\bFileUtils\b|\bFile\.(delete|unlink|truncate)\b"
+            r"\b(File|IO)\.write\b|\bFileUtils\b|\bFile\.(delete|unlink|truncate|rename)\b"
             r"|\bFile\.open\b[^;\n]*[\"'][wa][bt+]*(:[^\"']*)?[\"']"
         ),
     ),
@@ -2501,10 +2505,10 @@ _STDIN_CLI = {
         inline=r"-r|--run|-[BRE]",
         valued=r"-d|--define|-c|--php-ini|-z|--zend-extension",
         flags=rf"-f|--file|-a|--interactive|-[nqCH]|{_LONG_WITH_VALUE}",
-        # `fopen` with a quoted mode that starts `w`, `a`, `x` or `c`
+        # `fopen` with a quoted mode that starts `w`, `a`, `x` or `c`, or holds `+`
         writes=(
             r"\b(file_put_contents|rename|copy|unlink|ftruncate)\b"
-            r"|\bfopen\b[^;]*[\"'][waxc][bt+]*[\"']"
+            r"|\bfopen\b[^;]*[\"']([waxc][bt+]*|r[bt]*\+[bt]*)[\"']"
         ),
     ),
     "Rscript": _StdinCli(
