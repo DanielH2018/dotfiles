@@ -185,8 +185,11 @@ function keysUnderAnOsCondition(text) {
 }
 
 test('only signing, credential and line-ending settings differ by OS', () => {
-  const stray = keysUnderAnOsCondition(fs.readFileSync(TMPL, 'utf8')).filter((k) => !PER_OS_KEYS.has(k));
-  assert.deepStrictEqual(stray, []);
+  const found = keysUnderAnOsCondition(fs.readFileSync(TMPL, 'utf8'));
+  for (const k of ['user.signingkey', 'gpg "ssh".program', 'credential.helper', 'core.autocrlf']) {
+    assert.ok(found.includes(k), `the census still sees ${k}`);
+  }
+  assert.deepStrictEqual(found.filter((k) => !PER_OS_KEYS.has(k)), []);
 });
 
 test('Linux gets the same conflict and moved-line styles as macOS', { skip }, (t) => {
