@@ -296,9 +296,9 @@ interpreter is any word whose basename is `python…`, so a path-spelled interpr
 `env`, `timeout` or `nice` leader are covered without a list of leaders. `uv run -` and
 `uv run --script -` run the program on stdin with no `python` word, so a `uv` runner whose
 command word is `-` or another descriptor counts as an interpreter too (dotfiles #1286).
-`secret_interpreter` reads the same programs for a secret path, because its own pattern
-needs an interpreter word before the path. A script file's program stays out of reach. The
-rule also reads what the program is given: whatever its
+`secret_interpreter` reads the same programs, and the words after each, for a secret
+path: its pattern needs an interpreter word before the path. A script file's program
+stays out of reach. The rule also reads what the program is given: whatever its
 segment redirects in, and every earlier segment of the command, which may be the program
 itself or its arguments under `xargs`. Reading every earlier segment needs no model of
 pipes, groups or descriptors, and costs a writer refused after an unrelated segment that

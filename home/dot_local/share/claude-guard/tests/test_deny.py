@@ -1685,8 +1685,10 @@ UV_STDIN_SECRET_DENY = [
     "uv run - <<'EOF'\nprint(open('server.key').read())\nEOF",
     "uv run --script - <<'EOF'\nprint(open('server.key').read())\nEOF",
     "echo \"print(open('server.key').read())\" | uv run -",
-    # a secret that is no write target, in a program piped to a `python` word after it
-    "tee /dev/null <<'EOF' | python3\nprint(open('/run/homelab-secrets/x').read())\nEOF",
+    # the path is an argument after the program
+    "uv run - /run/homelab-secrets/x <<'EOF'\nimport sys\nprint(open(sys.argv[1]).read())\nEOF",
+    # a program piped to a `python` word that comes after it
+    "echo \"print(open('/run/homelab-secrets/x').read())\" | python3",
 ]
 UV_STDIN_ALLOW = [
     "uv run - <<'EOF'\nprint(1)\nEOF",

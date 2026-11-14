@@ -2262,9 +2262,9 @@ def inplace_edit(sc: Scan, target: str) -> Verdict | None:
 #
 # `uv run -` and `uv run --script -` run the Python program on stdin with no `python` word
 # (dotfiles #1286), so a `uv` runner whose command word is a descriptor counts as an
-# interpreter (`_python_arguments`). `secret_interpreter` reads the same programs for a
-# secret path: its own pattern needs an interpreter word before the path, and a program on
-# stdin comes before that word or with none.
+# interpreter (`_python_arguments`). `secret_interpreter` reads the same programs, and the
+# words after each, for a secret path: its own pattern needs an interpreter word before the
+# path, and a program on stdin comes before that word or with none.
 #
 # Residual: the program a script file holds (`python3 fix.py ~/.bashrc`), and one that
 # reaches the path with no segment naming it (`'.bash' + 'rc'`, a file of paths). The
@@ -2332,9 +2332,9 @@ def _without_redirects(words: list[str]) -> tuple[list[str], list[str], bool]:
 
 def _command_line_programs(
     args: list[str], redirected: list[str], earlier: list[str], fills_stdin: bool
-) -> list[tuple[str, list[str]]]:
-    """The programs a Python interpreter runs from its command line, each with the texts it
-    can read a path from.
+) -> list[tuple[str, list[str], list[str]]]:
+    """The programs a Python interpreter runs from its command line, each with the words after
+    it and the other texts it can read a path from.
 
     Args:
         args: The words after the interpreter, redirects removed (`_without_redirects`).
@@ -2345,18 +2345,19 @@ def _command_line_programs(
         fills_stdin: Whether the segment fills its own stdin (`_without_redirects`).
 
     Returns:
-        The `-c` program with the words after it, `redirected` and `earlier`. When the
-        interpreter reads its program from a descriptor (`_PY_DESCRIPTOR`), each of
-        `redirected` as the program, with the words after the operand and `earlier`; each
+        Each program as `(program, words after it, other texts)`. The `-c` program comes
+        with the words after it, then `redirected` and `earlier`. When the interpreter
+        reads its program from a descriptor (`_PY_DESCRIPTOR`), each of `redirected` is
+        the program, with the words after the operand, then `earlier`; each
         of `earlier` is a program too, unless the descriptor is stdin and `fills_stdin`.
         Empty for a script file and for `-m`, whose later words belong to the script or
         the module.
     """
 
-    def read_from(operand: str, rest: list[str]) -> list[tuple[str, list[str]]]:
+    def read_from(operand: str, rest: list[str]) -> list[tuple[str, list[str], list[str]]]:
         own = fills_stdin and _PY_STDIN.fullmatch(operand) is not None
         programs = redirected if own else redirected + earlier
-        return [(text, rest + earlier) for text in programs]
+        return [(text, rest, earlier) for text in programs]
 
     stdin = redirected + earlier
     i = 0
@@ -2374,8 +2375,8 @@ def _command_line_programs(
             if c == "c":
                 rest = args[i + 1 :]
                 if glued:
-                    return [(glued, rest + stdin)]
-                return [(rest[0], rest[1:] + stdin)] if rest else []
+                    return [(glued, rest, stdin)]
+                return [(rest[0], rest[1:], stdin)] if rest else []
             if c == "m":
                 return []
             if c in _PY_VALUE_OPTS:
@@ -2404,25 +2405,28 @@ def _python_arguments(args: list[str]) -> list[list[str]]:
     return found
 
 
-def _names_secret(program: str, inputs: list[str]) -> bool:
+def _names_secret(program: str, arguments: list[str], fed: list[str]) -> bool:
     """Whether a Python `program` names a SECRET_PATHS path, its attribute accesses masked
-    as `_changes_target` masks them. The `inputs` it is given are other rules' to read."""
-    return bdb_re(normalize(_masked_attributes(program) or program), SECRET_PATHS)
+    as `_changes_target` masks them, or one of the `arguments` after it does. The other
+    texts `fed` to it are left out: a segment that only names a secret file is no read."""
+    text = normalize(_masked_attributes(program) or program)
+    return any(bdb_re(t, SECRET_PATHS) for t in (text, *map(normalize, arguments)))
 
 
-def _changes_target(program: str, inputs: list[str]) -> bool:
-    """Whether a Python `program` names a WRITE_TARGETS path, or is given one in `inputs`,
-    and may change it. The program's attribute accesses are masked as `secret_interpreter`
-    masks them, so `self.env.filters` names no `.env`. A program the shell may rewrite
-    first, one holding `$` or a backtick, is never read-only."""
+def _changes_target(program: str, arguments: list[str], fed: list[str]) -> bool:
+    """Whether a Python `program` names a WRITE_TARGETS path, or is given one in the
+    `arguments` after it or the other texts `fed` to it, and may change it. The program's
+    attribute accesses are masked as `secret_interpreter` masks them, so `self.env.filters`
+    names no `.env`. A program the shell may rewrite first, one holding `$` or a backtick,
+    is never read-only."""
     text = _masked_attributes(program) or program
-    if not bdb_re(text, WRITE_TARGETS) and not any(bdb_re(a, WRITE_TARGETS) for a in inputs):
+    if not any(bdb_re(t, WRITE_TARGETS) for t in (text, *arguments, *fed)):
         return False
     return "$" in program or "`" in program or not read_only(program)
 
 
 def _runs_python_program(
-    text: str, matches: Callable[[str, list[str]], bool], paths: str, depth: int = 0
+    text: str, matches: Callable[[str, list[str], list[str]], bool], paths: str, depth: int = 0
 ) -> bool:
     """Whether `text` runs a Python program from a command line that `matches` accepts.
 
@@ -2432,8 +2436,8 @@ def _runs_python_program(
 
     Args:
         text: A command line.
-        matches: Called with each program and the texts it can read a path from
-            (`_command_line_programs`).
+        matches: Called with each program, the words after it and the other texts it can
+            read a path from (`_command_line_programs`).
         paths: The pattern of the paths `matches` looks for. Text the parser or the word
             splitter refuses is accepted when a Python launch comes before one of them,
             because no program can be read out of it.
@@ -2455,10 +2459,10 @@ def _runs_python_program(
         redirected = [*seg.heredocs, *redirected, *substituted]
         programs: set[str] = set()
         for after in _python_arguments(args):
-            for program, inputs in _command_line_programs(after, redirected, earlier, fills_stdin):
-                if matches(program, inputs):
+            for found in _command_line_programs(after, redirected, earlier, fills_stdin):
+                if matches(*found):
                     return True
-                programs.add(program)
+                programs.add(found[0])
         nested = [w for w in words if any(c.isspace() for c in w)] + list(seg.heredocs)
         if any(
             _runs_python_program(t, matches, paths, depth + 1) for t in nested if t not in programs
