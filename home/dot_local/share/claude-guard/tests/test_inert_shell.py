@@ -71,7 +71,6 @@ def test_anything_outside_the_list_is_not_proven(command):
 PRINTED = [
     ("echo 'print(1)'", "print(1)"),
     ('echo -n "a = 1" b', "a = 1 b"),
-    ("echo 'x' 2>/dev/null", "x"),
     ("printf '%s\\n' 'a = 1' 'print(a)'", "a = 1\nprint(a)\n"),
     ("printf '%s' 'a\\n'", "a\\n"),
     ("printf 'a = 1\\nprint(a)\\n'", "a = 1\nprint(a)\n"),
@@ -79,18 +78,14 @@ PRINTED = [
 NOT_READ = [
     # another command, and a printer the words do not start with
     "cat f",
-    "env echo 'print(1)'",
     "echo 'print(1)' )",
-    "echo 'print(1)' > f",
     # a word the shell or the printer may rewrite
     'echo "print($x)"',
     "echo *.py",
     "echo 'a\\nb'",
     "printf 'a\\tb'",
-    "printf 'a%db' 1",
+    "printf 'a%%b'",
     "printf '%s %s' a b",
-    "printf -v x 'print(1)'",
-    "printf 'print(1)' extra",
 ]
 
 

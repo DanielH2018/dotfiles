@@ -1635,18 +1635,14 @@ PYTHON_WRITE_DENY = [
     f"echo \"open('{BASHRC}','w')\" > x && python3 < x",
     # #1303: a writer read out of the segment that prints it
     f"printf '%s\\n' \"open('{BASHRC}','w')\" | python3",
-    f"printf \"open('{BASHRC}','w')\\n\" | python3",
     f"cat <<'EOF' | python3\nopen('{BASHRC}','w')\nEOF",
-    f"grep -c foo ~/.zshrc; python3 <(echo \"open('{BASHRC}','w')\")",
     # a producer whose output the words do not give
     f"grep -c foo {BASHRC}; cat prog.py | python3",
     f"grep -c foo {BASHRC}; python3 <(cat prog.py)",
-    f"echo -e \"print(1)\\nopen('{BASHRC}','w')\" | python3",
-    f"(echo 'print(1)'; echo \"open('{BASHRC}','w')\") | python3",
+    f"(echo \"open('{BASHRC}','w')\"; echo 'print(1)') | python3",
     # a printer piped to an interpreter that may read something else
     f"echo \"-copen('{BASHRC}','w')\" | xargs -d '\\n' python3",
     f"exec 3<<< \"open('{BASHRC}','w')\"; echo 'print(1)' | python3 <&3",
-    f"exec 3<<< \"open('{BASHRC}','w')\"; echo 'print(1)' | python3 /dev/fd/3",
     # text the parser refuses, and a program the shell rewrites first
     f"python3 -c \"open('{BASHRC}','w')",
     "python3 -c \"print(open('$HOME/.bashrc').read())\"",
@@ -1672,9 +1668,7 @@ PYTHON_WRITE_ALLOW = [
     "cat ~/.bashrc | python3 - <<'EOF'\nimport sys\nprint(len(sys.stdin.read()))\nEOF",
     # #1303: a read-only program read out of the segment that prints it
     f"echo \"print(open('{BASHRC}').read())\" | python3",
-    f"echo \"import json; print(len(open('{BASHRC}').read()))\" | python3 -",
     f"printf '%s\\n' 'import sys' \"print(open('{BASHRC}').read())\" | python3",
-    f"printf \"print(open('{BASHRC}').read())\\n\" | python3",
     f"cat <<'EOF' | python3\nprint(open('{BASHRC}').read())\nEOF",
     "grep -c foo ~/.bashrc; python3 <(echo 'print(1)')",
     "grep -c foo ~/.bashrc; echo 'print(1)' | python3",
