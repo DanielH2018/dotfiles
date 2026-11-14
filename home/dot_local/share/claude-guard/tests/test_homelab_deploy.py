@@ -1,4 +1,6 @@
-"""A hand-run homelab write asks outside auto mode (dotfiles #1321, #1326, #1334, #1342).
+"""A hand-run homelab write asks outside auto mode.
+
+Dotfiles #1321, #1326, #1334, #1342, #1346 and #1347.
 
 Driven through `hook.pre_tool_use` with a temp HOME whose settings hold the template's
 permissions, as the harness sends a payload carrying `permission_mode`.
@@ -51,6 +53,12 @@ BOOTSTRAPS = [
     "bash <(cat hosts/bootstrap-host.sh) daniel-pi",
     "bash < <(sed '' hosts/bootstrap-host.sh)",
     "ssh daniel-pi 'bash <(cat hosts/bootstrap-host.sh)'",
+    "tee >(ssh daniel-pi sh) < hosts/bootstrap-host.sh",
+    "cat hosts/bootstrap-host.sh > >(sh)",
+    "cat hosts/bootstrap-host.sh | tee >(true; sh) > /dev/null",
+    "source hosts/bootstrap-host.sh",
+    ". hosts/bootstrap-host.sh daniel-pi",
+    "source <(cat hosts/bootstrap-host.sh)",
 ]
 # No sudo form: the sudo boundary in deny.py already denies it, locally and over ssh.
 RECONCILES = [
@@ -68,6 +76,14 @@ RECONCILES = [
     "bash <<< 'systemctl start homelab-reconcile'",
     "sed 's/^ //' <<'EOF' | ssh daniel-pi bash\n systemctl start homelab-reconcile\nEOF",
     "bash <(cat <<'EOF'\nsystemctl start homelab-reconcile\nEOF\n)",
+    "echo 'systemctl start homelab-reconcile' | ssh daniel-pi sh",
+    "echo -e 'cd /\\nsystemctl start homelab-reconcile' | ssh daniel-pi sh",
+    "printf '%s\\n' 'systemctl start homelab-reconcile' | ssh daniel-pi sh",
+    "printf '%s\\n' 'cd /' 'systemctl start homelab-reconcile' | ssh daniel-pi sh",
+    "printf '%s %s %s\\n' systemctl start homelab-reconcile | ssh daniel-pi sh",
+    "printf 'systemctl start %s\\n' homelab-reconcile | ssh daniel-pi bash",
+    "bash <(echo systemctl start homelab-reconcile)",
+    "echo 'systemctl start homelab-reconcile' > >(ssh daniel-pi sh)",
 ]
 WRITES = DISPATCHES + BOOTSTRAPS + RECONCILES
 NOT_WRITES = [
@@ -91,6 +107,11 @@ NOT_WRITES = [
     "diff <(cat hosts/bootstrap-host.sh) <(ssh daniel-pi cat /tmp/bootstrap-host.sh)",
     "bash lint.sh <(cat hosts/bootstrap-host.sh)",
     "cat hosts/bootstrap-host.sh; ssh daniel-pi sh",
+    "echo 'systemctl start homelab-reconcile' | tee notes.txt",
+    "printf '%s\\n' 'systemctl start homelab-reconcile' > x.sh",
+    "tee >(wc -l) < hosts/bootstrap-host.sh",
+    "sh lint.sh > >(tee log.txt) < hosts/bootstrap-host.sh",
+    "source lint.sh hosts/bootstrap-host.sh",
 ]
 # Payloads to a trusted ssh host, which the judge's trusted-host arm would otherwise allow.
 TRUSTED_HOST_WRITES = [

@@ -27,12 +27,17 @@ stdin carries (dotfiles #1342). The check does not model what `sed`, `head` or `
 with their operands. It over-reads instead: `grep -c x hosts/bootstrap-host.sh | sh` asks,
 and no filter between the script and the shell hides the script. A `<( )` stands for the
 stdout of its body wherever a file can stand: as a shell's script, after `<`, or as an
-operand of a stage that feeds a pipe.
+operand of a stage that feeds a pipe. The body of a `>( )` reads the stdout of the stage
+that names it (dotfiles #1347).
 
-Known residuals: a numeric workflow ID, which cannot be resolved offline; a script whose
-text is the argument of an `echo` or `printf` that feeds a shell (dotfiles #1346); and a
-shell inside a `>( )` that reads the stage's output, or a script run by `source` or `.`
-(dotfiles #1347). `gh api -X POST …/dispatches` already asks through `deny.gh_api`.
+An `echo` or `printf` writes its arguments as script text (dotfiles #1346). The check does
+not expand a `printf` format. It over-reads again: the arguments joined, the arguments after
+the format joined, and each argument after the format are each a text.
+
+`source` and `.` run a script file as a shell does (dotfiles #1347).
+
+Known residual: a numeric workflow ID, which cannot be resolved offline.
+`gh api -X POST …/dispatches` already asks through `deny.gh_api`.
 """
 
 import posixpath
@@ -64,6 +69,7 @@ _GH_VALUED = frozenset({"-R", "--repo", "-r", "--ref", "-f", "--raw-field", "-F"
 _WORKFLOWS = frozenset({"promote", "promote.yml", "promote.yaml"})
 _BOOTSTRAP = "bootstrap-host.sh"
 _SHELLS = ("bash", "sh", "dash", "zsh")
+_SOURCES = ("source", ".")
 _SHELL_LONG_VALUED = frozenset({"--rcfile", "--init-file"})
 _SSH_VALUED = frozenset(f"-{letter}" for letter in "BbcDEeFIiJLlmOoPpQRSWw")
 _SYSTEMCTL_VALUED = frozenset(
@@ -75,7 +81,8 @@ _RUN_VERBS = frozenset(
 _ENABLE_VERBS = frozenset({"enable", "reenable"})
 _UNITS = frozenset({"homelab-reconcile", "homelab-reconcile.service"})
 _DEPTH = 2
-# The word a `<( )` is replaced by before the command is lexed, followed by its index.
+# The word a `<( )` or `>( )` is replaced by before the command is lexed, followed by its
+# index.
 _PROCSUB = "/dev/fd/claude-guard-procsub-"
 
 
@@ -148,10 +155,37 @@ def _shell_operand(args: list[str]) -> tuple[str, str] | None:
 
 
 def _script(argv: list[str]) -> str | None:
-    """The script file a shell `argv` runs, or None when `argv` runs none."""
+    """The script file `argv` runs as a shell or sources, or None when `argv` runs none."""
     args = _shell_args(argv)
-    operand = _shell_operand(args) if args is not None else None
-    return operand[1] if operand and operand[0] == "script" else None
+    if args is not None:
+        operand = _shell_operand(args)
+        return operand[1] if operand and operand[0] == "script" else None
+    for source in _SOURCES:
+        found = unwrap(argv, source)
+        if found is not None:
+            return found[0][1] if len(found[0]) > 1 else None
+    return None
+
+
+def _printed(argv: list[str]) -> tuple[str, ...]:
+    """The script texts an `echo` or `printf` `argv` can write, or none for another command.
+
+    A `\\n` escape is read both as a newline and as a space, whether or not the command
+    expands it: the newline ends a command, and the space keeps a `printf` format on one
+    line with the arguments that fill it.
+    """
+    for tool in ("echo", "printf"):
+        found = unwrap(argv, tool)
+        if found is None:
+            continue
+        args = found[0][1:]
+        while args and args[0].startswith("-"):
+            args = args[1:]
+        texts = [" ".join(args)]
+        if tool == "printf":
+            texts += [" ".join(args[1:]), *args[1:]]
+        return tuple(text.replace("\\n", end) for text in texts if text for end in "\n ")
+    return ()
 
 
 def _runs_bootstrap(argv: list[str]) -> bool:
@@ -277,25 +311,41 @@ class _Stream:
         return out
 
 
-def _read(command: str, depth: int = 0) -> tuple[list[list[str]], _Stream]:
+def _read(
+    command: str, depth: int = 0, stdin: _Stream | None = None
+) -> tuple[list[list[str]], _Stream]:
     """Every argv `command` runs, with redirections dropped, and what `command` writes to
     stdout. A script file fed to a stage that executes it appears as a one-word argv naming
-    that file."""
+    that file.
+
+    Args:
+        command: the command text.
+        depth: how many shells deep `command` sits inside the command the check was given.
+        stdin: what `command` itself reads on stdin, nothing when omitted. Every stage
+          that heads a pipeline reads it.
+    """
+    stdin = stdin or _Stream()
     spans = substitution_spans(command)
     if spans is None:
         return [], _Stream()
     out: list[list[str]] = []
     feeds: dict[str, _Stream] = {}
+    sinks: dict[str, str] = {}
     masked = ""
     last = 0
-    for span in spans:
-        argvs, stdout = _read(command[span.body : span.end - 1], depth)
-        out.extend(argvs)
-        if span.kind == "procsub" and command[span.start] == "<":
-            word = f"{_PROCSUB}{len(feeds)}"
-            feeds[word] = stdout
-            masked += command[last : span.start] + word
-            last = span.end
+    for i, span in enumerate(spans):
+        body = command[span.body : span.end - 1]
+        if span.kind != "procsub":
+            out.extend(_read(body, depth)[0])
+            continue
+        word = f"{_PROCSUB}{i}"
+        if command[span.start] == "<":
+            argvs, feeds[word] = _read(body, depth)
+            out.extend(argvs)
+        else:
+            sinks[word] = body
+        masked += command[last : span.start] + word
+        last = span.end
     masked += command[last:]
 
     def add(words: list[str]) -> None:
@@ -305,18 +355,18 @@ def _read(command: str, depth: int = 0) -> tuple[list[list[str]], _Stream]:
             out.extend(_read(inner, depth + 1)[0])
 
     written = _Stream()
-    piped = _Stream()
+    piped = stdin
     for seg in parse(masked).segments:
         if not seg.text.strip():
             continue  # `|&` parses as `|` then an empty `&` segment
-        argv = _segment_argv(seg.text)
-        words, fed = _redirects(argv) if argv else ([], _Stream())
-        stdin = fed + _Stream(texts=seg.heredocs) + piped
+        argv = _segment_argv(seg.text) or []
+        words, fed = _redirects(argv)
+        read = fed + _Stream(texts=seg.heredocs) + piped
         if words:
             add(words)
             script = _script(words)
             if _runs_stdin(words):
-                executed = stdin
+                executed = read
             elif script in feeds:
                 executed = _Stream((script,))
             else:
@@ -326,12 +376,17 @@ def _read(command: str, depth: int = 0) -> tuple[list[list[str]], _Stream]:
             if depth < _DEPTH:
                 for text in executed.texts:
                     out.extend(_read(text, depth + 1)[0])
-        operands = tuple(word for word in words[1:] if not word.startswith("-"))
-        stdout = (_Stream(operands) + stdin).resolved(feeds)
+        operands = tuple(
+            word for word in words[1:] if not word.startswith("-") and word not in sinks
+        )
+        stdout = (_Stream(operands, _printed(words)) + read).resolved(feeds)
+        for word in argv:
+            if word in sinks:
+                out.extend(_read(sinks[word], depth, stdout)[0])
         if seg.sep == "|":
             piped = stdout
         else:
-            piped = _Stream()
+            piped = stdin
             written += stdout
     return out, written
 
