@@ -26,7 +26,7 @@ from collections.abc import Mapping
 from claude_guard import apply_guard, bypass, prompt_tool, tq_wrap, waits, wrapped
 from claude_guard.checks import (
     git_conventions,
-    promote_dispatch,
+    homelab_deploy,
     read_only_agents,
     worktree_escape,
 )
@@ -309,12 +309,12 @@ def read_only_agent_verdict(
     return Verdict(v[0], read_only_agents.RULE, v[1]) if v else None
 
 
-def promote_dispatch_verdict(stdin_text: str, command: str) -> Verdict | None:
-    """claude_guard.checks.promote_dispatch as a Verdict, or None (dotfiles #1321). It reads
-    the payload's `permission_mode`, so it runs here rather than in deny()."""
+def homelab_deploy_verdict(stdin_text: str, command: str) -> Verdict | None:
+    """claude_guard.checks.homelab_deploy as a Verdict, or None (dotfiles #1321, #1326). It
+    reads the payload's `permission_mode`, so it runs here rather than in deny()."""
     data = json.loads(stdin_text)
-    v = promote_dispatch.verdict(data, command) if isinstance(data, dict) else None
-    return Verdict(v[0], promote_dispatch.RULE, v[1]) if v else None
+    v = homelab_deploy.verdict(data, command) if isinstance(data, dict) else None
+    return Verdict(v[0], homelab_deploy.RULE, v[1]) if v else None
 
 
 def wrapped_verdict(command: str, env: Mapping[str, str]) -> Verdict | None:
@@ -351,7 +351,7 @@ def pre_tool_use(stdin_text: str, env: Mapping[str, str]) -> str | None:
     to ask (spec, Failure contracts), the posture the bash took on a missing jq. The
     worktree-escape check is a deny rule and shares that try, because it is the only one that
     reads the session's cwd, and so does the read-only-agent check (dotfiles #848), which
-    reads the payload's `agent_type`, and so does the promote-dispatch check (dotfiles #1321),
+    reads the payload's `agent_type`, and so does the homelab-deploy check (dotfiles #1321),
     which reads its `permission_mode`. Unparseable
     stdin is no decision (:22-23). The git conventions run beside the deny rules and fail
     open (conventions()). The needless-bypass check (claude_guard.bypass) runs after them and
@@ -371,7 +371,7 @@ def pre_tool_use(stdin_text: str, env: Mapping[str, str]) -> str | None:
         rules = merge(merge(deny(command, "", env), footgun(command)), awk_verdict(command))
         rules = merge(rules, escape_verdict(command, cwd))
         rules = merge(rules, read_only_agent_verdict(stdin_text, command, env))
-        rules = merge(rules, promote_dispatch_verdict(stdin_text, command))
+        rules = merge(rules, homelab_deploy_verdict(stdin_text, command))
         rules = merge(rules, waits.hand_wait(command, run_in_background(stdin_text)))
         rules = merge(rules, wrapped_verdict(command, env))
     except Exception:

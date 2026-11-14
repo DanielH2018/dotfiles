@@ -42,6 +42,7 @@
 .local/share/claude-guard/tests/test_git_conventions.py
 .local/share/claude-guard/tests/test_gitread.py
 .local/share/claude-guard/tests/test_git_reset.py
+.local/share/claude-guard/tests/test_homelab_deploy.py
 .local/share/claude-guard/tests/test_hook.py
 .local/share/claude-guard/tests/test_inert_python.py
 .local/share/claude-guard/tests/test_inert_shell.py
@@ -49,7 +50,6 @@
 .local/share/claude-guard/tests/test_judge.py
 .local/share/claude-guard/tests/test_must_pass.py
 .local/share/claude-guard/tests/test_package.py
-.local/share/claude-guard/tests/test_promote_dispatch.py
 .local/share/claude-guard/tests/test_prompt_tool.py
 .local/share/claude-guard/tests/test_read_only_agents.py
 .local/share/claude-guard/tests/test_readonly.py

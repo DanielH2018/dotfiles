@@ -342,3 +342,8 @@ Scripts/wslhost-interop-reaper
 # 2026-11-12 (its H7 slice), so no session runs ansible-playbook any more.
 .local/share/claude-guard/claude_guard/checks/ansible.py
 .local/share/claude-guard/tests/test_ansible.py
+
+# dotfiles #1326: the promote-dispatch check grew the bootstrap-host and homelab-reconcile
+# routes and moved to checks/homelab_deploy.py with its test.
+.local/share/claude-guard/claude_guard/checks/promote_dispatch.py
+.local/share/claude-guard/tests/test_promote_dispatch.py

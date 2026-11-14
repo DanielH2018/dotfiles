@@ -237,12 +237,16 @@ check. When the payload's `agent_type` names an agent whose frontmatter under
 roots, a command that changes files outside them, a shell or `eval`, and any git or gh verb
 outside a read-only set. Its module docstring says why the rest is a denylist.
 
-`checks/promote_dispatch.py` (dotfiles #1321) asks on a `gh workflow run` of the server
-repo's `promote` workflow, wherever `-R` sits in the argv. It asks only when the payload's
+`checks/homelab_deploy.py` (dotfiles #1321, #1326) asks on a hand-run write to the live
+homelab. It matches three commands: a `gh workflow run` of the server repo's `promote`
+workflow, wherever `-R` sits in the argv; a run of `hosts/bootstrap-host.sh`; and a
+`systemctl start` or `restart` of `homelab-reconcile`. It reads each one locally and inside
+the remote text of an `ssh` or `hl` call or a `sh -c` string. It asks only when the payload's
 `permission_mode` is `default`, `manual`, `acceptEdits` or `plan`. Auto mode is left to the
 `soft_deny` prose, which clears the dispatch the server repo's post-merge procedure prints.
 A settings `ask` rule cannot make that split, because Claude Code honours an ask rule in
-auto mode too.
+auto mode too. The judge's trusted-host arm does not allow an ssh payload the check matches,
+so a PermissionRequest allow cannot answer the ask before the user sees it.
 
 Three rules read text that no command runs, and they skip it only where that is provable.
 `rm_root` matches each segment, substitution and heredoc body on its own. It leaves out a
