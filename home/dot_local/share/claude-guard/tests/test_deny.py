@@ -2215,6 +2215,12 @@ def test_a_push_without_a_force_is_no_decision(command):
         f"node -e \"const a = ['pu' + 'sh', '--mirror']; {_NODE_RUN}('git', a)\"",
         'perl -e \'my @a = ("push", "--force"); system("git", @a)\'',
         "perl -e 'my @a = qw(push --force); system(\"git\", @a)'",
+        # A word list takes any punctuation as its delimiter.
+        "perl -e 'my @a = qw/push --force/; system(\"git\", @a)'",
+        "perl -e 'my @a = qw<push --force>; system(\"git\", @a)'",
+        "ruby -e 'a = %w|push --force|; system(\"git\", *a)'",
+        "ruby -e 'a = %w<push -f>; system(\"git\", *a)'",
+        "perl -e 'my @a = qw#push +feat#; system(\"git\", @a)'",
         "ruby -e 'a = %w[push --force]; system(\"git\", *a)'",
         'bash -c "ruby -e \'a = [\\"push\\", \\"-f\\"]; system(\\"git\\", *a)\'"',
     ],
