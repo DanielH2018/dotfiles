@@ -179,8 +179,8 @@ A Python program gets a second reading that needs no adjacent literals (dotfiles
 For a `-c` or stdin program that `inert_python.inert` cannot prove starts no process,
 `inert_python.literal_words` collects the words of every string literal, wherever it sits.
 The census folds `+` between literals and follows a name the program binds once to one.
-`force_push_flag` denies the program when those words hold `git`, a push subcommand and a
-force spelling. The three words need not share a list, so a program that starts a plain
+`force_push_flag` denies the program when those words hold `git`, a push subcommand or an
+inline alias for one, and a force spelling. The three words need not share a list, so a program that starts a plain
 push and passes `-f` to another command is denied too. A word the program builds at run
 time (base64, `getattr`, `chr()`, `str.join`) is an accepted residual.
 

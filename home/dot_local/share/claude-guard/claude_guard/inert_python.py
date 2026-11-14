@@ -35,6 +35,7 @@ Typical usage example:
 import ast
 import builtins
 import re
+from typing import NamedTuple
 
 # Modules whose public API holds nothing that runs a process.
 MODULES = frozenset(
@@ -217,7 +218,7 @@ def literal_words(program: str) -> frozenset[str]:
 
     The census has no data flow. A literal counts wherever it sits, so a list bound to a
     name, a starred list and a list built with `+` or `append` all count. Empty for a
-    program that does not parse.
+    program that does not parse. A word longer than `_WORD_LIMIT` is left out.
     """
     tree = _parsed(program)
     if tree is None:
@@ -231,26 +232,99 @@ def literal_words(program: str) -> frozenset[str]:
         and isinstance(node.targets[0], ast.Name)
         and bound[node.targets[0].id] == 1
     }
-    texts = (_literal_text(node, values) for node in ast.walk(tree))
-    return frozenset(word for text in texts if text for word in text.split())
+    words: set[str] = set()
+    folded: dict[int, _Edges | None] = {}
+    for node in ast.walk(tree):
+        _fold(node, values, folded, words)
+    return frozenset(w for w in words if w and len(w) <= _WORD_LIMIT)
 
 
-def _literal_text(node: ast.AST, values: dict[str, ast.expr], depth: int = 0) -> str | None:
-    """The text of a string or bytes literal, of `+` between two such texts, or of a name
-    that `values` binds to one. None for every other node."""
-    if isinstance(node, ast.Constant):
-        if isinstance(node.value, bytes):
-            return node.value.decode("utf-8", "replace")
-        return node.value if isinstance(node.value, str) else None
-    if depth > 8:  # `a = a + 'x'` binds `a` once and refers to itself
-        return None
-    if isinstance(node, ast.Name) and node.id in values:
-        return _literal_text(values[node.id], values, depth + 1)
-    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        left = _literal_text(node.left, values, depth + 1)
-        right = _literal_text(node.right, values, depth + 1)
-        return None if left is None or right is None else left + right
-    return None
+# Longer than a path, a subcommand or a ref name can be. A name that doubles itself
+# (`a = b + b`) grows a word without bound, so a longer one is cut and never counted.
+_WORD_LIMIT = 8192
+_WHITESPACE = re.compile(r"\s+")
+
+
+class _Edges(NamedTuple):
+    """The first and last word of a text, which the text next to it may continue.
+
+    Attributes:
+        first: The text up to its first whitespace. Empty when the text starts with one.
+        last: The text after its last whitespace, or None for a text that holds no
+            whitespace and so is all `first`.
+    """
+
+    first: str
+    last: str | None
+
+
+def _edges_of(text: str, words: set[str]) -> _Edges:
+    parts = [part[: _WORD_LIMIT + 1] for part in _WHITESPACE.split(text)]
+    if len(parts) == 1:
+        return _Edges(parts[0], None)
+    words.update(parts[1:-1])
+    return _Edges(parts[0], parts[-1])
+
+
+def _joined(a: _Edges, b: _Edges, words: set[str]) -> _Edges:
+    seam = ((a.first if a.last is None else a.last) + b.first)[: _WORD_LIMIT + 1]
+    if a.last is None:
+        return _Edges(seam, b.last)
+    if b.last is None:
+        return _Edges(a.first, seam)
+    words.add(seam)
+    return _Edges(a.first, b.last)
+
+
+def _fold(
+    root: ast.AST, values: dict[str, ast.expr], folded: dict[int, _Edges | None], words: set[str]
+) -> None:
+    """Folds `root` and each node it is built from, and adds the words they hold to `words`.
+
+    A node folds when it is a string or bytes literal, `+` between two nodes that fold, or
+    a name that `values` binds to one. The walk keeps its own stack, because a chain of
+    `+` nests as deep as it is long.
+
+    Args:
+        root: Any node of the program.
+        values: The expression each name bound once is assigned.
+        folded: The result for each node already read, by `id`. None marks a node that
+            does not fold. Filled in place.
+        words: The census. Filled in place.
+    """
+    stack = [root]
+    started: set[int] = set()
+    while stack:
+        node = stack[-1]
+        if id(node) in folded:
+            stack.pop()
+            continue
+        parts: list[ast.AST] = []
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            parts = [node.left, node.right]
+        elif isinstance(node, ast.Name) and node.id in values:
+            parts = [values[node.id]]
+        waiting = [part for part in parts if id(part) not in folded]
+        if any(id(part) in started for part in waiting):  # `a = a + 'x'` refers to itself
+            folded[id(node)] = None
+            continue
+        if waiting:
+            started.add(id(node))
+            stack += waiting
+            continue
+        results = [folded[id(part)] for part in parts]
+        edges = None
+        if isinstance(node, ast.Constant) and isinstance(node.value, str | bytes):
+            value = node.value
+            text = value.decode("utf-8", "replace") if isinstance(value, bytes) else value
+            edges = _edges_of(text, words)
+        elif len(results) == 1:
+            edges = results[0]
+        elif len(results) == 2 and results[0] is not None and results[1] is not None:
+            edges = _joined(results[0], results[1], words)
+        folded[id(node)] = edges
+        if edges is not None:
+            words.update((edges.first, edges.last or ""))
 
 
 def _parsed(program: str) -> ast.Module | None:

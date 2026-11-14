@@ -3110,11 +3110,15 @@ _PLUS_REFSPEC = rf"{GIT_PUSH_AT}.*\s\+[^\s]"
 _MIRROR = rf"{GIT_PUSH_AT}.*\s--mirror{_FLAG_END}"
 # The same four spellings as one whole word of a Python program's string literals.
 _FORCE_LITERAL = re.compile(r"--force|-[vqdnu46]*f[A-Za-z0-9]*|\+\S+|--mirror")
+# A word that starts a push: the subcommand, or an inline alias whose value is one.
+_PUSH_LITERAL = re.compile(
+    rf"(?:.*alias\.[^=]+=!?)?(?:{'|'.join(sorted(PUSH_SUBCOMMANDS))})", re.DOTALL
+)
 
 
 def _python_may_force_push(program: str, arguments: list[str], fed: list[str]) -> bool:
     """Whether a Python `program` that may start a process holds, as words of its string
-    literals, `git`, a push subcommand and a force spelling.
+    literals, `git`, a push subcommand or an alias for one, and a force spelling.
 
     The three words need not share a list, so a program that starts a plain push and
     passes `-f` to another command is refused too."""
@@ -3123,7 +3127,7 @@ def _python_may_force_push(program: str, arguments: list[str], fed: list[str]) -
     words = literal_words(program)
     return (
         any(posixpath.basename(w) == "git" for w in words)
-        and not words.isdisjoint(PUSH_SUBCOMMANDS)
+        and any(_PUSH_LITERAL.fullmatch(w) for w in words)
         and any(_FORCE_LITERAL.fullmatch(w) for w in words)
     )
 

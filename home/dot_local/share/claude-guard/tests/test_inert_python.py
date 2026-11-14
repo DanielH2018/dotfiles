@@ -145,7 +145,17 @@ def test_a_program_outside_the_allowlist_is_not_inert(program):
         ("p = 'pu'\np = 'x'\nrun(p + 'sh')", {"pu", "x", "sh"}),
         ("p = p + 'sh'", {"sh"}),
         ("run(['git'", set()),
+        ("run('a b' + 'c d' + ' e')", {"a", "b", "c", "bc", "d", "e"}),
     ],
 )
 def test_literal_words_folds_concatenation_and_names_bound_once(program, words):
     assert literal_words(program) == words
+
+
+def test_literal_words_folds_a_chain_of_any_length():
+    assert "ab" in literal_words("x = " + "'' + " * 5000 + "'a' + 'b'")
+
+
+def test_literal_words_leaves_out_a_word_a_name_doubles_past_the_limit():
+    doubling = "\n".join(f"x{i + 1} = x{i} + x{i}" for i in range(64))
+    assert literal_words(f"x0 = 'ab'\n{doubling}") == {"ab" * 2**n for n in range(13)}

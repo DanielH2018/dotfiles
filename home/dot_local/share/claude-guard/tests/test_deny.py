@@ -2199,6 +2199,8 @@ def test_a_push_an_interpreter_starts_from_an_argument_list_is_denied(command, r
         f"p = 'pu'; {_RUN}(['/usr/bin/git', p + 'sh', '-uf'])",
         f"cmd = ['git']; cmd.append('send-pack'); cmd.append('+feat'); {_RUN}(cmd)",
         f"flag = '--mirror'; {_RUN}('git push ' + flag, shell=True)",
+        f"x = {"'' + " * 40}'--fo' + 'rce'; {_RUN}(['git', 'pu' + 'sh', x])",
+        f"a = ['-c', 'alias.p=push', 'p', '--force']; {_RUN}(['git'] + a)",
     ],
 )
 def test_a_force_push_whose_words_a_python_program_keeps_apart_is_denied(program):
