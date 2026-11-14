@@ -2109,6 +2109,11 @@ def test_an_ordinary_config_write_is_no_decision(command):
         "cd /tmp && git config --global --add safe.directory '*'",
         "bash -c 'git config --global user.name x'",
         "bash <<'EOF'\ngit config --global user.name x\nEOF",
+        "bash -c 'git config --global user.name x' --list",
+        "bash -c 'git config --global user.name x\necho --get'",
+        "bash <<'EOF'\ngit config --global user.name x # --get\nEOF",
+        "git config --global user.name x # --get",
+        "ssh box 'git config --system core.editor vi'",
     ],
 )
 def test_a_machine_wide_config_write_is_denied(command):
@@ -2122,7 +2127,7 @@ def test_a_machine_wide_config_write_is_denied(command):
         "git config --global --get-all rerere.autoupdate",
         "git config --global --list --show-origin",
         "git config get --system core.editor",
-        "bash -c 'git config --global --get user.name'",
+        "bash <<'EOF'\ngit config --global --list\nEOF",
         "git commit -m 'refuse git config --global user.name x'",
     ],
 )

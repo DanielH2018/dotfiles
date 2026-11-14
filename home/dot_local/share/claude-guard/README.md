@@ -280,7 +280,9 @@ match every path under `.ssh/`, and a write to a `.pub` file stays refused.
 The push rules (`force_push`, `push_main`, `force_push_flag`, `push_config`,
 `push_no_verify`, `config_write`) and `machine_config_write` match `git push` and
 `git config` as text anywhere in a segment, so that `bash -c '…'` and an ssh payload stay
-covered (dotfiles #1312 for `machine_config_write`). Each line of a heredoc
+covered (dotfiles #1312 for `machine_config_write`). `machine_config_write` passes a read
+only when the `git config` is a command of its own, so a read inside a `bash -c` argument
+or an ssh payload is denied with the writes. Each line of a heredoc
 body is a member of the segment set too when a shell, a scheduler, `make` or `ssh` reads
 the body on stdin, directly, behind a wrapper such as `env` or `sudo`, at the end of a
 pipe, or inside a subshell or a group whose closer carries the heredoc (dotfiles #1289).

@@ -61,7 +61,7 @@ import shlex
 import shutil
 import tokenize
 from collections import Counter
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from claude_guard import secret_table
@@ -2849,20 +2849,23 @@ def config_write(sc: Scan, target: str) -> Verdict | None:
 
 
 _MACHINE_SCOPES = frozenset({"--global", "--system"})
-_CONFIG_ARGS_TEXT = rf"git{GLOBALS_RE}\s+config\b([^;&|]*)"
+_MACHINE_CONFIG_TEXT = rf"git{GLOBALS_RE}\s+config\b[^;&|]*\s--(global|system){_FLAG_END}"
 
 
-def _writes_machine_config(args: Sequence[str]) -> bool:
-    return bool(_MACHINE_SCOPES & set(args)) and not config_read(args)
+def _writes_machine_config(text: str) -> bool:
+    """Whether `text`, one simple command, writes machine-wide git config or may run a
+    command that does.
 
-
-def _config_args_in_text(segset: str) -> Iterator[list[str]]:
-    """The arguments of each `git config` that `segset` holds as text: in a `bash -c`
-    argument, a heredoc line a shell runs, or a command the parser refuses."""
-    pattern = _pattern(_CONFIG_ARGS_TEXT, False)
-    for line in segset.split("\n"):
-        for match in pattern.finditer(line):
-            yield re.findall(r"[^\s()`]+", match.group(1))
+    Only a `git config` invocation that carries the scope itself can be a read, because
+    only there are the words known to be its arguments. A word that starts with `#` may
+    open a comment that hides the words after it from git, so such a command is no read.
+    Any other text that names a scoped `git config` counts as a write, whatever follows it:
+    a `bash -c` or ssh payload, or an alias value.
+    """
+    for inv in invocations(text):
+        if inv.sub == "config" and _MACHINE_SCOPES & set(inv.args):
+            return any(a.startswith("#") for a in inv.args) or not config_read(inv.args)
+    return bdb_re(normalize(text), _MACHINE_CONFIG_TEXT)
 
 
 def machine_config_write(sc: Scan, target: str) -> Verdict | None:
@@ -2871,16 +2874,25 @@ def machine_config_write(sc: Scan, target: str) -> Verdict | None:
     This replaces the settings deny `Bash(git config --global:*)`, which Claude Code applies
     before any hook runs and so also refused `git config --global --get …`. Reads go on to
     the judge, which approves them through `gitread.config_read`, the same test used here.
+    Each segment and substitution body is tested on its own (`_writes_machine_config`), and
+    so is each command of a heredoc body whose lines may run.
     """
-    if any(inv.sub == "config" and _writes_machine_config(inv.args) for inv in sc.gits) or any(
-        map(_writes_machine_config, _config_args_in_text(sc.segset))
-    ):
+    p = parse(sc.command)
+    if not p.ok:
+        hit = bdb_re(sc.scan, _MACHINE_CONFIG_TEXT)
+    else:
+        texts = [seg.text for seg in p.segments] + list(p.substitutions)
+        hit = any(map(_writes_machine_config, texts)) or any(
+            machine_config_write(build_scan(body), target) for body in _heredocs_run_as_lines(p)
+        )
+    if hit:
         return Verdict(
             "deny",
             "machine-config-write",
             "Blocked: this changes git config for every repository on the machine "
             "(`--global` or `--system`). Reading it with `--get`, `--get-all` or `--list` "
-            "is allowed; ask the user to make the change.",
+            "is allowed as a command of its own, not inside `bash -c` or an ssh payload; ask "
+            "the user to make the change.",
         )
     return None
 
