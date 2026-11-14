@@ -2465,10 +2465,10 @@ _STDIN_CLI = {
         valued=r"-[CEFIr]",
         flags=rf"-{_RUBY_SWITCHES}+|-[CEFIrKTWx0i].+|-[ixW]|{_LONG_WITH_VALUE}",
         inplace=rf"-{_RUBY_SWITCHES}*i.*",
-        # `File.open` with a quoted mode that starts `w` or `a`
+        # `File.open` with a quoted `w` or `a` mode, an encoding after it or not: `"w:UTF-8"`
         writes=(
             r"\b(File|IO)\.write\b|\bFileUtils\b"
-            r"|\bFile\.open\b[^;\n]*[\"'][wa][bt+]*[\"']"
+            r"|\bFile\.open\b[^;\n]*[\"'][wa][bt+]*(:[^\"']*)?[\"']"
         ),
     ),
     # `-f` names the script in the next word, which is then read as the operand.

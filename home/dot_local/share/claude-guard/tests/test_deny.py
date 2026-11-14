@@ -1928,6 +1928,7 @@ OTHER_OPERAND_WRITE_DENY = [
     "perl -e 'rename $ARGV[0], $ARGV[1]' /tmp/x ~/.gitconfig",
     "ruby -e 'File.write(ARGV[0], 1)' ~/.bashrc",
     "ruby -e 'File.open(ARGV[0], \"a\") { |f| f.puts 1 }' ~/.zshrc",
+    "ruby -e 'File.open(ARGV[0], \"wb:UTF-8\") { |f| f.puts 1 }' ~/.bashrc",
     "ruby -rfileutils -e 'FileUtils.cp(ARGV[0], ARGV[1])' /tmp/x ~/.gitconfig",
     # an in-place flag makes a program with no write call a writer
     "ruby -pi -e '$_.upcase!' ~/.gitconfig",
