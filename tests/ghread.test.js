@@ -62,13 +62,15 @@ function ghread(args, env = {}, { quota = NO_QUOTA, cwd } = {}) {
   });
 }
 
-// A quota module that writes what ghread handed record() to `out`.
+// A quota module that writes what ghread handed record() to `out`: the environment only as
+// the keys the tests read, so no token lands on disk.
 function fakeQuota(dir, out) {
   const file = path.join(dir, 'gh_quota.py');
   fs.writeFileSync(file, `import json
+KEYS = ("CLAUDE_CODE_SESSION_ID", "GH_QUOTA_DIR", "GH_HOST", "PATH")
 def record(args, env=None, gh="gh"):
     with open(${JSON.stringify(out)}, "w") as f:
-        json.dump({"args": list(args), "env": dict(env), "gh": gh}, f)
+        json.dump({"args": list(args), "env": {k: env[k] for k in KEYS if k in env}, "gh": gh}, f)
 `);
   return file;
 }

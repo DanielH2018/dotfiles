@@ -85,7 +85,7 @@ def repo_for(explicit: str | None, cwd: Path, run: Runner = subprocess.run) -> s
 
 
 def run_group(cmd: list[str], *, timeout: float, **kwargs) -> subprocess.CompletedProcess:
-    """`subprocess.run` that kills the child's whole process group when it times out.
+    """`subprocess.run` that kills the child's whole process group on a timeout or interrupt.
 
     ghread runs gh as its own child, so killing ghread alone would leave a hung gh running.
 
@@ -98,7 +98,7 @@ def run_group(cmd: list[str], *, timeout: float, **kwargs) -> subprocess.Complet
     with subprocess.Popen(cmd, start_new_session=True, **kwargs) as proc:
         try:
             out, err = proc.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
+        except BaseException:
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(proc.pid, signal.SIGKILL)
             proc.wait()
