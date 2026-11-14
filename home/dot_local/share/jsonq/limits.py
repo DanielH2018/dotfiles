@@ -27,7 +27,10 @@ MAX_SOURCE_BYTES = 200_000  # ast.parse is recursive; do not hand it a novel
 # not stop refusing. documents.py searches it with re.IGNORECASE, since APFS is
 # case-insensitive; `(?-i:…)` keeps the env-template exemption exact-case.
 SECRET_PATHS = (
-    r"((?<!process)(?<!\.\.)\.env(?!iron(?:ments?|b)?\b)(?!(?-i:\.(?:example|sample|template))(?![A-Za-z0-9_./-]))(?!(?<=[A-Za-z0-9_-]\.env)\.j2(?![A-Za-z0-9_./-]))|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config"
+    r"((?<!process)(?<!\.\.)\.env(?!iron(?:ments?|b)?\b)(?!(?-i:\.(?:example|sample|template))(?![A-Za-z0-9_./-]))(?!(?<=[A-Za-z0-9_-]\.env)\.j2(?![A-Za-z0-9_./-]))"
+    r"|\.ssh/(?![\w.-]*\.pub(?![\w./-]))|id_rsa(?![\w.-]*\.pub(?![\w./-]))"
+    r"|id_ed25519(?![\w.-]*\.pub(?![\w./-]))|id_ecdsa(?![\w.-]*\.pub(?![\w./-]))"
+    r"|\.aws/credentials|\.aws/config"
     r"|\.gnupg/|\.netrc|\.pypirc|\.npmrc"
     r"|/run/secrets/|/run/credstore/|/homelab-secrets/|/libvirt/secrets/|\.git-credentials"
     r"|\.kube/config|\.docker/config\.json|\.config/gh/hosts\.yml"

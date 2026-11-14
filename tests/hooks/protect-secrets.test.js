@@ -186,10 +186,10 @@ test('every SECRET_PATHS entry in the deny gate is covered by this one', { skip 
   // Turn each alternation branch into a concrete path this hook can be asked about.
   const SAMPLE = {
     '(?<!process)(?<!\\.\\.)\\.env(?!iron(?:ments?|b)?\\b)(?!(?-i:\\.(?:example|sample|template))(?![A-Za-z0-9_./-]))(?!(?<=[A-Za-z0-9_-]\\.env)\\.j2(?![A-Za-z0-9_./-]))': '/home/u/.env',
-    '\\.ssh/': '/home/u/.ssh/id_rsa',
-    'id_rsa': '/home/u/id_rsa',
-    'id_ed25519': '/home/u/id_ed25519',
-    'id_ecdsa': '/home/u/id_ecdsa',
+    '\\.ssh/(?![\\w.-]*\\.pub(?![\\w./-]))': '/home/u/.ssh/id_rsa',
+    'id_rsa(?![\\w.-]*\\.pub(?![\\w./-]))': '/home/u/id_rsa',
+    'id_ed25519(?![\\w.-]*\\.pub(?![\\w./-]))': '/home/u/id_ed25519',
+    'id_ecdsa(?![\\w.-]*\\.pub(?![\\w./-]))': '/home/u/id_ecdsa',
     '\\.aws/credentials': '/home/u/.aws/credentials',
     '\\.aws/config': '/home/u/.aws/config',
     '\\.gnupg/': '/home/u/.gnupg/secring.gpg',
