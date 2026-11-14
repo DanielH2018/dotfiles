@@ -61,3 +61,14 @@ test('no blank line is left where the gate was', { skip }, () => {
   assert.ok(block, 'the daniel-box block renders');
   assert.doesNotMatch(block, /\n\s*\n\s*IdentityFile/, 'the elided branch leaves no gap');
 });
+
+test('shared connection settings appear once, in a trailing Host * block', { skip }, () => {
+  const out = renderFile(TMPL);
+  const blocks = out.split(/^Host /m).slice(1);
+  assert.match(blocks.at(-1), /^\*\n/, 'Host * is the last block');
+  const options = WINDOWS ? ['ServerAliveInterval'] : ['ControlMaster', 'ControlPersist', 'ServerAliveInterval'];
+  for (const opt of options) {
+    assert.strictEqual(out.match(new RegExp(`^\\s*${opt} `, 'gm')).length, 1, `${opt} appears once`);
+    assert.match(blocks.at(-1), new RegExp(`^\\s*${opt} `, 'm'), `${opt} is in Host *`);
+  }
+});

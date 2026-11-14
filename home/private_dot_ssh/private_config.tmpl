@@ -23,42 +23,11 @@ Host daniel-server homelab
     #
     # serve-artifacts.sh still binds the port ON each host, so the loopback route survives as a
     # manual fallback for when the cluster is down: `ssh -L 8182:127.0.0.1:8182 daniel-server`.
-{{- if ne .chezmoi.os "windows" }}
-    # Multiplexing stays. It no longer exists to establish a forward once — it is here so
-    # repeat sessions skip the handshake, and so a burst of them does not trip UFW's ssh rate
-    # limit (six connections in 30s to either host gets REJECTed, which reads as the host being
-    # down). Note sshd's MaxSessions caps channels PER CONNECTION, so multiplexing trades a
-    # connection limit for a channel limit; the hardening role sets it to 10 (server repo,
-    # roles/setup/initial_setup) and at the old value of 2 the third pane could not open.
-    #
-    # %C, not %r@%h:%p — unix socket paths cap at ~104 bytes and the literal form overflows
-    # it on long hostnames, at which point ssh silently declines to multiplex
-    # (agentview/common.sh:86 hit exactly this). ~/.ssh already exists at mode 0700, so the
-    # flat name needs no mkdir, matching otel-sweep's `~/.ssh/otel-sweep-%C`.
-    #
-    # ServerAlive* is not redundant with ControlPersist: it detects a master whose peer went
-    # away, so a suspended box leaves a socket that fails rather than one that hangs the next
-    # session. 60/10 are daniel-pi's interactive values below — deliberately NOT agentview's
-    # 5/2, which are tuned to fail a background picker fast and would drop a live shell on a
-    # brief blip.
-    #
-    # otel-sweep passes its own -o Control* with private sockets, by design — behaviour
-    # travels with the tool. These lines are for interactive sessions only and do not
-    # reach it.
-    # Gated off Windows: Win32-OpenSSH does not support control-socket multiplexing.
-    ControlMaster auto
-    ControlPath ~/.ssh/cm-%C
-    ControlPersist 10m
-    ServerAliveInterval 60
-    ServerAliveCountMax 10
-{{- end }}
 
 Host daniel-pi pi
     HostName 10.0.0.139
     User ubuntu
     IdentityFile ~/.ssh/daniel-pi
-    ServerAliveInterval 60
-    ServerAliveCountMax 10
 
 Host daniel-box box
     HostName 10.0.0.215
@@ -79,12 +48,34 @@ Host daniel-box box
     # No LocalForward, same reasoning as daniel-server above — the cluster serves this host's
     # artifacts at a real URL, so nothing emits a 127.0.0.1:8183 link any more. The manual
     # fallback is `ssh -L 8183:127.0.0.1:8183 daniel-box`.
+
+# Last on purpose: ssh takes the first value it reads for each option, so a host block above
+# can still override these.
+Host *
+    # ServerAlive* is not redundant with ControlPersist: it detects a master whose peer went
+    # away, so a suspended box leaves a socket that fails rather than one that hangs the next
+    # session. 60/10 are interactive values, deliberately NOT agentview's 5/2, which are tuned
+    # to fail a background picker fast and would drop a live shell on a brief blip.
+    ServerAliveInterval 60
+    ServerAliveCountMax 10
 {{- if ne .chezmoi.os "windows" }}
-    # Multiplex, same arrangement as daniel-server above — see the rationale there for what
-    # multiplexing is still for, %C, the ServerAlive* values, and the Windows gate.
+    # Multiplexing exists so repeat sessions skip the handshake, and so a burst of them does
+    # not trip UFW's ssh rate limit (six connections in 30s to either host gets REJECTed, which
+    # reads as the host being down). Note sshd's MaxSessions caps channels PER CONNECTION, so
+    # multiplexing trades a connection limit for a channel limit; the hardening role sets it to
+    # 10 (server repo, roles/setup/initial_setup) and at the old value of 2 the third pane
+    # could not open.
+    #
+    # %C, not %r@%h:%p — unix socket paths cap at ~104 bytes and the literal form overflows
+    # it on long hostnames, at which point ssh silently declines to multiplex
+    # (agentview/common.sh:86 hit exactly this). ~/.ssh already exists at mode 0700, so the
+    # flat name needs no mkdir, matching otel-sweep's `~/.ssh/otel-sweep-%C`.
+    #
+    # otel-sweep passes its own -o Control* with private sockets, by design — behaviour
+    # travels with the tool. These lines are for interactive sessions only and do not
+    # reach it.
+    # Gated off Windows: Win32-OpenSSH does not support control-socket multiplexing.
     ControlMaster auto
     ControlPath ~/.ssh/cm-%C
     ControlPersist 10m
-    ServerAliveInterval 60
-    ServerAliveCountMax 10
 {{- end }}
