@@ -1430,6 +1430,61 @@ def test_a_fixture_outside_the_scratch_directory_or_beside_another_write_is_deni
     assert "$CLAUDE_JOB_DIR/tmp/" in d.deny(SCRATCH_FIXTURE_DENY[0], "", SCRATCH_ENV).reason
 
 
+# DECIDED (dotfiles #1251, operator ruling 2026-11-14): a Python program that names a
+# protected path is refused unless `inert_python.read_only` proves it changes no file.
+BASHRC = f"{HOME}/.bashrc"
+PYTHON_WRITE_DENY = [
+    f"python3 -c \"open('{BASHRC}','w').write('x')\"",
+    f"python3 - <<'EOF'\nfrom pathlib import Path\nPath('{BASHRC}').write_text('x')\nEOF",
+    f"python3 <<'EOF'\nopen('{BASHRC}', 'a').write('x')\nEOF",
+    f"python3 /dev/stdin <<'EOF'\nopen('{BASHRC}', 'a').write('x')\nEOF",
+    f"uv run python -c \"open('{BASHRC}','w').write('x')\"",
+    # a writer no list of writing calls would hold
+    f"python3 -c \"import shutil; shutil.copy('x', '{BASHRC}')\"",
+    f"python3 -c \"import gzip; gzip.open('{BASHRC}', 'w')\"",
+    f"python3 -c \"o = open; o('{BASHRC}', 'w')\"",
+    # the path is an argument after the program
+    "python3 -c \"import sys; open(sys.argv[1], 'a').write('x')\" ~/.zshrc",
+    "python3 - ~/.zshrc <<'EOF'\nimport sys\nopen(sys.argv[1], 'a').write('x')\nEOF",
+    # a path-spelled interpreter, and a leader in front of it
+    f"/usr/bin/python3 -c \"open('{BASHRC}','w')\"",
+    f".venv/bin/python -c \"open('{BASHRC}','w')\"",
+    f"env PYTHONPATH=. python3 -c \"open('{BASHRC}','w')\"",
+    f"timeout 5 python3 -c \"open('{BASHRC}','w')\"",
+    f"nice -n 5 python3 -c \"open('{BASHRC}','w')\"",
+    # interpreter options before the program, and a redirect between them
+    f"python3 -Ic \"open('{BASHRC}','w')\"",
+    f"python3 -W ignore -c \"open('{BASHRC}','w')\"",
+    f"python3 2>/dev/null -c \"open('{BASHRC}','w')\"",
+    # a command line another command runs
+    f"bash -c \"python3 -c \\\"open('{BASHRC}','w')\\\"\"",
+    f"echo $(python3 -c \"open('{BASHRC}','w')\")",
+    # text the parser refuses, and a program the shell rewrites first
+    f"python3 -c \"open('{BASHRC}','w')",
+    "python3 -c \"print(open('$HOME/.bashrc').read())\"",
+]
+PYTHON_WRITE_ALLOW = [
+    f"python3 -c \"print(open('{BASHRC}').read())\"",
+    f"python3 -c \"import json; print(json.load(open('{HOME}/.claude/settings.json'))['hooks'])\"",
+    f"python3 - <<'EOF'\nfrom pathlib import Path\nprint(Path('{BASHRC}').read_text())\nEOF",
+    # a write that names no protected path, in the text or after it
+    "python3 -c \"open('out.txt','w').write('x')\"",
+    "python3 - <<'EOF'\nfrom pathlib import Path\nPath('a').write_text(str(app.env.filters))\nEOF",
+    # the words after a module or a script file are that program's, not a `-c` program's
+    "python3 -m json.tool ~/.claude/settings.json",
+    "uv run python scripts/dev/findings.py open --title 'the .bashrc guard'",
+    "grep -c python ~/.bashrc",
+]
+
+
+def test_a_python_program_that_may_change_a_protected_file_is_denied():
+    assert rules(PYTHON_WRITE_DENY) == ["python-write"] * len(PYTHON_WRITE_DENY)
+
+
+def test_a_python_program_that_only_reads_or_names_no_protected_file_is_allowed():
+    assert kinds(PYTHON_WRITE_ALLOW) == ["none"] * len(PYTHON_WRITE_ALLOW)
+
+
 # --- terraform / tofu / terragrunt (:1086-1118) -----------------------------------------------
 
 TF_DENY = [
@@ -2240,7 +2295,7 @@ SUDO_REFUSE = [
     "python3 - <<'EOF'\nimport pathlib\npathlib.os.system('sudo id')\nEOF",
     "python3 - <<'EOF'\nimport yaml\nyaml.unsafe_load('x: sudo')\nEOF",
     "python3 -c \"getattr(__import__('os'), 'system')('sudo id')\"",
-    "python3 - <<'EOF'\nfrom pathlib import Path\nPath('/u/.zshrc').write_text('sudo id')\nEOF",
+    "python3 - <<'EOF'\nfrom pathlib import Path\nPath('/u/.zshenv').write_text('sudo id')\nEOF",
     # an unquoted delimiter: the shell runs the substitution before Python reads a word
     "python3 - <<EOF\nprint('$(sudo id)')\nEOF",
     # a script reads the heredoc as data, and may run it

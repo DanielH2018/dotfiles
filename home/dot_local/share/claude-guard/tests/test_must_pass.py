@@ -84,6 +84,7 @@ HEADLESS = [
 # on the command line, and it has no in-place edit case.
 SECRET = "/home/u/.ssh/id_rsa"
 SED = "sed -i 's/a/b/' ~/.bashrc"
+BASHRC = "/home/u/.bashrc"
 MUST_REFUSE = [
     ("secret-read-interpreter", f"python3 -c \"print(open('{SECRET}').read())\""),
     ("secret-read-interpreter", f"python3 - <<'EOF'\nprint(open('{SECRET}').read())\nEOF"),
@@ -99,6 +100,10 @@ MUST_REFUSE = [
     ("inplace-edit", f"python3 - <<'EOF'\nimport os\nos.system(\"{SED}\")\nEOF"),
     ("inplace-edit", f'uv run python -c "import os; os.system(\\"{SED}\\")"'),
     ("inplace-edit", f"uv run python - <<'EOF'\nimport os\nos.system(\"{SED}\")\nEOF"),
+    ("python-write", f"python3 -c \"open('{BASHRC}','w').write('x')\""),
+    ("python-write", f"python3 - <<'EOF'\nopen('{BASHRC}','w').write('x')\nEOF"),
+    ("python-write", f"uv run python -c \"open('{BASHRC}','w').write('x')\""),
+    ("python-write", f"uv run python - <<'EOF'\nopen('{BASHRC}','w').write('x')\nEOF"),
 ]
 
 

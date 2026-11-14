@@ -73,7 +73,7 @@ from claude_guard.gitargv import (
     subcommand_at,
 )
 from claude_guard.gitread import config_read
-from claude_guard.inert_python import inert
+from claude_guard.inert_python import inert, read_only
 from claude_guard.rules import load_rules
 from claude_guard.segment import Segment, mask_substitutions, parse, substitution_spans
 
@@ -2185,6 +2185,140 @@ def inplace_edit(sc: Scan, target: str) -> Verdict | None:
     return None
 
 
+# DECIDED (dotfiles #1251, operator ruling 2026-11-14): a Python program that names a
+# WRITE_TARGETS path is refused unless `inert_python.read_only` proves it changes no file. A
+# check that looks for the calls that write, such as `open(…, 'w')` or `write_text`, fails
+# open on every spelling outside its list, so the proof is an allowlist and the refusal is
+# the default. The interpreter is any word whose basename is `python…`, wherever it sits in
+# the segment. That covers a path-spelled interpreter and every leader (`env`, `timeout`,
+# `nice`, `uv run`, `xargs`) without a list of leaders to fall behind.
+#
+# Residual: the program a script file holds (`python3 fix.py ~/.bashrc`), one that reaches
+# the path without naming it (a `cd`, an environment variable, `'.bash' + 'rc'`), and one
+# fed through a pipe. The guard never reads a file it did not see written.
+_PYTHON_WORD = re.compile(r"python[0-9.]*")
+_PYTHON_NAMES_TARGET = rf"{_INTERPRETER_WORD}.*{WRITE_TARGETS}"
+# CPython's options that take a value: the rest of the word, or the next word.
+_PY_VALUE_OPTS = "WX"
+_PY_STDIN = frozenset({"-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"})
+
+
+def _without_redirects(words: list[str]) -> list[str]:
+    """`words` less each redirect: its operator, its target and a file descriptor before it."""
+    kept: list[str] = []
+    skip = False
+    for w in words:
+        if skip:
+            skip = False
+        elif _REDIRECT_WORD.fullmatch(w):
+            if kept and kept[-1].isdigit():
+                kept.pop()
+            skip = True
+        else:
+            kept.append(w)
+    return kept
+
+
+def _command_line_programs(
+    args: list[str], heredocs: tuple[str, ...]
+) -> list[tuple[str, list[str]]]:
+    """The programs a Python interpreter runs from its command line, each with the words it
+    receives as `sys.argv[1:]`.
+
+    Args:
+        args: The words after the interpreter, redirects removed (`_without_redirects`).
+        heredocs: The heredoc bodies of the interpreter's segment.
+
+    Returns:
+        The `-c` program, or every heredoc body when the interpreter reads its program
+        from stdin. Empty for a script file and for `-m`, whose later words belong to the
+        script or the module.
+    """
+    i = 0
+    while i < len(args):
+        w = args[i]
+        if w in _PY_STDIN:
+            return [(body, args[i + 1 :]) for body in heredocs]
+        if not w.startswith("-"):
+            return []
+        if w.startswith("--"):
+            i += 2 if w == "--check-hash-based-pycs" else 1
+            continue
+        for j, c in enumerate(w[1:], 1):
+            glued = w[j + 1 :]
+            if c == "c":
+                rest = args[i + 1 :]
+                if glued:
+                    return [(glued, rest)]
+                return [(rest[0], rest[1:])] if rest else []
+            if c == "m":
+                return []
+            if c in _PY_VALUE_OPTS:
+                i += not glued
+                break
+        i += 1
+    return [(body, []) for body in heredocs]
+
+
+def _changes_target(program: str, argv: list[str]) -> bool:
+    """Whether a Python `program` run with `argv` names a WRITE_TARGETS path and may change
+    it. The program's attribute accesses are masked as `secret_interpreter` masks them, so
+    `self.env.filters` names no `.env`. A program the shell may rewrite first, one holding
+    `$` or a backtick, is never read-only."""
+    text = _masked_attributes(program) or program
+    if not bdb_re(text, WRITE_TARGETS) and not any(bdb_re(a, WRITE_TARGETS) for a in argv):
+        return False
+    return "$" in program or "`" in program or not read_only(program)
+
+
+def _python_changes_target(text: str, depth: int = 0) -> bool:
+    """Whether a Python program in `text` names a WRITE_TARGETS path and may change it
+    (`_changes_target`). A word that holds a whole command line, as `bash -c` and ssh take,
+    a substitution body and a heredoc body are each read in turn, except a word or body
+    already read as the Python program. Text the parser or the word splitter refuses is
+    refused when a `python` word comes before a target, because no program can be read out
+    of it."""
+    p = parse(text)
+    if not p.ok or depth > 4:
+        return bdb_re(normalize(text), _PYTHON_NAMES_TARGET)
+    for seg in p.segments:
+        words = _words(seg.text)
+        if words is None:
+            if bdb_re(normalize("\n".join((seg.text, *seg.heredocs))), _PYTHON_NAMES_TARGET):
+                return True
+            continue
+        args = _without_redirects(words)
+        programs: set[str] = set()
+        for i, w in enumerate(args):
+            if not _PYTHON_WORD.fullmatch(posixpath.basename(w)):
+                continue
+            for program, argv in _command_line_programs(args[i + 1 :], seg.heredocs):
+                if _changes_target(program, argv):
+                    return True
+                programs.add(program)
+        nested = [w for w in words if any(c.isspace() for c in w)] + list(seg.heredocs)
+        if any(_python_changes_target(t, depth + 1) for t in nested if t not in programs):
+            return True
+    return any(_python_changes_target(t, depth + 1) for t in p.substitutions)
+
+
+def python_write(sc: Scan, target: str) -> Verdict | None:
+    """A `python -c` or stdin program that names a WRITE_TARGETS path, in its text or in an
+    argument after it, and is not provably read-only (#1251)."""
+    if _python_changes_target(sc.command):
+        return Verdict(
+            "deny",
+            "python-write",
+            "Blocked: a Python program that names a secrets, shell-startup, or git "
+            "config/hook file and is not provably read-only. To read the file, keep the "
+            "program to `open()` without a write mode, `Path.read_text` and `json.load`, "
+            "and print the result; `str.replace`, `write` and every import outside "
+            "`inert_python.py`'s list count as a change. Ask the user before changing the "
+            f"file itself.{EDIT_TOOL_HINT}",
+        )
+    return None
+
+
 # --- terraform / tofu / terragrunt (:1086-1118) -----------------------------------------------
 
 TF_HUMAN = "Use plan to preview; a human applies infra changes."
@@ -3655,6 +3789,7 @@ RULES: tuple[Rule, ...] = (
     docker_inspect,
     write_targets,
     inplace_edit,
+    python_write,
     terraform,
     force_push_flag,
     push_config,

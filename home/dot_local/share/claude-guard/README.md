@@ -255,6 +255,20 @@ operands, and a pipe into kill or a shell running a named script is judged at th
 Jinja `secret.yaml.j2` template is not a secrets file. That took the replay from 243 denies
 and 15 asks to 208 and 4, with nothing newly refused (2026-10-24).
 
+One rule goes the other way and refuses by default. `python_write` refuses a `python -c`
+program, or a program Python reads from a heredoc, that names a secrets, shell-startup or
+git config/hook file in its text or in an argument after it (dotfiles #1251). The program
+passes only when `inert_python.read_only` proves it changes no file. That proof is the
+`inert` allowlist without the attributes that write, create, move or delete a file. It
+passes an `open` only as a call whose mode is a literal read mode, read at the position
+each opener keeps it: second for the builtin, first or second for an `x.open(…)`. The
+interpreter is any word whose basename is `python…`, so a path-spelled interpreter and an
+`env`, `timeout` or `nice` leader are covered without a list of leaders. A script file's
+program stays out of reach, as does a program fed through a pipe. Over 27,144 distinct
+commands from this host's transcripts the rule refused 60 (2026-11-14). Most were edit
+scripts that rewrite a file under `.claude/hooks/`, or whose replaced text names
+`secrets.yml` or `.bashrc`; the denial points those at the Edit tool.
+
 When nothing above decides, `readonly.py` (dotfiles #628, ported from the server repo's
 `auto-approve-readonly.py`) allows a command whose every stage is provably read-only. It
 applies only when the session cwd is `$HOME` itself or inside `~/server` or

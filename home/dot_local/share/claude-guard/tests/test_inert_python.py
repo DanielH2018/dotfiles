@@ -2,7 +2,7 @@
 
 import pytest
 
-from claude_guard.inert_python import inert
+from claude_guard.inert_python import inert, read_only
 
 INERT = [
     "from pathlib import Path\np = Path('a.md')\np.write_text(p.read_text().replace('x', 'y'))",
@@ -45,6 +45,58 @@ NOT_INERT = [
     # text that is not Python
     "if x then echo; fi",
 ]
+
+
+READ_ONLY = [
+    "print(open('/home/u/.bashrc').read())",
+    "import json\nprint(json.load(open('/home/u/.claude/settings.json', 'rb'))['hooks'])",
+    "from pathlib import Path\nprint(Path('.zshrc').read_text().splitlines()[:3])",
+    "from pathlib import Path\nwith Path('.zshrc').open() as f:\n    print(f.read())",
+    "from pathlib import Path\nprint(Path('.zshrc').open('r', encoding='utf-8').read())",
+    "print(open('.zshrc', mode='rt', encoding='utf-8').read())",
+]
+NOT_READ_ONLY = [
+    # an attribute that changes a file on some object
+    "from pathlib import Path\nPath('.zshrc').write_text('x')",
+    "from pathlib import Path\nPath('.zshrc').unlink()",
+    "from pathlib import Path\nPath('x').replace('.zshrc')",
+    "from pathlib import Path\nPath('x').rename('.zshrc')",
+    "from json import dump\ndump({}, f)",
+    # the builtin takes the mode second, or as a keyword
+    "open('.zshrc', 'w')",
+    "open('.zshrc', 'r+')",
+    "open('.zshrc', mode='a')",
+    "open('.zshrc', m)",
+    "open(*args)",
+    "open('.zshrc', **kwargs)",
+    "open('.zshrc', opener=f)",
+    # `Path('f').open` takes the mode first
+    "from pathlib import Path\nPath('.zshrc').open('w')",
+    "from pathlib import Path\nPath('.zshrc').open(m)",
+    "from pathlib import Path\nPath('.zshrc').open(mode='a')",
+    # the unbound `Path.open`, like `gzip.open`, takes the path first and the mode second
+    "from pathlib import Path\nPath.open(Path('.zshrc'), 'w')",
+    "from pathlib import Path\nPath.open('.zshrc', 'w')",
+    # an `open` that is not called where it is named
+    "o = open\no('.zshrc', 'w')",
+    "from functools import partial\npartial(open, '.zshrc')('w')",
+    "from pathlib import Path\nf = Path('.zshrc').open\nf('w')",
+    "list(map(open, ['.zshrc'], ['w']))",
+    # outside the allowlist `inert` shares
+    "import gzip\ngzip.open('.zshrc')",
+    "import shutil\nshutil.copy('x', '.zshrc')",
+    "if x then echo; fi",
+]
+
+
+@pytest.mark.parametrize("program", READ_ONLY)
+def test_a_program_that_opens_files_only_for_reading_is_read_only(program):
+    assert read_only(program)
+
+
+@pytest.mark.parametrize("program", NOT_READ_ONLY)
+def test_a_program_that_may_change_a_file_is_not_read_only(program):
+    assert not read_only(program)
 
 
 @pytest.mark.parametrize("program", INERT)
