@@ -2384,6 +2384,19 @@ _STDIN_CLI = {
     ),
     "osascript": _StdinCli(inline=r"-e", valued=r"-[ls]", flags=r"-i|-l.+|-s[hseo]+"),
 }
+_PACKAGE_VERBS = frozenset(
+    {"install", "uninstall", "reinstall", "remove", "upgrade", "update", "info", "show"}
+    | {"search", "list", "ls", "view", "outdated"}
+)
+# Commands that run none of the words after them, so an interpreter's name there is an
+# argument. A value is the subcommands the entry holds for, read only as the second word,
+# or None for every form of the command. A command missing from the table keeps the
+# refusal, as a leader such as `bundle exec` must.
+_NAMES_ONLY: dict[str, frozenset[str] | None] = {
+    **dict.fromkeys(("grep", "egrep", "fgrep", "echo", "printf", "which", "whereis", "type")),
+    **dict.fromkeys(("brew", "apt", "apt-get", "dnf", "npm", "pnpm", "gem"), _PACKAGE_VERBS),
+    "nvm": frozenset({"use", "install", "uninstall", "ls", "current", "alias"}),
+}
 _INTERPRETER_NAME = re.compile("|".join((_PYTHON_WORD.pattern, *_STDIN_CLI)))
 
 
@@ -2608,17 +2621,18 @@ def _other_interpreter_arguments(args: list[str]) -> list[tuple[_StdinCli, list[
     """The options of each interpreter other than Python that `args` may start, with the
     words after it.
 
-    An interpreter is a word whose basename is a `_STDIN_CLI` name and which is the
-    segment's command word, or any later word when the command word is an executor, an
-    escalator or a runner in a mode that runs a command. Under any other command the word
-    is an argument: `brew install node`, `npm view bun` and `which ruby` start no
-    interpreter."""
+    An interpreter is a word whose basename is a `_STDIN_CLI` name, wherever it sits, so
+    every leader counts without a list of leaders. The one exception is a command that
+    `_NAMES_ONLY` lists: its words are names it looks up, installs or prints, so `brew
+    install node` and `which ruby` start no interpreter."""
     argv = _argv(_command_words(args))
-    anywhere = bool(argv) and (
-        posixpath.basename(argv[0]) in _EXECUTORS | _ESCALATORS or _runner_command(argv) is not None
-    )
+    if not argv:
+        return []
+    subcommands = _NAMES_ONLY.get(posixpath.basename(argv[0]), frozenset())
+    if subcommands is None or argv[1:2] and argv[1] in subcommands:
+        return []
     named = ((_STDIN_CLI.get(posixpath.basename(w)), argv[i + 1 :]) for i, w in enumerate(argv))
-    return [(cli, after) for i, (cli, after) in enumerate(named) if cli and (anywhere or i == 0)]
+    return [(cli, after) for cli, after in named if cli is not None]
 
 
 def _stdin_program_names_secret(program: str) -> bool:

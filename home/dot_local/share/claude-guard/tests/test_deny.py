@@ -1795,6 +1795,11 @@ OTHER_STDIN_SECRET_DENY = [
     # a leader in front, a path-spelled interpreter and a command line another command runs
     f"{READS_KEY} | timeout 5 node",
     f"{READS_KEY} | /usr/bin/perl",
+    # a leader no table lists
+    f"{READS_KEY} | bundle exec ruby",
+    f"{READS_KEY} | rbenv exec ruby",
+    f"{READS_KEY} | nvm exec node",
+    f"{READS_KEY} | mise exec -- node",
     'bash -c "echo \\"open(F, q(/x/server.key))\\" | perl"',
     # a program that also parses as Python keeps its `q(server.key)` unmasked
     'echo "print(q(server.key))" | perl',
@@ -1813,6 +1818,7 @@ OTHER_STDIN_ALLOW = [
     "git log --stat -- server.key | grep node",
     "git diff -- config/master.key | wc -l; which ruby",
     "git log --stat -- server.key && npm view bun",
+    "git log --stat -- server.key; nvm use node",
 ]
 
 
