@@ -293,6 +293,30 @@ test('missing manifest fails closed with a clear error, not a crash mid-scan', {
   assert.throws(() => runSweep('/nonexistent/retention-manifest.json'));
 });
 
+// journald stores a unit's stderr at info, which a host keeping only notice and above drops.
+// JOURNAL_STREAM names the stream journald reads; stderr is a file here so its dev:ino is known.
+test('an error line carries the err priority prefix only when stderr is the journal', { skip }, () => {
+  const root = scratch(os.tmpdir(), 'retention-journal-');
+  const stderrOf = (env) => {
+    const errPath = path.join(root, 'stderr');
+    const fd = fs.openSync(errPath, 'w');
+    const { dev, ino } = fs.fstatSync(fd);
+    const stream = env === 'journal' ? `${dev}:${ino}` : '';
+    try {
+      spawnSync('python3', [SWEEP], {
+        env: { ...process.env, HOME: root, RETENTION_MANIFEST: '/nonexistent/m.json', JOURNAL_STREAM: stream },
+        stdio: ['ignore', 'ignore', fd],
+      });
+    } finally {
+      fs.closeSync(fd);
+    }
+    return fs.readFileSync(errPath, 'utf8');
+  };
+
+  assert.match(stderrOf('journal'), /^<3>retention-sweep: manifest not found/);
+  assert.match(stderrOf('terminal'), /^retention-sweep: manifest not found/);
+});
+
 // --- Slice 2: the delete path, one test per gate -------------------------------------
 
 const DEAD_PID = 999999;
@@ -452,6 +476,23 @@ test('prune-age removes an aged directory tree and keeps one inside the cap', { 
   assert.ok(!fs.existsSync(old), 'the 20-day-old tree should have been removed');
   assert.ok(fs.existsSync(recent), 'the 3-day-old tree is inside the 14d cap and must survive');
   assert.match(out, /younger than cap=14d/);
+});
+
+// G15's real failure: the sandbox user's uv lock in sticky /tmp, which the kernel refuses
+// to let the operator unlink. RETENTION_UID stands in for that other owner, since a test
+// cannot chown a file to another user.
+test('an entry another user owns is kept and is not an error', { skip }, () => {
+  const root = scratch(os.tmpdir(), 'retention-owner-');
+  const tmp = path.join(root, 'tmp');
+  const lock = aged(path.join(tmp, 'uv-0123456789abcdef.lock'), '', 3 * 86400 * 1000);
+  fs.chmodSync(tmp, 0o1777);
+
+  const m = manifestFile(root, [ageRow('G15', path.join(tmp, 'uv-*'), 'mtime+24h')]);
+  const out = runSweep(m, ['--apply'], { RETENTION_UID: String(os.userInfo().uid + 1) });
+
+  assert.ok(fs.existsSync(lock), 'another user\'s lock must survive');
+  assert.match(out, /owned by uid \d+, not the sweeping user/);
+  assert.match(out, /0 error\(s\)/);
 });
 
 test('prune-empty-dir removes an empty directory and never a populated one', { skip }, () => {

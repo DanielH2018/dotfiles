@@ -427,7 +427,7 @@ AppData
 .config/systemd/user/claude-changelog-watch.*
 .config/systemd/user/otel-sweep-watch.*
 .config/systemd/user/otel-savings-rollup.*
-.config/systemd/user/retention-sweep.*
+.config/systemd/user/retention-sweep*
 {{ else }}
 .claude/operator
 {{ end }}

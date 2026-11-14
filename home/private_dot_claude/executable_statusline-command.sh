@@ -150,6 +150,17 @@ if [[ -s "$otel_findings_file" ]]; then
   fi
 fi
 
+# Segment: failed retention sweeps (red). retention-sweep-failed.service, the OnFailure=
+# handler of the hourly sweep, appends one line per failed run; the sweep unit deletes the
+# file after its next clean run. Same standing-state shape as the otel segment above.
+sweep_failed_file="${XDG_STATE_HOME:-$HOME/.local/state}/retention-sweep/failed"
+if [[ -s "$sweep_failed_file" ]]; then
+  sweep_failed=$(grep -c . "$sweep_failed_file" 2>/dev/null)
+  if [[ "${sweep_failed:-0}" =~ ^[0-9]+$ ]] && (( sweep_failed > 0 )); then
+    add '\033[38;2;243;139;168m⚠ retention sweep failed %s time(s)\033[0m' "$sweep_failed"
+  fi
+fi
+
 # Segment: vim mode (purple) — only shown when vim mode is active
 [[ -n "$vim_mode" ]] && add '\033[38;2;203;166;247m%s\033[0m' "$vim_mode"
 

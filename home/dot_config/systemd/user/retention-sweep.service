@@ -1,5 +1,8 @@
 [Unit]
 Description=Prune stale Claude config state per the retention manifest
+# The server repo's monitoring does not read user units, so without this a failed sweep is
+# visible only to someone who asks systemd. The handler records it for the statusline and syslog.
+OnFailure=retention-sweep-failed.service
 
 [Service]
 Type=oneshot
@@ -7,11 +10,15 @@ Type=oneshot
 # (source-level row list, per-row glob prefix, grace floors) is what makes that safe;
 # this unit deliberately passes no other argument.
 ExecStart=%h/.local/bin/retention-sweep --apply
+# The way back out of the failed state: ExecStartPost runs only after ExecStart exits 0, so
+# the next clean run clears the statusline segment.
+ExecStartPost=rm -f %S/retention-sweep/failed
 # Hygiene must never compete with an interactive session for CPU or disk. A19-25's
 # lesson: a sweep that makes the machine feel slow gets disabled, and then caps nothing.
 Nice=10
 IOSchedulingClass=idle
 # stdout is the record. journald already rotates it, which is why the sweeper writes no
-# log file of its own.
+# log file of its own. A journald that stores only notice and above drops stdout; the
+# sweeper marks its stderr lines err so the reason for a failure survives.
 StandardOutput=journal
 StandardError=journal

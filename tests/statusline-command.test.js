@@ -133,6 +133,32 @@ test('no findings-pending file at all means no otel segment', { skip }, () => {
   assert.doesNotMatch(out, /otel finding\(s\)/);
 });
 
+// ── The failed retention-sweep segment ────────────────────────────────────────
+//
+// retention-sweep-failed.service, the hourly sweep's OnFailure= handler, appends one line
+// per failed run; the sweep unit deletes the file after its next clean run.
+function sweepFailedState(lines) {
+  const dir = scratch(os.tmpdir(), 'statusline-sweep-');
+  if (lines !== null) {
+    fs.mkdirSync(path.join(dir, 'retention-sweep'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'retention-sweep', 'failed'), lines.map((l) => l + '\n').join(''));
+  }
+  return dir;
+}
+
+test('failed retention sweeps show with a count of failed runs', { skip }, () => {
+  const state = sweepFailedState(['2026-11-14T02:00:00Z', '2026-11-14T03:00:00Z']);
+  const out = stripAnsi(run(LEAK_INPUT, '400', '/nonexistent/transcript-leaks-pending', { XDG_STATE_HOME: state }).stdout);
+  assert.match(out, /⚠ retention sweep failed 2 time\(s\)/);
+});
+
+test('an empty or absent failed file shows no retention-sweep segment', { skip }, () => {
+  for (const state of [sweepFailedState([]), sweepFailedState(null)]) {
+    const out = stripAnsi(run(LEAK_INPUT, '400', '/nonexistent/transcript-leaks-pending', { XDG_STATE_HOME: state }).stdout);
+    assert.doesNotMatch(out, /retention sweep failed/);
+  }
+});
+
 test('no marker means no leak segment', { skip }, () => {
   const out = stripAnsi(run(LEAK_INPUT).stdout);
   assert.doesNotMatch(out, /⚠/);

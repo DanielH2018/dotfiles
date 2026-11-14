@@ -59,7 +59,8 @@ their state registry) use them to keep every rule the SessionStart prune hook ha
 
 Test seams: RETENTION_MANIFEST, RETENTION_SIBLING_CANDIDATES (G12's live-sibling
 search list), RETENTION_STATE_DIR (run marker and measurements), RETENTION_LOCK,
-RETENTION_SYSNAME (the uname -s the host label branches on), ARTIFACT_SCUTIL.
+RETENTION_SYSNAME (the uname -s the host label branches on), RETENTION_UID (the
+owner whose entries the sweep may remove; the effective uid by default), ARTIFACT_SCUTIL.
 """  # noqa: E501
 
 from __future__ import annotations
@@ -106,8 +107,22 @@ def _out(text: str = "") -> None:
     sys.stdout.write(text + "\n")
 
 
+def _stderr_is_journal() -> bool:
+    stream = os.environ.get("JOURNAL_STREAM", "")
+    try:
+        st = os.fstat(2)
+    except OSError:
+        return False
+    return stream == f"{st.st_dev}:{st.st_ino}"
+
+
+# journald stores a unit's stderr at info, which MaxLevelStore=notice drops, so a failed
+# timer run would leave no reason. `<3>` is sd-daemon(3)'s per-line err priority.
+_ERR_PREFIX = "<3>" if _stderr_is_journal() else ""
+
+
 def _err(text: str) -> None:
-    sys.stderr.write(text + "\n")
+    sys.stderr.write(_ERR_PREFIX + text + "\n")
 
 
 # --- stat/du --------------------------------------------------------------------------
@@ -134,6 +149,13 @@ def file_mtime(path: str) -> int | None:
 def file_size(path: str) -> int | None:
     try:
         return os.lstat(path).st_size
+    except OSError:
+        return None
+
+
+def file_uid(path: str) -> int | None:
+    try:
+        return os.lstat(path).st_uid
     except OSError:
         return None
 
@@ -891,6 +913,7 @@ def sweep(cfg: dict) -> int:
     home = cfg["home"]
     manifest_path = cfg["manifest"]
     measured_at = cfg["measured_at"]
+    sweep_uid = cfg["uid"]
 
     total_pruned = total_bytes = total_rotated = total_rotated_bytes = rows = errors = 0
 
@@ -1006,6 +1029,13 @@ def sweep(cfg: dict) -> int:
                 # its own glob's prefix and is not a symlink.
                 if not contained(prefix, f):
                     kept_reason = "outside its glob prefix or a symlink"
+                    continue
+
+                # Another user's entry in sticky /tmp (G15) is one the kernel refuses to
+                # unlink; trying would turn every run into a failure.
+                owner = file_uid(f)
+                if owner != sweep_uid:
+                    kept_reason = f"owned by uid {owner}, not the sweeping user"
                     continue
 
                 if keep:
@@ -1230,6 +1260,7 @@ def main(argv: list[str]) -> int:
         "measured": f"{state_dir}/.retention-sweep-measured.json",
         "settings_env": load_settings_env(home),
         "now": int(time.time()),
+        "uid": int(os.environ.get("RETENTION_UID") or os.geteuid()),
         "measured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
 

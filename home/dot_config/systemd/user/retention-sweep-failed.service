@@ -1,0 +1,12 @@
+[Unit]
+Description=Record a failed retention sweep for the statusline and syslog
+Documentation=file:%h/.local/bin/retention-sweep
+
+[Service]
+Type=oneshot
+# One line per failed run, so the statusline segment can count them. retention-sweep.service
+# deletes the file after its next clean run.
+ExecStart=sh -c 'mkdir -p "%S/retention-sweep" && date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ >> "%S/retention-sweep/failed"'
+# syslog reaches Loki, where the server repo's host health checks report; `status=` is their
+# convention. Priority warning clears a journald that stores only notice and above.
+ExecStart=-logger -t retention-sweep -p user.warning "status=down retention-sweep.service failed; journalctl --user -u retention-sweep.service -p err names the cause"

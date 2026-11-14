@@ -41,7 +41,7 @@ const AGENT_IGNORED = [
   '.config/systemd/user/claude-changelog-watch.*',
   '.config/systemd/user/otel-sweep-watch.*',
   '.config/systemd/user/otel-savings-rollup.*',
-  '.config/systemd/user/retention-sweep.*',
+  '.config/systemd/user/retention-sweep*',
 ];
 
 // The hostname is not data, so a render that needs daniel-box sets it the way
