@@ -1205,6 +1205,10 @@ def sweep(cfg: dict) -> int:
                 )
         except OSError as e:
             _err(f"{PROG}: cannot write run marker {cfg['marker']}: {e.strerror}")
+        # The way out of the failed state retention-sweep-failed.service records. A run
+        # that skipped on the lock never gets here, so it cannot clear a real failure.
+        if errors == 0:
+            remove_file(cfg["failed"])
     else:
         _out(
             "Reported matched/bytes/age only — deletes nothing. "
@@ -1260,6 +1264,8 @@ def main(argv: list[str]) -> int:
         "state_dir": state_dir,
         "marker": f"{state_dir}/.retention-sweep-last-run",
         "measured": f"{state_dir}/.retention-sweep-measured.json",
+        "failed": f"{os.environ.get('XDG_STATE_HOME') or home + '/.local/state'}"
+        "/retention-sweep/failed",
         "settings_env": load_settings_env(home),
         "now": int(time.time()),
         "uid": int(os.environ.get("RETENTION_UID") or os.geteuid()),

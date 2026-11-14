@@ -47,6 +47,7 @@ function runSweep(manifestPath, args = [], extraEnv = {}) {
       RETENTION_MANIFEST: manifestPath,
       RETENTION_STATE_DIR: home,
       RETENTION_LOCK: path.join(home, 'sweep.lock'),
+      XDG_STATE_HOME: path.join(home, '.local', 'state'),
       ...extraEnv,
     },
     encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
@@ -769,12 +770,28 @@ test('a second sweep exits cleanly while another holds the lock', { skip: skip |
     }
     assert.ok(held, 'setup: could not get the holder to take the lock');
 
+    const failed = path.join(root, '.local', 'state', 'retention-sweep', 'failed');
+    fs.mkdirSync(path.dirname(failed), { recursive: true });
+    fs.writeFileSync(failed, '2026-11-14T03:00:00Z\n');
     const out = runSweep(m, ['--apply'], { RETENTION_STATE_DIR: root, RETENTION_LOCK: lock });
     assert.match(out, /another sweep is running/);
     assert.ok(fs.existsSync(f), 'the blocked sweep must not have deleted anything');
+    assert.ok(fs.existsSync(failed), 'a skipped sweep must not clear the failure record');
   } finally {
     try { process.kill(-holder.pid, 9); } catch { /* already gone */ }
   }
+});
+
+test('a clean --apply run clears the failure record', { skip }, () => {
+  const root = scratch(os.tmpdir(), 'retention-failed-');
+  const m = manifestFile(root, [deadPidRow('G2', path.join(root, 'sessions', '*.json'))]);
+  const failed = path.join(root, '.local', 'state', 'retention-sweep', 'failed');
+  fs.mkdirSync(path.dirname(failed), { recursive: true });
+  fs.writeFileSync(failed, '2026-11-14T03:00:00Z\n');
+  runSweep(m);
+  assert.ok(fs.existsSync(failed), 'a dry run proves nothing about --apply');
+  runSweep(m, ['--apply']);
+  assert.ok(!fs.existsSync(failed));
 });
 
 // The suite runs on the same machine the sweeper maintains, and an hourly timer runs the
