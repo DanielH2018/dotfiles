@@ -218,23 +218,23 @@ def _is_redirect(word: str) -> bool:
 def _redirects(argv: list[str]) -> tuple[list[str], str | None, str | None]:
     """`argv` split into its words without redirections, the file a `<` feeds its stdin,
     and the text of a `<<<` herestring. The lexer splits `2>/dev/null` into `2`, `>`,
-    `/dev/null`, so a digit word before an operator is read as its fd."""
+    `/dev/null`, so a digit word before an operator is dropped as its fd. The lexer also
+    drops the space that tells `-n 5 < file` from `5< file`, so every `<` and `<<<` is read
+    as feeding stdin."""
     words: list[str] = []
-    source = herestring = fd = None
+    source = herestring = None
     i = 0
     while i < len(argv):
         word = argv[i]
         if word.isdigit() and i + 1 < len(argv) and _is_redirect(argv[i + 1]):
-            fd = word
             i += 1
             continue
         if _is_redirect(word):
             target = argv[i + 1] if i + 1 < len(argv) else None
-            if fd in (None, "0") and word == "<":
+            if word == "<":
                 source = target
-            elif fd in (None, "0") and word == "<<<":
+            elif word == "<<<":
                 herestring = target
-            fd = None
             i += 2
             continue
         words.append(word)
