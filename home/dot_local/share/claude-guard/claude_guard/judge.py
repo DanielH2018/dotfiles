@@ -30,6 +30,7 @@ import sys
 from dataclasses import dataclass
 
 from claude_guard.assignments import prefix_ok, split_assignments, standalone_name_ok
+from claude_guard.checks import homelab_deploy
 from claude_guard.checks.awk import segment_risk
 from claude_guard.checks.curl import curl_safe
 from claude_guard.checks.git_branch import checkout_branch_safe, merge_safe, rebase_safe
@@ -1202,7 +1203,8 @@ def judge_segment(
         remote_part = _STDERR_SINK_WORD.sub("", part)
         if readonly_remote_safe(remote_part):
             return True, "remote-readonly-check"
-        if trusted_host_safe(remote_part):
+        # A trusted host's payload can still be a homelab write that must reach the user.
+        if trusted_host_safe(remote_part) and homelab_deploy.route(remote_part) is None:
             return True, "trusted-host-check"
 
     # :359-363.
@@ -1334,7 +1336,7 @@ def judge(
     # without re-running the command.
     if readonly_remote_safe(command):
         return Decision(True, "remote-readonly-check", ())
-    if trusted_host_safe(command):
+    if trusted_host_safe(command) and homelab_deploy.route(command) is None:
         return Decision(True, "trusted-host-check", ())
     if clean_reset_safe(command, cwd):
         return Decision(True, "git-reset-check", ())
