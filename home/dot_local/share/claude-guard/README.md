@@ -382,7 +382,8 @@ segment before it is a candidate: `grep -c foo ~/.bashrc; echo 'print(1)' | pyth
 passes. Every other producer is still refused when an earlier segment names a protected
 file, because the rule reads that producer's shell text as the program. So is a printer
 behind any other leader, such as `xargs`, which turns the piped text into arguments, or a
-listed leader given another option. So is an `echo` whose operand holds a backslash. A
+listed leader given another option. So is an `echo` whose operand holds a backslash, and a printer
+with an output redirect, which may send its text somewhere other than the pipe. A
 brace group piped onward by a bare `}` is read as what its members print, in order, when
 every member is a printer that ends in `;` or a newline. A subshell, a nested group, a
 group with a redirect and a group with any other member are refused as before. A `<(…)` operand narrows the candidates only when every

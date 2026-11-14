@@ -1690,6 +1690,10 @@ PYTHON_WRITE_DENY = [
     # a leader that turns the piped text into arguments, or is not in its one read shape
     f"echo \"-copen('{BASHRC}','w')\" | timeout 5 xargs -d '\\n' python3",
     f"echo \"-copen('{BASHRC}','w')\" | env -S 'xargs python3' python3",
+    # a group member whose redirect takes its text off the pipe
+    f"{{ echo 'x = \"\"\"' >&2; echo \"open('{BASHRC}','w')\"; echo '\"\"\"' >&2; }} | python3",
+    f"{{ echo '\"\"\"' > /dev/null; echo \"open('{BASHRC}','w')\"; echo '\"\"\"' 2>&1 >f; }} | python3",
+    f"{{ cat <<'EOF' >&2\n'''\nEOF\necho \"open('{BASHRC}','w')\"; echo \"'''\" >&2; }} | python3",
     # a group with a member whose output the words do not give
     f"grep -c foo {BASHRC}; {{ echo 'import sys'; cat w.py; }} | python3",
     # a substitution that reads the stdin it inherits

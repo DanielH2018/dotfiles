@@ -2520,10 +2520,16 @@ def _without_redirects(words: list[str]) -> tuple[list[str], list[str], str]:
 def _printed_program(seg: Segment) -> str | None:
     """The text the segment `seg` writes to stdout when the words alone give it: the
     operands of an `echo` or a `printf` (`inert_shell.printed`), or the one heredoc a bare
-    `cat` forwards. None for every other segment."""
+    `cat` forwards. None for every other segment, and for one with an output redirect,
+    which may send the text somewhere other than stdout."""
+    words = _words(seg.text)
+    if words is None or any(
+        ">" in w and _PUNCTUATION.fullmatch(w.lstrip("0123456789")) for w in words
+    ):
+        return None
     if not seg.heredocs:
         return printed(seg.text)
-    args, _, stdin = _without_redirects(_words(seg.text) or [])
+    args, _, stdin = _without_redirects(words)
     forwards = args in (["cat"], ["cat", "-"]) and stdin == "own" and len(seg.heredocs) == 1
     return seg.heredocs[0] if forwards else None
 
