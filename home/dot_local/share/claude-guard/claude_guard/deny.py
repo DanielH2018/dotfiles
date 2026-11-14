@@ -48,6 +48,7 @@ denials name the words that matched, with the exclude arguments for a recursive 
 (dotfiles #802).
 """
 
+import ast
 import fnmatch
 import io
 import itertools
@@ -314,6 +315,22 @@ def _heredoc_program_expands(source: str | None, heredocs: tuple[str, ...], quot
     return not any(body == source and q for body, q in zip(heredocs, quoted, strict=False))
 
 
+def _names_only_in_quotes(text: str, pattern: str) -> bool:
+    """Whether the segment `text` is a grep, echo or printf (`_INERT_QUOTE_HEADS`) that matches
+    `pattern` only inside its quoted arguments. A segment holding a substitution is never one,
+    since the shell runs a `$( )` even inside double quotes."""
+    words = _words(text)
+    argv = _argv(words) if words else []
+    bare = _unquoted(text)
+    return (
+        bool(argv)
+        and posixpath.basename(argv[0]) in _INERT_QUOTE_HEADS
+        and bare is not None
+        and not _holds_substitution(text)
+        and not bdb_re(bare, pattern)
+    )
+
+
 def _rm_members(sc: Scan) -> list[str]:
     """The texts `rm_root` matches: each segment, substitution and heredoc body on its own.
 
@@ -332,18 +349,10 @@ def _rm_members(sc: Scan) -> list[str]:
     members: list[str] = []
     for seg in p.segments:
         words = _words(seg.text) or []
-        argv = _argv(words)
         source = _python_source(words, seg.heredocs) if words else None
         expands = _heredoc_program_expands(source, seg.heredocs, seg.heredoc_quoted)
         inert_source = _inert_program(source, expands)
-        bare = _unquoted(seg.text)
-        quoted_only = (
-            not runs_code
-            and bool(argv)
-            and posixpath.basename(argv[0]) in _INERT_QUOTE_HEADS
-            and bare is not None
-            and not re.search(r"\brm\b", bare)
-        )
+        quoted_only = not runs_code and _names_only_in_quotes(seg.text, r"\brm\b")
         if not quoted_only and not (inert_source and source in seg.text):
             members.append(normalize(seg.text))
         members += [normalize(b) for b in seg.heredocs if not (inert_source and b == source)]
@@ -389,9 +398,27 @@ _FORCE_MAIN_AT = rf"{GIT_PUSH_AT}(?=.*{_FORCE_WORD})(?=.*{_MAIN_DEST_F})"
 _REFSPEC_MAIN = r".*\+\s*(main|master|refs/heads/(main|master))\b"
 
 
+def _without_quoted_pushes(sc: Scan) -> Scan:
+    """`sc` rebuilt with each segment that names a push only in a grep, echo or printf
+    pattern (`_names_only_in_quotes`) read as `true`. Every push rule reads this, since their
+    regexes anchor on GIT_PUSH_AT anywhere in a member's text. A segment with a heredoc is
+    kept, and so is every segment of a command where some segment runs code, since
+    `printf 'git push -f' > x.sh; bash x.sh` runs what the printf only names. A command the
+    parser refuses is left as it is."""
+    p = parse(sc.command)
+    if not p.ok or any(_runs_code(s.text) for s in p.segments):
+        return sc
+    command = sc.command
+    for seg in p.segments:
+        if not seg.heredocs and _names_only_in_quotes(seg.text, GIT_PUSH_AT):
+            command = command.replace(seg.text, "true", 1)
+    return sc if command == sc.command else build_scan(command)
+
+
 def force_push(sc: Scan, target: str) -> Verdict | None:
     """:687-693. The push and its destination must share a segment (bdb_re_pair); the
     --force-with-lease exemption stays whole-string."""
+    sc = _without_quoted_pushes(sc)
     if not bdb_re(sc.scan, _LEASE) and (
         bdb_re_pair(sc.segset, _FORCE_FLAG, _MAIN_DEST_F) or bdb_re(sc.segset, _FORCE_MAIN_AT)
     ):
@@ -412,6 +439,7 @@ def force_push(sc: Scan, target: str) -> Verdict | None:
 def push_main(sc: Scan, target: str) -> Verdict | None:
     """:725-728. Any push whose DESTINATION is main/master; `:` is deliberately not a
     terminator here so `main:feature` stays a push to feature."""
+    sc = _without_quoted_pushes(sc)
     dest = r"([[:space:]]|:)(refs/heads/)?(main|master)([[:space:]]|\)|`|$)"
     if bdb_re_pair(sc.segset, r"git[[:space:]]+push\b", dest) or bdb_re(
         sc.segset, rf"{GIT_PUSH_AT}.*{dest}"
@@ -2185,6 +2213,106 @@ def inplace_edit(sc: Scan, target: str) -> Verdict | None:
     return None
 
 
+# Calls that write, move, remove or re-mode the file they name. `open` is a write only with a
+# write mode (`_opens_for_write`); `copy`, `move` and the rest need two arguments, so
+# `d.copy()` is not one; `rename` and `replace` need one, or `os.` before them, so
+# `s.replace(a, b)` is not one; `remove` needs `os.`, so `xs.remove(x)` is not one.
+_PY_WRITERS = frozenset(
+    {
+        "write_text",
+        "write_bytes",
+        "touch",
+        "symlink_to",
+        "hardlink_to",
+        "unlink",
+        "chmod",
+        "rmtree",
+        "truncate",
+    }
+)
+_PY_TWO_ARG_WRITERS = frozenset(
+    {"copy", "copy2", "copyfile", "copytree", "move", "symlink", "link"}
+)
+_PY_MODE = re.compile(r"[rwxabtU+]*[wxa+][rwxabtU+]*")
+
+
+def _receiver(func: ast.expr) -> str | None:
+    """The plain name a called method is looked up on (`os` in `os.open`), else None."""
+    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+        return func.value.id
+    return None
+
+
+def _opens_for_write(call: ast.Call) -> bool:
+    """Whether `call`, an `open`, opens for writing: a mode literal holding `w`, `x`, `a` or
+    `+`, a mode the program computes, or `os.open`, whose flags are never a literal. The
+    mode is the second argument of `open`, `io.open` and `codecs.open`, and the first of a
+    method such as `Path.open`."""
+    receiver = _receiver(call.func)
+    if receiver == "os":
+        return True
+    method = isinstance(call.func, ast.Attribute) and receiver not in ("io", "codecs", "builtins")
+    position = 0 if method else 1
+    modes = [k.value for k in call.keywords if k.arg in ("mode", None)]
+    modes += call.args[position : position + 1]
+    return any(
+        not (isinstance(m, ast.Constant) and isinstance(m.value, str))
+        or _PY_MODE.fullmatch(m.value) is not None
+        for m in modes
+    )
+
+
+def _python_writes(program: str) -> bool:
+    """Whether the Python `program` holds a call that writes a file (`_PY_WRITERS`), or does
+    not parse, so its calls cannot be read."""
+    try:
+        tree = ast.parse(program)
+    except SyntaxError, ValueError:
+        return True
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        on_os = _receiver(func) == "os"
+        if (
+            (name == "open" and _opens_for_write(node))
+            or name in _PY_WRITERS
+            or (name in _PY_TWO_ARG_WRITERS and len(node.args) >= 2)
+            or (name in ("rename", "replace") and (on_os or len(node.args) == 1))
+            or (name == "remove" and on_os)
+        ):
+            return True
+    return False
+
+
+def python_write(sc: Scan, target: str) -> Verdict | None:
+    """A closed-shape Python program (`_python_source`) that names a WRITE_TARGETS path and
+    writes a file (`_python_writes`), in a segment or a substitution. The path and the write
+    need not be the same call: a program that reads `~/.bashrc` and writes elsewhere is
+    refused too. `uv run python <file>` is out of reach, since the guard never reads the
+    file."""
+    p = parse(sc.command)
+    if not p.ok:
+        return None
+    segments = list(p.segments)
+    for sub in p.substitutions:
+        q = parse(sub)
+        segments += q.segments if q.ok else []
+    for seg in segments:
+        words = _words(seg.text)
+        source = _python_source(_argv(words), seg.heredocs) if words else None
+        if source and bdb_re(source, WRITE_TARGETS) and _python_writes(source):
+            return Verdict(
+                "deny",
+                "python-write",
+                "Blocked: a Python program that writes a file and names a secrets, "
+                "shell-startup, or git config/hook file. Ask the user to make this change "
+                "manually; an ordinary git setting goes through `git config <key> <value>`.",
+            )
+    return None
+
+
 # --- terraform / tofu / terragrunt (:1086-1118) -----------------------------------------------
 
 TF_HUMAN = "Use plan to preview; a human applies infra changes."
@@ -2269,6 +2397,7 @@ def force_push_flag(sc: Scan, target: str) -> Verdict | None:
     options, a wrapper, or an inline alias before the push hide nothing. send-pack, the
     plumbing under push, reads the same. `--mirror` force-updates every remote ref, so it is a
     force too."""
+    sc = _without_quoted_pushes(sc)
     if any(bdb_re(sc.segset, p) for p in (_FORCE_ANY, _FORCE_CLUSTER, _PLUS_REFSPEC, _MIRROR)):
         return Verdict(
             "deny",
@@ -2331,6 +2460,7 @@ def push_config(sc: Scan, target: str) -> Verdict | None:
     `remote.<name>.mirror`: a force push, or a push to main, that no flag in the command
     shows. An alias whose value `--config-env` hides counts too, since nothing shows what it
     runs. `push.default` stays no decision: `matching` pushes what `git push --all` does."""
+    sc = _without_quoted_pushes(sc)
     hit = any(
         (inv.sub in PUSH_SUBCOMMANDS and any(_config_forces(k, v) for k, v in inv.config))
         or (not inv.sub and not inv.shell)
@@ -2375,6 +2505,7 @@ def push_no_verify(sc: Scan, target: str) -> Verdict | None:
     """A push that skips the pre-push hook, the repo's signature gate: `--no-verify` behind
     a global option, where the settings glob `git push *--no-verify*` cannot see it, or
     `core.hooksPath` set inline, which is the same skip by another name."""
+    sc = _without_quoted_pushes(sc)
     if any(_skips_hooks(inv) for inv in sc.gits) or any(
         bdb_re(line, GIT_PUSH_AT) and bdb_rei(line, _NO_VERIFY_TEXT)
         for line in sc.segset.split("\n")
@@ -3655,6 +3786,7 @@ RULES: tuple[Rule, ...] = (
     docker_inspect,
     write_targets,
     inplace_edit,
+    python_write,
     terraform,
     force_push_flag,
     push_config,

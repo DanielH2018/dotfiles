@@ -287,6 +287,36 @@ def test_push_and_destination_must_share_a_segment():
     assert whole.rule == "force-push-main"
 
 
+# dotfiles #1249: a push named only in a grep, echo or printf pattern is text nothing runs.
+QUOTED_PUSH_ALLOW = [
+    "grep -n 'git push --force' README.md",
+    "grep -n 'git push --force' README.md | head -5",
+    "rg -n 'git push origin main' docs/",
+    "grep -rn 'git push +main' docs/",
+    "grep -n 'git push --no-verify' README.md",
+    "grep -n 'git -c remote.o.push=+main push' README.md",
+    "echo 'git push --force'",
+]
+# A shell or ssh runs its quoted text, a later segment may run what printf wrote, and the shell
+# runs a substitution inside double quotes.
+QUOTED_PUSH_DENY = [
+    "bash -c 'git push --force'",
+    "ssh daniel-server 'cd r && git push --force'",
+    "printf 'git push origin main\\n' > x.sh; bash x.sh",
+    "grep x f; git push -f origin feat",
+    'echo "$(git push -f origin feat)"',
+    "grep 'git push -f origin feat",
+]
+
+
+def test_a_push_quoted_in_a_search_pattern_is_allowed():
+    assert kinds(QUOTED_PUSH_ALLOW) == ["none"] * len(QUOTED_PUSH_ALLOW)
+
+
+def test_a_quoted_push_that_something_runs_is_still_denied():
+    assert kinds(QUOTED_PUSH_DENY) == ["deny"] * len(QUOTED_PUSH_DENY)
+
+
 # --- gh api (:730-766) -------------------------------------------------------------------------
 
 GH_MUTATE = [
@@ -744,6 +774,31 @@ def test_reading_a_secret_path_is_denied():
 
 def test_reading_an_ordinary_path_is_allowed():
     assert "deny" not in kinds(SECRET_ALLOW)
+
+
+# dotfiles #1250: a `.pub` file holds no secret. The private key beside it, a glob, a brace
+# expansion and a path that only passes through a `.pub` name stay refused.
+PUBLIC_KEY_ALLOW = [
+    "cat ~/.ssh/id_ed25519.pub",
+    "cat ~/.ssh/id_rsa.pub",
+    "ssh-keygen -lf ~/.ssh/id_ecdsa-cert.pub",
+]
+PUBLIC_KEY_DENY = [
+    "cat ~/.ssh/id_ed25519.pub ~/.ssh/id_ed25519",
+    "cat ~/.ssh/id_ed25519{,.pub}",
+    "cat ~/.ssh/x.pub/../id_ed25519",
+    "cat ~/.ssh/id_ed25519.pubkey",
+    "cat ~/.ssh/*.pub",
+    "cat ~/.ssh/config",
+]
+
+
+def test_reading_an_ssh_public_key_is_allowed():
+    assert kinds(PUBLIC_KEY_ALLOW) == ["none"] * len(PUBLIC_KEY_ALLOW)
+
+
+def test_a_private_key_named_beside_or_through_a_public_one_is_still_denied():
+    assert rules(PUBLIC_KEY_DENY) == ["secret-read"] * len(PUBLIC_KEY_DENY)
 
 
 # dotfiles #861. The sampled shapes the secret-read rules refused although the text only named
@@ -1428,6 +1483,37 @@ def test_a_fixture_outside_the_scratch_directory_or_beside_another_write_is_deni
         "write-target"
     ] * len(SCRATCH_FIXTURE_DENY)
     assert "$CLAUDE_JOB_DIR/tmp/" in d.deny(SCRATCH_FIXTURE_DENY[0], "", SCRATCH_ENV).reason
+
+
+# dotfiles #1251: a Python program that writes a file and names a protected one. The write
+# need not be the call that names the path.
+PYTHON_WRITE_DENY = [
+    "python3 -c \"open('/home/u/.bashrc','w').write('x')\"",
+    "python3 -c \"open('/home/u/.bashrc', mode=m)\"",
+    "uv run python - <<'EOF'\nfrom pathlib import Path\nPath.home().joinpath('.zshrc')"
+    ".write_text('x')\nEOF",
+    "python3 -c \"import shutil; shutil.copy('/tmp/x', '/home/u/.gitconfig')\"",
+    "python3 -c \"import os; os.replace('/tmp/x', '.git/hooks/pre-push')\"",
+    "python3 -c \"from pathlib import Path; Path('/home/u/.claude/settings.json').open('w')\"",
+    "python3 -c \"import os; os.open('/home/u/.profile', os.O_WRONLY)\"",
+    "x=$(python3 -c \"open('/home/u/.bashrc','w').write('x')\")",
+    "python3 -c \"open('/home/u/.bashrc' 'w'\"",
+]
+PYTHON_WRITE_ALLOW = [
+    "python3 -c \"print(open('/home/u/.bashrc').read())\"",
+    "python3 -c \"import json; print(json.load(open('/home/u/.claude/settings.json')))\"",
+    "python3 -c \"print(open('/home/u/.bashrc').read().replace('a', 'b'))\"",
+    "python3 -c \"d = {}; e = d.copy(); xs = ['.bashrc']; xs.remove('.bashrc')\"",
+    "python3 -c \"open('/tmp/out','w').write('x')\"",
+]
+
+
+def test_a_python_write_naming_a_protected_file_is_denied():
+    assert rules(PYTHON_WRITE_DENY) == ["python-write"] * len(PYTHON_WRITE_DENY)
+
+
+def test_a_python_read_of_a_protected_file_or_a_write_elsewhere_is_allowed():
+    assert kinds(PYTHON_WRITE_ALLOW) == ["none"] * len(PYTHON_WRITE_ALLOW)
 
 
 # --- terraform / tofu / terragrunt (:1086-1118) -----------------------------------------------
@@ -2240,7 +2326,8 @@ SUDO_REFUSE = [
     "python3 - <<'EOF'\nimport pathlib\npathlib.os.system('sudo id')\nEOF",
     "python3 - <<'EOF'\nimport yaml\nyaml.unsafe_load('x: sudo')\nEOF",
     "python3 -c \"getattr(__import__('os'), 'system')('sudo id')\"",
-    "python3 - <<'EOF'\nfrom pathlib import Path\nPath('/u/.zshrc').write_text('sudo id')\nEOF",
+    "python3 - <<'EOF'\nfrom pathlib import Path\nPath('/u/.config/systemd/user/x.service')"
+    ".write_text('sudo id')\nEOF",
     # an unquoted delimiter: the shell runs the substitution before Python reads a word
     "python3 - <<EOF\nprint('$(sudo id)')\nEOF",
     # a script reads the heredoc as data, and may run it

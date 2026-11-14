@@ -238,10 +238,11 @@ check. When the payload's `agent_type` names an agent whose frontmatter under
 roots, a command that changes files outside them, a shell or `eval`, and any git or gh verb
 outside a read-only set. Its module docstring says why the rest is a denylist.
 
-Three rules read text that no command runs, and they skip it only where that is provable.
+Four rule groups read text that no command runs, and they skip it only where that is provable.
 `rm_root` matches each segment, substitution and heredoc body on its own. It leaves out a
 stored heredoc, and a grep, echo or printf whose `rm` is only quoted, unless another segment
-runs code. `pipe_to_shell` matches a stage after a pipe at its start, unless the stage runs
+runs code. The push rules leave out a grep, echo or printf whose `git push` is only quoted,
+with the same exception (dotfiles #1249). `pipe_to_shell` matches a stage after a pipe at its start, unless the stage runs
 code. The sudo boundary skips the word search in a closed-shape Python program that
 `inert_python.py` proves starts no process. That module is an allowlist of imports, attributes
 and builtins, and it refuses a program naming a shell-startup, settings, hook or PATH file.
@@ -254,6 +255,12 @@ argv, a grep pattern and a sed `s` script are one word, sed and perl -i edit onl
 operands, and a pipe into kill or a shell running a named script is judged at the stage. A
 Jinja `secret.yaml.j2` template is not a secrets file. That took the replay from 243 denies
 and 15 asks to 208 and 4, with nothing newly refused (2026-10-24).
+
+`python_write` (dotfiles #1251) refuses a closed-shape Python program that names a
+secrets, shell-startup, or git config or hook file and holds a call that writes a file:
+`open` with a write mode, `Path.write_text`, `shutil.copy`, `os.replace` and the like. The
+path and the write need not be the same call. A program that only reads such a file passes,
+and `uv run python <file>` stays out of reach, since the guard never reads the file.
 
 When nothing above decides, `readonly.py` (dotfiles #628, ported from the server repo's
 `auto-approve-readonly.py`) allows a command whose every stage is provably read-only. It

@@ -45,6 +45,7 @@ HEADLESS = [
     "git grep -n -E 'pkill|killall' -- docs",
     "rg -n 'rm -rf /' docs/",
     "grep -rn 'sudo ' docs/ | head -20",
+    "grep -n 'git push --force' README.md",
     'git grep -n -E "kuma-push\\.env|live-drift-check\\.env" -- ansible',
     "grep -c 'credentials.json\\|\\*\\*/.env' home/.chezmoitemplates/settings.base.json",
     "sed -n '/cluster-vars.sops.env/p' docs/landing.md",
@@ -56,6 +57,7 @@ HEADLESS = [
     "ls -l ~/.ssh/config",
     "ls ~/.config/sops/age",
     "stat -c '%a %U' ~/.ssh/id_ed25519",
+    "cat ~/.ssh/id_ed25519.pub",
     "git show --no-textconv --numstat --format='%h %s' HEAD -- ansible/vars/secrets.yml",
     # piped and compound ssh and kubectl
     "ssh daniel-server 'journalctl -u k3s --since -1h --no-pager' | tail -20",
@@ -81,9 +83,10 @@ HEADLESS = [
 
 # Each deny check that guards an interpreter, through each interpreter form. The deny layer
 # never sees the body of `uv run python <file>`, so that form's cases put the dangerous text
-# on the command line, and it has no in-place edit case.
+# on the command line, and it has no in-place edit or Python write case.
 SECRET = "/home/u/.ssh/id_rsa"
 SED = "sed -i 's/a/b/' ~/.bashrc"
+WRITE = "open('/home/u/.bashrc','w').write('x')"
 MUST_REFUSE = [
     ("secret-read-interpreter", f"python3 -c \"print(open('{SECRET}').read())\""),
     ("secret-read-interpreter", f"python3 - <<'EOF'\nprint(open('{SECRET}').read())\nEOF"),
@@ -99,6 +102,10 @@ MUST_REFUSE = [
     ("inplace-edit", f"python3 - <<'EOF'\nimport os\nos.system(\"{SED}\")\nEOF"),
     ("inplace-edit", f'uv run python -c "import os; os.system(\\"{SED}\\")"'),
     ("inplace-edit", f"uv run python - <<'EOF'\nimport os\nos.system(\"{SED}\")\nEOF"),
+    ("python-write", f'python3 -c "{WRITE}"'),
+    ("python-write", f"python3 - <<'EOF'\n{WRITE}\nEOF"),
+    ("python-write", f'uv run python -c "{WRITE}"'),
+    ("python-write", f"uv run python - <<'EOF'\n{WRITE}\nEOF"),
 ]
 
 
