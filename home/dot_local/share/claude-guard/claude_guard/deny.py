@@ -76,7 +76,7 @@ from claude_guard.gitargv import (
 )
 from claude_guard.gitread import config_read
 from claude_guard.inert_python import SHELL_STARTUP_FILES, inert, read_only
-from claude_guard.inert_shell import only_reads_or_prints, segment_reads_or_prints
+from claude_guard.inert_shell import only_reads_or_prints, printed, segment_reads_or_prints
 from claude_guard.rules import load_rules
 from claude_guard.segment import Segment, mask_substitutions, parse, substitution_spans
 
@@ -2254,11 +2254,21 @@ def inplace_edit(sc: Scan, target: str) -> Verdict | None:
 # a target.
 #
 # Each input is also a candidate program when the interpreter reads its program from stdin,
-# a numbered descriptor or a `<(…)` operand. The one exception: an earlier segment is no
-# candidate for a program read from stdin when the interpreter's segment fills stdin itself
-# (`_without_redirects`), because no earlier segment can reach the interpreter then. Without
-# the exception the shell text of `grep -c foo ~/.bashrc` is read as a program that is not
-# Python, and a read-only heredoc after it is refused (dotfiles #1288).
+# a numbered descriptor or a `<(…)` operand. An earlier segment is shell text, which is
+# never read-only Python, so the candidates are narrowed wherever the words show that an
+# earlier segment cannot be the program (dotfiles #1288, #1303):
+#
+# - The interpreter's segment fills stdin itself (`_without_redirects`). No earlier segment
+#   reaches a program read from stdin.
+# - The program is a `<(…)` operand. Only that substitution's output reaches it.
+# - The interpreter is the first word of its segment, the segment leaves stdin alone, and
+#   the segment piped into it only prints (`_printed_program`). A printer reads no stdin,
+#   so the text it prints is the whole program. A leader in front of the interpreter keeps
+#   every earlier segment a candidate, because `xargs` turns the piped text into arguments.
+#
+# A substitution body and a piped segment that only print are read as the text they print.
+# Every other producer stays shell text, because the guard cannot read what an arbitrary
+# command prints. A function or an alias named `echo`, `printf` or `cat` is not looked for.
 #
 # `uv run -` and `uv run --script -` run the Python program on stdin with no `python` word
 # (dotfiles #1286), so a `uv` runner whose command word is a descriptor counts as an
@@ -2282,16 +2292,17 @@ _DESCRIPTOR_WORD = re.compile(r"[0-9]+|\{\w+\}")
 _PUNCTUATION = re.compile(r"[()<>|&;]+")
 
 
-def _without_redirects(words: list[str]) -> tuple[list[str], list[str], bool]:
+def _without_redirects(words: list[str]) -> tuple[list[str], list[str], str]:
     """`words` less each redirect (its operator, its target and a file descriptor before
-    it), the targets of the redirects that feed input, and whether the segment fills its
-    own stdin.
+    it), the targets of the redirects that feed input, and where the segment's stdin comes
+    from: `own`, `inherited` or `unknown`.
 
     A process substitution's words are dropped through its closing `)`. One that is an
     operand, not a redirect's target, leaves its opening `<(` in place of the operand.
 
-    The segment fills its own stdin when a heredoc or a here-string lands on stdin and
-    nothing else in the segment can put another descriptor there. A redirect on a numbered
+    Stdin is `inherited` when no redirect of the segment can touch it, and `own` when a
+    heredoc or a here-string lands on it and nothing else in the segment can put another
+    descriptor there. A redirect on a numbered
     or named (`{fd}`) descriptor, a duplication such as `<&3` and a process substitution
     as the target each count as something else, since the words alone do not say which
     descriptor they move or what an earlier segment left open on it. A `<` file redirect
@@ -2327,11 +2338,51 @@ def _without_redirects(words: list[str]) -> tuple[list[str], list[str], bool]:
             operator = w
         else:
             kept.append(w)
-    return kept, inputs, fills_stdin and not shares_stdin
+    if shares_stdin:
+        return kept, inputs, "unknown"
+    return kept, inputs, "own" if fills_stdin else "inherited"
+
+
+def _printed_program(seg: Segment) -> str | None:
+    """The text the segment `seg` writes to stdout when the words alone give it: the
+    operands of an `echo` or a `printf` (`inert_shell.printed`), or the one heredoc a bare
+    `cat` forwards. None for every other segment."""
+    if not seg.heredocs:
+        return printed(seg.text)
+    args, _, stdin = _without_redirects(_words(seg.text) or [])
+    forwards = args in (["cat"], ["cat", "-"]) and stdin == "own" and len(seg.heredocs) == 1
+    return seg.heredocs[0] if forwards else None
+
+
+def _piped_programs(
+    args: list[str], stdin: str, previous: Segment | None, earlier: list[str]
+) -> list[str]:
+    """The texts from earlier segments that may be the program an interpreter reads from
+    stdin.
+
+    Args:
+        args: The words of the interpreter's segment, redirects removed.
+        stdin: Where the segment's stdin comes from (`_without_redirects`).
+        previous: The segment before the interpreter's, if any.
+        earlier: The text of every earlier segment and heredoc body.
+
+    Returns:
+        Nothing when the segment fills its own stdin. The text `previous` prints when it
+        only prints (`_printed_program`) and is piped into an interpreter that is the
+        first word of a segment whose stdin is inherited. Otherwise `earlier`.
+    """
+    if stdin == "own":
+        return []
+    direct = bool(args) and _PYTHON_WORD.fullmatch(posixpath.basename(args[0])) is not None
+    if stdin == "inherited" and direct and previous is not None and previous.sep == "|":
+        program = _printed_program(previous)
+        if program is not None:
+            return [program]
+    return earlier
 
 
 def _command_line_programs(
-    args: list[str], redirected: list[str], earlier: list[str], fills_stdin: bool
+    args: list[str], redirected: list[str], piped: list[str], earlier: list[str]
 ) -> list[tuple[str, list[str], list[str]]]:
     """The programs a Python interpreter runs from its command line, each with the words after
     it and the other texts it can read a path from.
@@ -2340,23 +2391,29 @@ def _command_line_programs(
         args: The words after the interpreter, redirects removed (`_without_redirects`).
         redirected: The texts the interpreter's segment puts on a descriptor: its heredoc
             bodies, input redirect targets and process substitutions.
+        piped: The texts from earlier segments that may be a program read from stdin
+            (`_piped_programs`).
         earlier: The earlier segments of the command, which may reach a descriptor of the
             interpreter through a pipe, a group or an `exec`.
-        fills_stdin: Whether the segment fills its own stdin (`_without_redirects`).
 
     Returns:
         Each program as `(program, words after it, other texts)`. The `-c` program comes
         with the words after it, then `redirected` and `earlier`. When the interpreter
         reads its program from a descriptor (`_PY_DESCRIPTOR`), each of `redirected` is
-        the program, with the words after the operand, then `earlier`; each
-        of `earlier` is a program too, unless the descriptor is stdin and `fills_stdin`.
+        the program, with the words after the operand, then `earlier`. So is each of
+        `piped` when the descriptor is stdin, and each of `earlier` when it is neither
+        stdin nor a `<(…)` operand.
         Empty for a script file and for `-m`, whose later words belong to the script or
         the module.
     """
 
     def read_from(operand: str, rest: list[str]) -> list[tuple[str, list[str], list[str]]]:
-        own = fills_stdin and _PY_STDIN.fullmatch(operand) is not None
-        programs = redirected if own else redirected + earlier
+        if operand == "<(":
+            programs = redirected
+        elif _PY_STDIN.fullmatch(operand):
+            programs = redirected + piped
+        else:
+            programs = redirected + earlier
         return [(text, rest, earlier) for text in programs]
 
     stdin = redirected + earlier
@@ -2448,18 +2505,21 @@ def _runs_python_program(
     if not p.ok or depth > 4:
         return bdb_re(normalize(text), unreadable)
     earlier: list[str] = []
+    previous = None
     for seg in p.segments:
         words = _words(seg.text)
         if words is None:
             if bdb_re(normalize("\n".join((seg.text, *seg.heredocs))), unreadable):
                 return True
+            previous = seg
             continue
-        args, redirected, fills_stdin = _without_redirects(words)
-        substituted = p.substitutions if "<(" in words else ()
+        args, redirected, stdin = _without_redirects(words)
+        substituted = [printed(t) or t for t in p.substitutions] if "<(" in words else []
         redirected = [*seg.heredocs, *redirected, *substituted]
+        piped = _piped_programs(args, stdin, previous, earlier)
         programs: set[str] = set()
         for after in _python_arguments(args):
-            for found in _command_line_programs(after, redirected, earlier, fills_stdin):
+            for found in _command_line_programs(after, redirected, piped, earlier):
                 if matches(*found):
                     return True
                 programs.add(found[0])
@@ -2469,6 +2529,7 @@ def _runs_python_program(
         ):
             return True
         earlier += [seg.text, *seg.heredocs]
+        previous = seg
     return any(_runs_python_program(t, matches, paths, depth + 1) for t in p.substitutions)
 
 

@@ -315,9 +315,22 @@ heredoc after `grep -c foo ~/.bashrc` passes (dotfiles #1288). The segment fills
 itself when a heredoc or a here-string lands on stdin, and the segment holds no redirect on
 a numbered or named (`{fd}`) descriptor, no duplication such as `<&3`, no process
 substitution as a redirect's target and no `<` file redirect, whose file an earlier segment
-may have written. A program piped in from an earlier segment is still
-refused when any earlier segment names a protected file, read-only or not, because the rule
-reads that segment's shell text as the program. Over 27,268 distinct commands from this
+may have written.
+
+A program that an earlier segment prints is read out of that segment in two places
+(dotfiles #1303). The first is a segment piped straight into an interpreter that is the
+first word of its own segment and redirects nothing onto stdin. The second is the body of
+a `<(…)` operand. The rule reads the operands of an `echo`, the operands of a `printf`
+whose format is `%s`, `%s\n` or plain text ending lines with `\n`, and the one heredoc a
+bare `cat` forwards. A printer reads no stdin, so its text is the whole program and no
+segment before it is a candidate: `grep -c foo ~/.bashrc; echo 'print(1)' | python3`
+passes. Every other producer is still refused when an earlier segment names a protected
+file, because the rule reads that producer's shell text as the program. So is a printer
+behind a leader such as `xargs` or `timeout`, a printer inside a group, and an `echo`
+whose operand holds a backslash. The rule does not look for a function or an alias that
+redefines `echo`, `printf` or `cat`.
+
+Over 27,268 distinct commands from this
 host's transcripts the rule refused 77 (2026-11-14), 12 of them probes of the guard itself. Most of the rest were
 edit scripts that rewrite a file under `.claude/hooks/`, or whose replaced text names
 `secrets.yml` or `.bashrc`; the denial points those at the Edit tool.
