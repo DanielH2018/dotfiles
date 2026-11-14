@@ -277,7 +277,7 @@ def wrappers_on_path(tmp_path, monkeypatch):
     [
         ("gh run rerun 4567 --failed", "gh-rerun-failed"),
         ("gh run rerun --failed 4567 -R org/repo", "gh-rerun-failed"),
-        ("ansible-playbook site.yml > /tmp/a.log 2>&1", "runlog"),
+        ("uv run pytest > /tmp/a.log 2>&1", "runlog"),
         ("make >out.log 2>&1", "runlog"),
         ("make >> out.log 2>&1", "runlog"),
         ("make 1>out.log 2>&1 &", "runlog"),

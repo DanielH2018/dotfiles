@@ -1239,7 +1239,7 @@ def test_a_bare_assignment_with_no_command_following_still_refuses(rm):
 
 # --- single-segment check reachability (D2, Task 7) ---------------------------------------------
 #
-# Before D2, `curl`/`rm`/`remote`/`ansible`/`git_reset` were each individually correct but
+# Before D2, `curl`/`rm`/`remote`/`git_reset` were each individually correct but
 # unreachable for a BARE command: judge() returned "not-compound" before any of them ever
 # ran. These pin that each is now reachable on its own, not only as one segment of a chain
 # — "the check exists" and "the check is reachable" are different claims.
@@ -1277,24 +1277,10 @@ def test_a_bare_trusted_host_command_is_now_reachable(main):
     )
 
 
-def test_a_bare_readonly_ansible_check_is_now_reachable(main):
-    assert allowed("ansible-playbook site.yml --check", main)
-
-
-def test_ansible_check_survives_the_stdio_blocking_prefix_and_trailing_tail_pipe(main):
-    # Fix round 1, F6: fixed by F0, verified here rather than patched separately. Before
-    # F0, these were judged per-SEGMENT (judge()'s own segmenter splits the `| tail -3`
-    # away from the `2>&1` ahead of it, leaving a bare `2>&1` that ansible_readonly_safe's
-    # `_TRAILING` regex cannot match — it needs the pipe attached). The whole-command arm
-    # hands ansible_readonly_safe the UNSPLIT command, exactly where its own leading/
-    # trailing strips (the tail-bounding suffix) expect
-    # to find them. Both are the plan's named live production shape.
-    assert allowed(
-        "uv run ansible-playbook ansible/deploy.yml --tags karakeep --check"
-        " 2>&1 | tail -3",
-        main,
+def test_a_read_only_ansible_playbook_flag_earns_no_grace(main):
+    assert judge("ansible-playbook site.yml --check", main, ROOTS, CWD).rule == (
+        "segment:0:unlisted"
     )
-    assert allowed("ansible-playbook site.yml --check 2>&1 | tail -3", main)
 
 
 def test_a_bare_clean_git_reset_hard_is_now_reachable(main, tmp_path):
@@ -1304,13 +1290,13 @@ def test_a_bare_clean_git_reset_hard_is_now_reachable(main, tmp_path):
 
 def test_a_chained_segment_does_not_earn_a_standalone_hooks_grace(main, tmp_path):
     # F0's REJECTING half. Every assertion above this one is an allow — none of them goes
-    # red if the four checks are wired back into judge_segment as a per-segment arm
-    # instead of a judge() whole-command arm. These three prove the rejection: each
+    # red if the whole-command checks are wired back into judge_segment as a per-segment
+    # arm instead of a judge() whole-command arm. These prove the rejection: each
     # chains a first segment that is allow-listed on its own ("git status", under MAIN)
     # with a second segment that the standalone hook it once delegated to would approve
     # in ISOLATION, but that the real allow-readonly-remote.sh/allow-daniel-server.sh/
-    # allow-ansible-readonly.sh/allow-clean-reset.sh never sees as a segment of a chain —
-    # each is a PermissionRequest hook judging the WHOLE raw command, and all four
+    # allow-clean-reset.sh never sees as a segment of a chain —
+    # each is a PermissionRequest hook judging the WHOLE raw command, and all three
     # self-refuse a compound shape (the comment above judge()'s whole-command arms). Put
     # the check back in judge_segment and segment 1 here earns its own "-check" reason
     # from the bare segment text alone, flipping the whole decision to allow.
@@ -1323,11 +1309,10 @@ def test_a_chained_segment_does_not_earn_a_standalone_hooks_grace(main, tmp_path
     # server #1898 moved the two REMOTE checks to a per-segment arm as well (judge_segment,
     # `word in ("ssh", "hl")`), so the ssh line below is now an allow — that arm is what
     # replaced the server repo's own pipeline-walking PermissionRequest shim. The git-reset
-    # and ansible lines keep F0's rejection: neither check has a per-segment twin.
+    # line keeps F0's rejection: that check has no per-segment twin.
     work = _make_repo(tmp_path)
     assert not judge("git status && git reset --hard origin/master", main, ROOTS, work).allow
     assert allowed("git status && ssh daniel-server uptime", main)
-    assert not allowed("git status && ansible-playbook site.yml --check", main)
 
 
 # server #1898: the per-segment remote arm. The shape the whole-command arms refuse and the

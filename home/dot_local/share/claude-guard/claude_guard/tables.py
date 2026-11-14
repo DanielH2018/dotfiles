@@ -8,9 +8,8 @@ import re
 # tokens apart — is space and tab. A literal newline is handled by the segmenter before any
 # consuming regex runs: a `Segment.text` never carries one. Python's `\s` is wider: it also
 # matches `\r`, `\f`, `\v` and Unicode whitespace, none of which is a bash word boundary.
-# One definition, imported by every module that means "bash word boundary" — judge.py and
-# checks/ansible.py both read it from here, because judge imports ansible and a copy in
-# each was the two-literals-that-drift hazard the J1/J2 marker in judge.py names.
+# One definition, imported by every module that means "bash word boundary", because a copy
+# in each was the two-literals-that-drift hazard the J1/J2 marker in judge.py names.
 WS = " \t"
 
 # The OTHER whitespace class bash uses, and it is wider: POSIX `[[:space:]]` is space, tab,

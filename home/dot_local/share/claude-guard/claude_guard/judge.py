@@ -11,10 +11,9 @@ here, plus D2's removal of the not-compound early return (see the marker at its 
 `VAR=` stripping was the one #477 rule deliberately NOT ported; it came back narrowed to an
 allowlist (claude_guard.assignments) — see the DECIDED marker in `judge()` below.
 
-Fix round 1 (finding 3/6/7), F0: `remote.readonly_remote_safe`, `remote.trusted_host_safe`,
-`ansible.ansible_readonly_safe` and `git_reset.clean_reset_safe` are STANDALONE
-PermissionRequest hooks in the deployed chain (allow-readonly-remote.sh,
-allow-daniel-server.sh, allow-ansible-readonly.sh, allow-clean-reset.sh) — they are never
+Fix round 1 (finding 3/6/7), F0: `remote.readonly_remote_safe`, `remote.trusted_host_safe`
+and `git_reset.clean_reset_safe` are STANDALONE PermissionRequest hooks in the deployed
+chain (allow-readonly-remote.sh, allow-daniel-server.sh, allow-clean-reset.sh) — they are never
 delegated to from inside allow-compound-bash.sh's own segment loop, which only ever calls
 out to curl and rm (:117-122, :130-135). So they are wired in `judge()` below as
 whole-command arms tried against the untouched `command`, not inside `judge_segment` — the
@@ -31,7 +30,6 @@ import sys
 from dataclasses import dataclass
 
 from claude_guard.assignments import prefix_ok, split_assignments, standalone_name_ok
-from claude_guard.checks.ansible import ansible_readonly_safe
 from claude_guard.checks.awk import segment_risk
 from claude_guard.checks.curl import curl_safe
 from claude_guard.checks.git_branch import checkout_branch_safe, merge_safe, rebase_safe
@@ -80,8 +78,8 @@ _CD_LIKE = frozenset({"cd", "pushd", "popd"})
 # for a different pair of regexes. Round 3 (J5) found the drift once, in the two DEVNULL
 # lookaheads' tails; round 4 (K1/K2) found it live twice more — a heredoc delimiter
 # (segment.py's own copy of this fix sits beside the quoted-delimiter branch) and an
-# fd-dup redirect target. `WS` itself lives in tables.py so checks/ansible.py reads the
-# same definition without a circular import. `_first_word` and `_OPTION_WORD` below port
+# fd-dup redirect target. `WS` itself lives in tables.py so judge.py and assignments.py
+# read the same definition without a circular import. `_first_word` and `_OPTION_WORD` below port
 # a POSIX `[[:space:]]` construct, not IFS splitting, so they read `POSIX_SPACE` instead —
 # the wider class, and the one those two bash lines actually name.
 
@@ -1101,7 +1099,7 @@ def judge_segment(
     # :343-348,:353. A provably-safe curl or a confined rm each resolve their own ask
     # rule. These two, and only these two, are delegated to from inside
     # allow-compound-bash.sh's own per-segment loop (safe_curl_ok/safe_rm_ok), so they stay
-    # a judge_segment arm. The other three standalone-hook ports (remote/ansible/git-reset)
+    # a judge_segment arm. The other standalone-hook ports (remote/git-reset)
     # moved to whole-command arms in judge() (fix round 1, F0) — they were never delegated
     # to from inside this loop in the bash either, so wiring them here let a segment inside
     # a chain (e.g. `cd /tmp && git reset --hard origin/master`) earn a grace the bash
@@ -1305,10 +1303,9 @@ def judge(
     # and a bare unlisted command still returns Decision(False, "segment:0:unlisted", …) —
     # nothing here ever returns "deny".
 
-    # F0 (fix round 1, findings 3/6/7). readonly_remote_safe, trusted_host_safe,
-    # ansible_readonly_safe and clean_reset_safe port FOUR STANDALONE PermissionRequest
-    # hooks (allow-readonly-remote.sh, allow-daniel-server.sh, allow-ansible-readonly.sh,
-    # allow-clean-reset.sh) — none of them is delegated to from inside
+    # F0 (fix round 1, findings 3/6/7). readonly_remote_safe, trusted_host_safe and
+    # clean_reset_safe port THREE STANDALONE PermissionRequest hooks
+    # (allow-readonly-remote.sh, allow-daniel-server.sh, allow-clean-reset.sh) — none of them is delegated to from inside
     # allow-compound-bash.sh's own segment loop (only curl and rm are, :117-122,
     # :130-135), so they belong here, tried against the WHOLE, unsegmented `command` —
     # the harness invokes each of the real standalone hooks against the full raw command
@@ -1317,10 +1314,9 @@ def judge(
     # itself and is the one place that gets to decide whether it applies — a prefilter
     # keyed on the chain's first segment (a segment-loop optimisation that does not
     # transfer here) would skip e.g. clean_reset_safe on a command carrying an unrelated
-    # prefix. Each of the four already self-refuses a compound shape on its own terms —
+    # prefix. Each of the three already self-refuses a compound shape on its own terms —
     # readonly_remote_safe and clean_reset_safe via segment.parse's own segment count,
-    # trusted_host_safe via its own local-split-risk character scan, ansible_readonly_safe
-    # via scratch.tokenize's special-character refusal — so e.g. `ssh daniel-server uptime
+    # trusted_host_safe via its own local-split-risk character scan — so e.g. `ssh daniel-server uptime
     # && rm -rf /` cannot ride in on the first segment being provably read-only. curl and
     # rm need no equivalent arm here: confirmed directly against the bash oracles, not
     # just their Python ports — allow-safe-curl.sh:107/allow-safe-rm.sh:88 each refuse an
@@ -1342,15 +1338,13 @@ def judge(
         return Decision(True, "remote-readonly-check", ())
     if trusted_host_safe(command):
         return Decision(True, "trusted-host-check", ())
-    if ansible_readonly_safe(command):
-        return Decision(True, "ansible-check", ())
     if clean_reset_safe(command, cwd):
         return Decision(True, "git-reset-check", ())
 
-    # DECIDED: the four whole-command arms above run BEFORE whole_glob_defer, deliberately
+    # DECIDED: the three whole-command arms above run BEFORE whole_glob_defer, deliberately
     # — a real PermissionRequest hook is a separate, independent registration from
     # allow-compound-bash.sh and never consults its deny/ask glob list at all, so a
-    # command one of the four would allow is not filtered through that list in the
+    # command one of the three would allow is not filtered through that list in the
     # deployed chain either. Placing them after whole_glob_defer would be stricter than
     # the bash, not a faithful port.
 

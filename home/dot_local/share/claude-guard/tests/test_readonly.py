@@ -223,7 +223,7 @@ REJECT = [
     "ssh daniel-server rm -rf /tmp/x",
     "ssh daniel-server docker run alpine",
     "ssh daniel-server systemctl restart traefik",
-    "ssh daniel-server uv run ansible-playbook deploy.yml",
+    "ssh daniel-server uv run scripts/deploy.py",
     "ssh daniel-server 'cat a; rm b'",
     "ssh daniel-server docker ps | tee out.txt",
     "ssh unknown-host docker ps",

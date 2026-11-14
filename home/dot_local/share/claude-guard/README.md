@@ -48,7 +48,7 @@ the judge.
 
 `claude_guard.judge.judge(command, rules, roots, cwd)` is `allow-compound-bash.sh`'s decision,
 ported line for line, plus the standalone PermissionRequest hooks it never delegated to (the
-four whole-command checks below) and the spec's "a single segment is judged like a chain"
+three whole-command checks below) and the spec's "a single segment is judged like a chain"
 decision: a bare command reaches the same checks a chained one does rather than returning
 `not-compound`. It allows a chain when every segment is allow-listed or passes a check
 (`checks/scratch.py` for a confined `rm`, `checks/worktree_scratch.py` for an `rm` of
@@ -57,8 +57,7 @@ untracked files, a `git clean -f -- <paths>` of untracked files, or a `git resto
 `checks/curl.py` for a plain GET/HEAD against an allowlisted host, the
 `git merge --ff-only <ref>` exception), and no segment matches deny or
 ask, or when the whole command passes one of `checks/remote.py`'s `readonly_remote_safe()` /
-`trusted_host_safe()`, `checks/ansible.py`'s `ansible_readonly_safe()`, or
-`checks/git_reset.py`'s `clean_reset_safe()`. Before a segment is judged, the judge reads
+`trusted_host_safe()` or `checks/git_reset.py`'s `clean_reset_safe()`. Before a segment is judged, the judge reads
 past a loop keyword (`for … in`, `while`, `until`, `do`, `done`) and a literal leading
 `NAME=value` whose name `assignments.py` allows, and `git -C <path> <sub>` is judged as
 `git <sub>` run in `<path>`. `kubectl -n <ns> <verb>` is judged as `kubectl <verb> -n <ns>`,

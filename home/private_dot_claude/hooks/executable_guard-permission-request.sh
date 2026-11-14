@@ -7,9 +7,9 @@
 #   description: Approve Bash commands that claude-guard judges safe
 # DECIDED: claude-guard slice 3 cutover (docs/specs/2026-09-06-claude-guard-design.md,
 # Rollout row 3). This is now the sole decision for Bash PermissionRequest --
-# judge() ports, rule for rule, the six bash hooks that used to be registered
+# judge() ports, rule for rule, the bash hooks that used to be registered
 # in settings.base.json (allow-compound-bash.sh, allow-readonly-remote.sh, allow-safe-curl.sh,
-# allow-safe-rm.sh, allow-ansible-readonly.sh, allow-daniel-server.sh; each
+# allow-safe-rm.sh, allow-daniel-server.sh; each
 # hook's own file:line citations live in the claude_guard check that replaced
 # it). They are deleted, not merely unregistered -- the Python tests are the
 # oracle now. auto-approve-remote-ssh.sh is not among them; its entry moved to

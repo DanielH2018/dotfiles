@@ -948,10 +948,8 @@
            repo's scripts/deploy.sh and the lock it takes. These three prefix forms
            (bare, uv run, and uv run --frozen) are named explicitly so the posture on a
            hand-run playbook does not depend on a prefix: an inline `python3 -c '...'`
-           ahead of the playbook asks nothing on its own. claude_guard's ansible_readonly_safe()
-           narrows this back to unprompted for the genuinely read-only invocation shapes
-           (--check, --list-tasks, --list-tags, --list-hosts, --syntax-check with no
-           file-valued -e/--extra-vars); everything else still asks. */}}
+           ahead of the playbook asks nothing on its own. No check narrows these: every
+           hand-run playbook asks, --check included. */}}
       "Bash(ansible-playbook:*)",
       "Bash(uv run ansible-playbook:*)",
       "Bash(uv run --frozen ansible-playbook:*)",

@@ -148,7 +148,7 @@ REMOTE_DENY = [
     'SSH host "sudo apt update"',
 ]
 REMOTE_ALLOW = [
-    "ssh homelab 'cd ~/server/ansible && ansible-playbook deploy.yml'",
+    "ssh homelab 'cd ~/server && uv run scripts/deploy.py'",
     "ssh homelab 'docker ps'",
     "ssh homelab 'systemctl status docker'",
     'ssh homelab "~/.local/bin/claude -p hello"',

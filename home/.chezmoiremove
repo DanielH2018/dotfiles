@@ -337,3 +337,8 @@ Scripts/wslhost-interop-reaper
 .claude/sandbox/test_gh_pr_guard.py
 .claude/sandbox/vault-allowlist.txt
 .claude/sandbox/vault-sensitive.txt
+
+# dotfiles #1305: the read-only ansible-playbook check. The server repo deleted Ansible on
+# 2026-11-12 (its H7 slice), so no session runs ansible-playbook any more.
+.local/share/claude-guard/claude_guard/checks/ansible.py
+.local/share/claude-guard/tests/test_ansible.py

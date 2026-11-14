@@ -371,7 +371,7 @@
     {
       "why": "ssh remote-exec: legit deploys / reads / remote claude must still pass (no literal sudo)",
       "commands": [
-        "ssh homelab 'cd ~/server/ansible && ansible-playbook deploy.yml'",
+        "ssh homelab 'cd ~/server && uv run scripts/deploy.py'",
         "ssh homelab 'docker ps'",
         "ssh homelab 'systemctl status docker'",
         "ssh homelab \"~/.local/bin/claude -p hello\"",
