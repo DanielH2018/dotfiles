@@ -100,7 +100,6 @@ RECONCILES = [
     "bash -c 'sh' <<< 'systemctl start homelab-reconcile'",
     "ssh daniel-pi 'bash -c sh' <<'EOF'\nsystemctl start homelab-reconcile\nEOF",
     "eval systemctl start homelab-reconcile",
-    "eval 'ssh daniel-pi \"systemctl start homelab-reconcile\"'",
     "x='systemctl start homelab-reconcile'; echo \"$x\" | ssh daniel-pi sh",
     "x='systemctl start homelab-reconcile'; ssh daniel-pi \"$x\"",
     "x='systemctl start homelab-reconcile'; ssh daniel-pi $x",
