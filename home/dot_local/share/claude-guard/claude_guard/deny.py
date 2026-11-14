@@ -300,8 +300,11 @@ _INERT_QUOTE_HEADS = frozenset({"grep", "egrep", "fgrep", "rg", "echo", "printf"
 # Commands that run nothing and write no file, whatever their arguments, so a command made of
 # them and the heads above cannot run the text a quoted argument holds.
 _INERT_HEADS = _INERT_QUOTE_HEADS | {"head", "tail", "wc", "cd", "pwd", "true"}
-# A redirect that writes no file: a dup onto another descriptor, or into /dev/null.
-_HARMLESS_REDIRECT = re.compile(r"[0-9]*>&[0-9-]|[0-9&]*>>?\s*/dev/null(?![\w/.-])")
+# A redirect that writes no file: a dup onto another descriptor, or into /dev/null. bash reads
+# `>&word` as a file write unless the word is all digits or `-`, so the dup is anchored.
+_HARMLESS_REDIRECT = re.compile(
+    r"[0-9]*>&(?:[0-9]+|-)(?![^\s;&|<>()])|[0-9&]*>>?\s*/dev/null(?![\w/.-])"
+)
 
 
 def _only_inert_segments(segments: tuple[Segment, ...]) -> bool:
@@ -2275,9 +2278,11 @@ _PY_READ_MODE = re.compile(r"[rbtU]*")
 def _call_writes(call: ast.Call) -> bool:
     """Whether `call` writes a file through `open`, `Path.replace` or `Path.copy`. `open`
     writes unless its mode is a literal of read letters: the second argument of the builtin,
-    the first of `Path.open`. `replace` writes with fewer than the two arguments `str.replace`
-    takes, and `copy` with any argument, unless it is the `copy` module's function. A
-    starred argument or `**` keyword hides what the call passes, so it writes."""
+    the first of `Path.open`. `replace` writes with fewer than the two positional arguments
+    `str.replace` takes, so a keyword `target` writes. `copy` writes with any argument,
+    positional or keyword: the receiver's name says nothing about what it is bound to, so
+    the `copy` module's `copy.copy(x)` counts too. A starred argument or `**` keyword hides
+    what the call passes, so it writes."""
     func = call.func
     name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
     if name not in ("open", "replace", "copy"):
@@ -2289,8 +2294,7 @@ def _call_writes(call: ast.Call) -> bool:
     if name == "replace":
         return isinstance(func, ast.Attribute) and len(call.args) < 2
     if name == "copy":
-        receiver = func.value if isinstance(func, ast.Attribute) else None
-        return bool(call.args) and not (isinstance(receiver, ast.Name) and receiver.id == "copy")
+        return isinstance(func, ast.Attribute) and bool(call.args or call.keywords)
     position = 0 if isinstance(func, ast.Attribute) else 1
     modes = [k.value for k in call.keywords if k.arg == "mode"] + call.args[position : position + 1]
     return any(

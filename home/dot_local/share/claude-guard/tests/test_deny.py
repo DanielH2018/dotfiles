@@ -195,6 +195,7 @@ RM_DENY = [
     "echo 'rm -rf ~' > x.sh; bash x.sh",
     "echo 'rm -rf /' | at now",
     "echo '* * * * * rm -rf /' | crontab -",
+    "echo 'rm -rf /' >&2x.sh",
     "cat > x.sh <<'EOF'\nrm -rf ~\nEOF\nbash x.sh",
     "bash -c 'rm -rf ~'",
     "python3 - <<'EOF'\nimport os\nos.system('rm -rf ~')\nEOF",
@@ -293,6 +294,7 @@ def test_push_and_destination_must_share_a_segment():
 QUOTED_PUSH_ALLOW = [
     "grep -n 'git push --force' README.md",
     "grep -n 'git push --force' README.md | head -5",
+    "grep -n 'git push --force' README.md 2>&1 >&2",
     "rg -n 'git push origin main' docs/",
     "grep -rn 'git push +main' docs/",
     "grep -n 'git push --no-verify' README.md",
@@ -318,6 +320,9 @@ QUOTED_PUSH_DENY = [
     "printf 'git push -f origin main' > p.sh; GIT_PAGER=./p.sh git log",
     "printf 'git push -f origin main' > p.sh; git -c alias.x='!./p.sh' x",
     "echo 'git push -f origin main' | tmux load-buffer -; tmux paste-buffer",
+    # bash reads `>&word` as a file write unless the word is all digits or `-`
+    "echo 'git push -f origin main' >&2x.sh",
+    "echo 'git push -f origin main' >&-x.sh",
 ]
 
 
@@ -1512,6 +1517,8 @@ PYTHON_WRITE_DENY = [
     "python3 -c \"import os; os.chown('/home/u/.bashrc',0,0)\"",
     "python3 -c \"import subprocess; subprocess.run(['cp','/tmp/x','/home/u/.bashrc'])\"",
     "python3 -c \"from pathlib import Path; Path('/tmp/x').replace('/home/u/.gitconfig')\"",
+    "python3 -c \"from pathlib import Path; Path('/tmp/x').copy(target='/home/u/.bashrc')\"",
+    "python3 -c \"from pathlib import Path; copy=Path('/tmp/x'); copy.copy('/home/u/.bashrc')\"",
     # the path as a script argument, and the launches past a path, an executor or a shell
     "python3 -c \"import sys; open(sys.argv[1],'w').write('x')\" /home/u/.bashrc",
     "/usr/bin/python3 -c \"open('/home/u/.bashrc','w').write('x')\"",
@@ -1535,8 +1542,7 @@ PYTHON_WRITE_ALLOW = [
     "python3 -c \"print(open('/home/u/.bashrc').read())\"",
     "python3 -c \"import json; print(json.load(open('/home/u/.claude/settings.json')))\"",
     "python3 -c \"print(open('/home/u/.bashrc').read().replace('a', 'b'))\"",
-    "python3 -c \"import copy; d = {}; e = d.copy(); f = copy.copy(d); xs = ['.bashrc']; "
-    "xs.remove('.bashrc')\"",
+    "python3 -c \"d = {}; e = d.copy(); xs = ['.bashrc']; xs.remove('.bashrc')\"",
     "python3 - <<'EOF'\nfrom pathlib import Path\n"
     "print(Path('/home/u/.claude/settings.json').read_text())\nEOF",
     "python3 -c \"open('/tmp/out','w').write('x')\"",
