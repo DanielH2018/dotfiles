@@ -194,7 +194,14 @@ test('only signing, credential and line-ending settings differ by OS', () => {
 // `diff=sops` as plaintext (#1263). A secrets diff shows ciphertext; read a change with sops.
 test('no diff driver decrypts SOPS files', { skip }, (t) => {
   if (process.platform !== 'linux') return t.skip('renders the darwin branch off Linux');
-  const out = render(fakeHome([]));
+  const home = fakeHome([]);
+  const bin = path.join(home, 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'sops'), '#!/bin/sh\n', { mode: 0o755 });
+  const out = renderFile(TMPL, {
+    source: srcPath(),
+    env: { ...process.env, HOME: home, PATH: `${bin}${path.delimiter}${process.env.PATH}` },
+  });
   assert.doesNotMatch(out, /^\[diff "sops"\]/m);
   assert.doesNotMatch(out, /textconv/);
 });
