@@ -1399,7 +1399,7 @@ DECRYPT_ALLOW = [
     # an exclude pathspec keeps the file out of the diff (2026-10-24)
     "git diff A...B -- ':!secrets/secrets.yml' | head -400",
     "git diff A...B -- ':(exclude)secrets/secrets.yml'",
-    # the sops driver is a textconv, so `--no-textconv` prints the ciphertext
+    # a diff driver that decrypts is a textconv, so `--no-textconv` prints the ciphertext
     "git show --no-textconv --numstat --format='%h %s' HEAD -- secrets/secrets.yml",
     "git diff --no-textconv secrets/secrets.yml",
 ]
@@ -1446,6 +1446,11 @@ def test_decrypting_a_secret_is_denied():
         "docker-inspect-unformatted",
         "docker-inspect-env",
     ]
+
+
+def test_the_git_diff_refusal_names_a_decrypting_diff_driver_as_a_condition():
+    reason = d.deny("git diff secrets/secrets.yml", "", ENV).reason
+    assert "where git is configured with a diff driver that decrypts" in reason
 
 
 def test_editing_or_naming_a_secret_without_decrypting_is_allowed():
@@ -1917,8 +1922,9 @@ OTHER_INLINE_WRITE_DENY = [
     f"deno eval --ext ts \"Deno.writeTextFileSync('{BASHRC}', 'x')\"",
     f"deno eval 'Deno.writeTextFileSync(' \"'{BASHRC}', 'x')\"",
 ]
-# DECIDED (dotfiles #1363, operator ruling 2026-11-14): a node, perl or ruby program given a
-# protected path as an operand is refused when it calls a write API or edits in place.
+# DECIDED (dotfiles #1363 and #1365, operator rulings 2026-11-14): a program given a
+# protected path as an operand is refused when it calls an API that writes, deletes or
+# truncates, when it edits in place, or when its interpreter has no list of such calls.
 NODE_WRITES_ARGUMENT = "require('fs').writeFileSync(process.argv[1], 'x')"
 OTHER_OPERAND_WRITE_DENY = [
     f'node -e "{NODE_WRITES_ARGUMENT}" ~/.bashrc',
@@ -1934,6 +1940,41 @@ OTHER_OPERAND_WRITE_DENY = [
     "ruby -pi -e '$_.upcase!' ~/.gitconfig",
     "ruby -i.bak -pe '$_.upcase!' ~/.zshrc",
 ]
+OTHER_OPERAND_DELETE_DENY = [
+    "node -e \"require('fs').unlinkSync(process.argv[1])\" ~/.bashrc",
+    "node -e \"require('fs').rmSync(process.argv[1])\" ~/.zshrc",
+    "node -e \"require('fs').truncateSync(process.argv[1])\" ~/.gitconfig",
+    "perl -e 'unlink @ARGV' ~/.bashrc",
+    "perl -e 'truncate $ARGV[0], 0' ~/.zshrc",
+    "ruby -e 'File.delete(ARGV[0])' ~/.bashrc",
+    "ruby -e 'File.unlink(ARGV[0])' ~/.zshrc",
+    "ruby -e 'File.truncate(ARGV[0], 0)' ~/.gitconfig",
+    "ruby -rfileutils -e 'FileUtils.rm_f(ARGV[0])' ~/.bashrc",
+]
+BUN_PHP_DENO_OPERAND_WRITE_DENY = [
+    f'bun -e "{NODE_WRITES_ARGUMENT}" ~/.bashrc',
+    "bun -e \"require('fs').unlinkSync(process.argv[1])\" ~/.zshrc",
+    "php -r 'file_put_contents($argv[1], \"x\");' ~/.bashrc",
+    'php -r \'$f = fopen($argv[1], "a"); fwrite($f, "x");\' ~/.zshrc',
+    "php -r 'rename($argv[1], $argv[2]);' /tmp/x ~/.gitconfig",
+    "php -r 'copy($argv[1], $argv[2]);' /tmp/x ~/.gitconfig",
+    "php -r 'unlink($argv[1]);' ~/.bashrc",
+    "php -r 'ftruncate($h, 0);' ~/.bashrc",
+    "echo 'Deno.writeTextFileSync(Deno.args[0], \"x\")' | deno run -A - ~/.bashrc",
+    "echo 'await Deno.writeFile(Deno.args[0], d)' | deno run -A - ~/.zshrc",
+    "echo 'Deno.openSync(Deno.args[0], {append: true})' | deno run -A - ~/.bashrc",
+    "echo 'const o = {write: true}; Deno.openSync(Deno.args[0], o)' | deno run -A - ~/.bashrc",
+    "echo 'Deno.renameSync(Deno.args[0], Deno.args[1])' | deno run -A - /tmp/x ~/.gitconfig",
+    "echo 'Deno.copyFileSync(Deno.args[0], Deno.args[1])' | deno run -A - /tmp/x ~/.gitconfig",
+    "echo 'Deno.removeSync(Deno.args[0])' | deno run -A - ~/.bashrc",
+    "echo 'Deno.truncateSync(Deno.args[0])' | deno run -A - ~/.zshrc",
+]
+# No list of write calls exists for these, so the program text is not read.
+UNLISTED_INTERPRETER_OPERAND_DENY = [
+    "Rscript -e 'writeLines(\"x\", commandArgs(TRUE)[1])' ~/.bashrc",
+    "Rscript -e 'cat(readLines(commandArgs(TRUE)[1]))' ~/.bashrc",
+    "osascript -e 'on run argv' -e 'return item 1 of argv' -e 'end run' ~/.zshrc",
+]
 OTHER_WRITE_ALLOW = [
     "node -e 'console.log(process.env.HOME)'",
     "ruby -e 'puts 1'",
@@ -1943,6 +1984,13 @@ OTHER_WRITE_ALLOW = [
     "node -e \"console.log(require('fs').readFileSync(process.argv[1], 'utf8'))\" ~/.bashrc",
     "perl -e 'open(my $f, \"<\", $ARGV[0]); print readline($f)' ~/.bashrc",
     "ruby -e 'File.open(ARGV[0]) { |f| puts f.read }' ~/.zshrc",
+    "bun -e \"console.log(require('fs').readFileSync(process.argv[1], 'utf8'))\" ~/.bashrc",
+    "php -r 'echo file_get_contents($argv[1]);' ~/.bashrc",
+    "php -r '$f = fopen($argv[1], \"r\"); echo fgets($f);' ~/.zshrc",
+    "echo 'console.log(Deno.readTextFileSync(Deno.args[0]))' | deno run -A - ~/.bashrc",
+    "echo 'Deno.openSync(Deno.args[0], {read: true})' | deno run -A - ~/.bashrc",
+    # an interpreter with no list, given no protected file
+    "Rscript -e 'cat(readLines(commandArgs(TRUE)[1]))' notes.txt",
     # a write call whose operands name no protected file
     f'node -e "{NODE_WRITES_ARGUMENT}" out.txt',
     "deno eval 'console.log(1)'",
@@ -1968,6 +2016,21 @@ def test_an_inline_program_of_another_interpreter_that_names_a_protected_file_is
 def test_a_writing_program_of_another_interpreter_given_a_protected_file_is_refused():
     expected = ["interpreter-write"] * len(OTHER_OPERAND_WRITE_DENY)
     assert rules(OTHER_OPERAND_WRITE_DENY) == expected
+
+
+def test_a_deleting_or_truncating_program_given_a_protected_file_is_refused():
+    expected = ["interpreter-write"] * len(OTHER_OPERAND_DELETE_DENY)
+    assert rules(OTHER_OPERAND_DELETE_DENY) == expected
+
+
+def test_a_writing_bun_php_or_deno_program_given_a_protected_file_is_refused():
+    expected = ["interpreter-write"] * len(BUN_PHP_DENO_OPERAND_WRITE_DENY)
+    assert rules(BUN_PHP_DENO_OPERAND_WRITE_DENY) == expected
+
+
+def test_an_interpreter_with_no_write_list_given_a_protected_file_is_refused():
+    expected = ["interpreter-write"] * len(UNLISTED_INTERPRETER_OPERAND_DENY)
+    assert rules(UNLISTED_INTERPRETER_OPERAND_DENY) == expected
 
 
 def test_another_interpreter_whose_program_names_no_protected_file_is_allowed():

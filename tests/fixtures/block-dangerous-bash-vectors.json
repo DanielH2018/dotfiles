@@ -261,7 +261,7 @@
       ]
     },
     {
-      "why": "git's sops diff driver decrypts before diffing",
+      "why": "A repo or host can configure a git diff driver that decrypts SOPS files before diffing. This repo's gitconfig deploys none, and the guard cannot read which config a command runs under, so the diff is refused everywhere",
       "commands": [
         "git diff secrets/secrets.yml",
         "git show HEAD:secrets/secrets.yml",

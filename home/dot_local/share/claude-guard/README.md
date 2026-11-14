@@ -387,15 +387,27 @@ read-only proof exists for those languages, so the rule refuses a program that o
 the file as well. The operator accepted that over-refusal on 2026-11-14. The words after
 `deno eval` are an inline program too (dotfiles #1362).
 
-A node, perl or ruby program can take the path from the words after it. The rule refuses
-such a program only when it can write (dotfiles #1363, operator ruling 2026-11-14). Either
-the command carries an in-place edit flag (`-i`, `-i.bak`), or the program text calls a
-write API from the list in `_STDIN_CLI`: node's `writeFileSync` and its relatives, perl's
-`open` with a `>` mode, `rename`, `copy` and `move`, ruby's `File.write`, `IO.write`,
-`FileUtils` and `File.open` with a `w` or `a` mode. So `perl -ne 'print' ~/.zshrc`, which
-reads its operand as data, passes. A program that builds the API name at run time passes
-too, and the ruling accepts that. For `bun`, `deno`, `php`, `Rscript` and `osascript` the
-rule reads the program text only.
+A program of one of those interpreters can take the path from the words after it. The rule
+refuses such a program only when it can write (dotfiles #1363 and #1365, operator rulings
+2026-11-14). Either the command carries an in-place edit flag (`-i`, `-i.bak`), or the
+program text calls an API from the interpreter's `writes` list in `_STDIN_CLI`. A call
+that deletes or truncates a file counts as a write. The lists:
+
+- node and bun: `writeFile`, `appendFile`, `createWriteStream`, `copyFileSync`,
+  `renameSync`, `unlink`, `rm` and `truncate`, with their `Sync` forms.
+- perl: `open` with a `>` mode, `rename`, `copy`, `move`, `unlink` and `truncate`.
+- ruby: `File.write`, `IO.write`, `FileUtils`, `File.open` with a `w` or `a` mode,
+  `File.delete`, `File.unlink` and `File.truncate`.
+- php: `file_put_contents`, `fopen` with a `w`, `a`, `x` or `c` mode, `rename`, `copy`,
+  `unlink` and `ftruncate`.
+- deno: `Deno.writeFile`, `Deno.writeTextFile`, `Deno.rename`, `Deno.copyFile`,
+  `Deno.remove` and `Deno.truncate`, with their `Sync` forms, and `Deno.open` in a
+  program that holds a `write`, `append`, `create`, `createNew` or `truncate` option.
+
+So `perl -ne 'print' ~/.zshrc`, which reads its operand as data, passes. A program that
+builds the API name at run time passes too, and the rulings accept that. An interpreter
+with no `writes` list fails closed: the rule refuses `Rscript` or `osascript` given such a
+path whatever the program text says.
 
 The rule reads an inline program after an option `_STDIN_CLI` does not list, and past the
 one word that may be that option's value, so a gap in the list refuses here too. An

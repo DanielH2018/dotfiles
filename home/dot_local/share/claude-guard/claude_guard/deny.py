@@ -1890,15 +1890,19 @@ def _renders_plaintext(invocation: str) -> bool:
     """Whether one `git diff|show|log -p` naming a SOPS path prints the decrypted text."""
     if re.search(r"(^|\s)--(stat|name-only|name-status)(\s|=|$)", invocation):
         return False
-    # The sops driver is a textconv, so `--no-textconv` turns it off unless a later
-    # `--textconv` turns it back on.
+    # A diff driver that decrypts is a textconv, so `--no-textconv` turns it off unless a
+    # later `--textconv` turns it back on.
     flags = re.findall(r"(?:^|\s)--(no-textconv|textconv)(?=\s|$)", invocation)
     return not flags or flags[-1] == "textconv"
 
 
 def git_sops_diff(sc: Scan, target: str) -> Verdict | None:
-    """:994-1014. `--stat`, `--name-only`, `--name-status` emit no content and are exempt, as
-    is `--no-textconv`, which prints the ciphertext. Each git invocation is judged on its own
+    """:994-1014. Covers a repo or host whose git config sets a diff driver that decrypts
+    SOPS files. This repo's gitconfig deploys none, and the guard cannot read which config a
+    command runs under, so it refuses everywhere.
+
+    `--stat`, `--name-only`, `--name-status` emit no content and are exempt, as is
+    `--no-textconv`, which prints the ciphertext. Each git invocation is judged on its own
     flags. An exclude pathspec (`:!secrets.yml`, `:^…`, `:(exclude)…`) keeps the file out of
     the diff, so it is dropped before the match, as `_EXCLUDE_WORD` drops it for the
     readers."""
@@ -1914,11 +1918,12 @@ def git_sops_diff(sc: Scan, target: str) -> Verdict | None:
         return Verdict(
             "deny",
             "git-sops-diff",
-            "Blocked: the sops diff driver decrypts before diffing, so this prints plaintext "
-            "credentials. Use `git diff --stat` or `--name-only` to see THAT it changed, and "
+            "Blocked: where git is configured with a diff driver that decrypts SOPS files, "
+            "this prints plaintext credentials, and the guard cannot tell whether this repo "
+            "or host is. Use `git diff --stat` or `--name-only` to see THAT it changed, and "
             "`sops <file>` to inspect it. To list a revision's key names or check it is all "
             "ciphertext, run `secretq keys --rev REV FILE` or `secretq encrypted --rev REV "
-            "FILE`, which read the blob without the diff driver.",
+            "FILE`, which read the blob without any diff driver.",
         )
     return None
 
@@ -2380,17 +2385,18 @@ def inplace_edit(sc: Scan, target: str) -> Verdict | None:
 # words after `deno eval`) when the program names a WRITE_TARGETS path, read-only or not. No
 # read-only proof exists for those languages, so the over-refusal is accepted.
 #
-# DECIDED (dotfiles #1363, operator ruling 2026-11-14): a node, perl or ruby program whose
-# operands name a WRITE_TARGETS path is refused only when it can write: the command carries
-# an in-place edit flag (`_StdinCli.inplace`), or the program text calls a write API from a
-# short list (`_StdinCli.writes`). `perl -ne 'print if /x/' ~/.zshrc` reads its operand as
-# data and passes. A program that builds the API name at run time, as
+# DECIDED (dotfiles #1363 and #1365, operator rulings 2026-11-14): a program of one of
+# those interpreters whose operands name a WRITE_TARGETS path is refused only when it can
+# write: the command carries an in-place edit flag (`_StdinCli.inplace`), or the program
+# text calls an API from the interpreter's list (`_StdinCli.writes`) that writes, renames,
+# copies, deletes or truncates a file. `perl -ne 'print if /x/' ~/.zshrc` reads its operand
+# as data and passes. An interpreter with no list, such as `Rscript` or `osascript`, is
+# refused whatever its program says. A program that builds the API name at run time, as
 # `fs['write' + 'FileSync']` does, is an accepted residual.
 #
 # Residual: the program a script file holds (`python3 fix.py ~/.bashrc`), and one that
 # reaches the path with no segment naming it (`'.bash' + 'rc'`, a file of paths). The
-# guard never reads a file it did not see written. For an interpreter other than node,
-# perl, ruby and Python, also a path the program takes from the words after it.
+# guard never reads a file it did not see written.
 _PYTHON_WORD = re.compile(r"python[0-9.]*")
 _PYTHON_LAUNCH = rf"({_INTERPRETER_WORD}|\buv\s+run\b)"
 # CPython's options that take a value: the rest of the word, or the next word.
@@ -2420,7 +2426,9 @@ class _StdinCli:
         inline_subcommand: The subcommand whose operands are the program, as the `eval`
             of `deno eval CODE`.
         inplace: An option that makes the interpreter edit its operands in place.
-        writes: A call in a program's text that writes, renames or copies a file.
+        writes: A call in a program's text that writes, renames, copies, deletes or
+            truncates a file. None when the interpreter has no list, which makes every
+            program a writer.
     """
 
     inline: str
@@ -2429,10 +2437,15 @@ class _StdinCli:
     subcommands: tuple[str, ...] = ()
     inline_subcommand: str | None = None
     inplace: str = _NEVER
-    writes: str = _NEVER
+    writes: str | None = None
 
 
 _LONG_WITH_VALUE = r"--[\w-]+=.*"
+_NODE_WRITES = (
+    r"(write|append)File(Sync)?|createWriteStream|copyFileSync|renameSync"
+    r"|unlink(Sync)?|\brm(Sync)?\b|truncate"
+)
+_DENO_OPEN_WRITES = r"\b(write|append|create|createNew|truncate)\s*:"
 _PERL_SWITCHES = r"(?:[acnpsStTuUwWX]|0[0-7]*|l[0-7]*)"
 _RUBY_SWITCHES = r"[acdlnpsSvwyU]"
 # An option missing from an entry is read as leaving the program on stdin, so a short list
@@ -2443,7 +2456,7 @@ _STDIN_CLI = {
         inline=r"-e|-p|-pe|--eval|--print|--(eval|print)=.*",
         valued=r"-r|--require|--import|-C|--conditions|--loader|--experimental-loader",
         flags=rf"-i|--interactive|-c|--check|--no-[\w-]+|{_LONG_WITH_VALUE}",
-        writes=r"(write|append)File(Sync)?|createWriteStream|copyFileSync|renameSync",
+        writes=_NODE_WRITES,
     ),
     "deno": _StdinCli(
         inline=_NEVER,
@@ -2451,12 +2464,18 @@ _STDIN_CLI = {
         flags=rf"-A|-q|--quiet|--allow-[\w-]+|--no-[\w-]+|--unstable[\w-]*|{_LONG_WITH_VALUE}",
         subcommands=("run", "repl"),
         inline_subcommand="eval",
+        # `Deno.open` counts when the program holds a write option, in the call or not.
+        writes=(
+            r"\bDeno\.(write(Text)?File|rename|copyFile|remove|truncate)"
+            rf"|\bDeno\.open(?s:.*){_DENO_OPEN_WRITES}|{_DENO_OPEN_WRITES}(?s:.*)\bDeno\.open"
+        ),
     ),
     "bun": _StdinCli(
         inline=r"-e|-p|--eval|--print|--(eval|print)=.*",
         valued=r"-r|--preload|--cwd|-c|--config",
         flags=rf"-b|--bun|--smol|--silent|--no-[\w-]+|{_LONG_WITH_VALUE}",
         subcommands=("run",),
+        writes=_NODE_WRITES,
     ),
     "perl": _StdinCli(
         inline=rf"-{_PERL_SWITCHES}*[eE].*",
@@ -2464,7 +2483,7 @@ _STDIN_CLI = {
         flags=rf"-{_PERL_SWITCHES}+|-[IMmCdDFix].+|-[ix]",
         inplace=rf"-{_PERL_SWITCHES}*i.*",
         # `open` with a quoted mode that starts `>`, `>>`, `+>` or `+<`
-        writes=r"\bopen\b[^;]*[\"'](\+?>|\+<)|\b(rename|copy|move)\b",
+        writes=r"\bopen\b[^;]*[\"'](\+?>|\+<)|\b(rename|copy|move|unlink|truncate)\b",
     ),
     "ruby": _StdinCli(
         inline=rf"-{_RUBY_SWITCHES}*e.*",
@@ -2473,7 +2492,7 @@ _STDIN_CLI = {
         inplace=rf"-{_RUBY_SWITCHES}*i.*",
         # `File.open` with a quoted `w` or `a` mode, an encoding after it or not: `"w:UTF-8"`
         writes=(
-            r"\b(File|IO)\.write\b|\bFileUtils\b"
+            r"\b(File|IO)\.write\b|\bFileUtils\b|\bFile\.(delete|unlink|truncate)\b"
             r"|\bFile\.open\b[^;\n]*[\"'][wa][bt+]*(:[^\"']*)?[\"']"
         ),
     ),
@@ -2482,6 +2501,11 @@ _STDIN_CLI = {
         inline=r"-r|--run|-[BRE]",
         valued=r"-d|--define|-c|--php-ini|-z|--zend-extension",
         flags=rf"-f|--file|-a|--interactive|-[nqCH]|{_LONG_WITH_VALUE}",
+        # `fopen` with a quoted mode that starts `w`, `a`, `x` or `c`
+        writes=(
+            r"\b(file_put_contents|rename|copy|unlink|ftruncate)\b"
+            r"|\bfopen\b[^;]*[\"'][waxc][bt+]*[\"']"
+        ),
     ),
     "Rscript": _StdinCli(
         inline=r"-e|--expression=.*",
@@ -3019,7 +3043,8 @@ def _may_write_target(cli: _StdinCli, program: str, operands: list[str]) -> bool
         True when the program names the path, unless perl runs it as one plain
         substitution (`_PERL_SUBSTITUTION`), which names no file. True too when an operand
         names the path and the program can write it: an operand is an in-place edit flag
-        (`cli.inplace`), or the program calls a write API (`cli.writes`).
+        (`cli.inplace`), the program calls a write API (`cli.writes`), or the interpreter
+        has no list of them.
     """
     plain = cli is _STDIN_CLI["perl"] and _PERL_SUBSTITUTION.fullmatch(program.strip())
     if not plain and bdb_re(program, WRITE_TARGETS):
@@ -3027,13 +3052,13 @@ def _may_write_target(cli: _StdinCli, program: str, operands: list[str]) -> bool
     if not any(bdb_re(w, WRITE_TARGETS) for w in operands):
         return False
     edits_in_place = any(re.fullmatch(cli.inplace, w, re.DOTALL) for w in operands)
-    return edits_in_place or re.search(cli.writes, program) is not None
+    return edits_in_place or cli.writes is None or re.search(cli.writes, program) is not None
 
 
 def interpreter_write(sc: Scan, target: str) -> Verdict | None:
     """A program that `node`, `perl`, `ruby` or another `_STDIN_CLI` interpreter reads from
     a descriptor or takes inline, and that names a WRITE_TARGETS path (#1344) or can write
-    one its operands name (#1363)."""
+    one its operands name (#1363, #1365)."""
     if _runs_python_program(
         sc.command, lambda *_: False, WRITE_TARGETS, other_matches=_may_write_target
     ):
@@ -3042,7 +3067,9 @@ def interpreter_write(sc: Scan, target: str) -> Verdict | None:
             "interpreter-write",
             "Blocked: a node, perl, ruby or other interpreter program, piped in or given "
             "inline, that names a secrets, shell-startup, or git config/hook file, or that "
-            "writes a file and is given one as an argument. The guard cannot prove a "
+            "writes, deletes or truncates a file and is given one as an argument. An "
+            "interpreter with no list of write calls in the guard, such as Rscript, is "
+            "refused given one whatever its program says. The guard cannot prove a "
             "program that names the file read-only, so it refuses one that only reads as "
             "well. To read the file, use the Read tool or `cat`, and pipe the text to the "
             f"program. Ask the user before changing the file itself.{EDIT_TOOL_HINT}",
