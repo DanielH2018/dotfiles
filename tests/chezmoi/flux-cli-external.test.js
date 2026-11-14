@@ -45,7 +45,7 @@ test('no other host renders any external', { skip }, () => {
 //
 // The URL is read from the template text, not a chezmoi render, so the check runs in CI, where
 // chezmoi may be absent.
-const FLUX_DEFAULTS = 'ansible/roles/k8s/flux/defaults/main.yml';
+const FLUX_DEFAULTS = 'k8s/roles/flux/defaults/main.yml';
 
 // The release in the flux external's URL, or why it cannot be read. The URL names the release
 // twice, as the tag and in the tarball name, and a URL whose two disagree is a problem too.

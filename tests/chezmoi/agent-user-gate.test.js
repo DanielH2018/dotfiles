@@ -200,7 +200,7 @@ test("the agent on a host outside the server's dev_tooling_hosts gets nothing fr
 // passing while the server moved (#1129). A pattern that finds nothing reads as a disagreement,
 // so the server moving the pin fails here rather than passing on nothing.
 const SERVER_PINS = {
-  python: ['ansible/inventory/group_vars/all.yml', /^host_python_version: "([^"]+)"$/m],
+  python: ['inventory/group_vars/all.yml', /^host_python_version: "([^"]+)"$/m],
 };
 
 // Why our pins and the server's files disagree, one line per tool, or [] when they agree.
