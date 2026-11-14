@@ -268,8 +268,9 @@ The push rules (`force_push`, `push_main`, `force_push_flag`, `push_config`,
 `push_no_verify`, `config_write`) match `git push` and `git config` as text anywhere in a
 segment, so that `bash -c '…'` and an ssh payload stay covered. Each line of a heredoc
 body is a member of the segment set too when a shell, a scheduler, `make` or `ssh` reads
-the body on stdin, directly, behind a wrapper such as `env` or `sudo`, or at the end of a
-pipe (dotfiles #1289). A body fed to any other command is data, so
+the body on stdin, directly, behind a wrapper such as `env` or `sudo`, at the end of a
+pipe, or inside a subshell or a group whose closer carries the heredoc (dotfiles #1289).
+A body that a data sink stores counts too when the command runs code. A body fed to any other command is data, so
 `grep -c x <<'EOF'` over push text passes. A stored heredoc is stripped before that. A flag such as
 `--force` ends at any character that cannot continue the word, because a flag that closes
 a quoted program is followed by `)` or `;` once the quotes are removed. `deny` skips the

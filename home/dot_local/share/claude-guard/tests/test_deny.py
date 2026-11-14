@@ -336,6 +336,11 @@ QUOTED_PUSH_DENY = [
     "cat <<'EOF' | crontab -\n* * * * * git push --force origin feat\nEOF",
     "env LC_ALL=C bash <<'EOF'\ngit push --force origin feat\nEOF",
     "ssh daniel-server <<'EOF'\ngit push --force origin feat\nEOF",
+    "(bash <<'EOF'\ngit push --force origin feat\nEOF\n)",
+    "{ bash; } <<'EOF'\ngit push --force origin feat\nEOF",
+    "if true; then bash; fi <<'EOF'\ngit push --force origin feat\nEOF",
+    "while read l; do eval \"$l\"; done <<'EOF'\ngit push --force origin feat\nEOF",
+    "cat > x.sh <<'EOF'; bash x.sh\ngit push --force origin feat\nEOF",
 ]
 
 
@@ -1758,6 +1763,8 @@ def test_a_force_push_chained_with_a_dangerous_command_is_still_denied():
         "cat > notes.md <<'EOF'\ngit push --force origin feat\nEOF",
         # A heredoc fed to a command that runs none of its lines is data.
         "grep -c x <<'EOF'\ngit push --force\nEOF",
+        "(grep -c x <<'EOF'\ngit push --force\nEOF\n)",
+        "while read l; do echo \"$l\"; done <<'EOF'\ngit push --force origin feat\nEOF",
         "python3 <<'EOF'\nprint('docs say: git push origin main')\nEOF",
         'claude-guard replay /dev/stdin --deny <<\'EOF\'\n{"command": "git push --force"}\nEOF',
     ],

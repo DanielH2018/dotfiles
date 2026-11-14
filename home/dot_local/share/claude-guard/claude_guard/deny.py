@@ -14,8 +14,8 @@ Three subjects, as the bash has them (:238-317):
     scanset  BDB_SCANSET — SCAN, then one normalised line per segment.parse segment and per
              substitution body. The command-position-anchored families read this, so a
              command after a newline is in command position. Not the bash's: one more line
-             per line of a heredoc body that a shell, make or a scheduler runs as commands
-             (`_runs_heredoc_lines`). A body fed to anything else is data.
+             per line of a heredoc body that a shell, make or a scheduler may run as
+             commands (`_heredocs_run_as_lines`). A body fed to anything else is data.
     segset   BDB_SEGSET — the same set without SCAN, for the pair rules that need both halves
              from ONE command. When the parse refuses, both collapse to SCAN alone, which is
              the bash's degradation path: a refusal lands on the whole-string rules, never on
@@ -2757,16 +2757,24 @@ _EXECUTORS = frozenset(
 _LINE_RUNNERS = _SHELLS | _SCHEDULERS | {"source", ".", "make", "ssh", "hl"}
 
 
+def _command_names(text: str) -> list[str] | None:
+    """The basenames of the words of the command the segment `text` runs, with compound
+    openers, keywords and assignments skipped, or None when the text cannot be split."""
+    words = _words(text)
+    if words is None:
+        return None
+    return [posixpath.basename(w) for w in _argv(_command_words(words))]
+
+
 def _runs_heredoc_lines(text: str) -> bool:
     """Whether the segment `text` runs each line of its stdin as a command.
 
     True for a line runner, and for a wrapper (`sudo`, `env`, `timeout`) with a line runner
     among its words. A segment that cannot be split into words counts, since nothing proves
     its stdin is data."""
-    words = _words(text)
-    if words is None:
+    names = _command_names(text)
+    if names is None:
         return True
-    names = [posixpath.basename(w) for w in _argv(words)]
     if not names:
         return False
     if names[0] in _LINE_RUNNERS:
@@ -2774,19 +2782,30 @@ def _runs_heredoc_lines(text: str) -> bool:
     return names[0] in _EXECUTORS | {"sudo", "doas"} and not _LINE_RUNNERS.isdisjoint(names)
 
 
+_GROUP_CLOSERS = frozenset({"}", ")", "fi", "done", "esac"})
+
+
 def _heredocs_run_as_lines(segments: tuple[Segment, ...]) -> list[str]:
-    """The heredoc bodies of `segments` whose lines run as commands: a body on a line
-    runner's own stdin, or on a stage piped into one (`cat <<EOF | bash`)."""
+    """The heredoc bodies of `segments` whose lines run as commands.
+
+    A body counts when a line runner may read it: on the runner's own stdin, on a stage
+    piped into one (`cat <<EOF | bash`), on the closer of a group that holds one
+    (`{ bash; } <<EOF`), or stored by a data sink in a command that runs code
+    (`cat > x.sh <<EOF; bash x.sh`)."""
+    runs_code = any(_runs_code(s.text) for s in segments)
     bodies: list[str] = []
     for i, seg in enumerate(segments):
         if not seg.heredocs:
             continue
-        pipeline = [seg]
+        readers = [seg]
         for later in segments[i + 1 :]:
-            if pipeline[-1].sep != "|":
+            if readers[-1].sep != "|":
                 break
-            pipeline.append(later)
-        if any(_runs_heredoc_lines(stage.text) for stage in pipeline):
+            readers.append(later)
+        if (_words(seg.text) or [""])[0] in _GROUP_CLOSERS:
+            readers = list(segments)
+        stored_then_run = runs_code and _is_data_sink(seg.text, seg.sep)
+        if stored_then_run or any(_runs_heredoc_lines(r.text) for r in readers):
             bodies += seg.heredocs
     return bodies
 
