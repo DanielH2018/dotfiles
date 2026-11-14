@@ -364,18 +364,11 @@
            the control: it scans the command text, heredoc bodies included, whatever the
            interpreter (secret-read-interpreter, pipe-to-shell, in-place edits), and it runs
            before any allow rule. `python3 -` is the heredoc form's prefix, which
-           claude_guard.judge's python_heredoc_prefix judges in place of the segment. The
-           `-I` forms run the same code isolated. The deny layer skips the text of a program
-           that changes a file only in that form (claude_guard.inert_python, dotfiles
-           #1339). */}}
+           claude_guard.judge's python_heredoc_prefix judges in place of the segment. */}}
       "Bash(python3 -c:*)",
       "Bash(python -c:*)",
       "Bash(python3 -)",
       "Bash(python -)",
-      "Bash(python3 -I -c:*)",
-      "Bash(python -I -c:*)",
-      "Bash(python3 -I -)",
-      "Bash(python -I -)",
       "Bash(pytest:*)",
       "Bash(pip list)",
       "Bash(pip show:*)",

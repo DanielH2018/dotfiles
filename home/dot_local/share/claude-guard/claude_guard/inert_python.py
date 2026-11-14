@@ -3,8 +3,8 @@
 The deny rules read an interpreter's program as text: `os.system('sudo id')` has no shell
 command position, so any `sudo` or `rm -rf ~` in the program is refused. Most such programs
 in practice only edit a file by string replacement, and the word is in the text they write.
-`inert(program, isolated=…)` lets a rule tell those apart. `read_only(program)` is the narrower
-proof that the program also changes no file, for a rule that guards a file the program names.
+`inert(program)` lets a rule tell those apart. `read_only(program)` is the narrower proof that
+the program also changes no file, for a rule that guards a file the program names.
 
 It is an allowlist, and anything it does not recognise refuses. A program is inert only when
 it parses, and when every import, every attribute it reads and every builtin it names is one
@@ -14,19 +14,19 @@ fails on the import, since `yaml.unsafe_load` can construct `os.system`. A progr
 text names a shell-startup, settings or hook file is never inert either. Such a program can
 plant a command that a later shell runs, which no text rule here would see.
 
-A program can also start a process through a module it writes. For a `-c` or stdin program
-Python puts the working directory first on `sys.path`, and `PYTHONPATH` adds more
-directories ahead of the standard library. So `import json` loads a `./json.py` the program
-wrote a line earlier, and `datetime.strptime` loads a `./_strptime.py` on first use. The
-allowlist cannot name the file a write goes to, since it has no types. So a program that may
-change a file is inert only when the interpreter runs isolated (`-I`), which keeps both the
-working directory and `PYTHONPATH` off `sys.path`. A program that changes no file
-(`read_only`) is inert without the flag. The directories that stay on an isolated
-interpreter's path are in `_PLANTS`.
+A program can also start a process through a file it writes. For a `-c` or stdin program
+Python puts the working directory first on `sys.path`, so `import json` loads a `./json.py`
+the program wrote a line earlier, and `datetime.strptime` loads a `./_strptime.py` on first
+use. So an inert program writes only where this module can read the destination: a string
+literal that ends in a data suffix (`names_data_file`), which no interpreter loads by name.
+The literal is the path of an `open`, the argument of a `Path(…)` whose method writes, a
+name bound once to such a `Path(…)`, or the target of a rename. Every other write refuses:
+a path that is computed, joined, globbed or passed in. A caller still has to rule out a
+later command that runs the data file, and a redirect of the program's own output.
 
 Typical usage example:
 
-    if interpreter and not inert(body, isolated=isolated):
+    if interpreter and not inert(body):
         ...  # read the body for an escalator, as before
 """
 
@@ -125,16 +125,13 @@ SHELL_STARTUP_FILES = (
 # one could plant a command there, so it is never inert. zsh reads `.zshenv` for every
 # `zsh -c`, which is how each Bash call runs here; `.ssh/config` runs a `ProxyCommand`;
 # `~/.config` holds git's XDG config and systemd user units; `.mcp.json` and `.claude.json`
-# start MCP servers. `lib/python3.N/` and `site-packages/` hold the modules an isolated
-# interpreter still imports, and a uv-managed or venv interpreter keeps them under the home
-# directory. A root-owned directory such as /etc or /usr/local/bin is not listed: an inert
-# program starts no `sudo`, so it cannot write one.
+# start MCP servers. A root-owned directory such as /etc or /usr/local/bin is not listed: an
+# inert program starts no `sudo`, so it cannot write one.
 _PLANTS = re.compile(
     rf"{SHELL_STARTUP_FILES}|"
     r"\.ssh/|\.config/|\.claude/settings|\.claude/hooks|\.claude\.json|\.mcp\.json|"
     r"\.git/hooks|\.git/config|\.gitconfig|crontab|/proc/|"
-    r"\.local/bin|~/bin\b|/home/[^/\s]+/bin\b|"
-    r"lib/python[0-9]|site-packages"
+    r"\.local/bin|~/bin\b|/home/[^/\s]+/bin\b"
 )
 _BUILTIN_NAMES = frozenset(dir(builtins))
 
@@ -149,14 +146,26 @@ def _import_ok(node: ast.Import | ast.ImportFrom, attributes: frozenset[str]) ->
     return all(a.name.split(".")[0] in MODULES and "." not in a.name for a in node.names)
 
 
-def inert(program: str, *, isolated: bool) -> bool:
+# The suffixes of a file that holds text or data. Python imports none of them by name, and
+# neither a shell nor an interpreter is named after one.
+_DATA_FILE = re.compile(
+    r".*\.(?:md|txt|rst|json|jsonl|yaml|yml|toml|csv|tsv|html|xml|log)", re.DOTALL
+)
+
+
+def names_data_file(path: str) -> bool:
+    """Whether `path` ends in a data suffix, so no interpreter loads the file by its name."""
+    return _DATA_FILE.fullmatch(path) is not None
+
+
+def inert(program: str) -> bool:
     """True when `program` parses as Python and can start no process.
+
+    A program that may change a file passes only when each write goes to a string literal
+    that `names_data_file` accepts, so the program cannot write a module and import it.
 
     Args:
         program: The program text an interpreter runs: a heredoc body or a `-c` argument.
-        isolated: Whether the interpreter runs with `-I`. Without it, a module the program
-            writes into the working directory shadows the one it imports, so a program
-            that may change a file is not inert.
 
     Returns:
         False for any program this module cannot prove inert, including one that does not
@@ -164,7 +173,8 @@ def inert(program: str, *, isolated: bool) -> bool:
     """
     if _PLANTS.search(program):
         return False
-    return _within(_parsed(program), ATTRIBUTES) if isolated else read_only(program)
+    tree = _parsed(program)
+    return _read_only(tree) or (_within(tree, ATTRIBUTES) and _writes_only_data_files(tree))
 
 
 def read_only(program: str) -> bool:
@@ -182,7 +192,10 @@ def read_only(program: str) -> bool:
         False for any program this module cannot prove read-only, including one that does
         not parse.
     """
-    tree = _parsed(program)
+    return _read_only(_parsed(program))
+
+
+def _read_only(tree: ast.Module | None) -> bool:
     if not _within(tree, READ_ATTRIBUTES | {"open"}):
         return False
     read_opens = {
@@ -244,6 +257,155 @@ def _opens_for_read(call: ast.Call) -> bool:
             return False
         letters = set(first.value)
         return not (letters <= set("rwxabt+") and letters & set("wxa+"))
+    return True
+
+
+def _bindings(tree: ast.Module) -> dict[str, int]:
+    """How many statements, clauses and parameters in `tree` bind each name."""
+    names: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            names.append(node.id)
+        elif isinstance(node, ast.arg):
+            names.append(node.arg)
+        elif isinstance(node, ast.alias):
+            names.append(node.asname or node.name.split(".")[0])
+        elif isinstance(node, ast.MatchMapping):
+            names.append(node.rest or "")
+        elif isinstance(
+            node,
+            ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.ExceptHandler
+            | ast.MatchAs | ast.MatchStar | ast.TypeVar | ast.ParamSpec | ast.TypeVarTuple,
+        ):  # fmt: skip
+            names.append(node.name or "")
+    return {name: names.count(name) for name in names}
+
+
+class _DataPaths:
+    """The expressions of one program that name a data file (`names_data_file`).
+
+    A name counts only when the program binds it once, at module level, to `Path(…)` of a
+    data-file literal. `Path` counts only as the class `from pathlib import Path` or
+    `import pathlib` binds, with no second binding of that name.
+    """
+
+    def __init__(self, tree: ast.Module) -> None:
+        self._bound = _bindings(tree)
+        imported = [
+            (type(node), getattr(node, "module", None), alias.name, alias.asname)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import | ast.ImportFrom)
+            for alias in node.names
+        ]
+        self._path_class = (ast.ImportFrom, "pathlib", "Path", None) in imported
+        self._pathlib = (ast.Import, None, "pathlib", None) in imported
+        self._names = {
+            node.targets[0].id
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and self._path_of_literal(node.value)
+            and self._bound[node.targets[0].id] == 1
+            and node.targets[0].id not in _BUILTIN_NAMES
+        }
+
+    def _path_of_literal(self, node: ast.expr) -> bool:
+        if not (isinstance(node, ast.Call) and len(node.args) == 1 and not node.keywords):
+            return False
+        func = node.func
+        if isinstance(func, ast.Name):
+            known = func.id == "Path" and self._path_class and self._bound["Path"] == 1
+        else:
+            known = (
+                isinstance(func, ast.Attribute)
+                and func.attr == "Path"
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "pathlib"
+                and self._pathlib
+                and self._bound["pathlib"] == 1
+            )
+        return known and _data_literal(node.args[0])
+
+    def names(self, node: ast.expr) -> bool:
+        """Whether `node` is a data-file literal, `Path(…)` of one, or a name bound to that."""
+        if isinstance(node, ast.Name):
+            return node.id in self._names
+        return _data_literal(node) or self._path_of_literal(node)
+
+
+def _data_literal(node: ast.expr) -> bool:
+    return (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and names_data_file(node.value)
+    )
+
+
+def _is_path_class(node: ast.AST) -> bool:
+    return (isinstance(node, ast.Name) and node.id == "Path") or (
+        isinstance(node, ast.Attribute) and node.attr == "Path"
+    )
+
+
+def _writes_only_data_files(tree: ast.Module) -> bool:
+    """Whether every write in `tree`, already within ATTRIBUTES, goes to a data file.
+
+    The check has no types, so it reads each call that may write by its shape:
+
+    - `open(…)` and `x.open(…)` that `_opens_for_read` does not pass: the builtin's first
+      argument, or `x`, must name a data file (`_DataPaths.names`).
+    - `x.write_text(…)` and `x.write_bytes(…)`: `x` must name a data file.
+    - `x.rename(t)`, `x.replace(t)` and `x.copy(t)`: `t` must name a data file. `replace`
+      with two arguments or more is `str.replace`, since `Path.replace` takes one, and
+      `copy()` with none copies a list or a dict.
+
+    `write`, `writelines` and `dump` write through a file object, which came from an `open`
+    above. `mkdir`, `touch` and `unlink` put no text in a file.
+
+    `open`, `Path` and each FILE_CHANGING attribute may appear only as the function of a
+    call. Passed, aliased or subclassed, any of them would write out of sight of the shapes
+    above: `Path.rename('a.md', 'json.py')` is a call on the class, not on a path.
+    """
+    paths = _DataPaths(tree)
+    called = {id(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call)}
+    for node in ast.walk(tree):
+        may_write = (
+            _is_open(node)
+            or _is_path_class(node)
+            or (isinstance(node, ast.Attribute) and node.attr in FILE_CHANGING)
+        )
+        if may_write and id(node) not in called:
+            return False
+        if isinstance(node, ast.Call) and not _call_writes_data_file(node, paths):
+            return False
+    return True
+
+
+def _call_writes_data_file(call: ast.Call, paths: _DataPaths) -> bool:
+    func = call.func
+    if _is_open(func):
+        if _opens_for_read(call):
+            return True
+        if any(isinstance(a, ast.Starred) for a in call.args):
+            return False
+        if any(k.arg not in _OPEN_KEYWORDS for k in call.keywords):
+            return False
+        if isinstance(func, ast.Attribute):
+            return paths.names(func.value)
+        return bool(call.args) and paths.names(call.args[0])
+    if not isinstance(func, ast.Attribute):
+        return True
+    if func.attr in ("write_text", "write_bytes"):
+        return paths.names(func.value)
+    if func.attr in ("rename", "replace", "copy"):
+        if any(isinstance(a, ast.Starred) for a in call.args):
+            return False
+        if func.attr == "replace" and len(call.args) >= 2:
+            return True
+        if func.attr == "copy" and not call.args and not call.keywords:
+            return True
+        return len(call.args) == 1 and not call.keywords and paths.names(call.args[0])
     return True
 
 

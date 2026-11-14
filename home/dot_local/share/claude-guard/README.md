@@ -261,22 +261,26 @@ so a PermissionRequest allow cannot answer the ask before the user sees it.
 Three rules read text that no command runs, and they skip it only where that is provable.
 `rm_root` matches each segment, substitution and heredoc body on its own. It leaves out a
 stored heredoc. It also leaves out a grep, echo or printf whose `rm` is only quoted, and an
-inert Python program, but only when every other segment is a reader or printer that
-`inert_shell.py` proves, so a pipe into `at` or `crontab` keeps the text. A second Python
-program keeps the text too, since it may import a file the first one wrote.
+inert Python program, but only when every other segment is a `cd` or a reader or printer
+that `inert_shell.py` proves, so a pipe into `at` or `crontab` keeps the text. A second
+Python program keeps the text too, since it may run a file the first one wrote.
 `pipe_to_shell` matches a stage after a pipe at its start, unless the stage runs code. It
 counts `at` and `batch` as shells, because each reads a shell script on stdin. A stored
 heredoc stays in the scan when another segment runs code, and `at`, `batch` and `crontab`
 count as running code, since each runs a file it is given. The sudo boundary skips the word search in a closed-shape Python program that
 `inert_python.py` proves starts no process. That module is an allowlist of imports, attributes
 and builtins, and it refuses a program naming a shell-startup, settings, hook or PATH file.
-A program that may change a file passes only when the interpreter runs isolated, as
-`python3 -I - <<'EOF'` or `python3 -I -c '…'` (dotfiles #1339). Without `-I`, Python puts the
-working directory and `PYTHONPATH` ahead of the standard library on `sys.path`, so
-`import json` runs a `./json.py` the program wrote a line earlier. `-P` is not enough,
-because it leaves `PYTHONPATH` in place. A program that `read_only` proves changes no file
-passes without the flag. The module also refuses a program that names `lib/python3.N/` or
-`site-packages`, the directories an isolated interpreter still imports from.
+A program that may change a file passes only when each write goes to a string literal with
+a data suffix, such as `.md`, `.json` or `.yaml` (dotfiles #1339). Python puts the working
+directory first on `sys.path` for a `-c` or stdin program, so `import json` runs a
+`./json.py` the program wrote a line earlier. The allowlist has no types, so it reads the
+destination from the shape of the call: `open('a.md', 'w')`, `Path('a.md').write_text(…)`,
+or a name bound once to `Path('a.md')`. A path that is joined, globbed, computed or passed
+in is refused, and so is `open`, `Path` or a writing method that is passed or aliased. A
+segment that redirects the program's output into a file without a data suffix is refused
+as well. The boundary skips the program under the same condition `rm_root` has: every
+other segment is a `cd` or a reader or printer, and the command has no substitution. An
+edit of a `.py` or `.sh` file that holds `sudo` as text goes through the Edit tool instead.
 A week's replay over 32,188 commands took the deny count from 316 to 262. No command went
 from allowed to denied (2026-10-24). The boundary also reads a Python script's own arguments
 as data, past a literal `.py` path, so a `findings.py open --title` that names sudo passes.

@@ -53,7 +53,7 @@ HEADLESS = [
     "git grep -n 'git push --force' -- docs",
     # prose that mentions a privileged command
     "echo 'run sudo systemctl restart k3s by hand'",
-    'python3 -I - <<EOF\nopen("/tmp/x.md","w").write("run sudo systemctl restart foo")\nEOF',
+    'python3 - <<EOF\nopen("/tmp/x.md","w").write("run sudo systemctl restart foo")\nEOF',
     # read-only paths under secret directories
     "ls -la ~/.ssh",
     "ls -l ~/.ssh/config",

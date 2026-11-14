@@ -77,7 +77,7 @@ from claude_guard.gitargv import (
     subcommand_at,
 )
 from claude_guard.gitread import config_read
-from claude_guard.inert_python import SHELL_STARTUP_FILES, inert, read_only
+from claude_guard.inert_python import SHELL_STARTUP_FILES, inert, names_data_file, read_only
 from claude_guard.inert_shell import printed, runs_none_of_its_words, segment_reads_or_prints
 from claude_guard.rules import load_rules
 from claude_guard.segment import Parsed, Segment, mask_substitutions, parse, substitution_spans
@@ -338,10 +338,11 @@ def _inert_source(
     """The Python program of a segment when it provably starts no process, else None.
 
     The segment must be one of the closed shapes (`_python_program`), and `inert` must pass
-    its program, which for a program that may change a file takes the `-I` flag. When the
-    shell expands the program first, a `$` or a backtick in it can run a command before
-    Python reads a word, so such a program is never inert. The shell expands a `-c`
-    argument, and a heredoc unless its delimiter is quoted.
+    its program. When the shell expands the program first, a `$` or a backtick in it can
+    run a command before Python reads a word, so such a program is never inert. The shell
+    expands a `-c` argument, and a heredoc unless its delimiter is quoted. A segment that
+    redirects its output into a file `names_data_file` refuses is not inert either: the
+    program could print a module there and import it.
 
     Args:
         words: The segment's words.
@@ -354,14 +355,36 @@ def _inert_source(
     expands = not (program.from_heredoc and quoted[:1] == (True,))
     if expands and ("$" in program.source or "`" in program.source):
         return None
-    return program.source if inert(program.source, isolated=program.isolated) else None
+    if not all(_output_is_data(op, to) for op, to in zip(words, [*words[1:], ""], strict=True)):
+        return None
+    return program.source if inert(program.source) else None
+
+
+def _output_is_data(operator: str, destination: str) -> bool:
+    """Whether `operator`, when it is an output redirect, sends to a descriptor, to
+    /dev/null or to a data file. Any other word passes."""
+    if ">" not in operator or not set(operator) <= set("<>&|"):
+        return True
+    if operator == ">&" and (destination.isdigit() or destination == "-"):
+        return True
+    return destination == "/dev/null" or names_data_file(destination)
+
+
+def _only_changes_directory(seg: Segment) -> bool:
+    words = _words(seg.text) or []
+    return (
+        words[:1] == ["cd"]
+        and not seg.heredocs
+        and all(re.fullmatch(r"[\w./~-]+", w) for w in words[1:])
+    )
 
 
 def _contained_inert_sources(p: Parsed) -> list[str | None] | None:
     """Per segment of `p`, its inert Python program (`_inert_source`), else None. The whole
     result is None unless one segment at most is such a program and every other one is a
-    reader or printer `segment_reads_or_prints` proves, with no substitution. Anything
-    else, a second Python program included, may run a file the inert program writes."""
+    `cd` or a reader or printer `segment_reads_or_prints` proves, with no substitution.
+    Anything else, a second Python program included, may run a file the inert program
+    writes."""
     if p.substitutions:
         return None
     sources = [
@@ -370,7 +393,7 @@ def _contained_inert_sources(p: Parsed) -> list[str | None] | None:
     if sum(source is not None for source in sources) > 1:
         return None
     contained = all(
-        source is not None or segment_reads_or_prints(seg)
+        source is not None or segment_reads_or_prints(seg) or _only_changes_directory(seg)
         for source, seg in zip(sources, p.segments, strict=True)
     )
     return sources if contained else None
@@ -1497,13 +1520,10 @@ class _PythonProgram(NamedTuple):
     Attributes:
         source: The program text.
         from_heredoc: Whether the program is the segment's heredoc, not a `-c` argument.
-        isolated: Whether the interpreter runs with `-I`, which keeps the working
-            directory and `PYTHONPATH` off `sys.path`.
     """
 
     source: str
     from_heredoc: bool
-    isolated: bool
 
 
 def _python_program(words: list[str], heredocs: tuple[str, ...]) -> _PythonProgram | None:
@@ -1521,17 +1541,14 @@ def _python_program(words: list[str], heredocs: tuple[str, ...]) -> _PythonProgr
         i += 1
     rest = words[i:]
     if rest and _PY_FLAG_THEN_C.fullmatch(rest[0]):
-        if len(rest) < 2:
-            return None
-        return _PythonProgram(rest[1], False, any("I" in w for w in words[1 : i + 1]))
-    isolated = any("I" in w for w in words[1:i])
+        return _PythonProgram(rest[1], False) if len(rest) > 1 else None
     if rest and rest[0] == "-":
         rest = rest[1:]
     if not rest or rest[0] not in ("<<", "<<-") or len(heredocs) != 1:
         return None
     if sum("<" in w for w in words) != 1:
         return None
-    return _PythonProgram(heredocs[0], True, isolated)
+    return _PythonProgram(heredocs[0], True)
 
 
 def _python_source(words: list[str], heredocs: tuple[str, ...]) -> str | None:
@@ -3590,11 +3607,14 @@ def _segment_sudo(
     depth: int,
     nested: bool,
     quoted: tuple[bool, ...] = (),
+    contained: bool = False,
 ) -> int:
     """The rank of what one segment runs: an escalator other than the one allowed command
     line, a command word only an expansion names, or neither. The allowed line counts only
     as a whole top-level segment: inside a payload or a substitution it is refused too.
-    `quoted` holds whether each heredoc's delimiter is quoted, as the parse reports it."""
+    `quoted` holds whether each heredoc's delimiter is quoted, as the parse reports it.
+    `contained` is whether no other segment of the command can run a file this one writes
+    (`_contained_inert_sources`)."""
     # Bash joins a backslash-newline before it splits words; shlex would keep the newline in
     # the word, so `sudo\<newline> -n true` would read as a command named "sudo\n".
     joined = text.replace("\\\n", "")
@@ -3613,7 +3633,9 @@ def _segment_sudo(
     cmds, redirected, here = _command_lines(words)
     # A closed-shape Python program that provably starts no process (`_inert_source`) holds
     # `sudo` only as text it writes or compares, so its word search is skipped.
-    inert_source = len(cmds) == 1 and _inert_source(words, heredocs, quoted) is not None
+    inert_source = (
+        contained and len(cmds) == 1 and _inert_source(words, heredocs, quoted) is not None
+    )
     # Bash expands no brace inside quotes, and shlex has removed the quotes by the time a
     # word reaches the brace check. A brace list counts only when one survives in the
     # segment with every quoted character blanked: a Python heredoc body read as shell has
@@ -3793,8 +3815,12 @@ def _sudo_text(text: str, depth: int = 0, nested: bool = False) -> int:
     if not p.ok:
         return _SUDO_ESCALATES if _loose_hit(text) else _SUDO_CLEAN
     found = _SUDO_CLEAN
+    contained = depth == 0 and not nested and _contained_inert_sources(p) is not None
     for rank in itertools.chain(
-        (_segment_sudo(t, h, depth, arm, q) for t, h, q, arm in _case_arms(p.segments, nested)),
+        (
+            _segment_sudo(t, h, depth, arm, q, contained)
+            for t, h, q, arm in _case_arms(p.segments, nested)
+        ),
         (_sudo_text(sub, depth, True) for sub in p.substitutions),
     ):
         found = max(found, rank)

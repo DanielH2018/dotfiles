@@ -12,6 +12,35 @@ INERT = [
     "s = open('docs/x.md').read()\nprint(s.replace('a', 'sudo -n /usr/local/sbin/x'))",
     # the edit idiom that rebinds a module-level text
     "s = open('f').read()\ndef rep(a, b):\n    global s\n    s = s.replace(a, b)\nrep('x', 'y')",
+    # each shape of a write whose destination is a data-file literal
+    "open('/tmp/x.md', 'w').write('run sudo')",
+    "import pathlib\npathlib.Path('a.json').write_text('{}')",
+    "import json\nwith open('out.json', 'w') as f:\n    json.dump({}, f)",
+    "from pathlib import Path\nPath('b.md').replace('a.md')",
+    "from pathlib import Path\nwith Path('a.log').open('a') as f:\n    f.write('x')",
+]
+PY = "from pathlib import Path\n"
+NOT_A_DATA_FILE = [
+    # a module the program could then import
+    PY + "Path('json.py').write_text('import os')\nimport json",
+    "open('_strptime.py', 'w').write('import os')",
+    PY + "Path('a.md').rename('json.py')",
+    PY + "Path('a.md').copy('json.py')",
+    # a path that is not one string literal
+    "open('json' + '.md', 'w').write('x')",
+    PY + "(Path('lib') / 'json' / '__init__.py').write_text('x')",
+    PY + "Path('a.md').with_suffix('.py').write_text('x')",
+    PY + "for p in Path('.').rglob('*.md'):\n    p.write_text('x')",
+    "import sys\nopen(sys.argv[1], 'w').write('x')",
+    # a name bound more than once, or by something other than `Path(…)` of a literal
+    PY + "p = Path('a.md')\np = Path('json.py')\np.write_text('x')",
+    PY + "p = Path('a.md')\ndef f(p):\n    p.write_text('x')",
+    "import pathlib\ndef Path(x):\n    return pathlib.Path('j.py')\nPath('a.md').write_text('x')",
+    # a writer that is passed, aliased or called on the class
+    "o = open\no('a.md', 'w')",
+    PY + "w = Path('a.md').write_text\nw('x')",
+    PY + "Path.rename('a.md', 'json.py')",
+    PY + "class P(Path):\n    pass\nP('a.md').touch()",
 ]
 NOT_INERT = [
     # a declaration that names a dunder or a builtin outside the set
@@ -42,9 +71,6 @@ NOT_INERT = [
     "open('/home/u/.ssh/config', 'a').write('ProxyCommand id')",
     "open('/home/u/.config/git/config', 'a').write('[core]')",
     "open('.mcp.json', 'w').write('{}')",
-    # a directory an isolated interpreter still imports from
-    "open('/home/u/.local/share/uv/python/cpython-3.15/lib/python3.15/_strptime.py', 'w')",
-    "open('.venv/lib64/python3.15/site-packages/x.pth', 'w')",
     # text that is not Python
     "if x then echo; fi",
 ]
@@ -95,21 +121,14 @@ def test_a_program_that_may_change_a_file_is_not_read_only(program):
 
 @pytest.mark.parametrize("program", INERT)
 def test_a_program_that_only_reads_and_writes_text_is_inert(program):
-    assert inert(program, isolated=True)
+    assert inert(program)
 
 
-def test_a_program_that_may_change_a_file_is_inert_only_on_an_isolated_interpreter():
-    # Without `-I` the working directory is first on `sys.path`, so `import json` runs the
-    # file the line before it wrote.
-    program = "from pathlib import Path\nPath('json.py').write_text('import os')\nimport json"
-    assert inert(program, isolated=True)
-    assert not inert(program, isolated=False)
-
-
-def test_a_program_that_changes_no_file_is_inert_without_isolation():
-    assert inert("import json, sys\nprint(json.load(sys.stdin)['sudo'])", isolated=False)
+@pytest.mark.parametrize("program", NOT_A_DATA_FILE)
+def test_a_write_that_is_not_to_a_data_file_literal_is_not_inert(program):
+    assert not inert(program)
 
 
 @pytest.mark.parametrize("program", NOT_INERT)
 def test_a_program_outside_the_allowlist_is_not_inert(program):
-    assert not inert(program, isolated=True)
+    assert not inert(program)
