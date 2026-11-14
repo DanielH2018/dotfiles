@@ -24,6 +24,20 @@ test('shim runs the CLI from CLAUDE_GUARD_HOME', { skip: skipUnless('uv') }, () 
   assert.match(r.stdout, /\[1\] sep=eof heredocs=0: pwd/);
 });
 
+test('shim ignores a claude_guard package in the working directory', { skip: skipUnless('uv') }, (t) => {
+  const cwd = scratch(os.tmpdir(), 'claude-guard-cwd-pkg-', t);
+  fs.mkdirSync(path.join(cwd, 'claude_guard'));
+  fs.writeFileSync(path.join(cwd, 'claude_guard', '__init__.py'), '');
+  fs.writeFileSync(path.join(cwd, 'claude_guard', 'cli.py'), 'print("planted cli ran")\n');
+
+  const r = spawnSync('bash', [SHIM, 'explain', 'ls; pwd'], {
+    encoding: 'utf8', cwd, env: { ...process.env, CLAUDE_GUARD_HOME: SHARE },
+  });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /planted cli ran/);
+  assert.match(r.stdout, /^status: ok/m);
+});
+
 // Extract the `uv python find ...` argv straight from the shim's own source text, so this
 // test tracks whatever flags the shim actually passes rather than a hand-copied duplicate
 // that could silently drift out of sync with it.

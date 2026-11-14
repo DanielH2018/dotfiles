@@ -13,10 +13,13 @@
 # venv is not the risk: uv already probes it and falls back to the managed toolchain on its
 # own.) `--managed-python` restricts the answer to a uv-managed install. `-S` skips
 # site-packages; the package needs only the stdlib and PYTHONPATH still applies without site.
+# `-P` keeps the working directory off sys.path, where `python -m` puts it ahead of
+# PYTHONPATH: a `claude_guard/` directory in cwd would otherwise run in place of the
+# deployed package.
 set -eu
 SHARE="${CLAUDE_GUARD_HOME:-$HOME/.local/share/claude-guard}"
 if ! PY=$(uv python find --no-project --managed-python --system 3.15 2>/dev/null); then
   echo "claude-guard: no uv-managed Python 3.15 found; run: uv python install 3.15" >&2
   exit 2
 fi
-PYTHONPATH="$SHARE" exec "$PY" -S -m claude_guard.cli "$@"
+PYTHONPATH="$SHARE" exec "$PY" -S -P -m claude_guard.cli "$@"
