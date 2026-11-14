@@ -279,16 +279,20 @@ def calls_are_all_literal(program: str) -> bool:
     """Whether the lists of `call_arguments` are all that the calls of `program` are given.
 
     True only when no call can be handed a word from outside its own list, so that the
-    lists can stand in for the program's text. Each of these makes it False:
+    lists can stand in for the program's text. It is an allowlist, and anything it does
+    not recognise is False. The whole program must be made of these and nothing else:
 
-    - A call names something the census has no value for: a loop variable, a parameter,
-      a name bound twice or by unpacking, a function or class the program defines, or an
-      attribute of one. A module the program imports and a builtin it does not rebind
-      hold no literal of the program, so they do not count.
-    - The program changes a name it binds once after binding it: a subscript assignment
-      or a `_MUTATORS` method call on the name.
-    - The program names the process environment (`_ENVIRONMENT`), which every process
-      it starts inherits, whichever call starts it.
+    - `import` and `from … import` statements, with no `*`.
+    - An assignment of one name the program binds once.
+    - A call, as a statement or inside another call or an assignment. It calls a
+      function of `_STARTERS` through the module the program imported, a builtin of
+      `_PLAIN_BUILTINS` the program does not rebind, or `split` on a string literal.
+    - As a call's arguments and an assignment's value: literals, lists, tuples, sets and
+      dicts of them, a starred list, `+`, an f-string, and a name bound once.
+
+    So a loop, a function, a class, an attribute read or store, a subscript, and a call
+    to anything else each make it False: `os.environ`, `getattr`, `globals`, `exec`,
+    a method of a bound name.
 
     Args:
         program: The program text an interpreter runs: a heredoc body or a `-c` argument.
@@ -307,14 +311,27 @@ class _CallCensus(NamedTuple):
     all_literal: bool
 
 
-# The attributes of `os` that read or set the environment a started process inherits.
-_ENVIRONMENT = frozenset({"environ", "environb", "putenv", "unsetenv"})
-# Methods that change a list, dict or set in place.
-_MUTATORS = frozenset(
-    {
-        "append", "extend", "insert", "remove", "pop", "clear", "reverse", "sort",
-        "update", "setdefault", "add", "discard", "popitem",
-    }
+# Functions that start a process from their arguments, or split and quote a command
+# line, and that neither run Python source nor change what a later call starts.
+_STARTERS = {
+    "subprocess": frozenset(
+        {"run", "call", "check_call", "check_output", "Popen", "getoutput", "getstatusoutput"}
+    ),
+    "os": frozenset(
+        {
+            "system", "popen", "execl", "execle", "execlp", "execlpe", "execv", "execve",
+            "execvp", "execvpe", "spawnl", "spawnle", "spawnlp", "spawnlpe", "spawnv",
+            "spawnve", "spawnvp", "spawnvpe", "posix_spawn", "posix_spawnp",
+        }
+    ),
+    "shlex": frozenset({"split", "join", "quote"}),
+}  # fmt: skip
+# Builtins that return their arguments, rearranged or printed, and nothing else.
+_PLAIN_BUILTINS = frozenset({"print", "len", "str", "list", "tuple", "dict", "set", "sorted"})
+_LITERAL_EXPRESSIONS = (
+    ast.Constant, ast.List, ast.Tuple, ast.Set, ast.Dict, ast.Starred, ast.JoinedStr,
+    ast.FormattedValue, ast.keyword, ast.Load, ast.Store, ast.Add, ast.alias, ast.Module,
+    ast.Expr, ast.Pass,
 )  # fmt: skip
 
 
@@ -332,15 +349,7 @@ def _call_census(program: str) -> _CallCensus | None:
         and isinstance(node.targets[0], ast.Name)
         and bound[node.targets[0].id] == 1
     }
-    imported = Counter(
-        alias.asname or alias.name.split(".")[0]
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Import | ast.ImportFrom)
-        for alias in node.names
-    )
-    holds_no_literal = {name for name, count in imported.items() if bound[name] == count}
-    holds_no_literal |= {name for name in _BUILTIN_NAMES if name not in bound}
-    spelled = _Spelled(values, frozenset(holds_no_literal))
+    spelled = _Spelled(values)
     found: list[tuple[str, ...]] = []
     try:
         for node in ast.walk(tree):
@@ -352,42 +361,83 @@ def _call_census(program: str) -> _CallCensus | None:
                 found.append(tuple(spelled.words(node)))
     except RecursionError, _TooLong:
         return None
-    all_literal = (
-        spelled.all_literal
-        and not _names_environment(tree)
-        and not any(name in values for name in _changed_in_place(tree))
-    )
+    all_literal = _only_starts_literals(tree, values, bound)
     return _CallCensus(tuple(words for words in found if words), all_literal)
 
 
-def _names_environment(tree: ast.Module) -> bool:
+def _only_starts_literals(
+    tree: ast.Module, values: dict[str, ast.expr], bound: dict[str, int]
+) -> bool:
+    """Whether every node of `tree` is one `calls_are_all_literal` lists.
+
+    Args:
+        tree: The program.
+        values: The expression each name bound once is assigned.
+        bound: How many times the program binds each name (`_bindings`).
+    """
+    functions: dict[str, tuple[str, str | None]] = {}
+    imports: Counter[str] = Counter()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Attribute):
-            names = [node.attr]
-        elif isinstance(node, ast.Name):
-            names = [node.id]
-        elif isinstance(node, ast.Import | ast.ImportFrom):
-            names = [alias.name for alias in node.names]
-        else:
+        for alias in node.names if isinstance(node, ast.Import | ast.ImportFrom) else ():
+            name = alias.asname or alias.name.split(".")[0]
+            imports[name] += 1
+            if isinstance(node, ast.Import):
+                functions[name] = (alias.name if alias.asname else name, None)
+            elif not node.level:
+                functions[name] = (node.module or "", alias.name)
+    # A name is the module or function it was imported as only while nothing else binds it.
+    functions = {name: f for name, f in functions.items() if bound[name] == imports[name]}
+    called: set[int] = set()
+    for node in ast.walk(tree):  # parents first, so a call is read before its function
+        if id(node) in called or isinstance(node, _LITERAL_EXPRESSIONS):
             continue
-        if _ENVIRONMENT.intersection(names) or "*" in names:
-            return True
-    return False
+        if isinstance(node, ast.Import | ast.ImportFrom):
+            if any(alias.name == "*" for alias in node.names):
+                return False
+        elif isinstance(node, ast.Assign):
+            target = node.targets[0]
+            if not (isinstance(target, ast.Name) and target.id in values):
+                return False
+        elif isinstance(node, ast.BinOp):
+            if not isinstance(node.op, ast.Add):
+                return False
+        elif isinstance(node, ast.Name):
+            if isinstance(node.ctx, ast.Load) and node.id not in values:
+                return False
+        elif isinstance(node, ast.Call):
+            if not _calls_a_starter(node.func, functions, bound):
+                return False
+            called.update(id(part) for part in ast.walk(node.func))
+        else:
+            return False
+    return True
 
 
-def _changed_in_place(tree: ast.Module) -> set[str]:
-    """The names `tree` assigns into by subscript, or calls a `_MUTATORS` method on."""
-    changed: list[ast.expr] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Subscript) and not isinstance(node.ctx, ast.Load):
-            changed.append(node.value)
-        elif (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr in _MUTATORS
-        ):
-            changed.append(node.func.value)
-    return {node.id for node in changed if isinstance(node, ast.Name)}
+def _calls_a_starter(
+    func: ast.expr, functions: dict[str, tuple[str, str | None]], bound: dict[str, int]
+) -> bool:
+    """Whether `func` is a `_STARTERS` function, a `_PLAIN_BUILTINS` builtin or `split`
+    on a string literal.
+
+    Args:
+        func: The function of a call.
+        functions: The module, and the function when `from … import` bound it, that
+            each imported name stands for.
+        bound: How many times the program binds each name (`_bindings`).
+    """
+    if isinstance(func, ast.Name):
+        module, name = functions.get(func.id, ("", None))
+        if name is None:
+            return func.id in _PLAIN_BUILTINS and func.id not in bound
+        return name in _STARTERS.get(module, ())
+    if not isinstance(func, ast.Attribute):
+        return False
+    if isinstance(func.value, ast.Constant):
+        return isinstance(func.value.value, str | bytes) and func.attr == "split"
+    if not isinstance(func.value, ast.Name):
+        return False
+    module, name = functions.get(func.value.id, ("", ""))
+    return name is None and func.attr in _STARTERS.get(module, ())
 
 
 # More than a command line can hold. A name that doubles itself (`a = b + b`) grows a list
@@ -402,20 +452,13 @@ class _TooLong(Exception):
 class _Spelled:
     """The words each expression of one program spells out, read without running it."""
 
-    def __init__(self, values: dict[str, ast.expr], holds_no_literal: frozenset[str]) -> None:
+    def __init__(self, values: dict[str, ast.expr]) -> None:
         """Initializes the reader.
 
         Args:
             values: The expression each name bound once is assigned.
-            holds_no_literal: The names that stand for no literal of the program: a
-                module it imports, a builtin it does not rebind.
-
-        Attributes:
-            all_literal: False once a name read so far is in neither argument.
         """
-        self.all_literal = True
         self._values = values
-        self._holds_no_literal = holds_no_literal
         self._read: dict[int, tuple[bool, list[str]]] = {}
         self._reading: set[int] = set()
 
@@ -451,10 +494,7 @@ class _Spelled:
             return (True, [value]) if isinstance(value, str) else (False, [])
         if isinstance(node, ast.Name):
             value = self._values.get(node.id)
-            if value is not None:
-                return self._spell(value)
-            self.all_literal = self.all_literal and node.id in self._holds_no_literal
-            return False, []
+            return self._spell(value) if value is not None else (False, [])
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
             # A chain of `+` nests as deep as it is long, so its operands are read in a loop.
             operands = [node.right]

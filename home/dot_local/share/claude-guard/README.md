@@ -201,8 +201,13 @@ For these three rules the per-call reading replaces the program's text only wher
 lists are everything the program's calls are given. That takes two conditions. The text
 is certain to be Python: a closed-shape program (`_plain_python_sources`) that holds no
 `$` or backtick and sits in the command once. And `inert_python.calls_are_all_literal`
-passes it: no call takes a name the census has no one value for, the program changes no
-bound name in place, and it does not name the process environment. Any other program
+passes it, which is an allowlist. The whole program is `import` statements, assignments
+of one name bound once, and calls to a function that starts a process (`subprocess.run`,
+`os.system` and the rest of `_STARTERS`), to a plain builtin such as `print`, or to
+`split` on a string literal. Every argument is a literal, a list, tuple, set or dict of
+them, a starred list, `+`, an f-string, or a name bound once. A loop, a function, a
+class, an attribute read or store, a subscript, or a call to anything else, such as
+`os.environ.update`, `getattr` or `exec`, fails it. Any other program
 keeps its text reading, with its argument lists joined, and gets the per-call reading on
 top. A program that `inert` proves starts no process adds no call.
 

@@ -2421,6 +2421,29 @@ _OS_RUN = "import os, subprocess; subprocess.run"
         (f"class C:\n    cmd = ['git', 'push', 'origin', 'main']\n{_RUN}(C.cmd)", "push-main"),
         (f"def g():\n    return ['git', 'push', 'origin', 'main']\n{_RUN}(g())", "push-main"),
         (f"def g(c=['git', 'push', 'origin', 'main']):\n    {_RUN}(c)\ng()", "push-main"),
+        # A list stored where no name binding records it.
+        (
+            "import subprocess as s; s.c = ['git', 'push', 'origin', 'main']; s.run(s.c)",
+            "push-main",
+        ),
+        (
+            f"c = ['git', 'status']; globals()['c'] = ['git', 'push', 'origin', 'main']; {_RUN}(c)",
+            "push-main",
+        ),
+        (
+            f"import sys; sys.argv = ['git', 'push', 'origin', 'main']; {_RUN}(sys.argv)",
+            "push-main",
+        ),
+        # A call to something other than a process starter.
+        (
+            f"getattr(os, 'environ').update(GIT_CONFIG_GLOBAL='/c'); {_OS_RUN}(['git', 'push'])",
+            "push-config",
+        ),
+        (
+            "import builtins, subprocess; builtins.exec('a = [1, \\'git\\', \\'push\\']'); "
+            "builtins.exec('subprocess.run(a[1:] + [\\'origin\\', \\'main\\'])')",
+            "push-main",
+        ),
     ],
 )
 def test_a_push_the_calls_of_a_python_program_do_not_spell_is_still_read_as_text(program, rule):

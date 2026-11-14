@@ -211,37 +211,47 @@ def test_call_arguments_is_none_for_a_program_it_cannot_read(program):
 @pytest.mark.parametrize(
     "program",
     [
-        "import subprocess\nsubprocess.run(['git', 'fetch'], check=True, stdout=subprocess.PIPE)",
-        "import x as s\nimport x as s\na = ['fetch']\nprint(len(a)); s.run(['git'] + a)",
-        "from subprocess import run as r\nimport sys\nr(['git', *sys.argv[1:]], cwd=f'/x/{1}')",
+        "import subprocess\nsubprocess.run(['git', 'fetch'], check=True, cwd=f'/x/{1}')",
+        "import subprocess as s\nimport subprocess as s\na = ['fetch']\ns.run(['git', *a] + a)",
+        "from subprocess import run as r\nimport os, shlex\nr(shlex.split('git fetch'))",
+        "import os\nc = 'a' + 'b'\nprint(len(c)); os.system(c); os.execvp('git', 'a b'.split())",
     ],
 )
-def test_a_program_whose_calls_take_literals_modules_and_builtins_is_all_literal(program):
+def test_a_program_that_only_starts_processes_from_literals_is_all_literal(program):
     assert calls_are_all_literal(program)
 
 
 @pytest.mark.parametrize(
     "program",
     [
+        # A call that is handed a name with no one value.
         "for c in [['git']]:\n    run(c)",
-        "c = ['git']\nc = ['ls']\nrun(c)",
-        "a, b = ['git'], ['ls']\nrun(a)",
-        "def f(c):\n    run(c)",
-        "def g():\n    return ['git']\nrun(g())",
-        "class C:\n    cmd = ['git']\nrun(C.cmd)",
-        "run([c for c in ['git']])",
-        "print = run\nprint(['git'])",
-        "import subprocess\nsubprocess = other\nsubprocess.run(['git'])",
-        # A name bound once and then changed in place.
-        "c = ['git', 'x']\nc[1] = 'y'\nrun(c)",
-        "c = ['git']\nc.append('y')\nrun(c)",
-        # The process environment.
+        "c = ['git']\nc = ['ls']\nprint(c)",
+        "a, b = ['git'], ['ls']\nprint(a)",
+        "def f(c):\n    print(c)",
+        "class C:\n    cmd = ['git']\nprint(C.cmd)",
+        "print([c for c in ['git']])",
+        # A value stored where no name binding records it, or changed in place.
+        "import subprocess as s\ns.c = ['git']\ns.run(s.c)",
+        "import subprocess, sys\nsys.argv = ['git']\nsubprocess.run(sys.argv)",
+        "c = ['ls']\nglobals()['c'] = ['git']\nprint(c)",
+        "c = ['git', 'x']\nc[1] = 'y'\nprint(c)",
+        "c = ['git']\nc.append('y')\nprint(c)",
+        # A call to anything but a process starter.
         "import os\nos.environ['K'] = 'v'",
+        "import os\nos.environ.update(K='v')",
         "import os\nos.putenv('K', 'v')",
-        "from os import environ as e\ne.update(K='v')",
-        "from os import *",
+        "import os\ngetattr(os, 'environ').update(K='v')",
+        "import builtins\nbuiltins.exec('x = 1')",
+        "import subprocess\nsubprocess.run(['git'], stdout=subprocess.PIPE)",
+        "run(['git'])",
+        # A name that is no longer what it was imported as.
+        "import os as subprocess\nsubprocess.run(['git'])",
+        "import subprocess\nsubprocess = other\nsubprocess.run(['git'])",
+        "from os import *\nsystem('git')",
+        "print = exec\nprint('x = 1')",
         "run(['git'",
     ],
 )
-def test_a_program_whose_calls_may_take_more_than_their_literals_is_not_all_literal(program):
+def test_a_program_that_does_more_than_start_processes_from_literals_is_not_all_literal(program):
     assert not calls_are_all_literal(program)
