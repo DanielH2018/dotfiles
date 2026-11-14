@@ -172,8 +172,19 @@ and `normalize` deletes the quotes of `subprocess.run(['git', 'push', '--force']
 keeping its commas. So `build_scan` adds a member for each text that holds an argument
 list, with a space in place of the comma between two string literals (dotfiles #1337). The
 member covers a Python list or tuple, the `'git', ['push', …]` of node's `execFileSync`, and
-a list `system` call in perl and ruby. A list that a program builds across statements, or
-from a variable, stays unread. Two rules are new with #709.
+a list `system` call in perl and ruby. A list that a node, perl or ruby program builds
+across statements, or from a variable, stays unread.
+
+A Python program gets a second reading that needs no adjacent literals (dotfiles #1349).
+For a `-c` or stdin program that `inert_python.inert` cannot prove starts no process,
+`inert_python.literal_words` collects the words of every string literal, wherever it sits.
+The census folds `+` between literals and follows a name the program binds once to one.
+`force_push_flag` denies the program when those words hold `git`, a push subcommand and a
+force spelling. The three words need not share a list, so a program that starts a plain
+push and passes `-f` to another command is denied too. A word the program builds at run
+time (base64, `getattr`, `chr()`, `str.join`) is an accepted residual.
+
+Two rules are new with #709.
 `push_config` denies a push whose inline config (`-c`, `--config-env`, `GIT_CONFIG_*`) sets a
 `+` refspec, a refspec onto main/master, or `remote.<name>.mirror`. `push_no_verify` denies
 `--no-verify` or an inline `core.hooksPath` on a push. `config_write` denies the persistent

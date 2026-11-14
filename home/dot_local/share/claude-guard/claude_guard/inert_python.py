@@ -5,6 +5,8 @@ command position, so any `sudo` or `rm -rf ~` in the program is refused. Most su
 in practice only edit a file by string replacement, and the word is in the text they write.
 `inert(program)` lets a rule tell those apart. `read_only(program)` is the narrower proof that
 the program also changes no file, for a rule that guards a file the program names.
+`literal_words(program)` is for a program that is not inert: the words its string literals
+hold, for a rule that asks which command the program could start.
 
 It is an allowlist, and anything it does not recognise refuses. A program is inert only when
 it parses, and when every import, every attribute it reads and every builtin it names is one
@@ -204,6 +206,51 @@ def _read_only(tree: ast.Module | None) -> bool:
         if isinstance(node, ast.Call) and _opens_for_read(node)
     }
     return all(id(node) in read_opens for node in ast.walk(tree) if _is_open(node))
+
+
+# DECIDED (dotfiles #1349, operator ruling 2026-11-14): the census reads string literals,
+# `+` between them, and a name the program binds once to either. A word the program builds
+# any other way is an accepted residual: base64, `getattr`, `chr()`, `str.join`, a format,
+# a value read at run time.
+def literal_words(program: str) -> frozenset[str]:
+    """Returns every word a string literal of `program` holds, split at whitespace.
+
+    The census has no data flow. A literal counts wherever it sits, so a list bound to a
+    name, a starred list and a list built with `+` or `append` all count. Empty for a
+    program that does not parse.
+    """
+    tree = _parsed(program)
+    if tree is None:
+        return frozenset()
+    bound = _bindings(tree)
+    values = {
+        node.targets[0].id: node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and bound[node.targets[0].id] == 1
+    }
+    texts = (_literal_text(node, values) for node in ast.walk(tree))
+    return frozenset(word for text in texts if text for word in text.split())
+
+
+def _literal_text(node: ast.AST, values: dict[str, ast.expr], depth: int = 0) -> str | None:
+    """The text of a string or bytes literal, of `+` between two such texts, or of a name
+    that `values` binds to one. None for every other node."""
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, bytes):
+            return node.value.decode("utf-8", "replace")
+        return node.value if isinstance(node.value, str) else None
+    if depth > 8:  # `a = a + 'x'` binds `a` once and refers to itself
+        return None
+    if isinstance(node, ast.Name) and node.id in values:
+        return _literal_text(values[node.id], values, depth + 1)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left = _literal_text(node.left, values, depth + 1)
+        right = _literal_text(node.right, values, depth + 1)
+        return None if left is None or right is None else left + right
+    return None
 
 
 def _parsed(program: str) -> ast.Module | None:

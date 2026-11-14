@@ -77,7 +77,13 @@ from claude_guard.gitargv import (
     subcommand_at,
 )
 from claude_guard.gitread import config_read
-from claude_guard.inert_python import SHELL_STARTUP_FILES, inert, names_data_file, read_only
+from claude_guard.inert_python import (
+    SHELL_STARTUP_FILES,
+    inert,
+    literal_words,
+    names_data_file,
+    read_only,
+)
 from claude_guard.inert_shell import printed, runs_none_of_its_words, segment_reads_or_prints
 from claude_guard.rules import load_rules
 from claude_guard.segment import Parsed, Segment, mask_substitutions, parse, substitution_spans
@@ -3102,6 +3108,24 @@ _FORCE_ANY = rf"{GIT_PUSH_AT}.*{_FORCE_WORD}"
 _FORCE_CLUSTER = rf"{GIT_PUSH_AT}.*\s-[vqdnu46]*f"
 _PLUS_REFSPEC = rf"{GIT_PUSH_AT}.*\s\+[^\s]"
 _MIRROR = rf"{GIT_PUSH_AT}.*\s--mirror{_FLAG_END}"
+# The same four spellings as one whole word of a Python program's string literals.
+_FORCE_LITERAL = re.compile(r"--force|-[vqdnu46]*f[A-Za-z0-9]*|\+\S+|--mirror")
+
+
+def _python_may_force_push(program: str, arguments: list[str], fed: list[str]) -> bool:
+    """Whether a Python `program` that may start a process holds, as words of its string
+    literals, `git`, a push subcommand and a force spelling.
+
+    The three words need not share a list, so a program that starts a plain push and
+    passes `-f` to another command is refused too."""
+    if inert(program):
+        return False
+    words = literal_words(program)
+    return (
+        any(posixpath.basename(w) == "git" for w in words)
+        and not words.isdisjoint(PUSH_SUBCOMMANDS)
+        and any(_FORCE_LITERAL.fullmatch(w) for w in words)
+    )
 
 
 def force_push_flag(sc: Scan, target: str) -> Verdict | None:
@@ -3127,8 +3151,14 @@ def force_push_flag(sc: Scan, target: str) -> Verdict | None:
     #709 closed the rest of the class. Every pattern anchors on GIT_PUSH_AT, so git's global
     options, a wrapper, or an inline alias before the push hide nothing. send-pack, the
     plumbing under push, reads the same. `--mirror` force-updates every remote ref, so it is a
-    force too."""
-    if any(bdb_re(sc.segset, p) for p in (_FORCE_ANY, _FORCE_CLUSTER, _PLUS_REFSPEC, _MIRROR)):
+    force too.
+
+    A Python program can keep `git`, `push` and the flag apart, in a list bound to a name,
+    a starred list or a concatenation, so no text pattern matches (#1349). A `-c` or stdin
+    program is refused on the words of its literals instead (`_python_may_force_push`)."""
+    if any(
+        bdb_re(sc.segset, p) for p in (_FORCE_ANY, _FORCE_CLUSTER, _PLUS_REFSPEC, _MIRROR)
+    ) or _runs_python_program(sc.command, _python_may_force_push, _NEVER):
         return Verdict(
             "deny",
             "force-push-flag",

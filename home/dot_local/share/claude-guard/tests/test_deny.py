@@ -2068,6 +2068,9 @@ def test_a_force_push_chained_with_a_dangerous_command_is_still_denied():
     assert kinds(chained) == ["deny", "deny"]
 
 
+_RUN = "import subprocess; subprocess.run"
+
+
 @pytest.mark.parametrize(
     "command",
     [
@@ -2103,13 +2106,15 @@ def test_a_force_push_chained_with_a_dangerous_command_is_still_denied():
         "python3 -c \"import subprocess as s; s.run(['git', 'status']); s.run(['ls', '-f'])\"",
         "python3 <<'EOF'\nprint(['git', 'push', '--force'])\nEOF",
         "python3 -c \"import subprocess; subprocess.run(['git', 'push', 'origin', 'feat',])\"",
+        # #1349: literals kept apart that hold a plain push, a lease, or no process to start.
+        f"python3 -c \"a = ['push', 'origin', 'feat']; {_RUN}(['git'] + a)\"",
+        f"python3 -c \"{_RUN}(['git', *['push', '--force-with-lease']])\"",
+        f"python3 -c \"a = ['log', '--force']; {_RUN}(['git'] + a)\"",
+        "python3 -c \"a = ['push', '--force']; print(['git'] + a)\"",
     ],
 )
 def test_a_push_without_a_force_is_no_decision(command):
     assert d.deny(command, "", ENV) == d.NONE
-
-
-_RUN = "import subprocess; subprocess.run"
 
 
 @pytest.mark.parametrize(
@@ -2182,6 +2187,24 @@ _RUN = "import subprocess; subprocess.run"
 def test_a_push_an_interpreter_starts_from_an_argument_list_is_denied(command, rule):
     v = d.deny(command, "", ENV)
     assert (v.kind, v.rule) == ("deny", rule)
+
+
+@pytest.mark.parametrize(
+    "program",
+    [
+        f"a = ['push', '--force']; {_RUN}(['git'] + a)",
+        f"{_RUN}(['git', *['push', '--force']])",
+        f"{_RUN}(['git'] + ['push', '--force'])",
+        f"{_RUN}(['git', 'pu' + 'sh', '--force'])",
+        f"p = 'pu'; {_RUN}(['/usr/bin/git', p + 'sh', '-uf'])",
+        f"cmd = ['git']; cmd.append('send-pack'); cmd.append('+feat'); {_RUN}(cmd)",
+        f"flag = '--mirror'; {_RUN}('git push ' + flag, shell=True)",
+    ],
+)
+def test_a_force_push_whose_words_a_python_program_keeps_apart_is_denied(program):
+    for command in (f'python3 -c "{program}"', f"python3 - <<'EOF'\n{program}\nEOF"):
+        v = d.deny(command, "", ENV)
+        assert (v.kind, v.rule) == ("deny", "force-push-flag"), command
 
 
 # --- git's global options before the subcommand (dotfiles #709) ------------------------------

@@ -2,7 +2,7 @@
 
 import pytest
 
-from claude_guard.inert_python import inert, read_only
+from claude_guard.inert_python import inert, literal_words, read_only
 
 INERT = [
     "from pathlib import Path\np = Path('a.md')\np.write_text(p.read_text().replace('x', 'y'))",
@@ -132,3 +132,20 @@ def test_a_write_that_is_not_to_a_data_file_literal_is_not_inert(program):
 @pytest.mark.parametrize("program", NOT_INERT)
 def test_a_program_outside_the_allowlist_is_not_inert(program):
     assert not inert(program)
+
+
+@pytest.mark.parametrize(
+    ("program", "words"),
+    [
+        ("run(['git'] + a)\na = ['push', b'--force']", {"git", "push", "--force"}),
+        ("run(['pu' + 'sh', 'a' + 'b' + 'c'])", {"pu", "sh", "push", "a", "b", "c", "ab", "abc"}),
+        ("p = 'pu'\nrun(p + 'sh')", {"pu", "sh", "push"}),
+        ("run('git push ' + flag, shell=True)", {"git", "push"}),
+        # A name bound twice, or to itself, has no one value to fold.
+        ("p = 'pu'\np = 'x'\nrun(p + 'sh')", {"pu", "x", "sh"}),
+        ("p = p + 'sh'", {"sh"}),
+        ("run(['git'", set()),
+    ],
+)
+def test_literal_words_folds_concatenation_and_names_bound_once(program, words):
+    assert literal_words(program) == words
