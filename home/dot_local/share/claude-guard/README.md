@@ -371,6 +371,14 @@ program text only. A path in the words after the program passes, because
 `perl -ne 'print' ~/.zshrc` reads its operand as data. The program of `deno eval` is not
 read either.
 
+The rule reads an inline program after an option `_STDIN_CLI` does not list, and past the
+one word that may be that option's value, so a gap in the list refuses here too. An
+interpreter's name counts with a version suffix (`ruby3.2`, `perl5.36`) and as `nodejs`.
+One program shape passes although it names a protected file: a single perl substitution
+that runs no code, as in `perl -pi -e 's/secrets.yml/x/' docs/a.md`. Its text names no
+file, which `inplace_edit` already holds for an in-place perl. A substitution with the `e`
+flag, or one that evaluates code inside its pattern or replacement, is refused.
+
 A script file's program stays out of reach. `python_write` also reads what the program is given: whatever its
 segment redirects in, and every earlier segment of the command, which may be the program
 itself or its arguments under `xargs`. Reading every earlier segment needs no model of

@@ -2470,7 +2470,17 @@ _NAMES_ONLY: dict[str, frozenset[str] | None] = {
     **dict.fromkeys(("brew", "apt", "apt-get", "dnf", "npm", "pnpm", "gem"), _PACKAGE_VERBS),
     "nvm": frozenset({"use", "install", "uninstall", "ls", "current", "alias"}),
 }
-_INTERPRETER_NAME = re.compile("|".join((_PYTHON_WORD.pattern, *_STDIN_CLI)))
+_STDIN_CLI_ALIASES = {"nodejs": "node"}  # Debian's name for node
+_INTERPRETER_NAME = re.compile(
+    rf"{_PYTHON_WORD.pattern}|({'|'.join((*_STDIN_CLI, *_STDIN_CLI_ALIASES))})[0-9.]*"
+)
+
+
+def _stdin_cli(word: str) -> _StdinCli | None:
+    """The options of the interpreter other than Python that `word` names, by its basename
+    less a version suffix: `/usr/bin/ruby3.2` and `perl5.36` name `ruby` and `perl`."""
+    name = posixpath.basename(word).rstrip("0123456789.")
+    return _STDIN_CLI.get(_STDIN_CLI_ALIASES.get(name, name))
 
 
 def _without_redirects(words: list[str]) -> tuple[list[str], list[str], str]:
@@ -2705,22 +2715,25 @@ def _inline_programs(cli: _StdinCli, args: list[str]) -> list[str]:
         Each inline option (`cli.inline`) ahead of the first operand, and the word after
         it. The option word is kept because some hold the program themselves, as
         `--eval=…` and perl's `-e…` do. The words do not say which, so the word after a
-        self-contained option is returned too.
+        self-contained option is returned too. A word after an option `cli` does not list
+        may be that option's value and not the operand, so the reading goes on past that
+        one word.
     """
     found: list[str] = []
-    after_inline = False
+    value_or_operand = False
     i = 1 if args[:1] and args[0] in cli.subcommands else 0
     while i < len(args):
         w = args[i]
         if re.fullmatch(cli.inline, w, re.DOTALL):
             found += args[i : i + 2]
-            after_inline = True
-            i += 1
-            continue
-        if not w.startswith("-") and not after_inline:
+            value_or_operand = True
+        elif _PY_DESCRIPTOR.fullmatch(w) or not (w.startswith("-") or value_or_operand):
             break
-        after_inline = False
-        i += 2 if re.fullmatch(cli.valued, w) else 1
+        elif re.fullmatch(cli.valued, w):
+            i += 1
+        else:
+            value_or_operand = w.startswith("-") and not re.fullmatch(cli.flags, w, re.DOTALL)
+        i += 1
     return found
 
 
@@ -2810,7 +2823,7 @@ def _other_interpreter_arguments(args: list[str]) -> list[tuple[_StdinCli, list[
     """The options of each interpreter other than Python that `args` may start, with the
     words after it.
 
-    An interpreter is a word whose basename is a `_STDIN_CLI` name, wherever it sits, so
+    An interpreter is a word that names one (`_stdin_cli`), wherever it sits, so
     every leader counts without a list of leaders. The one exception is a command that
     `_NAMES_ONLY` lists: its words are names it looks up, installs or prints, so `brew
     install node` and `which ruby` start no interpreter."""
@@ -2820,7 +2833,7 @@ def _other_interpreter_arguments(args: list[str]) -> list[tuple[_StdinCli, list[
     subcommands = _NAMES_ONLY.get(posixpath.basename(argv[0]), frozenset())
     if subcommands is None or argv[1:2] and argv[1] in subcommands:
         return []
-    named = ((_STDIN_CLI.get(posixpath.basename(w)), argv[i + 1 :]) for i, w in enumerate(argv))
+    named = ((_stdin_cli(w), argv[i + 1 :]) for i, w in enumerate(argv))
     return [(cli, after) for cli, after in named if cli is not None]
 
 
@@ -2910,11 +2923,9 @@ def _runs_python_program(
                 programs.add(found[0])
         for cli, after in _other_interpreter_arguments(args) if other_matches else ():
             operand = _program_descriptor(cli, after)
-            given = (
-                _inline_programs(cli, after)
-                if operand is None
-                else _descriptor_programs(operand, redirected, piped, substituted, earlier)
-            )
+            given = _inline_programs(cli, after)
+            if operand is not None:
+                given += _descriptor_programs(operand, redirected, piped, substituted, earlier)
             for program in given:
                 if other_matches(program):
                     return True
@@ -2943,8 +2954,20 @@ def python_write(sc: Scan, target: str) -> Verdict | None:
     return None
 
 
+# One perl substitution that runs no code: three delimiters, flags without `e`, and none of
+# the forms that evaluate inside a pattern or a replacement (`@{[…]}`, `${\…}`, `(?{…})`).
+# Its text names no file, as `_inplace_edits_only_safe_files` holds for `perl -pi -e`.
+_PERL_SUBSTITUTION = re.compile(
+    r"(?!.*(@|\$\{|\(\?\??\{))s(?P<d>[/#|,!])((?!(?P=d)).)*(?P=d)((?!(?P=d)).)*(?P=d)[gimsxnpadlur]*;?",
+    re.DOTALL,
+)
+
+
 def _names_write_target(program: str) -> bool:
-    """Whether a program an interpreter other than Python runs names a WRITE_TARGETS path."""
+    """Whether a program an interpreter other than Python runs names a WRITE_TARGETS path.
+    A program that is one plain perl substitution (`_PERL_SUBSTITUTION`) names none."""
+    if _PERL_SUBSTITUTION.fullmatch(program.strip()):
+        return False
     return bdb_re(program, WRITE_TARGETS)
 
 

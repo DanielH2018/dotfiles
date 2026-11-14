@@ -1884,6 +1884,20 @@ OTHER_INLINE_WRITE_DENY = [
     f"ruby -rjson -e \"File.write('{BASHRC}', 'x')\"",
     f"php -r \"file_put_contents('{BASHRC}', 'x');\"",
     f'bun run -e "{NODE_WRITES_BASHRC}"',
+    # an option no table lists before the inline program, alone and with a separate value
+    f'node --inspect -e "{NODE_WRITES_BASHRC}"',
+    f'node --title foo -e "{NODE_WRITES_BASHRC}"',
+    f'bun --hot -e "{NODE_WRITES_BASHRC}"',
+    f"ruby --verbose -e \"File.write('{BASHRC}', 'x')\"",
+    # an in-place perl whose program is more than one plain substitution
+    f"perl -pi -e \"unlink('{BASHRC}')\" docs/a.md",
+    f"perl -pi -e 's/x/unlink(q({BASHRC}))/e' docs/a.md",
+    f"perl -pi -e 's/x/@{{[unlink q({BASHRC})]}}/' docs/a.md",
+    # an interpreter named with a version, and Debian's name for node
+    f"ruby3.2 -e \"File.write('{BASHRC}', 'x')\"",
+    f"/usr/bin/perl5.36 -e \"unlink('{BASHRC}')\"",
+    f'nodejs -e "{NODE_WRITES_BASHRC}"',
+    f'echo "{NODE_WRITES_BASHRC}" | node18',
     # a second inline program, after one the option word holds and after one it does not
     f"perl -e'$x = 1;' -e \"unlink('{BASHRC}')\"",
     f"ruby -e 'x = 1' -e \"File.write('{BASHRC}', 'x')\"",
@@ -1897,6 +1911,8 @@ OTHER_WRITE_ALLOW = [
     "perl -ne 'print if /PATH/' ~/.zshrc",
     "node count.js -e ~/.bashrc",
     "cat ~/.bashrc | perl -ne 'print if /PATH/'",
+    # one plain perl substitution runs no code, so the path in it is text
+    "perl -pe 's/.zshrc/.bashrc/g' docs/a.md",
     # an interpreter's name as the argument of a command that runs none
     "grep -c PATH ~/.bashrc && brew install node",
 ]
