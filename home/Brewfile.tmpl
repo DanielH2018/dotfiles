@@ -44,6 +44,12 @@ brew "pulumi/tap/pulumi"
 {{- range .tools }}{{ if .brew }}
 brew "{{ .brew }}"
 {{- end }}{{- end }}
+# GUI applications, App Store apps and editor extensions install on a workstation only, the
+# same split the Windows installer makes for its winget GUI inventory. A server-profile Mac
+# gets the CLI toolchain, which is the scope CI's bootstrap-macos job can complete: a `mas`
+# row fails on a machine signed out of the App Store, and the `vscode` rows need the
+# visual-studio-code cask.
+{{ if eq .profile "workstation" -}}
 cask "1password"
 cask "1password-cli"
 cask "firefox"
@@ -75,6 +81,7 @@ vscode "ms-python.vscode-python-envs"
 vscode "ms-vscode-remote.remote-containers"
 vscode "rust-lang.rust-analyzer"
 vscode "yzhang.markdown-all-in-one"
+{{ end -}}
 cargo "taplo-cli"
 # No `npm` rows. brew bundle runs npm under its own PATH, which holds Homebrew's node
 # (/opt/homebrew/opt/node/bin) and never fnm's, so an npm row fails with "env: node: No such

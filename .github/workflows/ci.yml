@@ -10,8 +10,8 @@
 # The `gate` job is the check main's `main CI gate` ruleset requires, so it blocks as well as
 # reports: main cannot move onto a commit until this job has passed on it. Rename the job and
 # the ruleset's required check (and bin/land's LAND_REQUIRED_CHECK default) together. `gate`
-# runs nothing itself; it passes only when `suite`, `render`, `bootstrap` and `bootstrap-windows`
-# all passed, so a job added to its `needs:` blocks a landing without a ruleset edit.
+# runs nothing itself; it passes only when `suite`, `render`, `bootstrap`, `bootstrap-windows`
+# and `bootstrap-macos` all passed, so a job added to its `needs:` blocks a landing without a ruleset edit.
 #
 # The gate is invoked as bin/gate rather than reimplemented step by step, so CI and a hand
 # run cannot drift into checking different things. Since #694 the pre-push hook runs only the
@@ -47,7 +47,7 @@ jobs:
   # The required check. A job whose `needs:` failed is SKIPPED, and the ruleset counts a
   # skipped required check as passing, so this runs `always()` and reads each result itself.
   gate:
-    needs: [suite, render, bootstrap, bootstrap-windows]
+    needs: [suite, render, bootstrap, bootstrap-windows, bootstrap-macos]
     if: always()
     runs-on: ubuntu-24.04
     steps:
@@ -55,7 +55,7 @@ jobs:
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          echo "suite, render legs, bootstrap, bootstrap-windows: $RESULTS"
+          echo "suite, render legs, bootstrap, bootstrap-windows, bootstrap-macos: $RESULTS"
           for r in $RESULTS; do
             [ "$r" = success ] || { echo "::error::a job the gate requires ended $r"; exit 1; }
           done
@@ -420,3 +420,63 @@ jobs:
           $userPath = [Environment]::GetEnvironmentVariable('Path', 'User') -split ';'
           if ($userPath -notcontains "$env:USERPROFILE\.local\bin") { $missing += '~\.local\bin on the User PATH (setup-windows-tweaks)' }
           if ($missing) { throw "bootstrap left these missing: $($missing -join ', ')" }
+
+  # The macOS half of `bootstrap`, so the os-darwin and os-unix run_ scripts execute rather than
+  # only render. `render` covers macOS with `apply --dry-run`, which runs no run_ script. `server`
+  # keeps the job within a hosted runner's reach, as it does for bootstrap-windows: Brewfile.tmpl
+  # gates its casks, `mas` and `vscode` rows on workstation, so brew bundle installs the CLI
+  # toolchain and nothing that needs an App Store sign-in or a GUI session.
+  #
+  # The runner is not a bare Mac. It ships Homebrew, node, python and gh. Homebrew is checked
+  # first because install-brew-bundle defers without it, which would fail the apply for a
+  # reason a real Mac also has. The checks after the apply name things only the run_ scripts
+  # put there. The apply runs under BSD script(1), whose argument order differs from the
+  # util-linux one the Ubuntu job uses, for the same reason: set-default-shell defers without a
+  # terminal. script(1) does not reliably pass the child's exit status through, so the script
+  # writes its own status to a file and the step reads that.
+  bootstrap-macos:
+    name: bootstrap (macos-15, profile=server)
+    runs-on: macos-15
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Require Homebrew
+        run: brew --version
+
+      - name: Install chezmoi
+        run: |
+          bin/ci-install-chezmoi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: chezmoi init --apply
+        run: |
+          set -euo pipefail
+          status="$RUNNER_TEMP/bootstrap.status"
+          cat > "$RUNNER_TEMP/bootstrap.sh" <<SH
+          chezmoi init --apply --no-tty --promptDefaults \\
+            --promptString 'Machine profile (workstation/server/minimal)=server' \\
+            "$GITHUB_WORKSPACE"
+          echo \$? > "$status"
+          SH
+          script -q /dev/null bash "$RUNNER_TEMP/bootstrap.sh"
+          [ "$(cat "$status")" = 0 ] || { echo "::error::chezmoi init --apply exited $(cat "$status")"; exit 1; }
+          data="$(chezmoi execute-template 'work={{ .work }} profile={{ .profile }} agent={{ .agent }}')"
+          echo "$data"
+          [ "$data" = 'work=false profile=server agent=false' ] || { echo "::error::init wrote the wrong answers: $data"; exit 1; }
+
+      - name: Check what the run_ scripts installed
+        run: |
+          set -euo pipefail
+          missing=''
+          brew list --formula util-linux >/dev/null 2>&1 || missing="$missing util-linux(install-brew-bundle)"
+          [ -x "$HOME/.local/bin/claude" ] || missing="$missing claude(install-claude)"
+          [ -x "$HOME/.local/bin/ruff" ] || missing="$missing ruff-via-uv-tool(install-python-tools)"
+          login_shell="$(dscl . -read "/Users/$(id -un)" UserShell | awk '{print $2}')"
+          [ "$login_shell" = /bin/zsh ] || missing="$missing zsh-login-shell(set-default-shell,got:$login_shell)"
+          [ -z "$missing" ] || { echo "::error::bootstrap left these missing:$missing"; exit 1; }
