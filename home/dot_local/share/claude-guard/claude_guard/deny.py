@@ -3112,7 +3112,7 @@ _MIRROR = rf"{GIT_PUSH_AT}.*\s--mirror{_FLAG_END}"
 _FORCE_LITERAL = re.compile(r"--force|-[vqdnu46]*f[A-Za-z0-9]*|\+\S+|--mirror")
 # A word that starts a push: the subcommand, or an inline alias whose value is one.
 _PUSH_LITERAL = re.compile(
-    rf"(?:.*alias\.[^=]+=!?)?(?:{'|'.join(sorted(PUSH_SUBCOMMANDS))})", re.DOTALL
+    rf"(?:.*(?i:alias)\.[^=]+=!?)?(?:{'|'.join(sorted(PUSH_SUBCOMMANDS))})", re.DOTALL
 )
 
 
