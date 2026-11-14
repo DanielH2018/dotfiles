@@ -1954,10 +1954,52 @@ def test_a_force_push_chained_with_a_dangerous_command_is_still_denied():
         "python3 tool.py <<'EOF'\ngit push --force origin feat\nEOF",
         "python3 -c 'import sys; print(sys.stdin.read())' <<'EOF'\ngit push --force\nEOF",
         'claude-guard replay /dev/stdin --deny <<\'EOF\'\n{"command": "git push --force"}\nEOF',
+        # #1337: an argument list that starts a plain push, or no push at all.
+        "python3 -c \"import subprocess; subprocess.run(['git', 'push', 'origin', 'feat'])\"",
+        "python3 -c \"import subprocess; subprocess.run(['git', 'log', '--force'])\"",
+        "python3 -c \"import subprocess as s; s.run(['git', 'status']); s.run(['ls', '-f'])\"",
+        "python3 <<'EOF'\nprint(['git', 'push', '--force'])\nEOF",
     ],
 )
 def test_a_push_without_a_force_is_no_decision(command):
     assert d.deny(command, "", ENV) == d.NONE
+
+
+_RUN = "import subprocess; subprocess.run"
+
+
+@pytest.mark.parametrize(
+    ("command", "rule"),
+    [
+        (f"python3 -c \"{_RUN}(['git', 'push', '--force', 'origin', 'feat'])\"", "force-push-flag"),
+        (f"python3 -c \"{_RUN}(['git','-C','/tmp/x','push','-f'])\"", "force-push-flag"),
+        (f"python3 -c \"{_RUN}(('git', 'push', 'origin', '+feat'))\"", "force-push-flag"),
+        (
+            "python3 <<'EOF'\nimport subprocess\n"
+            "subprocess.run(['git', 'push', '--force', 'origin', 'feat'])\nEOF",
+            "force-push-flag",
+        ),
+        # One literal per line: the list is joined before the body is split into lines.
+        (
+            "python3 <<'EOF'\nimport subprocess\n"
+            "subprocess.run([\n    'git',\n    'push',\n    '--force',\n])\nEOF",
+            "force-push-flag",
+        ),
+        (
+            "node -e \"require('child_process').execFileSync('git', ['push', '--force'])\"",
+            "force-push-flag",
+        ),
+        ('perl -e \'system("git", "push", "--force", "origin", "feat")\'', "force-push-flag"),
+        # A parse the segmenter refuses is still read with its lists joined.
+        (f"python3 -c \"{_RUN}(['git', 'push', '--force'", "force-push-flag"),
+        (f"python3 -c \"{_RUN}(['git', 'push', 'origin', 'main'])\"", "push-main"),
+        (f"python3 -c \"{_RUN}(['git', 'push', '--force', 'origin', 'main'])\"", "force-push-main"),
+        (f"python3 -c \"{_RUN}(['git', 'push', '--no-verify'])\"", "push-no-verify"),
+    ],
+)
+def test_a_push_an_interpreter_starts_from_an_argument_list_is_denied(command, rule):
+    v = d.deny(command, "", ENV)
+    assert (v.kind, v.rule) == ("deny", rule)
 
 
 # --- git's global options before the subcommand (dotfiles #709) ------------------------------

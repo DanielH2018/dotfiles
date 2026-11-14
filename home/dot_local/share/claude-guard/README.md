@@ -167,7 +167,13 @@ is the one reader of git's command line. It finds the subcommand behind `-C`, `-
 `--git-dir` and the rest of `git --help`'s global options, behind an assignment prefix or a
 wrapper, and behind an inline alias. `deny()` adds a canonical `git push <args>` line per push
 to its segment set. For text the parser cannot read, such as `bash -c '…'`, it uses a
-`GIT_PUSH_AT` regex built from the same option table. Two rules are new with it.
+`GIT_PUSH_AT` regex built from the same option table. That regex reads `git push` as text,
+and `normalize` deletes the quotes of `subprocess.run(['git', 'push', '--force'])` while
+keeping its commas. So `build_scan` adds a member for each text that holds an argument
+list, with a space in place of the comma between two string literals (dotfiles #1337). The
+member covers a Python list or tuple, the `'git', ['push', …]` of node's `execFileSync`, and
+a list `system` call in perl and ruby. A list that a program builds across statements, or
+from a variable, stays unread. Two rules are new with #709.
 `push_config` denies a push whose inline config (`-c`, `--config-env`, `GIT_CONFIG_*`) sets a
 `+` refspec, a refspec onto main/master, or `remote.<name>.mirror`. `push_no_verify` denies
 `--no-verify` or an inline `core.hooksPath` on a push. `config_write` denies the persistent

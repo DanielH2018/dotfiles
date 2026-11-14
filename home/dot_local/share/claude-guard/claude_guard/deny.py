@@ -207,13 +207,30 @@ class Scan:
     lines: str = ""
 
 
+# The gap between two string literals of an argument list: `'git', 'push'`, and the
+# `'git', ['push'` of node's `execFileSync`.
+_LIST_GAP = re.compile(r"""(["'])\s*,\s*[\[(]?\s*(["'])""")
+
+
+def _with_joined_lists(text: str) -> list[str]:
+    """`text`, then `text` with each argument list read as the command line it starts.
+
+    `normalize` deletes quotes and keeps commas, so `subprocess.run(['git', 'push', '-f'])`
+    holds no `git push` for a rule to match. The second text closes one literal, puts a
+    space in the gap and opens the next. It is left out when `text` holds no such gap."""
+    joined = _LIST_GAP.sub(r"\1 \2", text)
+    return [text] if joined == text else [text, joined]
+
+
 def build_scan(command: str) -> Scan:
     scan = normalize(command)
     lines = "\n".join(normalize(line) for line in command.split("\n"))
     p = parse(command)
     if not p.ok:
-        return Scan(command, scan, scan, scan, False, lines=lines)
-    texts = [seg.text for seg in p.segments] + list(p.substitutions)
+        unparsed = "\n".join(normalize(t) for t in _with_joined_lists(command))
+        return Scan(command, scan, unparsed, unparsed, False, lines=lines)
+    segments = [seg.text for seg in p.segments] + list(p.substitutions)
+    texts = [t for text in segments for t in _with_joined_lists(text)]
     members = [normalize(text) for text in texts]
     # Not the bash's (#709): one more member per git push a segment runs, spelled
     # `git push <args>` with git's global options dropped and an inline alias expanded, so the
@@ -222,9 +239,11 @@ def build_scan(command: str) -> Scan:
         normalize(line) for text in texts for line in canonical_lines(text, PUSH_SUBCOMMANDS)
     ]
     for body in _heredocs_run_as_lines(p):
-        for line in body.replace("\\\n", " ").split("\n"):
-            members += [normalize(t) for t in (line, *canonical_lines(line, PUSH_SUBCOMMANDS))]
-    gits = tuple(inv for text in texts for inv in invocations(text))
+        # Joined before the split, so a list written one literal per line is one line.
+        for text in _with_joined_lists(body):
+            for line in text.replace("\\\n", " ").split("\n"):
+                members += [normalize(t) for t in (line, *canonical_lines(line, PUSH_SUBCOMMANDS))]
+    gits = tuple(inv for text in segments for inv in invocations(text))
     scanset = "\n".join([scan, *members])
     segset = "\n".join(members) if members else scan
     return Scan(command, scan, scanset, segset, True, gits, lines)
@@ -405,7 +424,7 @@ _FLAG_END = r"([^[:alnum:]_-]|$)"
 _FORCE_WORD = rf"(--force{_FLAG_END}|[ ]-f{_FLAG_END})"
 _FORCE_FLAG = rf"git\s+push.*{_FORCE_WORD}"
 _LEASE = r"\-\-force-with-lease"
-_MAIN_DEST_F = r"(^|[[:space:]]|:)(main|master)([[:space:]]|:|\)|`|$)"
+_MAIN_DEST_F = r"(^|[[:space:]]|:)(main|master)([[:space:]]|:|\)|\]|`|$)"
 
 # Not the bash's (#709): git, any run of git's global options, then a push, for text the
 # canonical `git push` lines do not cover (a refused parse, `bash -c '...'`). An inline alias
@@ -443,7 +462,7 @@ def force_push(sc: Scan, target: str) -> Verdict | None:
 def push_main(sc: Scan, target: str) -> Verdict | None:
     """:725-728. Any push whose DESTINATION is main/master; `:` is deliberately not a
     terminator here so `main:feature` stays a push to feature."""
-    dest = r"([[:space:]]|:)(refs/heads/)?(main|master)([[:space:]]|\)|`|$)"
+    dest = r"([[:space:]]|:)(refs/heads/)?(main|master)([[:space:]]|\)|\]|`|$)"
     if bdb_re_pair(sc.segset, r"git[[:space:]]+push\b", dest) or bdb_re(
         sc.segset, rf"{GIT_PUSH_AT}.*{dest}"
     ):
