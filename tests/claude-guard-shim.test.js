@@ -53,6 +53,36 @@ function shimLookupArgv(shimPath) {
   return tokens;
 }
 
+// An inherited VIRTUAL_ENV (a session started under `uv run` has one) outranks the cwd walk,
+// so a fixture that leaves it set measures the active venv instead of the one it built.
+function envWithoutActiveVenv(extra = {}) {
+  const env = { ...process.env, ...extra };
+  for (const k of ['VIRTUAL_ENV', 'CONDA_PREFIX']) {
+    if (!(k in extra)) delete env[k];
+  }
+  return env;
+}
+
+function makeVenv(t, prefix) {
+  const dir = scratch(os.tmpdir(), prefix, t);
+  const venv = path.join(dir, '.venv');
+  const created = spawnSync('uv', ['venv', '--python', '3.15', venv],
+    { encoding: 'utf8', env: envWithoutActiveVenv() });
+  if (created.status !== 0) {
+    t.skip(`uv venv --python 3.15 unavailable: ${created.stderr}`);
+    return null;
+  }
+  return dir;
+}
+
+function assertManaged(r, venvDir) {
+  assert.strictEqual(r.status, 0, r.stderr);
+  const found = r.stdout.trim();
+  assert.ok(!found.startsWith(venvDir), `got the venv instead of managed: ${found}`);
+  assert.match(found, /\/uv\/python\//);
+  assert.ok(fs.statSync(found).isFile(), found);
+}
+
 test('the shim\'s own lookup ignores a real cwd venv only because of --system',
   { skip: skipUnless('uv') }, (t) => {
     // A *dangling* or wrong-version cwd venv is not the risk `--system` guards against: uv
@@ -62,37 +92,36 @@ test('the shim\'s own lookup ignores a real cwd venv only because of --system',
     // `.venv` is -- which uv prefers over the managed install unless `--system` is present.
     const argv = shimLookupArgv(SHIM);
     assert.ok(argv.includes('--system'), argv.join(' '));
+    const cwd = makeVenv(t, 'claude-guard-real-venv-');
+    if (!cwd) return;
+    const env = envWithoutActiveVenv();
 
-    const cwd = scratch(os.tmpdir(), 'claude-guard-real-venv-', t);
-    const venv = path.join(cwd, '.venv');
-    const created = spawnSync('uv', ['venv', '--python', '3.15', venv], { encoding: 'utf8' });
-    if (created.status !== 0) {
-      t.skip(`uv venv --python 3.15 unavailable: ${created.stderr}`);
-      return;
-    }
+    assertManaged(spawnSync('uv', ['python', 'find', ...argv], { encoding: 'utf8', cwd, env }), cwd);
 
-    const r = spawnSync('uv', ['python', 'find', ...argv], { encoding: 'utf8', cwd });
-    assert.strictEqual(r.status, 0, r.stderr);
-    const found = r.stdout.trim();
-    assert.ok(!found.startsWith(cwd), `got the cwd venv instead of managed: ${found}`);
-    assert.match(found, /\/uv\/python\//);
-    assert.ok(fs.statSync(found).isFile(), found);
-
-    // Control: the fixture must actually discriminate -- without --system the same lookup,
-    // from the same cwd, must prefer the venv it just proved --system skips. If uv's own
-    // preference for a cwd venv ever changes, skip visibly rather than pass for no reason.
+    // Control: without --system the same lookup, from the same cwd, must return the venv.
+    // If it does not, --system no longer guards anything and belongs out of the shim.
     const argvNoSystem = argv.filter((a) => a !== '--system');
-    const r2 = spawnSync('uv', ['python', 'find', ...argvNoSystem], { encoding: 'utf8', cwd });
-    if (r2.status !== 0) {
-      t.skip('uv python find without --system did not return 0; behaviour changed');
-      return;
-    }
-    const found2 = r2.stdout.trim();
-    if (!found2.startsWith(cwd)) {
-      t.skip('uv no longer prefers a cwd venv without --system; the control no longer discriminates');
-      return;
-    }
-    assert.ok(found2.startsWith(cwd));
+    const r2 = spawnSync('uv', ['python', 'find', ...argvNoSystem], { encoding: 'utf8', cwd, env });
+    assert.strictEqual(r2.status, 0, r2.stderr);
+    assert.ok(r2.stdout.trim().startsWith(cwd),
+      `without --system uv returned ${r2.stdout.trim()}, not the cwd venv: --system may be dead`);
+  });
+
+test('the shim\'s own lookup ignores an active VIRTUAL_ENV only because of --system',
+  { skip: skipUnless('uv') }, (t) => {
+    const argv = shimLookupArgv(SHIM);
+    const venvDir = makeVenv(t, 'claude-guard-active-venv-');
+    if (!venvDir) return;
+    const cwd = scratch(os.tmpdir(), 'claude-guard-plain-cwd-', t);
+    const env = envWithoutActiveVenv({ VIRTUAL_ENV: path.join(venvDir, '.venv') });
+
+    assertManaged(spawnSync('uv', ['python', 'find', ...argv], { encoding: 'utf8', cwd, env }), venvDir);
+
+    const argvNoSystem = argv.filter((a) => a !== '--system');
+    const r2 = spawnSync('uv', ['python', 'find', ...argvNoSystem], { encoding: 'utf8', cwd, env });
+    assert.strictEqual(r2.status, 0, r2.stderr);
+    assert.ok(r2.stdout.trim().startsWith(venvDir),
+      `without --system uv returned ${r2.stdout.trim()}, not the active venv`);
   });
 
 test('shim fails closed with a message when no managed 3.15 is available', () => {
