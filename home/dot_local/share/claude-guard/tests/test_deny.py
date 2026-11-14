@@ -317,6 +317,7 @@ QUOTED_PUSH_DENY = [
     "git -c alias.x='!git push -f' commit -m x",
     "git grep -O'git push --force' x",
     "git grep --open-files-in-pager='git push --force' x",
+    "git grep -e -- -O'git push --force origin main' x",
     "git commit -m 'git push --force'; make",
     "git show 'git push --force'",
     "grep -n \"$(echo 'git push --force')\" README.md",

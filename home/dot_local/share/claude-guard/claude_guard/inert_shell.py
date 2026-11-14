@@ -28,7 +28,6 @@ is refused with the rest. False means "not proven", never "runs something".
 the next command of a pipe is fed.
 """
 
-import itertools
 import re
 
 from claude_guard.segment import Segment, parse
@@ -301,7 +300,9 @@ _GIT_TEXT_SUBCOMMANDS = frozenset({"commit", "grep", "log"})
 def _git_runs_no_word(text: str) -> bool:
     """Whether the segment `text` is a `git commit`, `git grep` or `git log` that runs none
     of its arguments. `git grep -O<pager>` and `--open-files-in-pager=<pager>` run the pager,
-    and git accepts any unique prefix of the long name and an `O` inside a short cluster."""
+    and git accepts any unique prefix of the long name and an `O` inside a short cluster.
+    A word of either shape is refused wherever it sits, since a `--` may be an option's value
+    (`-e --`) and not the end of the options."""
     words = _words(text)
     if words is None or len(words) < 2 or any(glob for _, glob in words):
         return False
@@ -310,10 +311,9 @@ def _git_runs_no_word(text: str) -> bool:
         return False
     if sub != "grep":
         return True
-    options = itertools.takewhile(lambda arg: arg != "--", args)
     return not any(
         arg.startswith("--o") or (arg.startswith("-") and not arg.startswith("--") and "O" in arg)
-        for arg in options
+        for arg in args
     )
 
 

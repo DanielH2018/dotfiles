@@ -20,7 +20,6 @@ READS_OR_PRINTS = [
     "git commit -m 'Deny git push --force on any branch'",
     "git grep -n 'git push --force' -- docs",
     "git log --oneline --grep='git push --force' | head -5",
-    "git grep -n 'git push --force' -- -O",
 ]
 NOT_PROVEN = [
     # a command off the list, or one whose name is not the bare word
@@ -48,6 +47,9 @@ NOT_PROVEN = [
     "git grep -nOsh x",
     "git grep --open-files-in-pager='git push --force' x",
     "git grep --open='git push --force' x",
+    "git grep -e -- -O'git push --force' x",
+    "git grep -f -- --open-files-in-pager='git push --force' x",
+    "git grep -n 'git push --force' -- -O",
     "printf -v PATH '%s' /tmp/e",
     "printf [-]v PATH /tmp/e",
     # a redirect that is not a whole unquoted /dev/null or fd word
