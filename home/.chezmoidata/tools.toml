@@ -237,7 +237,7 @@ node = "22.23.4"
 python = "3.15.2"
 
 # The hosts whose Claude agent user gets uv, Python and prek from install-python-tools. It is
-# the server repo's `dev_tooling_hosts` (ansible/inventory/group_vars/all.yml), the same list
+# the server repo's `dev_tooling_hosts` (inventory/group_vars/all.yml), the same list
 # that gates Ansible's own install of them, and an operator apply is not gated by it. daniel-pi
 # is absent for the reason given there: nobody commits from it, and it has 512 MB.
 [agent_tooling]
