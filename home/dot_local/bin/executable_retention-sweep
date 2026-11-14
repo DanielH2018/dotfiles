@@ -1034,6 +1034,8 @@ def sweep(cfg: dict) -> int:
                 # Another user's entry in sticky /tmp (G15) is one the kernel refuses to
                 # unlink; trying would turn every run into a failure.
                 owner = file_uid(f)
+                if owner is None:
+                    continue  # removed since the glob ran
                 if owner != sweep_uid:
                     kept_reason = f"owned by uid {owner}, not the sweeping user"
                     continue
