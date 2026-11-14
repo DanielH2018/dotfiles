@@ -669,10 +669,16 @@ with tempfile.TemporaryDirectory() as tmp:
     KEY_OK = "enforced_by: tests/test_x.py::test_live"
 
     def findings(
-        extra_index="", extra_files=None, key=KEY_OK, a_marker=" [ENFORCED]", env=None
+        extra_index="",
+        extra_files=None,
+        key=KEY_OK,
+        a_marker=" [ENFORCED]",
+        env=None,
+        read_only=False,
     ):
         """What the hook prints for a store that is consistent apart from the changes
-        passed in: a.md carries `key` and a marker, b.md is marked and has no key."""
+        passed in: a.md carries `key` and a marker, b.md is marked and has no key.
+        `read_only` takes the store's write bit away for the run."""
         for stale in fmemories.glob("*.md"):
             stale.unlink()
         index_text = (
@@ -688,13 +694,18 @@ with tempfile.TemporaryDirectory() as tmp:
         }
         for name, text in files.items():
             (fmemories / name).write_text(text)
-        return subprocess.run(
-            [sys.executable, str(SCRIPT)],
-            cwd=repo,
-            capture_output=True,
-            text=True,
-            env=env or fenv,
-        ).stdout
+        if read_only:
+            fmemories.chmod(0o555)
+        try:
+            return subprocess.run(
+                [sys.executable, str(SCRIPT)],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+                env=env or fenv,
+            ).stdout
+        finally:
+            fmemories.chmod(0o755)
 
     check("a consistent index and store are silent", findings() == "")
 
@@ -751,5 +762,29 @@ with tempfile.TemporaryDirectory() as tmp:
         )
         == "",
     )
+
+    # Root writes through a missing write bit, so the store never reads as read-only.
+    if os.geteuid() != 0:
+        out = findings(extra_files={"stray.md": "body\n"}, read_only=True)
+        check(
+            "a store with no write bit gets one line that counts the sections, no rows",
+            out.count("\n") == 1
+            and out.startswith("This memory store is read-only here")
+            and "1 upkeep check reports findings" in out
+            and "stray.md" not in out,
+        )
+        out = findings(read_only=True)
+        check(
+            "a consistent read-only store gets the line without a count",
+            out.count("\n") == 1
+            and out.startswith("This memory store is read-only here")
+            and "upkeep" not in out,
+        )
+
+check(
+    "two sections with findings are counted in the plural",
+    "2 upkeep checks report findings"
+    in mod.read_only_line("3 memories name a path\n  a.md: x\n2 index findings\n"),
+)
 
 finish()

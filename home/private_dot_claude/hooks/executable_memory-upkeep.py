@@ -67,6 +67,11 @@ key's node id does not resolve). A marked entry with no `enforced_by:` key is no
 finding: section 2 still resolves its check from the memory's prose. The section prints
 after the other three.
 
+A read-only store. A memory directory the session cannot write is a copy that
+another host owns and overwrites. No session there can fix a finding, and a memory it
+tries to save fails. The four sections collapse to one line: the store is read-only,
+where a lesson goes instead, and how many sections have findings.
+
 Fails closed to silence. Every path returns 0, including the error paths: a broken
 session-start hook is worse than a missing nudge.
 
@@ -80,6 +85,8 @@ with CLAUDE_MEMORY_INDEX_CHECK=0. Each variable silences only its own sections.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import os
 import re
 import subprocess
@@ -523,6 +530,25 @@ def report_index_findings(memories: Path, tree: Tree) -> None:
         print(f"  ... and {len(rows) - MAX_REPORTED} more")
 
 
+def read_only_line(report: str) -> str:
+    """The one line a session gets on a store it cannot write.
+
+    Args:
+        report: what the four sections print for the store. Each section that has
+            findings opens with one line that is not indented.
+    """
+    sections = sum(1 for row in report.splitlines() if row and not row[0].isspace())
+    line = (
+        "This memory store is read-only here: another host owns it, and a write to it "
+        "fails. Save a memory on that host, or record the lesson in the repo as a "
+        "CLAUDE.md rule or an issue."
+    )
+    if sections:
+        noun = "check reports" if sections == 1 else "checks report"
+        line += f" {sections} upkeep {noun} findings that only the owning host can fix."
+    return line
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Report stale memory paths and checks, and an oversized index."
@@ -553,12 +579,22 @@ def main() -> int:
         return 0
 
     tree = Tree(repo, primary)
-    if check_paths:
-        report_stale_paths(memories, tree)
-        report_stale_checks(memories, tree)
-    if check_index:
-        report_index_size(memories, args.max)
-        report_index_findings(memories, tree)
+
+    def report() -> None:
+        if check_paths:
+            report_stale_paths(memories, tree)
+            report_stale_checks(memories, tree)
+        if check_index:
+            report_index_size(memories, args.max)
+            report_index_findings(memories, tree)
+
+    if os.access(memories, os.W_OK):
+        report()
+        return 0
+    held = io.StringIO()
+    with contextlib.redirect_stdout(held):
+        report()
+    print(read_only_line(held.getvalue()))
     return 0
 
 
