@@ -321,24 +321,32 @@ def _heredoc_program_expands(source: str | None, heredocs: tuple[str, ...], quot
     return not any(body == source and q for body, q in zip(heredocs, quoted, strict=False))
 
 
-def _contained_inert_sources(p: Parsed) -> list[str | None] | None:
-    """Per segment of `p`, its closed-shape Python program that starts no process
-    (`_inert_program`), else None. The whole result is None unless every segment is such a
-    program or a reader or printer `segment_reads_or_prints` proves, with no substitution:
-    anything else may run the text an inert program only writes or prints."""
+def _inert_source(seg: Segment) -> str | None:
+    """The closed-shape Python program of `seg` when it starts no process (`_inert_program`),
+    else None."""
+    source = _python_source(_words(seg.text) or [], seg.heredocs)
+    expands = _heredoc_program_expands(source, seg.heredocs, seg.heredoc_quoted)
+    return source if _inert_program(source, expands) else None
+
+
+def _runs_nothing_written(p: Parsed) -> list[bool] | None:
+    """Per segment of `p`, whether it is an inert Python program (`_inert_source`) or a
+    reader or printer `segment_reads_or_prints` proves, so it cannot run text that another
+    segment writes or prints. None when the command holds a substitution, which can."""
     if p.substitutions:
         return None
-    sources: list[str | None] = []
-    for seg in p.segments:
-        source = _python_source(_words(seg.text) or [], seg.heredocs)
-        expands = _heredoc_program_expands(source, seg.heredocs, seg.heredoc_quoted)
-        if _inert_program(source, expands):
-            sources.append(source)
-        elif segment_reads_or_prints(seg):
-            sources.append(None)
-        else:
-            return None
-    return sources
+    return [_inert_source(s) is not None or segment_reads_or_prints(s) for s in p.segments]
+
+
+def _contained_inert_sources(p: Parsed) -> list[str | None] | None:
+    """Per segment of `p`, its inert Python program (`_inert_source`), else None. The whole
+    result is None unless every segment runs nothing another one writes
+    (`_runs_nothing_written`): anything else may run the text an inert program only writes
+    or prints."""
+    quiet = _runs_nothing_written(p)
+    if quiet is None or not all(quiet):
+        return None
+    return [_inert_source(s) for s in p.segments]
 
 
 def _rm_members(sc: Scan) -> list[str]:
@@ -2922,16 +2930,20 @@ def _runs_heredoc_lines(text: str) -> bool:
     return names[0] in _EXECUTORS | {"sudo", "doas"} and not _LINE_RUNNERS.isdisjoint(names)
 
 
-def _reads_program(text: str) -> bool:
-    """Whether the segment `text` runs an interpreter that may run its stdin as a program.
+def _reads_program(text: str, output_may_run: bool) -> bool:
+    """Whether the segment `text` runs an interpreter whose stdin may run as a program.
 
     Two Python shapes take their program from elsewhere, so their stdin is data: a literal
     `.py` script (`_script_arguments_start`), and a `-c` program that starts no process,
-    which therefore cannot `exec` what it reads. Every other interpreter command counts."""
+    which therefore cannot `exec` what it reads. Either can still copy its stdin to a file
+    or a pipe, so the data counts as a program when `output_may_run`: when another segment
+    of the command could run what this one writes. Every other interpreter command counts."""
     words = _words(text)
     argv = _argv(_command_words(words)) if words else []
     if not argv or not _runs_interpreter(argv):
         return False
+    if output_may_run:
+        return True
     if _script_arguments_start(argv) is not None:
         return False
     return not _inert_program(_python_source(argv, ()), expands=True)
@@ -2958,6 +2970,7 @@ def _heredocs_run_as_lines(p: Parsed) -> list[str]:
     (`_contained_inert_sources`), whose lines only name the text."""
     segments = p.segments
     inert_sources = _contained_inert_sources(p) or itertools.repeat(None)
+    quiet = _runs_nothing_written(p) or [False] * len(segments)
     runs_code = any(_runs_code(s.text) for s in segments)
     bodies: list[str] = []
     for i, (seg, inert_source) in enumerate(zip(segments, inert_sources, strict=False)):
@@ -2975,7 +2988,10 @@ def _heredocs_run_as_lines(p: Parsed) -> list[str]:
         if closer == "esac":
             texts = [_CASE_ARM_HEAD.sub("", t, count=1) for t in texts]
         stored_then_run = runs_code and _is_data_sink(seg.text, seg.sep)
-        if stored_then_run or any(_runs_heredoc_lines(t) or _reads_program(t) for t in texts):
+        output_may_run = not all(quiet[:i] + quiet[i + 1 :])
+        if stored_then_run or any(
+            _runs_heredoc_lines(t) or _reads_program(t, output_may_run) for t in texts
+        ):
             bodies += [b for b in seg.heredocs if b != inert_source]
     return bodies
 

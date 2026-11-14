@@ -289,7 +289,9 @@ program runs the push (dotfiles #1314). Three Python shapes are left out. A prog
 that `inert_python.inert` proves starts no process only names the text, so
 `python3 <<'EOF'` with a `print` of push text passes. That holds only when every other
 segment is a reader or a printer, as for `rm_root`. A literal `.py` script reads the
-body as data, and so does a `-c` program that starts no process. Every other
+body as data, and so does a `-c` program that starts no process. Both hold under the
+same condition, because either can copy the body to a file that a later segment runs.
+Every other
 interpreter has no such proof: `node <<'EOF'` with a `console.log` of push text is
 refused. A body fed to any other command is data, so
 `grep -c x <<'EOF'` over push text passes. A stored heredoc is stripped before that. A flag such as

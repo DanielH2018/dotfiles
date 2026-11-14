@@ -354,6 +354,11 @@ QUOTED_PUSH_DENY = [
     "python3 -c 'exec(open(0).read())' <<'EOF'\nimport os\nos.system('git push -f origin x')\nEOF",
     # A program that only prints the text, in a command that runs what it printed.
     "python3 <<'EOF' > x.sh; bash x.sh\nprint('git push --force origin feat')\nEOF",
+    # A script or an inert `-c` program that reads the body as data, in a command that
+    # runs what it wrote.
+    "python3 tool.py <<'EOF' > x.sh; bash x.sh\ngit push --force origin feat\nEOF",
+    "python3 -c 'import sys; print(sys.stdin.read())' <<'EOF' > x.sh; bash x.sh\n"
+    "git push --force origin feat\nEOF",
     # An unquoted delimiter: the shell runs the substitution before Python reads a word.
     "python3 <<EOF\nprint('$(git push --force origin feat)')\nEOF",
 ]
