@@ -16,6 +16,9 @@ deployed file against the last state chezmoi wrote, the second is what apply wil
   " M path"   source edited, deployed untouched   -> the normal workflow, allowed
   "MM path"   deployed edited outside chezmoi     -> apply would discard it, denied
 
+A `.json` path whose deployed and rendered contents parse equal is not a conflict, because
+the edit outside chezmoi changed only formatting or key order.
+
 Override for a deliberate revert:  CHEZMOI_APPLY_GUARD=off chezmoi apply ...
 
 WHICH command is an apply, and WHICH paths it names, are decided by claude_guard.segment and
@@ -40,6 +43,7 @@ post side failed. No chezmoi on PATH is no decision: nothing is managed. Every c
 is bounded (claude_guard.bounded); the three local git reads are not (DECIDED below).
 """
 
+import json
 import os
 import re
 import shlex
@@ -300,6 +304,29 @@ def _chezmoi(env: Mapping[str, str]) -> str | None:
     return which("chezmoi", path=env.get("PATH", ""))
 
 
+def _same_json(path: str, czm: str, env: Mapping[str, str], run: Runner) -> bool:
+    """Whether the deployed JSON file at `path` parses to the same value chezmoi would write.
+
+    Claude Code rewrites ~/.claude/settings.json in its own key order, which `chezmoi status`
+    reports as a deployed edit. When the two parse equal, the apply changes only formatting
+    and discards nothing. Anything unreadable, unparsable or slow is a real conflict.
+    """
+    if not path.endswith(".json"):
+        return False
+    try:
+        with open(path, encoding="utf-8") as f:
+            deployed = json.load(f)
+    except OSError, ValueError:
+        return False
+    r = run([czm, "cat", path], _timeout(env, 1), 1048576, env)
+    if r.status != "ok" or r.exit != 0:
+        return False
+    try:
+        return json.loads(r.out) == deployed
+    except ValueError:
+        return False
+
+
 def _git(args: list[str], env: Mapping[str, str], run: Runner) -> str | None:
     r = run(["git", *args], 5, 65536, env)
     return r.out if r.status == "ok" and r.exit == 0 else None
@@ -399,6 +426,7 @@ def pre(command: str, env: Mapping[str, str], run: Runner = bounded.run) -> Verd
             for ln in conflicts
             if any(ln[3:] == t or ln[3:].startswith(t + "/") for t in targets)
         ]
+    conflicts = [ln for ln in conflicts if not _same_json(ln[3:], czm, env, run)]
     if not conflicts:
         return None
     paths = "\n".join(f"  {ln[3:]}" for ln in conflicts)

@@ -46,6 +46,7 @@ case "$1" in
           exit "\${STUB_STATUS_EXIT:-0}" ;;
   source-path) printf '%s' "\${STUB_SOURCE_PATH:-}" ;;
   diff) printf '%s\\n' "$*" > "\${STUB_DIFF_ARGS:-/dev/null}"; printf '%s' "\${STUB_DIFF:-}" ;;
+  cat) printf '%s' "\${STUB_CAT:-}" ;;
   *) exit 0 ;;
 esac
 exit 0
@@ -70,7 +71,7 @@ const UV_ENV = {
 // whole deny side, so a read-only allow or a context nudge beside the guard is no decision.
 const blocking = (d) => (d && ['deny', 'ask'].includes(d.permissionDecision) ? d : null);
 
-function decide(command, stubStatus) {
+function decide(command, stubStatus, extraEnv = {}) {
   const out = execFileSync('bash', [PRE], {
     input: JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd: '/home/daniel' }),
     encoding: 'utf8',
@@ -82,6 +83,7 @@ function decide(command, stubStatus) {
       STUB_STATUS: stubStatus,
       HOME: '/home/daniel',
       CLAUDE_GUARD_HOME: GUARD,
+      ...extraEnv,
     },
   });
   return blocking(out.trim() ? JSON.parse(out).hookSpecificOutput : null);
@@ -148,6 +150,17 @@ test('a flag value that looks like a path is not treated as a target', { skip },
 
 test('stays silent when chezmoi status reports nothing to overwrite', { skip }, () => {
   allows('chezmoi apply', CLEAN);
+});
+
+// Claude Code rewrites settings.json in its own key order, which status reports as MM.
+test('a deployed JSON file that differs only in key order is not a conflict', { skip }, () => {
+  const deployed = path.join(scratch(os.tmpdir(), 'czag-json-'), 'settings.json');
+  fs.writeFileSync(deployed, '{"b": 2, "a": {"y": [1, 2], "x": true}}\n');
+  const stub = `MM ${deployed}`;
+  const rendered = '{\n  "a": {"x": true, "y": [1, 2]},\n  "b": 2\n}\n';
+  assert.strictEqual(decide('chezmoi apply', stub, { STUB_CAT: rendered }), null);
+  const changed = decide('chezmoi apply', stub, { STUB_CAT: rendered.replace('2\n', '3\n') });
+  assert.strictEqual(changed && changed.permissionDecision, 'deny');
 });
 
 // ── what the flattened-text scan got wrong ────────────────────────────────────────
