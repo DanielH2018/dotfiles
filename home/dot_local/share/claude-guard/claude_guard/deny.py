@@ -2479,7 +2479,11 @@ _STDIN_CLI = {
         valued=r"-r|--preload|--cwd|-c|--config",
         flags=rf"-b|--bun|--smol|--silent|--no-[\w-]+|{_LONG_WITH_VALUE}",
         subcommands=("run",),
-        writes=rf"{_NODE_WRITES}|\bBun\.write\b|\.writer\(",
+        # A `Bun.file` handle counts when a later call on any object writes or deletes.
+        writes=(
+            rf"{_NODE_WRITES}|\bBun\.write\b|\.writer\("
+            r"|\bBun\.file\b(?s:.*)\.(write|delete)\("
+        ),
     ),
     "perl": _StdinCli(
         inline=rf"-{_PERL_SWITCHES}*[eE].*",

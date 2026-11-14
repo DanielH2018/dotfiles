@@ -395,7 +395,8 @@ that deletes or truncates a file counts as a write. The lists:
 
 - node: `writeFile`, `appendFile`, `createWriteStream`, `copyFile`, `rename`, `unlink`,
   `rm` and `truncate`, with their `Sync` forms, and `open` with a `w`, `a` or `r+` flag.
-- bun: node's list, `Bun.write` and a `.writer()` call.
+- bun: node's list, `Bun.write`, a `.writer()` call, and a `.write()` or `.delete()`
+  call in a program that holds `Bun.file`.
 - perl: `open` with a `>` mode, `rename`, `copy`, `move`, `unlink` and `truncate`.
 - ruby: `File.write`, `IO.write`, `FileUtils`, `File.open` with a `w` or `a` mode,
   `File.delete`, `File.unlink`, `File.truncate` and `File.rename`.

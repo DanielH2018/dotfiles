@@ -1978,6 +1978,8 @@ BUN_PHP_DENO_OPERAND_WRITE_DENY = [
     "echo 'Deno.truncateSync(Deno.args[0])' | deno run -A - ~/.zshrc",
     # each runtime's other file API: bun's own, and node's under deno
     "bun -e \"Bun.write(process.argv[1], 'x')\" ~/.bashrc",
+    "bun -e \"Bun.file(process.argv[1]).write('x')\" ~/.bashrc",
+    'bun -e "const f = Bun.file(process.argv[1]); await f.delete()" ~/.zshrc',
     "echo \"import {writeFileSync} from 'node:fs'; writeFileSync(Deno.args[0], 'x')\""
     " | deno run -A - ~/.bashrc",
     'php -r \'$f = fopen($argv[1], "r+"); fwrite($f, "x");\' ~/.bashrc',
@@ -1999,6 +2001,7 @@ OTHER_WRITE_ALLOW = [
     "ruby -e 'File.open(ARGV[0]) { |f| puts f.read }' ~/.zshrc",
     "bun -e \"console.log(require('fs').readFileSync(process.argv[1], 'utf8'))\" ~/.bashrc",
     "node -e \"require('fs').openSync(process.argv[1], 'r')\" ~/.bashrc",
+    'bun -e "console.log(await Bun.file(process.argv[1]).text())" ~/.bashrc',
     "php -r 'echo file_get_contents($argv[1]);' ~/.bashrc",
     "php -r '$f = fopen($argv[1], \"r\"); echo fgets($f);' ~/.zshrc",
     "echo 'console.log(Deno.readTextFileSync(Deno.args[0]))' | deno run -A - ~/.bashrc",
