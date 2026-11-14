@@ -239,11 +239,13 @@ check. When the payload's `agent_type` names an agent whose frontmatter under
 roots, a command that changes files outside them, a shell or `eval`, and any git or gh verb
 outside a read-only set. Its module docstring says why the rest is a denylist.
 
-`checks/homelab_deploy.py` (dotfiles #1321, #1326) asks on a hand-run write to the live
-homelab. It matches three commands: a `gh workflow run` of the server repo's `promote`
+`checks/homelab_deploy.py` (dotfiles #1321, #1326, #1334) asks on a hand-run write to the
+live homelab. It matches three commands: a `gh workflow run` of the server repo's `promote`
 workflow, wherever `-R` sits in the argv; a run of `hosts/bootstrap-host.sh`; and a
 `systemctl start` or `restart` of `homelab-reconcile`. It reads each one locally and inside
-the remote text of an `ssh` or `hl` call or a `sh -c` string. It asks only when the payload's
+the remote text of an `ssh` or `hl` call or a `sh -c` string. A shell or ssh call that
+executes its stdin also runs what it reads there: a `< file`, a heredoc or herestring body,
+or a `cat` piped into it. So `ssh host bash -s < hosts/bootstrap-host.sh` matches. It asks only when the payload's
 `permission_mode` is `default`, `manual`, `acceptEdits` or `plan`. Auto mode is left to the
 `soft_deny` prose, which clears the dispatch the server repo's post-merge procedure prints.
 A settings `ask` rule cannot make that split, because Claude Code honours an ask rule in

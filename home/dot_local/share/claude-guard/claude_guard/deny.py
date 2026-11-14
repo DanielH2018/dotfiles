@@ -4067,17 +4067,20 @@ def _stage_argvs(command: str) -> list[list[str]]:
     p = parse(command)
     if not p.ok:
         return []
-    out: list[list[str]] = []
-    for text in [seg.text for seg in p.segments] + list(p.substitutions):
-        words = _words(text)
-        if words is None:
-            continue
-        argv = _argv(_command_words(words))
-        while argv and argv[0] in ("command", "env", "exec"):
-            argv = _past_env(argv)[1] if argv[0] == "env" else argv[1:]
-        if argv:
-            out.append([posixpath.basename(argv[0]), *argv[1:]])
-    return out
+    texts = [seg.text for seg in p.segments] + list(p.substitutions)
+    return [argv for text in texts if (argv := _segment_argv(text))]
+
+
+def _segment_argv(text: str) -> list[str] | None:
+    """The argv one segment's `text` runs, as `_stage_argvs` reads it, or None when it runs
+    nothing or does not lex."""
+    words = _words(text)
+    if words is None:
+        return None
+    argv = _argv(_command_words(words))
+    while argv and argv[0] in ("command", "env", "exec"):
+        argv = _past_env(argv)[1] if argv[0] == "env" else argv[1:]
+    return [posixpath.basename(argv[0]), *argv[1:]] if argv else None
 
 
 def _compose_verb(args: list[str]) -> str | None:

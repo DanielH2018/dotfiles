@@ -1,4 +1,4 @@
-"""A hand-run homelab write asks outside auto mode (dotfiles #1321, #1326).
+"""A hand-run homelab write asks outside auto mode (dotfiles #1321, #1326, #1334).
 
 Driven through `hook.pre_tool_use` with a temp HOME whose settings hold the template's
 permissions, as the harness sends a payload carrying `permission_mode`.
@@ -32,6 +32,12 @@ BOOTSTRAPS = [
     "bash -c 'hosts/bootstrap-host.sh daniel-pi'",
     "bash -lc 'hosts/bootstrap-host.sh daniel-pi'",
     "bash -e -o pipefail hosts/bootstrap-host.sh daniel-pi",
+    "bash 2>/dev/null hosts/bootstrap-host.sh daniel-pi",
+    "ssh daniel-pi bash -s < hosts/bootstrap-host.sh",
+    "ssh daniel-pi bash -s -- daniel-pi < hosts/bootstrap-host.sh",
+    "ssh daniel-pi < hosts/bootstrap-host.sh",
+    "< hosts/bootstrap-host.sh bash",
+    "cat hosts/bootstrap-host.sh | ssh daniel-pi sh",
 ]
 # No sudo form: the sudo boundary in deny.py already denies it, locally and over ssh.
 RECONCILES = [
@@ -44,6 +50,9 @@ RECONCILES = [
     "timeout 30 ssh daniel-pi systemctl try-restart homelab-reconcile",
     "ssh daniel-pi -- systemctl start homelab-reconcile",
     "ssh daniel-pi -t 'systemctl start homelab-reconcile'",
+    "ssh daniel-pi sh <<'EOF'\nsystemctl start homelab-reconcile\nEOF",
+    "cat <<'EOF' | ssh daniel-pi bash\nsystemctl start homelab-reconcile\nEOF",
+    "bash <<< 'systemctl start homelab-reconcile'",
 ]
 WRITES = DISPATCHES + BOOTSTRAPS + RECONCILES
 NOT_WRITES = [
@@ -59,6 +68,10 @@ NOT_WRITES = [
     "ssh daniel-server journalctl -u homelab-reconcile",
     "systemctl enable homelab-reconcile.timer",
     "systemctl start other.service",
+    "bash -n < hosts/bootstrap-host.sh",
+    "bash lint.sh < hosts/bootstrap-host.sh",
+    "ssh daniel-pi 'cat > /tmp/b.sh' < hosts/bootstrap-host.sh",
+    "cat > x.sh <<'EOF'\nsystemctl start homelab-reconcile\nEOF",
 ]
 # Payloads to a trusted ssh host, which the judge's trusted-host arm would otherwise allow.
 TRUSTED_HOST_WRITES = [
@@ -68,6 +81,8 @@ TRUSTED_HOST_WRITES = [
     "ssh daniel-server -- systemctl start homelab-reconcile",
     "ssh daniel-server -t 'systemctl start homelab-reconcile'",
     "ssh daniel-server 'cd /srv && bash -e -o pipefail hosts/bootstrap-host.sh daniel-pi'",
+    "ssh daniel-server bash -s < hosts/bootstrap-host.sh",
+    "ssh daniel-server sh <<'EOF'\nsystemctl start homelab-reconcile\nEOF",
 ]
 
 

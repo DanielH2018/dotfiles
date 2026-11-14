@@ -1,4 +1,4 @@
-"""A hand-run write to the live homelab asks outside auto mode (dotfiles #1321, #1326).
+"""A hand-run write to the live homelab asks outside auto mode (dotfiles #1321, #1326, #1334).
 
 Three commands reconfigure the live homelab outside the merge-to-master path:
 
@@ -16,18 +16,22 @@ the argv and reads the payload's `permission_mode`, and asks only in a mode that
 `route()` reads every top-level segment and `$( )` body, past the wrappers that
 `gitargv.unwrap` skips (`timeout`, `nohup`, `nice`, `time`, `xargs`, `sudo`, ...). It also
 reads the remote text of an `ssh` or `hl` call and the text of a `bash -c` / `sh -c`, two
-levels deep. The PermissionRequest judge refuses its trusted-host allow for a command
-`route()` matches, so the ask this check raises reaches the user.
+levels deep. A stage that executes its stdin runs what it reads there: a `< file`, a heredoc
+or herestring body, or a `cat` piped into it. Such a stage is a shell given no script or
+`-s`, or an ssh or hl call whose remote command is empty or such a shell. The
+PermissionRequest judge refuses its trusted-host allow for a command `route()` matches, so
+the ask this check raises reaches the user.
 
 Known residuals: a numeric workflow ID, which cannot be resolved offline; and a script fed
-to a shell on stdin or through a heredoc (`ssh host bash -s < hosts/bootstrap-host.sh`).
-`gh api -X POST …/dispatches` already asks through `deny.gh_api`.
+to a shell by anything but `<`, a heredoc, a herestring or `cat` (`bash <(cat …)`,
+`tee … | sh`). `gh api -X POST …/dispatches` already asks through `deny.gh_api`.
 """
 
 import posixpath
 
-from claude_guard.deny import _stage_argvs
+from claude_guard.deny import _segment_argv, _stage_argvs
 from claude_guard.gitargv import unwrap
+from claude_guard.segment import parse
 
 RULE = "homelab-deploy"
 # Modes in which Claude Code itself prompts. Auto, bypassPermissions and dontAsk are left out,
@@ -100,12 +104,13 @@ def _shell_args(argv: list[str]) -> list[str] | None:
 
 def _shell_operand(args: list[str]) -> tuple[str, str] | None:
     """What a shell given `args` runs: `("command", text)` for a `-c` string, `("script",
-    path)` for a script file, or None when it runs neither or only checks syntax (`-n`).
+    path)` for a script file, `("stdin", "")` when it reads its commands from stdin (no
+    script, or `-s`), or None when it only checks syntax (`-n`) or `-c` has no string.
 
     A short-option cluster is read letter by letter, so `-lc` is `-l -c`; a cluster ending
     in `o` or `O` takes the next word as its value (`-o pipefail`).
     """
-    command = syntax_only = False
+    command = syntax_only = stdin = False
     i = 0
     while i < len(args):
         word = args[i]
@@ -118,12 +123,17 @@ def _shell_operand(args: list[str]) -> tuple[str, str] | None:
             if word[0] == "-":
                 command |= "c" in word
                 syntax_only |= "n" in word
+                stdin |= "s" in word
             i += 2 if word[-1] in "oO" else 1
         else:
             break
-    if syntax_only or i >= len(args):
+    if syntax_only:
         return None
-    return ("command" if command else "script", args[i])
+    if command:
+        return ("command", args[i]) if i < len(args) else None
+    if stdin or i >= len(args):
+        return ("stdin", "")
+    return ("script", args[i])
 
 
 def _runs_bootstrap(argv: list[str]) -> bool:
@@ -150,20 +160,86 @@ def _starts_reconcile(argv: list[str]) -> bool:
     return runs and any(unit in _UNITS for unit in words[1:])
 
 
-def _inner_text(argv: list[str]) -> str | None:
-    """The command text `argv` hands to another shell: the remote text of an `ssh` or `hl`
-    call, or the `-c` string of a shell. None when there is none."""
+def _remote_text(argv: list[str]) -> str | None:
+    """The remote command text of an `ssh` or `hl` call, empty when it opens a login shell,
+    or None when `argv` is neither."""
     found = unwrap(argv, "hl")
     if found is not None:
-        return " ".join(found[0][1:]) or None
+        return " ".join(found[0][1:])
     found = unwrap(argv, "ssh")
     if found is not None:
         args = found[0][1:]
         host = _past_ssh_options(args, 0)
-        return " ".join(args[_past_ssh_options(args, host + 1) :]) or None
+        return " ".join(args[_past_ssh_options(args, host + 1) :])
+    return None
+
+
+def _inner_text(argv: list[str]) -> str | None:
+    """The command text `argv` hands to another shell: the remote text of an `ssh` or `hl`
+    call, or the `-c` string of a shell. None when there is none."""
+    remote = _remote_text(argv)
+    if remote is not None:
+        return remote or None
     args = _shell_args(argv)
     operand = _shell_operand(args) if args is not None else None
     return operand[1] if operand and operand[0] == "command" else None
+
+
+def _runs_stdin(argv: list[str]) -> bool:
+    """Whether `argv` executes what it reads on stdin: a shell reading its commands there,
+    or an ssh or hl call whose remote command is empty or such a shell."""
+    remote = _remote_text(argv)
+    if remote is not None:
+        return not remote.strip() or any(
+            _runs_stdin(_redirects(inner)[0]) for inner in _stage_argvs(remote)
+        )
+    args = _shell_args(argv)
+    operand = _shell_operand(args) if args is not None else None
+    return operand is not None and operand[0] == "stdin"
+
+
+def _is_redirect(word: str) -> bool:
+    return bool(word) and set(word) <= set("<>&|") and ("<" in word or ">" in word)
+
+
+def _redirects(argv: list[str]) -> tuple[list[str], str | None, str | None]:
+    """`argv` split into its words without redirections, the file a `<` feeds its stdin,
+    and the text of a `<<<` herestring. The lexer splits `2>/dev/null` into `2`, `>`,
+    `/dev/null`, so a digit word before an operator is read as its fd."""
+    words: list[str] = []
+    source = herestring = fd = None
+    i = 0
+    while i < len(argv):
+        word = argv[i]
+        if word.isdigit() and i + 1 < len(argv) and _is_redirect(argv[i + 1]):
+            fd = word
+            i += 1
+            continue
+        if _is_redirect(word):
+            target = argv[i + 1] if i + 1 < len(argv) else None
+            if fd in (None, "0") and word == "<":
+                source = target
+            elif fd in (None, "0") and word == "<<<":
+                herestring = target
+            fd = None
+            i += 2
+            continue
+        words.append(word)
+        i += 1
+    return words, source, herestring
+
+
+def _cat_output(argv: list[str], files: list[str], texts: list[str]) -> tuple[list[str], list[str]]:
+    """The files and texts `argv` writes to stdout when it is a `cat` whose stdin carries
+    `files` and `texts`, else two empty lists."""
+    found = unwrap(argv, "cat")
+    if found is None:
+        return [], []
+    operands = [w for w in found[0][1:] if w == "-" or not w.startswith("-")]
+    if not operands:
+        return files, texts
+    named = [w for w in operands if w != "-"]
+    return (named + files, texts) if "-" in operands else (named, [])
 
 
 def _past_ssh_options(args: list[str], i: int) -> int:
@@ -177,12 +253,40 @@ def _past_ssh_options(args: list[str], i: int) -> int:
 
 
 def _argvs(command: str, depth: int = 0) -> list[list[str]]:
-    out = []
-    for argv in _stage_argvs(command):
-        out.append(argv)
-        inner = _inner_text(argv) if depth < _DEPTH else None
+    """Every argv `command` runs, with redirections dropped. A script file fed to a stage
+    that executes its stdin appears as a one-word argv naming that file."""
+    parsed = parse(command)
+    if not parsed.ok:
+        return []
+    out: list[list[str]] = []
+
+    def add(words: list[str]) -> None:
+        out.append(words)
+        inner = _inner_text(words) if depth < _DEPTH else None
         if inner:
             out.extend(_argvs(inner, depth + 1))
+
+    piped_files: list[str] = []
+    piped_texts: list[str] = []
+    for seg in parsed.segments:
+        argv = _segment_argv(seg.text)
+        words, source, herestring = _redirects(argv) if argv else ([], None, None)
+        files = [source] if source else piped_files
+        texts = [*seg.heredocs, *([herestring] if herestring else [])] or piped_texts
+        if words:
+            add(words)
+            if _runs_stdin(words):
+                out.extend([path] for path in files)
+                if depth < _DEPTH:
+                    for text in texts:
+                        out.extend(_argvs(text, depth + 1))
+        piped_files, piped_texts = (
+            _cat_output(words, files, texts) if seg.sep == "|" and words else ([], [])
+        )
+    for text in parsed.substitutions:
+        argv = _segment_argv(text)
+        if argv and (words := _redirects(argv)[0]):
+            add(words)
     return out
 
 
