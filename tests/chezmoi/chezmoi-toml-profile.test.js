@@ -36,15 +36,16 @@ const AGENT_PROMPT = 'Is this a Claude agent user (no sudo, its own git identity
 const isolatedConfigDir = scratch(os.tmpdir(), 'chezmoi-toml-');
 const isolatedConfig = path.join(isolatedConfigDir, 'nonexistent-chezmoi.toml');
 
-function render(profile, agent = false) {
+function render(profile, agent = false, prefix = '') {
   return execFileSync('chezmoi', [
     'execute-template', '--init',
     '--config', isolatedConfig,
     '--promptBool', `${WORK_PROMPT}=false`,
     '--promptBool', `${AGENT_PROMPT}=${agent}`,
     '--promptString', `${PROFILE_PROMPT}=${profile}`,
-  ], { input: fs.readFileSync(TMPL, 'utf8'), encoding: 'utf8', stdio: 'pipe' });
+  ], { input: prefix + fs.readFileSync(TMPL, 'utf8'), encoding: 'utf8', stdio: 'pipe' });
 }
+const renderAsWindows = (profile) => render(profile, false, '{{ $_ := set .chezmoi "os" "windows" }}');
 // Capture a non-zero exit instead of throwing, so status and stderr can be asserted.
 function renderFail(profile) {
   try { render(profile); return { status: 0, stderr: '' }; }
@@ -94,6 +95,23 @@ test('renders a ps1 interpreter that bypasses the execution policy', { skip }, (
   // -File must be last: chezmoi appends the script path, and without -File powershell
   // treats it as a command to interpret, which the execution policy blocks all the same.
   assert.match(args[1], /"-ExecutionPolicy", "Bypass", "-File"$/);
+});
+
+// A `chezmoi apply` started from pwsh 7 passes pwsh's PSModulePath to the powershell.exe that
+// runs each .ps1 script, and 5.1 then cannot autoload its own Microsoft.PowerShell.Utility.
+test('pins the scripts\' PSModulePath to Windows PowerShell 5.1 module directories on Windows', { skip }, () => {
+  const toml = renderAsWindows('server');
+  const table = toml.match(/^\[scriptEnv\]\n\s*PSModulePath = "(.*)"$/m);
+  assert.ok(table, 'Windows config must set PSModulePath under [scriptEnv]');
+  const entries = table[1].split(';').map((e) => e.replace(/\\\\/g, '\\'));
+  assert.ok(entries.length > 0 && entries.every((e) => /\\WindowsPowerShell\\/.test(e)),
+    `every entry must be a 5.1 module directory: ${entries.join(';')}`);
+  assert.ok(entries.some((e) => /\\system32\\WindowsPowerShell\\v1\.0\\Modules$/i.test(e)),
+    'the built-in modules directory must be on the path');
+});
+
+test('leaves PSModulePath alone off Windows', { skip }, () => {
+  assert.doesNotMatch(render('server'), /PSModulePath/);
 });
 
 // H7.38: the package unit that builds a Claude agent user runs `chezmoi init` with no tty and

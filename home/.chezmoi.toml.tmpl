@@ -53,3 +53,14 @@ umask = 0o022
 [interpreters.ps1]
     command = "powershell"
     args = ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]
+{{- if eq .chezmoi.os "windows" }}
+# chezmoi passes its own environment to every script, so a `chezmoi apply` started from pwsh 7
+# hands that powershell.exe pwsh's PSModulePath. Windows PowerShell 5.1 then autoloads pwsh's
+# copy of Microsoft.PowerShell.Utility, fails, and reports a cmdlet such as Get-FileHash as
+# "not recognized" (#1323). Pinning the variable to 5.1's own module directories makes the
+# run_ scripts independent of the shell chezmoi was started from. 5.1 adds the user's
+# Documents\WindowsPowerShell\Modules itself. This is a script-wide setting, so the Git Bash
+# scripts get it too, and any powershell they start inherits the same fix.
+[scriptEnv]
+    PSModulePath = {{ printf "%s\\WindowsPowerShell\\Modules;%s\\system32\\WindowsPowerShell\\v1.0\\Modules" (env "ProgramFiles" | default "C:\\Program Files") (env "SystemRoot" | default "C:\\Windows") | quote }}
+{{- end }}

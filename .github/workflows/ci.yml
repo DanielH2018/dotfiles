@@ -377,9 +377,8 @@ jobs:
           bin/ci-install-chezmoi
           cygpath -w "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      # Windows PowerShell 5.1, as on a fresh PC where pwsh is not installed yet. Launched from
-      # pwsh instead, the powershell.exe that runs each .ps1 script inherits pwsh's PSModulePath
-      # and fails to load built-in cmdlets such as Get-FileHash.
+      # Windows PowerShell 5.1, as on a fresh PC where pwsh is not installed yet. The re-apply
+      # step below covers an operator who starts chezmoi from pwsh instead.
       - name: chezmoi init --apply
         shell: powershell
         run: |
@@ -391,6 +390,21 @@ jobs:
           $data = chezmoi execute-template 'work={{ .work }} profile={{ .profile }} agent={{ .agent }}'
           Write-Host $data
           if ($data -ne 'work=false profile=server agent=false') { throw "init wrote the wrong answers: $data" }
+
+      # chezmoi started from pwsh hands each .ps1 script's powershell.exe pwsh's PSModulePath,
+      # which 5.1 cannot load built-in modules from. The [scriptEnv] PSModulePath in
+      # .chezmoi.toml.tmpl overrides it. Clearing the script state makes install-claude run
+      # again, and deleting claude.exe gets it past its skip-if-present check to the installer,
+      # which calls Get-FileHash. The check step below then requires claude.exe back.
+      - name: chezmoi apply from pwsh
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Remove-Item "$HOME\.local\bin\claude.exe"
+          chezmoi state delete-bucket --bucket=scriptState
+          if ($LASTEXITCODE -ne 0) { throw "chezmoi state delete-bucket exited $LASTEXITCODE" }
+          chezmoi apply --no-tty
+          if ($LASTEXITCODE -ne 0) { throw "chezmoi apply from pwsh exited $LASTEXITCODE" }
 
       - name: Check what the run_ scripts installed
         shell: pwsh
