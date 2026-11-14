@@ -27,6 +27,15 @@ foreach ($p in $packages) {
     Install-WingetPackage $p.id
 }
 
+# winget writes the new tools' directories to the registry PATH only, so without this a first
+# apply finds neither fnm nor uv below and leaves Node, Python, ruff and prek for a second run.
+$known = $env:Path -split ';'
+foreach ($scope in 'Machine', 'User') {
+    foreach ($d in [Environment]::GetEnvironmentVariable('Path', $scope) -split ';') {
+        if ($d -and $known -notcontains $d) { $env:Path += ";$d"; $known += $d }
+    }
+}
+
 # fnm installs only the version manager, not a Node runtime. claude-settings-merge is a
 # '#!/usr/bin/env node' script, so install a default LTS Node here (mirrors step 2 of
 # run_once_before_install-fnm.sh.tmpl). Idempotent: fnm skips an already-installed version.

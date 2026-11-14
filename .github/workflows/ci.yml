@@ -377,14 +377,17 @@ jobs:
           bin/ci-install-chezmoi
           cygpath -w "$HOME/.local/bin" >> "$GITHUB_PATH"
 
+      # Windows PowerShell 5.1, as on a fresh PC where pwsh is not installed yet. Launched from
+      # pwsh instead, the powershell.exe that runs each .ps1 script inherits pwsh's PSModulePath
+      # and fails to load built-in cmdlets such as Get-FileHash.
       - name: chezmoi init --apply
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          $PSNativeCommandUseErrorActionPreference = $true
           chezmoi init --apply --no-tty --promptDefaults `
             --promptString 'Machine profile (workstation/server/minimal)=server' `
             $env:GITHUB_WORKSPACE
+          if ($LASTEXITCODE -ne 0) { throw "chezmoi init --apply exited $LASTEXITCODE" }
           $data = chezmoi execute-template 'work={{ .work }} profile={{ .profile }} agent={{ .agent }}'
           Write-Host $data
           if ($data -ne 'work=false profile=server agent=false') { throw "init wrote the wrong answers: $data" }
@@ -397,6 +400,8 @@ jobs:
           winget list --exact --id Starship.Starship --accept-source-agreements | Out-Null
           if ($LASTEXITCODE -ne 0) { $missing += 'Starship.Starship (install-cli-tools)' }
           if (-not (Test-Path "$HOME\.local\bin\claude.exe")) { $missing += 'claude.exe (install-claude)' }
+          if (-not (Test-Path "$env:APPDATA\fnm\aliases\default")) { $missing += 'a default Node under fnm (install-cli-tools)' }
+          if (-not (Test-Path "$HOME\.local\bin\ruff.exe")) { $missing += 'ruff.exe via uv tool (install-cli-tools)' }
           if (-not (Test-Path "$HOME\.local\share\blesh\ble.sh")) { $missing += 'ble.sh (install-blesh)' }
           $userPath = [Environment]::GetEnvironmentVariable('Path', 'User') -split ';'
           if ($userPath -notcontains "$env:USERPROFILE\.local\bin") { $missing += '~\.local\bin on the User PATH (setup-windows-tweaks)' }
