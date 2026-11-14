@@ -325,9 +325,9 @@ test('install-docker-engine adds its apt repo via the shared helper', { skip }, 
     assert.match(log, /uv python install 3\.\d+\.\d+\n/, `the pinned interpreter should be provisioned:\n${log}`);
   });
 
-  // The half the server repo's Ansible makes necessary: it copies a plain prek file into
-  // ~/.local/bin, and `uv tool install` would refuse to overwrite that, so a prek already at
-  // the pin must be left alone and one at another version must be replaced with --force.
+  // A host may already hold a plain prek file in ~/.local/bin, which `uv tool install`
+  // would refuse to overwrite, so a prek already at the pin must be left alone and one at
+  // another version must be replaced with --force.
   test('install-python-tools.sh.tmpl: prek already at the pin -> not reinstalled', { skip }, () => {
     const pin = /^PREK_WANT='([^']+)'$/m.exec(renderFile(PT_SRC))[1];
     const { scriptFile, env, logFile } = ptSandbox({ uvPresent: true, prekVersion: pin });

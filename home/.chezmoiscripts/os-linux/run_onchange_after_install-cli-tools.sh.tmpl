@@ -79,8 +79,8 @@ fi
 #     Fedora: the distro package already tracks current gh (2.94 on F44), so a plain install is
 #     enough and there is no third-party repo to add.
 GH_LIST="/etc/apt/sources.list.d/github-cli.list"
-# deb822 equivalent. A host provisioned by Ansible's github_cli role registers the repo as
-# github-cli.sources and REMOVES the legacy one-line .list (apt reports a repo configured
+# deb822 equivalent. A host carrying the server repo's apt-github-cli host package registers
+# the repo as github-cli.sources and REMOVES the legacy one-line .list (apt reports a repo configured
 # twice if both exist). Checking only .list made this script report "GitHub CLI not
 # configured yet" on such a host forever — and since it is a run_once_after script that
 # exits 1 when any check fails, every later `chezmoi apply` retried and failed too.

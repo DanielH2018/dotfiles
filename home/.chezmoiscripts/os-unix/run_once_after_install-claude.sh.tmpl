@@ -8,7 +8,7 @@
 # refuses MINGW/MSYS). Bump the marker to force a reinstall.
 # A Claude agent user (see .chezmoitemplates/is-agent) installs it here too: the script is not gated on
 # is-agent, runs as that user with no elevation, and skips when ~/.local/bin/claude already exists,
-# which is how it behaves after the server repo's Ansible has installed it.
+# which is how it behaves when the server repo's claude-code host package has installed it.
 # claude-bump: v1
 set -u
 

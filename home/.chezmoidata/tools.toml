@@ -236,9 +236,9 @@ node = "22.23.4"
 # renovate: datasource=python-version depName=python
 python = "3.15.2"
 
-# The hosts whose Claude agent user gets uv, Python and prek from install-python-tools. It is
-# the server repo's `dev_tooling_hosts` (inventory/group_vars/all.yml), the same list
-# that gates Ansible's own install of them, and an operator apply is not gated by it. daniel-pi
-# is absent for the reason given there: nobody commits from it, and it has 512 MB.
+# The hosts whose Claude agent user gets uv, Python and prek from install-python-tools: the
+# hosts that set `claude_code_agent_user_enabled` for the server repo's claude-code host
+# package. An operator apply is not gated by it. daniel-pi is absent because nobody commits
+# from it, and it has 512 MB.
 [agent_tooling]
 hosts = ["daniel-box", "daniel-server"]

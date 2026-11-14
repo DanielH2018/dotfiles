@@ -1,8 +1,7 @@
-// `claude auto-mode critique` (2026-11-01) found three rules whose wording let the classifier
-// allow what the setup means to stop. The sops allow read as covering an editor override that
-// prints the decrypted file (#1109). The deploy soft deny exempted `--check`, under which
-// `check_mode: false` tasks run for real (#1110). The environment called the live hosts
-// "non-production" while three other entries treat a master push as a production deploy (#1111).
+// `claude auto-mode critique` (2026-11-01) found rules whose wording let the classifier allow
+// what the setup means to stop. The sops allow read as covering an editor override that prints
+// the decrypted file (#1109). The environment called the live hosts "non-production" while three
+// other entries treat a master push as a production deploy (#1111).
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
@@ -13,12 +12,14 @@ const { SOURCE, srcPath } = require('../lib/paths');
 const skip = skipUnless('chezmoi');
 const SETTINGS = srcPath('.chezmoitemplates', 'settings.base.json');
 
-function autoMode() {
+function settings() {
   return JSON.parse(execFileSync('chezmoi', [
     '--source', SOURCE, 'execute-template',
     '--override-data', JSON.stringify({ chezmoi: { hostname: 'daniel-box', homeDir: '/home/ubuntu' } }),
-  ], { input: fs.readFileSync(SETTINGS, 'utf8'), encoding: 'utf8' })).autoMode;
+  ], { input: fs.readFileSync(SETTINGS, 'utf8'), encoding: 'utf8' }));
 }
+
+const autoMode = () => settings().autoMode;
 
 test('the sops allow names sops set and excludes every editor variable', { skip }, () => {
   const hits = autoMode().allow.filter((e) => e.includes('secrets/secrets.yml') && e.includes('`sops set'));
@@ -28,12 +29,15 @@ test('the sops allow names sops set and excludes every editor variable', { skip 
   }
 });
 
-test('the deploy soft deny covers --check and exempts only --dry-run', { skip }, () => {
-  const hits = autoMode().soft_deny.filter((e) => e.startsWith('Running `scripts/deploy.sh`'));
+// The live hosts take writes from a landing; these are the routes around it.
+test('the deploy soft deny names each hand-run write route and clears only the PR\'s own landing', { skip }, () => {
+  const hits = autoMode().soft_deny.filter((e) => e.startsWith('Dispatching `promote` by hand'));
   assert.strictEqual(hits.length, 1);
-  assert.ok(!hits[0].includes('WITHOUT `--check`'), hits[0]);
-  assert.ok(hits[0].includes('`check_mode: false`'), hits[0]);
-  assert.ok(hits[0].includes('`scripts/deploy.sh --dry-run`'), hits[0]);
+  for (const route of ['`gh workflow run promote.yml', '`hosts/bootstrap-host.sh`', '`homelab-reconcile`']) {
+    assert.ok(hits[0].includes(route), route);
+  }
+  assert.ok(hits[0].includes('standing post-merge procedure'), hits[0]);
+  assert.ok(hits[0].includes('covers only the landing of that PR'), hits[0]);
 });
 
 test('no environment entry calls the live hosts non-production', { skip }, () => {
@@ -84,12 +88,6 @@ test('the edited-or-shadowed clause names every tool an allow entry opens on', {
   }
 });
 
-test('the deploy --dry-run exemption lapses when the session edits what it rests on', { skip }, () => {
-  const hits = autoMode().soft_deny.filter((e) => e.startsWith('Running `scripts/deploy.sh`'));
-  assert.strictEqual(hits.length, 1);
-  assert.ok(hits[0].includes('unless this session edited `deploy.sh`, or removed or changed a `when: not k8s_dry_run` guard'), hits[0]);
-});
-
 test('the protected IaC scope names the read-only RBAC template, not the deleted setup role', { skip }, () => {
   const hits = autoMode().environment.filter((e) => e.startsWith('Protected IaC scopes'));
   assert.strictEqual(hits.length, 1);
@@ -98,12 +96,16 @@ test('the protected IaC scope names the read-only RBAC template, not the deleted
 });
 
 test('the secrets entry names the server repo paths that replaced ansible/', { skip }, () => {
-  const mode = autoMode();
-  const hits = mode.environment.filter((e) => e.startsWith('Secrets management'));
+  const hits = autoMode().environment.filter((e) => e.startsWith('Secrets management'));
   assert.strictEqual(hits.length, 1);
   for (const path of ['secrets/secrets.yml', 'anything under inventory/']) {
     assert.ok(hits[0].includes(path), path);
   }
-  const stale = Object.values(mode).flat().filter((e) => /\bansible\/(vars|inventory|roles)\//.test(e));
+});
+
+test('no auto-mode entry or permission rule names the deleted Ansible tooling or scripts/deploy.sh', { skip }, () => {
+  const { autoMode: mode, permissions } = settings();
+  const entries = [...Object.values(mode), permissions.allow, permissions.ask, permissions.deny].flat();
+  const stale = entries.filter((e) => /\bansible\/(vars|inventory|roles)\/|ansible-playbook|ansible-lint|\bAnsible\b|scripts\/deploy\.sh/.test(e));
   assert.deepStrictEqual(stale, []);
 });

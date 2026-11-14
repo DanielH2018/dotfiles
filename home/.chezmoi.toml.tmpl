@@ -13,8 +13,8 @@ umask = 0o022
     # workstation|server = full tooling; minimal = resource-constrained host (e.g. the Pi),
     # opts out of the heavy Linux CLI-tool install. Any value other than "minimal" gets tools.
     profile = {{ $profile | quote }}
-    # true only for a locked-down Claude agent user that the server repo's Ansible builds
-    # (its claude_code role). It owns that user's shell profile, git identity and ssh, and the
+    # true only for a locked-down Claude agent user that the server repo's claude-code host
+    # package builds. It owns that user's shell profile, git identity and ssh, and the
     # agent runs no host-wide timer, so .chezmoitemplates/is-agent gates those off.
     agent = {{ $agent }}
 # Run the /bin/sh modify_ script through bash on every OS. The source is named

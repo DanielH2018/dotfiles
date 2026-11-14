@@ -132,8 +132,9 @@ const aptRepoAdd = (root, preexisting) => {
 };
 
 test('a deb822 .sources counts as already configured', { skip }, () => {
-  // The daniel-box collision: ansible writes github-cli.sources and deletes the one-line
-  // .list, so a guard watching only .list rewrote it and left apt with the repo twice.
+  // The daniel-box collision: the apt-github-cli host package writes github-cli.sources and
+  // deletes the one-line .list, so a guard watching only .list rewrote it and left apt with the
+  // repo twice.
   const r = aptRepoAdd(sandbox(), 'github-cli.sources');
   assert.strictEqual(r.rc, '0', 'should report success without configuring anything');
   assert.strictEqual(r.fetched, false, 'a repo already configured via deb822 must not be re-fetched');

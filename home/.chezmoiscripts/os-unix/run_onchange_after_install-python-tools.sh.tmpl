@@ -19,13 +19,13 @@
 # would only serve to make a bare `pytest` fail confusingly instead of failing fast.
 #
 # A Claude agent user (see .chezmoitemplates/is-agent) runs this script too, on the hosts in
-# .chezmoidata/tools.toml's [agent_tooling] table, and gets uv, the pinned Python and prek: the
-# set the server repo's Ansible (setup/common/tasks/agent_user.yml) copies in until H7.39 removes
-# that task. Ruff and the 3.12 interpreter are the operator's (the vault-tooling projects and the
-# edit hooks), so the agent skips them. Either installer can run first on a given host, so every
-# step below leaves a tool alone when it is already at the pinned version, and the pins here are
-# the same values Ansible's are (see [toolchain] in tools.toml). prek in particular is a plain
-# file Ansible copied into ~/.local/bin, where `uv tool install` would refuse to overwrite it.
+# .chezmoidata/tools.toml's [agent_tooling] table, and gets uv, the pinned Python and prek. The
+# server repo's claude-code host package runs this apply for that user once its dotfiles source
+# exists. Ruff and the 3.12 interpreter are the operator's (the vault-tooling projects and the
+# edit hooks), so the agent skips them. Every step below leaves a tool alone when it is already
+# at the pinned version, and the pins are the server repo's (see [toolchain] in tools.toml). A
+# host provisioned before that package may still hold a plain prek file in ~/.local/bin, where
+# `uv tool install` would refuse to overwrite it.
 #
 # Linux gets the uv binary from Astral's standalone installer — there is no apt package, which
 # is why uv has no [[tools]] entry in .chezmoidata/tools.toml (its VERSION is pinned there,
@@ -130,8 +130,8 @@ uv python install '{{ .toolchain.python }}' || { echo "install-python-tools: 'uv
 {{ if not $agent -}}
 uv tool install 'ruff=={{ .toolchain.ruff }}' || { echo "install-python-tools: installing ruff failed" >&2; failed=1; }
 {{ end -}}
-# `--force` takes over a ~/.local/bin/prek that is not uv's own shim, such as the copy Ansible
-# placed there. The version test keeps it from reinstalling a prek that is already right.
+# `--force` takes over a ~/.local/bin/prek that is not uv's own shim, such as a copy an
+# earlier provisioner placed there. The version test keeps it from reinstalling a prek that is already right.
 PREK_WANT='{{ .toolchain.prek }}'
 prek_version() {
   v="$(prek --version 2>/dev/null)"

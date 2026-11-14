@@ -114,7 +114,7 @@ fi
 #
 # The path carries the writing host — /a/<host>/<file> — because the server mounts one tree
 # per host under that segment. CLAUDE_ARTIFACTS_HOST names it; `hostname -s` is the fallback,
-# which is the same name the Ansible peer-sync directory uses.
+# which is the same name the server repo's claude-code peer sync uses for its directory.
 #
 # NOTE the freshness gap on a non-primary host: daniel-box mounts its own tree directly, so a
 # link there resolves immediately, but daniel-server's artifacts arrive by an rsync cron on

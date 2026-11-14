@@ -736,8 +736,8 @@
       {{/* Costs nothing today and closes the door tomorrow. Plain `kubectl` authenticates as
            system:serviceaccount:kube-system:homelab-readonly, which holds get/list/watch — so
            `kubectl auth can-i delete pods` already answers "no", as does delete pvc and
-           pods/exec. With `sudo` denied just below, Ansible is the ONLY write path to this
-           cluster. This entry means a future credential widening cannot silently hand back
+           pods/exec. With `sudo` denied just below, `promote` and Flux are the ONLY write path
+           to this cluster. This entry means a future credential widening cannot silently hand back
            `delete` against Longhorn PVCs and their B2 backup chain. Deny rather than
            autoMode.soft_deny: a soft block clears on explicit user intent, and "delete that
            pod" is exactly the phrasing that would clear it.
@@ -944,15 +944,6 @@
       {{/* -t is the short form of --show-token; either one prints the GitHub token into the transcript. `*-t*` matches both, because `--show-token` contains `-t`. */}}
       "Bash(gh auth status *-t*)",
       "Bash(node -e:*)",
-      {{/* A hand-run playbook is a real deploy on the homelab server repo, bypassing that
-           repo's scripts/deploy.sh and the lock it takes. These three prefix forms
-           (bare, uv run, and uv run --frozen) are named explicitly so the posture on a
-           hand-run playbook does not depend on a prefix: an inline `python3 -c '...'`
-           ahead of the playbook asks nothing on its own. No check narrows these: every
-           hand-run playbook asks, --check included. */}}
-      "Bash(ansible-playbook:*)",
-      "Bash(uv run ansible-playbook:*)",
-      "Bash(uv run --frozen ansible-playbook:*)",
       "Bash(npx -y:*)",
       "Bash(npx --yes:*)",
       "Bash(npx -c:*)",

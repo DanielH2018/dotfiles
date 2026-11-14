@@ -231,11 +231,11 @@ apt_repo_add() {
   [ "$PM" = apt ] || return 0
   list="$APT_LIST_DIR/$1.list"
   keyring="$APT_KEYRING_DIR/$1.gpg"
-  # A deb822 .sources counts as already configured. The server repo's ansible roles write
-  # gh and docker that way and delete the one-line .list as deprecated, so a guard watching
-  # only .list saw the file ansible had just removed, wrote it back, and left apt with the
-  # repo configured twice under two keyrings (daniel-box runs github_cli then chezmoi_setup).
-  # Ansible names the .sources after the repo, the same stem this takes as $1.
+  # A deb822 .sources counts as already configured. The server repo's apt-github-cli and
+  # apt-docker host packages write gh and docker that way and delete the one-line .list as
+  # deprecated, so a guard watching only .list would write back the file the package removed
+  # and leave apt with the repo configured twice under two keyrings. Each package names the
+  # .sources after the repo, the same stem this takes as $1.
   if [ -f "$list" ] || [ -f "$APT_LIST_DIR/$1.sources" ]; then
     return 0
   fi

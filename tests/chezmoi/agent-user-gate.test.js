@@ -1,9 +1,9 @@
 // Gate checks for the `agent` data key (home/.chezmoitemplates/is-agent).
 //
-// The server repo's Ansible applies these dotfiles to a locked-down Claude agent user as well
-// as to the operator, and seeds `agent = true` for it. Ansible owns that user's login profile,
-// git identity, signers and ssh, and its own ~/.claude/CLAUDE.md; a chezmoi apply that wrote
-// any of them would replace the agent's GitHub identity with the operator's. The gate fails
+// The server repo's claude-code host package applies these dotfiles to a locked-down Claude
+// agent user as well as to the operator, and seeds `agent = true` for it. That package owns the
+// user's login profile, git identity, signers and ssh, and its own ~/.claude/CLAUDE.md; a
+// chezmoi apply that wrote any of them would replace the agent's GitHub identity with the operator's. The gate fails
 // silently in both directions -- an ignore rule that matches nothing reports no error, and an
 // inverted one strips the operator's own files -- so each half is asserted by name.
 const { test } = require('node:test');
@@ -64,7 +64,7 @@ const onBox = (file, agent) => renderTemplate(
   { data: { agent, profile: 'server', work: false, in_toolbox: false } },
 );
 
-test('an agent ignores every path its Ansible owns and every operator-only tool', { skip }, () => {
+test('an agent ignores every path its host package owns and every operator-only tool', { skip }, () => {
   const got = ignored(true);
   for (const p of AGENT_IGNORED) assert.ok(got.has(p), `${p} reaches the agent`);
   assert.ok(!got.has('.claude/operator'), 'the agent loses the operator CLAUDE.md it imports');
@@ -134,7 +134,7 @@ test("the agent runs neither the source re-add hook nor the operator's artifact 
   assert.ok(agent.some((c) => c.includes('guard-pre-tool-use.sh')), 'the agent lost its guard hooks');
 });
 
-test('the agent skips the scripts that need sudo, a tty or a toolchain Ansible supplies', { skip }, () => {
+test('the agent skips the scripts that need sudo, a tty or a toolchain its host package supplies', { skip }, () => {
   for (const rel of [
     ['.chezmoiscripts', 'os-unix', 'run_once_after_set-default-shell.sh.tmpl'],
     ['.chezmoiscripts', 'os-linux', 'run_onchange_after_install-cli-tools.sh.tmpl'],
@@ -162,8 +162,8 @@ test("the agent's operator/CLAUDE.md is the user CLAUDE.md, rendered", { skip },
   assert.strictEqual(copy, body);
 });
 
-// H7.38: the agent installs uv, the pinned Python and prek itself, where the server repo's
-// Ansible used to copy them in. The pins are the server's, and the tools.toml header says so.
+// The agent installs uv, the pinned Python and prek itself. The pins are the server's, and the
+// tools.toml header says so.
 const onHost = (file, agent, hostname, profile = 'server') => renderTemplate(
   `{{ $_ := set .chezmoi "hostname" "${hostname}" }}{{ $_ := set .chezmoi "os" "linux" }}${fs.readFileSync(file, 'utf8')}`,
   { data: { agent, profile, work: false } },

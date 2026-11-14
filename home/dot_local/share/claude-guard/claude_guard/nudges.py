@@ -57,8 +57,8 @@ fires only where its wrapper is on PATH, since a host may have gh without either
      logged-in account does not own, and the command text does not name the owner, so a
      work-org rerun is left to run raw.
  10. runlog: a stage that sends stdout to a file and stderr after it (`> f 2>&1`, `&> f`),
-     the hand-written capture `runlog` replaces. `/dev/null` is not a capture. ansible
-     refuses the Bash tool's non-blocking stdio, which `runlog` swaps for blocking files.
+     the hand-written capture `runlog` replaces. `/dev/null` is not a capture. `runlog`
+     swaps the Bash tool's non-blocking stdio for blocking files, which some CLIs refuse.
 
 One warns about a host tool, the way footguns.py's ugrep-flag rule does:
 

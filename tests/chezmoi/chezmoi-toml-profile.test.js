@@ -58,7 +58,7 @@ for (const profile of ['workstation', 'server', 'minimal']) {
   });
 }
 
-// The server repo's Ansible seeds `agent = true` for its Claude agent user; every other host
+// The server repo's claude-code host package seeds `agent = true` for its Claude agent user; every other host
 // answers false. The data key must render as a bare TOML boolean, or is-agent reads a string.
 test('renders the agent answer as a boolean data key', { skip }, () => {
   assert.match(render('server', true), /^\s*agent = true$/m);

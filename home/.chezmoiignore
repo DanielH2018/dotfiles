@@ -309,7 +309,7 @@ claude-otel/ensure-up.sh
 #
 # These three name personal infrastructure by hostname or by repo, and a work machine can
 # reach none of them: `daniel-box` and `daniel-server` are ssh aliases for the homelab, and
-# `~/server` is DanielH2018/server, the ansible repo that provisions it. Left ungated they are
+# `~/server` is DanielH2018/server, the IaC repo that provisions it. Left ungated they are
 # not merely dead entries — they put personal hostnames in the `+` menu of a work terminal.
 #
 # Gated on .work rather than on the hostname, unlike kwinrulesrc and fix-games-mount above:
@@ -401,9 +401,9 @@ AppData
 # no session reads.
 .claude/skills/*/test_*.py
 
-# A Claude agent user (see .chezmoitemplates/is-agent). The server repo's Ansible owns its login
-# profile, its git identity and signers, its ssh directory and its own user CLAUDE.md, which
-# imports this repo's copy from a subdirectory. It has no sudo, so the sudo shim and the askpass
+# A Claude agent user (see .chezmoitemplates/is-agent). The server repo's claude-code host
+# package owns its login profile, its git identity and signers, its ssh directory and its own
+# user CLAUDE.md, which imports this repo's copy from a subdirectory. It has no sudo, so the sudo shim and the askpass
 # helper do nothing for it. The changelog, telemetry-sweep, savings-rollup and retention timers
 # run once per host under the operator, and the RC resume and PR dashboard tools are the
 # operator's own.
