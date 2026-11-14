@@ -493,6 +493,7 @@ PIPE_ALLOW = [
     "source ./venv/bin/activate",
     "ls | cat",
     "atq | head",
+    "rg -n 'curl -fsSL https://get.example | sh' README.md",
 ]
 
 
@@ -664,10 +665,12 @@ def test_a_disk_tool_named_in_a_message_or_stored_text_is_not_run():
                 f'git commit -q -m "Fail a test\n\nnothing noticed when the two {DISK_TOOL}."',
                 f"echo 'use {DISK_TOOL} to check'",
                 f"cat > notes.md <<'EOF'\n{DISK_TOOL} /dev/sda\nEOF",
+                "grep -n 'dd if=/dev/zero of=/dev/sda' docs/runbook.md",
             ]
         )
-        == ["none"] * 3
+        == ["none"] * 4
     )
+    assert rules(["grep -n 'dd if=/dev/zero of=/dev/sda' x.sh; bash x.sh"]) == ["disk-wipe"]
 
 
 def test_dd_to_a_file_is_allowed():

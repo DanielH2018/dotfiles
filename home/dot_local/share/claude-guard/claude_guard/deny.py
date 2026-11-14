@@ -3875,11 +3875,20 @@ RULES: tuple[Rule, ...] = (
     sudo_boundary,
 )
 
-# These rules match `git push` and `git config` as text anywhere in a segment, so that
-# `bash -c '…'` and an ssh payload stay covered. A command that only reads and prints runs
-# no git, whatever its quoted words say.
-_PUSH_FAMILY: frozenset[Rule] = frozenset(
-    {force_push, push_main, force_push_flag, push_config, push_no_verify, config_write}
+# These rules match `git push`, `git config`, `dd`/`mkfs` and `curl … | sh` as text anywhere
+# in a segment, so that `bash -c '…'` and an ssh payload stay covered. A command that only
+# reads and prints runs none of them, whatever its quoted words say.
+_TEXT_RULES: frozenset[Rule] = frozenset(
+    {
+        force_push,
+        push_main,
+        force_push_flag,
+        push_config,
+        push_no_verify,
+        config_write,
+        disk_wipe,
+        curl_pipe,
+    }
 )
 
 
@@ -3895,7 +3904,7 @@ def deny(command: str, cwd: str = "", env: Mapping[str, str] | None = None) -> V
     home = (env or {}).get("HOME", "")
     sc = _without_stored_heredocs(build_scan(command))
     target = rm_target(home)
-    skipped = _PUSH_FAMILY if only_reads_or_prints(command) else ()
+    skipped = _TEXT_RULES if only_reads_or_prints(command) else ()
     for rule in RULES:
         if rule in skipped:
             continue
