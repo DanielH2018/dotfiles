@@ -343,6 +343,19 @@ QUOTED_PUSH_DENY = [
     "case x in a) true;; *) bash;; esac <<'EOF'\ngit push --force origin feat\nEOF",
     "while read l; do eval \"$l\"; done <<'EOF'\ngit push --force origin feat\nEOF",
     "cat > x.sh <<'EOF'; bash x.sh\ngit push --force origin feat\nEOF",
+    # #1314: a heredoc body that an interpreter runs as its program.
+    "python3 <<'EOF'\nimport os; os.system('git push --force origin feat')\nEOF",
+    "perl <<'EOF'\nsystem(\"git push --force origin feat\");\nEOF",
+    "ruby <<'EOF'\nsystem('git push --force origin feat')\nEOF",
+    "node <<'EOF'\nrequire('child_process').execSync('git push --force origin feat')\nEOF",
+    "env python3 <<'EOF'\nimport os\nos.system('git push --force origin feat')\nEOF",
+    "cat <<'EOF' | python3\nimport os\nos.system('git push --force origin feat')\nEOF",
+    # A `-c` program that can exec its stdin makes the body a program too.
+    "python3 -c 'exec(open(0).read())' <<'EOF'\nimport os\nos.system('git push -f origin x')\nEOF",
+    # A program that only prints the text, in a command that runs what it printed.
+    "python3 <<'EOF' > x.sh; bash x.sh\nprint('git push --force origin feat')\nEOF",
+    # An unquoted delimiter: the shell runs the substitution before Python reads a word.
+    "python3 <<EOF\nprint('$(git push --force origin feat)')\nEOF",
 ]
 
 
@@ -1856,6 +1869,11 @@ def test_a_force_push_chained_with_a_dangerous_command_is_still_denied():
         "(grep -c x <<'EOF'\ngit push --force\nEOF\n)",
         "while read l; do echo \"$l\"; done <<'EOF'\ngit push --force origin feat\nEOF",
         "python3 <<'EOF'\nprint('docs say: git push origin main')\nEOF",
+        # #1314: a Python program that starts no process only names the text, and a
+        # script or an inert `-c` program reads the body as data.
+        "python3 <<'EOF'\nprint('docs say: git push --force origin feat')\nEOF",
+        "python3 tool.py <<'EOF'\ngit push --force origin feat\nEOF",
+        "python3 -c 'import sys; print(sys.stdin.read())' <<'EOF'\ngit push --force\nEOF",
         'claude-guard replay /dev/stdin --deny <<\'EOF\'\n{"command": "git push --force"}\nEOF',
     ],
 )

@@ -14,8 +14,9 @@ Three subjects, as the bash has them (:238-317):
     scanset  BDB_SCANSET — SCAN, then one normalised line per segment.parse segment and per
              substitution body. The command-position-anchored families read this, so a
              command after a newline is in command position. Not the bash's: one more line
-             per line of a heredoc body that a shell, make or a scheduler may run as
-             commands (`_heredocs_run_as_lines`). A body fed to anything else is data.
+             per line of a heredoc body that a shell, make, a scheduler or an interpreter
+             may run as commands (`_heredocs_run_as_lines`). A body fed to anything else
+             is data, and so is a Python program that starts no process.
     segset   BDB_SEGSET — the same set without SCAN, for the pair rules that need both halves
              from ONE command. When the parse refuses, both collapse to SCAN alone, which is
              the bash's degradation path: a refusal lands on the whole-string rules, never on
@@ -78,7 +79,7 @@ from claude_guard.gitread import config_read
 from claude_guard.inert_python import SHELL_STARTUP_FILES, inert, read_only
 from claude_guard.inert_shell import only_reads_or_prints, printed, segment_reads_or_prints
 from claude_guard.rules import load_rules
-from claude_guard.segment import Segment, mask_substitutions, parse, substitution_spans
+from claude_guard.segment import Parsed, Segment, mask_substitutions, parse, substitution_spans
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,7 +221,7 @@ def build_scan(command: str) -> Scan:
     members += [
         normalize(line) for text in texts for line in canonical_lines(text, PUSH_SUBCOMMANDS)
     ]
-    for body in _heredocs_run_as_lines(p.segments):
+    for body in _heredocs_run_as_lines(p):
         for line in body.replace("\\\n", " ").split("\n"):
             members += [normalize(t) for t in (line, *canonical_lines(line, PUSH_SUBCOMMANDS))]
     gits = tuple(inv for text in texts for inv in invocations(text))
@@ -320,6 +321,26 @@ def _heredoc_program_expands(source: str | None, heredocs: tuple[str, ...], quot
     return not any(body == source and q for body, q in zip(heredocs, quoted, strict=False))
 
 
+def _contained_inert_sources(p: Parsed) -> list[str | None] | None:
+    """Per segment of `p`, its closed-shape Python program that starts no process
+    (`_inert_program`), else None. The whole result is None unless every segment is such a
+    program or a reader or printer `segment_reads_or_prints` proves, with no substitution:
+    anything else may run the text an inert program only writes or prints."""
+    if p.substitutions:
+        return None
+    sources: list[str | None] = []
+    for seg in p.segments:
+        source = _python_source(_words(seg.text) or [], seg.heredocs)
+        expands = _heredoc_program_expands(source, seg.heredocs, seg.heredoc_quoted)
+        if _inert_program(source, expands):
+            sources.append(source)
+        elif segment_reads_or_prints(seg):
+            sources.append(None)
+        else:
+            return None
+    return sources
+
+
 def _rm_members(sc: Scan) -> list[str]:
     """The texts `rm_root` matches: each segment, substitution and heredoc body on its own.
 
@@ -335,19 +356,10 @@ def _rm_members(sc: Scan) -> list[str]:
     p = parse(sc.command)
     if not p.ok:
         return [sc.scan]
-    sources: list[tuple[str | None, bool]] = []
-    for seg in p.segments:
-        words = _words(seg.text) or []
-        source = _python_source(words, seg.heredocs) if words else None
-        expands = _heredoc_program_expands(source, seg.heredocs, seg.heredoc_quoted)
-        sources.append((source, _inert_program(source, expands)))
-    contained = not p.substitutions and all(
-        inert_source or segment_reads_or_prints(seg)
-        for seg, (_, inert_source) in zip(p.segments, sources, strict=True)
-    )
+    inert_sources = _contained_inert_sources(p)
+    contained = inert_sources is not None
     members: list[str] = []
-    for seg, (source, inert_source) in zip(p.segments, sources, strict=True):
-        inert_source = inert_source and contained
+    for seg, source in zip(p.segments, inert_sources or itertools.repeat(None), strict=False):
         argv = _argv(_words(seg.text) or [])
         bare = _unquoted(seg.text)
         quoted_only = (
@@ -357,9 +369,9 @@ def _rm_members(sc: Scan) -> list[str]:
             and bare is not None
             and not re.search(r"\brm\b", bare)
         )
-        if not quoted_only and not (inert_source and source in seg.text):
+        if not quoted_only and not (source is not None and source in seg.text):
             members.append(normalize(seg.text))
-        members += [normalize(b) for b in seg.heredocs if not (inert_source and b == source)]
+        members += [normalize(b) for b in seg.heredocs if b != source]
     members += [normalize(s) for s in p.substitutions]
     return members
 
@@ -2910,6 +2922,21 @@ def _runs_heredoc_lines(text: str) -> bool:
     return names[0] in _EXECUTORS | {"sudo", "doas"} and not _LINE_RUNNERS.isdisjoint(names)
 
 
+def _reads_program(text: str) -> bool:
+    """Whether the segment `text` runs an interpreter that may run its stdin as a program.
+
+    Two Python shapes take their program from elsewhere, so their stdin is data: a literal
+    `.py` script (`_script_arguments_start`), and a `-c` program that starts no process,
+    which therefore cannot `exec` what it reads. Every other interpreter command counts."""
+    words = _words(text)
+    argv = _argv(_command_words(words)) if words else []
+    if not argv or not _runs_interpreter(argv):
+        return False
+    if _script_arguments_start(argv) is not None:
+        return False
+    return not _inert_program(_python_source(argv, ()), expands=True)
+
+
 _GROUP_CLOSERS = frozenset({"}", ")", "fi", "done", "esac"})
 
 
@@ -2919,16 +2946,21 @@ _CASE_ARM_HEAD = re.compile(
 )
 
 
-def _heredocs_run_as_lines(segments: tuple[Segment, ...]) -> list[str]:
-    """The heredoc bodies of `segments` whose lines run as commands.
+def _heredocs_run_as_lines(p: Parsed) -> list[str]:
+    """The heredoc bodies of `p` whose lines may run as commands.
 
-    A body counts when a line runner may read it: on the runner's own stdin, on a stage
-    piped into one (`cat <<EOF | bash`), on the closer of a group that holds one
-    (`{ bash; } <<EOF`), or stored by a data sink in a command that runs code
-    (`cat > x.sh <<EOF; bash x.sh`)."""
+    A body counts when a line runner or an interpreter may read it: on the reader's own
+    stdin, on a stage piped into one (`cat <<EOF | bash`), on the closer of a group that
+    holds one (`{ bash; } <<EOF`), or stored by a data sink in a command that runs code
+    (`cat > x.sh <<EOF; bash x.sh`). An interpreter's program has no command position, so
+    each of its lines is read as one: `os.system('git push --force')` runs the push. The
+    one program left out is a Python program that starts no process
+    (`_contained_inert_sources`), whose lines only name the text."""
+    segments = p.segments
+    inert_sources = _contained_inert_sources(p) or itertools.repeat(None)
     runs_code = any(_runs_code(s.text) for s in segments)
     bodies: list[str] = []
-    for i, seg in enumerate(segments):
+    for i, (seg, inert_source) in enumerate(zip(segments, inert_sources, strict=False)):
         if not seg.heredocs:
             continue
         readers = [seg]
@@ -2943,8 +2975,8 @@ def _heredocs_run_as_lines(segments: tuple[Segment, ...]) -> list[str]:
         if closer == "esac":
             texts = [_CASE_ARM_HEAD.sub("", t, count=1) for t in texts]
         stored_then_run = runs_code and _is_data_sink(seg.text, seg.sep)
-        if stored_then_run or any(_runs_heredoc_lines(t) for t in texts):
-            bodies += seg.heredocs
+        if stored_then_run or any(_runs_heredoc_lines(t) or _reads_program(t) for t in texts):
+            bodies += [b for b in seg.heredocs if b != inert_source]
     return bodies
 
 

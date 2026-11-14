@@ -283,7 +283,15 @@ segment, so that `bash -c '…'` and an ssh payload stay covered. Each line of a
 body is a member of the segment set too when a shell, a scheduler, `make` or `ssh` reads
 the body on stdin, directly, behind a wrapper such as `env` or `sudo`, at the end of a
 pipe, or inside a subshell or a group whose closer carries the heredoc (dotfiles #1289).
-A body that a data sink stores counts too when the command runs code. A body fed to any other command is data, so
+A body that a data sink stores counts too when the command runs code. A body that an
+interpreter reads counts as well, because `os.system('git push --force')` in a heredoc
+program runs the push (dotfiles #1314). Three Python shapes are left out. A program
+that `inert_python.inert` proves starts no process only names the text, so
+`python3 <<'EOF'` with a `print` of push text passes. That holds only when every other
+segment is a reader or a printer, as for `rm_root`. A literal `.py` script reads the
+body as data, and so does a `-c` program that starts no process. Every other
+interpreter has no such proof: `node <<'EOF'` with a `console.log` of push text is
+refused. A body fed to any other command is data, so
 `grep -c x <<'EOF'` over push text passes. A stored heredoc is stripped before that. A flag such as
 `--force` ends at any character that cannot continue the word, because a flag that closes
 a quoted program is followed by `)` or `;` once the quotes are removed. `deny` skips the
