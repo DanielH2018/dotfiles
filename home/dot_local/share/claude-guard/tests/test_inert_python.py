@@ -42,6 +42,9 @@ NOT_INERT = [
     "open('/home/u/.ssh/config', 'a').write('ProxyCommand id')",
     "open('/home/u/.config/git/config', 'a').write('[core]')",
     "open('.mcp.json', 'w').write('{}')",
+    # a directory an isolated interpreter still imports from
+    "open('/home/u/.local/share/uv/python/cpython-3.15/lib/python3.15/_strptime.py', 'w')",
+    "open('.venv/lib64/python3.15/site-packages/x.pth', 'w')",
     # text that is not Python
     "if x then echo; fi",
 ]
@@ -92,9 +95,21 @@ def test_a_program_that_may_change_a_file_is_not_read_only(program):
 
 @pytest.mark.parametrize("program", INERT)
 def test_a_program_that_only_reads_and_writes_text_is_inert(program):
-    assert inert(program)
+    assert inert(program, isolated=True)
+
+
+def test_a_program_that_may_change_a_file_is_inert_only_on_an_isolated_interpreter():
+    # Without `-I` the working directory is first on `sys.path`, so `import json` runs the
+    # file the line before it wrote.
+    program = "from pathlib import Path\nPath('json.py').write_text('import os')\nimport json"
+    assert inert(program, isolated=True)
+    assert not inert(program, isolated=False)
+
+
+def test_a_program_that_changes_no_file_is_inert_without_isolation():
+    assert inert("import json, sys\nprint(json.load(sys.stdin)['sudo'])", isolated=False)
 
 
 @pytest.mark.parametrize("program", NOT_INERT)
 def test_a_program_outside_the_allowlist_is_not_inert(program):
-    assert not inert(program)
+    assert not inert(program, isolated=True)

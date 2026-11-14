@@ -63,6 +63,7 @@ import tokenize
 from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from claude_guard import secret_table
 from claude_guard.gitargv import (
@@ -331,38 +332,43 @@ RM_MSG = "Blocked: rm -rf targeting home or root directory. Use a specific path 
 _INERT_QUOTE_HEADS = frozenset({"grep", "egrep", "fgrep", "rg", "echo", "printf"})
 
 
-def _inert_program(source: str | None, expands: bool) -> bool:
-    """Whether `source`, a closed-shape Python program (`_python_source`), starts no process.
-    When the shell expands the program first (`expands`: a `-c` argument, or a heredoc whose
-    delimiter is unquoted), a `$` or a backtick in it can run a command before Python reads
-    a word, so such a program is never inert."""
-    if source is None or (expands and ("$" in source or "`" in source)):
-        return False
-    return inert(source)
+def _inert_source(
+    words: list[str], heredocs: tuple[str, ...], quoted: tuple[bool, ...] = ()
+) -> str | None:
+    """The Python program of a segment when it provably starts no process, else None.
 
+    The segment must be one of the closed shapes (`_python_program`), and `inert` must pass
+    its program, which for a program that may change a file takes the `-I` flag. When the
+    shell expands the program first, a `$` or a backtick in it can run a command before
+    Python reads a word, so such a program is never inert. The shell expands a `-c`
+    argument, and a heredoc unless its delimiter is quoted.
 
-def _heredoc_program_expands(source: str | None, heredocs: tuple[str, ...], quoted) -> bool:
-    """Whether the shell expands `source` before Python reads it: True unless `source` is one
-    of `heredocs` and that heredoc's delimiter is quoted (`<<'EOF'`)."""
-    return not any(body == source and q for body, q in zip(heredocs, quoted, strict=False))
-
-
-def _inert_source(seg: Segment) -> str | None:
-    """The closed-shape Python program of `seg` when it starts no process (`_inert_program`),
-    else None."""
-    source = _python_source(_words(seg.text) or [], seg.heredocs)
-    expands = _heredoc_program_expands(source, seg.heredocs, seg.heredoc_quoted)
-    return source if _inert_program(source, expands) else None
+    Args:
+        words: The segment's words.
+        heredocs: The segment's heredoc bodies.
+        quoted: Whether each heredoc's delimiter is quoted (`<<'EOF'`).
+    """
+    program = _python_program(words, heredocs)
+    if program is None:
+        return None
+    expands = not (program.from_heredoc and quoted[:1] == (True,))
+    if expands and ("$" in program.source or "`" in program.source):
+        return None
+    return program.source if inert(program.source, isolated=program.isolated) else None
 
 
 def _contained_inert_sources(p: Parsed) -> list[str | None] | None:
     """Per segment of `p`, its inert Python program (`_inert_source`), else None. The whole
-    result is None unless every segment is such a program or a reader or printer
-    `segment_reads_or_prints` proves, with no substitution: anything else may run the text
-    an inert program only writes or prints."""
+    result is None unless one segment at most is such a program and every other one is a
+    reader or printer `segment_reads_or_prints` proves, with no substitution. Anything
+    else, a second Python program included, may run a file the inert program writes."""
     if p.substitutions:
         return None
-    sources = [_inert_source(s) for s in p.segments]
+    sources = [
+        _inert_source(_words(s.text) or [], s.heredocs, s.heredoc_quoted) for s in p.segments
+    ]
+    if sum(source is not None for source in sources) > 1:
+        return None
     contained = all(
         source is not None or segment_reads_or_prints(seg)
         for source, seg in zip(sources, p.segments, strict=True)
@@ -376,11 +382,10 @@ def _rm_members(sc: Scan) -> list[str]:
     Matching the joined SCAN paired `rm -rf /tmp/x` in one segment with the ` / ` of a later
     `sed 's/^/--role /'`. Three things are left out. A heredoc body that is only stored
     (`_without_stored_heredocs`). The program of a closed-shape Python segment that starts no
-    process (`_inert_program`). And a grep, echo or printf segment whose `rm` sits only
-    inside quotes. The last two are dropped only when every segment is one of those inert
-    programs or a reader or printer `segment_reads_or_prints` proves, since
-    `echo 'rm -rf ~' | at now` runs what the first segment only names. A command the parser
-    refuses is matched whole, as before."""
+    process (`_inert_source`). And a grep, echo or printf segment whose `rm` sits only
+    inside quotes. The last two are dropped only when the command is contained
+    (`_contained_inert_sources`), since `echo 'rm -rf ~' | at now` runs what the first
+    segment only names. A command the parser refuses is matched whole, as before."""
     sc = _without_stored_heredocs(sc)
     p = parse(sc.command)
     if not p.ok:
@@ -1486,9 +1491,23 @@ def _past_uv_run(words: list[str]) -> list[str]:
     return words[i:]
 
 
-def _python_program(words: list[str], heredocs: tuple[str, ...]) -> tuple[str, bool] | None:
-    """The Python source of a segment whose words are one of the closed shapes, and whether
-    it is the segment's heredoc, or None.
+class _PythonProgram(NamedTuple):
+    """The program of a closed-shape Python segment.
+
+    Attributes:
+        source: The program text.
+        from_heredoc: Whether the program is the segment's heredoc, not a `-c` argument.
+        isolated: Whether the interpreter runs with `-I`, which keeps the working
+            directory and `PYTHONPATH` off `sys.path`.
+    """
+
+    source: str
+    from_heredoc: bool
+    isolated: bool
+
+
+def _python_program(words: list[str], heredocs: tuple[str, ...]) -> _PythonProgram | None:
+    """The Python program of a segment whose words are one of the closed shapes, or None.
 
     The shapes are `python…` or `uv run python…` (`_past_uv_run`), then only value-free
     flags, then either `-c PROGRAM` or a program read from stdin (`-` or nothing) that is
@@ -1502,26 +1521,29 @@ def _python_program(words: list[str], heredocs: tuple[str, ...]) -> tuple[str, b
         i += 1
     rest = words[i:]
     if rest and _PY_FLAG_THEN_C.fullmatch(rest[0]):
-        return (rest[1], False) if len(rest) > 1 else None
+        if len(rest) < 2:
+            return None
+        return _PythonProgram(rest[1], False, any("I" in w for w in words[1 : i + 1]))
+    isolated = any("I" in w for w in words[1:i])
     if rest and rest[0] == "-":
         rest = rest[1:]
     if not rest or rest[0] not in ("<<", "<<-") or len(heredocs) != 1:
         return None
     if sum("<" in w for w in words) != 1:
         return None
-    return heredocs[0], True
+    return _PythonProgram(heredocs[0], True, isolated)
 
 
 def _python_source(words: list[str], heredocs: tuple[str, ...]) -> str | None:
     program = _python_program(words, heredocs)
-    return program[0] if program else None
+    return program.source if program else None
 
 
 def python_reads_heredoc(words: list[str], heredocs: tuple[str, ...]) -> bool:
     """Whether `words` are one of the closed Python shapes (`_python_program`) and read the
     program from the segment's one heredoc."""
     program = _python_program(words, heredocs)
-    return program is not None and program[1]
+    return program is not None and program.from_heredoc
 
 
 def _script_arguments_start(argv: list[str]) -> int | None:
@@ -3158,7 +3180,7 @@ def _reads_program(text: str, output_may_run: bool) -> bool:
         return True
     if _script_arguments_start(argv) is not None:
         return False
-    return not _inert_program(_python_source(argv, ()), expands=True)
+    return _inert_source(argv, ()) is None
 
 
 _GROUP_CLOSERS = frozenset({"}", ")", "fi", "done", "esac"})
@@ -3205,7 +3227,11 @@ def _heredocs_run_as_lines(p: Parsed) -> list[str]:
         output_may_run = bool(p.substitutions) or not all(
             reads_or_prints[:i] + reads_or_prints[i + 1 :]
         )
-        inert_source = None if output_may_run else _inert_source(seg)
+        inert_source = (
+            None
+            if output_may_run
+            else _inert_source(_words(seg.text) or [], seg.heredocs, seg.heredoc_quoted)
+        )
         if stored_then_run or any(
             _runs_heredoc_lines(t) or _reads_program(t, output_may_run) for t in texts
         ):
@@ -3585,10 +3611,9 @@ def _segment_sudo(
     except ValueError:
         return _SUDO_ESCALATES if _loose_hit(text) else _SUDO_CLEAN
     cmds, redirected, here = _command_lines(words)
-    # A closed-shape Python program that provably starts no process (`_inert_program`) holds
+    # A closed-shape Python program that provably starts no process (`_inert_source`) holds
     # `sudo` only as text it writes or compares, so its word search is skipped.
-    source = _python_source(words, heredocs) if len(cmds) == 1 else None
-    inert_source = _inert_program(source, _heredoc_program_expands(source, heredocs, quoted))
+    inert_source = len(cmds) == 1 and _inert_source(words, heredocs, quoted) is not None
     # Bash expands no brace inside quotes, and shlex has removed the quotes by the time a
     # word reaches the brace check. A brace list counts only when one survives in the
     # segment with every quoted character blanked: a Python heredoc body read as shell has

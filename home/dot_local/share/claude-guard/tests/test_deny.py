@@ -177,6 +177,11 @@ def test_remote_rescan_is_whole_string_by_decision():
 
 # --- rm -rf on home or root (:573-599, :661-667) --------------------------------------------
 
+# A Python program that writes `./json.py`, a module that runs the command `{}` on import.
+PLANT_JSON = (
+    "from pathlib import Path\nPath('json.py').write_text(\"import os\\nos.system('{}')\\n\")\n"
+)
+
 RM_DENY = [
     "rm -rf /",
     "rm -rf ~",
@@ -188,6 +193,10 @@ RM_DENY = [
     f"rm -rf {HOME}",
     f"rm -rf {HOME}/",
     f"rm -rf {HOME}/*",
+    # #1339: a program that writes a module and a second program that imports it. Without
+    # `-I` the first is not inert, and two Python programs are never contained.
+    f"python3 - <<'EOF'\n{PLANT_JSON.format('rm -rf ~')}EOF\npython3 -c 'import json'",
+    f"python3 -I - <<'EOF'\n{PLANT_JSON.format('rm -rf ~')}EOF\npython3 -Ic 'import json'",
     "echo $(rm -rf /)",
     "echo `rm -rf /`",
     'echo "`rm -rf /`"',
@@ -220,7 +229,7 @@ RM_ALLOW = [
     # rm only inside a search pattern, a stored note, or text an inert program writes
     "grep -n '\"Bash(rm -rf ~/ *)\",' settings.json",
     "cat > notes.md <<'EOF'\nnever run rm -rf ~\nEOF",
-    "python3 - <<'EOF'\nfrom pathlib import Path\np = Path('a.md')\np.write_text('rm -rf ~')\nEOF",
+    "python3 -I - <<'EOF'\nfrom pathlib import Path\nPath('a.md').write_text('rm -rf ~')\nEOF",
 ]
 
 
@@ -374,6 +383,8 @@ QUOTED_PUSH_DENY = [
     "python3 <<'EOF'; python3 -c 'import json'\nprint('git push --force origin feat')\nEOF",
     # An unquoted delimiter: the shell runs the substitution before Python reads a word.
     "python3 <<EOF\nprint('$(git push --force origin feat)')\nEOF",
+    # #1339: without `-I`, the program imports the module it wrote into the working directory.
+    f"python3 - <<'EOF'\n{PLANT_JSON.format('git push --force origin feat')}import json\nEOF",
 ]
 
 
@@ -2555,6 +2566,10 @@ SUDO_EXECUTOR_VARIABLE = [
 
 SUDO_REFUSE = [
     *SUDO_EXECUTOR_VARIABLE,
+    # #1339: without `-I`, the program imports the module it wrote into the working
+    # directory, and `datetime.strptime` imports `_strptime` on first use
+    f"python3 - <<'EOF'\n{PLANT_JSON.format('sudo id')}import json\nEOF",
+    "python3 -c \"open('_strptime.py', 'w').write('sudo id')\"",
     # another option or order
     f"sudo {W}",
     f"sudo -E -n {W}",
@@ -2809,7 +2824,7 @@ SUDO_REFUSE = [
 SUDO_PASS = [
     # a Python program that only edits a file, the word `sudo` in the text it writes
     (
-        "python3 - <<'EOF'\nfrom pathlib import Path\np = Path('docs/x.md')\n"
+        "python3 -I - <<'EOF'\nfrom pathlib import Path\np = Path('docs/x.md')\n"
         "p.write_text(p.read_text().replace('a', '`sudo k3s kubectl apply`'))\nEOF"
     ),
     "uv run python - <<'EOF'\nimport re\ns = open('f').read()\nprint(re.sub('x', 'sudo', s))\nEOF",

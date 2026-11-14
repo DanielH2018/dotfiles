@@ -3,8 +3,8 @@
 The deny rules read an interpreter's program as text: `os.system('sudo id')` has no shell
 command position, so any `sudo` or `rm -rf ~` in the program is refused. Most such programs
 in practice only edit a file by string replacement, and the word is in the text they write.
-`inert(program)` lets a rule tell those apart. `read_only(program)` is the narrower proof that
-the program also changes no file, for a rule that guards a file the program names.
+`inert(program, isolated=…)` lets a rule tell those apart. `read_only(program)` is the narrower
+proof that the program also changes no file, for a rule that guards a file the program names.
 
 It is an allowlist, and anything it does not recognise refuses. A program is inert only when
 it parses, and when every import, every attribute it reads and every builtin it names is one
@@ -14,9 +14,19 @@ fails on the import, since `yaml.unsafe_load` can construct `os.system`. A progr
 text names a shell-startup, settings or hook file is never inert either. Such a program can
 plant a command that a later shell runs, which no text rule here would see.
 
+A program can also start a process through a module it writes. For a `-c` or stdin program
+Python puts the working directory first on `sys.path`, and `PYTHONPATH` adds more
+directories ahead of the standard library. So `import json` loads a `./json.py` the program
+wrote a line earlier, and `datetime.strptime` loads a `./_strptime.py` on first use. The
+allowlist cannot name the file a write goes to, since it has no types. So a program that may
+change a file is inert only when the interpreter runs isolated (`-I`), which keeps both the
+working directory and `PYTHONPATH` off `sys.path`. A program that changes no file
+(`read_only`) is inert without the flag. The directories that stay on an isolated
+interpreter's path are in `_PLANTS`.
+
 Typical usage example:
 
-    if interpreter and not inert(body):
+    if interpreter and not inert(body, isolated=isolated):
         ...  # read the body for an escalator, as before
 """
 
@@ -115,13 +125,16 @@ SHELL_STARTUP_FILES = (
 # one could plant a command there, so it is never inert. zsh reads `.zshenv` for every
 # `zsh -c`, which is how each Bash call runs here; `.ssh/config` runs a `ProxyCommand`;
 # `~/.config` holds git's XDG config and systemd user units; `.mcp.json` and `.claude.json`
-# start MCP servers. A root-owned directory such as /etc or /usr/local/bin is not listed: an
-# inert program starts no `sudo`, so it cannot write one.
+# start MCP servers. `lib/python3.N/` and `site-packages/` hold the modules an isolated
+# interpreter still imports, and a uv-managed or venv interpreter keeps them under the home
+# directory. A root-owned directory such as /etc or /usr/local/bin is not listed: an inert
+# program starts no `sudo`, so it cannot write one.
 _PLANTS = re.compile(
     rf"{SHELL_STARTUP_FILES}|"
     r"\.ssh/|\.config/|\.claude/settings|\.claude/hooks|\.claude\.json|\.mcp\.json|"
     r"\.git/hooks|\.git/config|\.gitconfig|crontab|/proc/|"
-    r"\.local/bin|~/bin\b|/home/[^/\s]+/bin\b"
+    r"\.local/bin|~/bin\b|/home/[^/\s]+/bin\b|"
+    r"lib/python[0-9]|site-packages"
 )
 _BUILTIN_NAMES = frozenset(dir(builtins))
 
@@ -136,17 +149,22 @@ def _import_ok(node: ast.Import | ast.ImportFrom, attributes: frozenset[str]) ->
     return all(a.name.split(".")[0] in MODULES and "." not in a.name for a in node.names)
 
 
-def inert(program: str) -> bool:
+def inert(program: str, *, isolated: bool) -> bool:
     """True when `program` parses as Python and can start no process.
 
     Args:
         program: The program text an interpreter runs: a heredoc body or a `-c` argument.
+        isolated: Whether the interpreter runs with `-I`. Without it, a module the program
+            writes into the working directory shadows the one it imports, so a program
+            that may change a file is not inert.
 
     Returns:
         False for any program this module cannot prove inert, including one that does not
         parse.
     """
-    return not _PLANTS.search(program) and _within(_parsed(program), ATTRIBUTES)
+    if _PLANTS.search(program):
+        return False
+    return _within(_parsed(program), ATTRIBUTES) if isolated else read_only(program)
 
 
 def read_only(program: str) -> bool:
