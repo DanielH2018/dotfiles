@@ -576,7 +576,7 @@ PIPE_WRAPPERS = (
     r"((sudo|env|command|exec|nohup|nice|stdbuf|xargs)[[:space:]]+(-[^[:space:]]+[[:space:]]+)*)*"
 )
 PIPE_TO_SHELL = (
-    rf"\|[[:space:]]*{PIPE_WRAPPERS}([^[:space:]|;&]*/)?(sh|bash|zsh|dash|fish|ksh|ash)\b"
+    rf"\|[[:space:]]*{PIPE_WRAPPERS}([^[:space:]|;&]*/)?(sh|bash|zsh|dash|fish|ksh|ash|at|batch)\b"
 )
 # :776-781: only a BARE interpreter — no script, no -c/-m — so stdin is the program.
 PIPE_TO_INTERPRETER = (
@@ -1051,6 +1051,8 @@ _RUNNERS = frozenset(
         "su",
     }
 )
+# Schedulers that run a script file or stdin later: `at -f x.sh now`, `batch`, `crontab c`.
+_SCHEDULERS = frozenset({"at", "batch", "crontab"})
 
 
 def _words(text: str) -> list[str] | None:
@@ -1083,6 +1085,7 @@ def _runs_code(text: str) -> bool:
     return (
         any(c in head for c in "$`/")
         or name in _RUNNERS
+        or name in _SCHEDULERS
         or name in _INTERPRETERS
         or name in _SHELLS
         or name in _EXECUTORS

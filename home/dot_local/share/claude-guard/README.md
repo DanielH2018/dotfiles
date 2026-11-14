@@ -242,8 +242,11 @@ Three rules read text that no command runs, and they skip it only where that is 
 `rm_root` matches each segment, substitution and heredoc body on its own. It leaves out a
 stored heredoc. It also leaves out a grep, echo or printf whose `rm` is only quoted, and an
 inert Python program, but only when every segment is one of those programs or a reader or
-printer that `inert_shell.py` proves, so a pipe into `at` or `crontab` keeps the text. `pipe_to_shell` matches a stage after a pipe at its start, unless the stage runs
-code. The sudo boundary skips the word search in a closed-shape Python program that
+printer that `inert_shell.py` proves, so a pipe into `at` or `crontab` keeps the text.
+`pipe_to_shell` matches a stage after a pipe at its start, unless the stage runs code. It
+counts `at` and `batch` as shells, because each reads a shell script on stdin. A stored
+heredoc stays in the scan when another segment runs code, and `at`, `batch` and `crontab`
+count as running code, since each runs a file it is given. The sudo boundary skips the word search in a closed-shape Python program that
 `inert_python.py` proves starts no process. That module is an allowlist of imports, attributes
 and builtins, and it refuses a program naming a shell-startup, settings, hook or PATH file.
 A week's replay over 32,188 commands took the deny count from 316 to 262. No command went
