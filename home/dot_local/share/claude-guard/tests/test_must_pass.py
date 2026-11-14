@@ -57,6 +57,7 @@ HEADLESS = [
     "ls -l ~/.ssh/config",
     "ls ~/.config/sops/age",
     "stat -c '%a %U' ~/.ssh/id_ed25519",
+    "cat ~/.ssh/id_ed25519.pub",
     "git show --no-textconv --numstat --format='%h %s' HEAD -- secrets/secrets.yml",
     # piped and compound ssh and kubectl
     "ssh daniel-server 'journalctl -u k3s --since -1h --no-pager' | tail -20",

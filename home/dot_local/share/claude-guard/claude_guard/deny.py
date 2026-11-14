@@ -902,6 +902,33 @@ _DOC_LEADERS = frozenset(
     {"man", "which", "whereis", "type", "command", "echo", "printf", "apropos"}
 )
 _FILTERS = frozenset({"grep", "egrep", "fgrep", "rg", "ag", "ack", "jq", "yq", "gojq", "jaq"})
+# Readers that print or hash their operands and can write no file. `xxd -r`, the copiers, sed
+# and the editors can, so they are left out and a write to a `.pub` file stays a match.
+_PRINTERS = frozenset(
+    {
+        "cat",
+        "tac",
+        "nl",
+        "head",
+        "tail",
+        "bat",
+        "batcat",
+        "strings",
+        "hexdump",
+        "hd",
+        "od",
+        "base32",
+        "base64",
+        "shasum",
+        "md5sum",
+        "sha1sum",
+        "sha256sum",
+    }
+)
+# A public key spelled out as a plain path: no expansion, glob, brace or `..`, and a name
+# before the suffix. It holds no secret, though SECRET_PATHS matches it under `.ssh/` and by
+# the private key's name.
+_PUBLIC_KEY = re.compile(r"(?!.*(^|/)\.\.(/|$))[A-Za-z0-9_~./+-]*[A-Za-z0-9_-]\.pub")
 # A route in a deny message is followed on a true match as on a false one, so it must be
 # safe either way. The Read tool is refused every path SECRET_PATHS names, and the Edit and
 # Write tools never print what a file holds, so the route discloses nothing.
@@ -1203,6 +1230,9 @@ def _read_head(text: str) -> str:
     only the first one out of the match, so the pattern is blanked to `_` while its quotes
     are still known. A sed script that is one `s` command is blanked the same way, since it
     names no file. A write redirect's target is dropped, since `cat > x` reads nothing.
+    A public key that a `_PRINTERS` command names as a plain path is blanked too
+    (dotfiles #1250); the command word must be the bare name, so `sudo cat` and `/x/cat`
+    keep it.
     Every other word is kept, with `;&|` turned to spaces so a quoted name cannot become a
     separator. Text the word splitter refuses, or that holds a substitution (shlex splits `$(`
     and `<(` into tokens of their own, which hides the command word), is returned
@@ -1231,6 +1261,8 @@ def _read_head(text: str) -> str:
         elif head == "git" and "grep" in args:
             k = args.index("grep")
             args = [*args[: k + 1], *_blank_git_grep_pattern(args[k + 1 :])]
+        elif cmd[0] in _PRINTERS:
+            args = ["_" if _PUBLIC_KEY.fullmatch(w) else w for w in args]
         kept = [*kept[: len(kept) - len(cmd)], cmd[0], *args]
     return " ".join(re.sub(r"[;&|]", " ", w) for w in kept)
 

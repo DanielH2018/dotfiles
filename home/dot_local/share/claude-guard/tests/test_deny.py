@@ -922,6 +922,53 @@ def test_reading_a_case_variant_of_a_secret_path_is_refused():
     assert rules(READS_A_CASE_VARIANT) == ["secret-read"] * len(READS_A_CASE_VARIANT)
 
 
+# dotfiles #1250. A public key holds no secret, so a command that only prints it passes.
+READS_A_PUBLIC_KEY = [
+    "cat ~/.ssh/id_ed25519.pub",
+    "head -1 /home/u/.ssh/id_rsa.pub",
+    "cat ~/.ssh/id_ed25519.pub | wc -c",
+    "sha256sum ~/.ssh/id_ed25519.pub && ls",
+]
+WRITES_A_PUBLIC_KEY = [
+    "cp /tmp/x ~/.ssh/id_rsa.pub",
+    "cat /tmp/x > ~/.ssh/id_rsa.pub",
+    "tee ~/.ssh/id_rsa.pub < /tmp/x",
+    "sed -i s/a/b/ ~/.ssh/id_rsa.pub",
+    "dd if=/tmp/x of=~/.ssh/id_rsa.pub",
+    "xxd -r /tmp/x ~/.ssh/id_rsa.pub",
+    "cat ~/.ssh/a.pub\ncp x ~/.ssh/b.pub",
+]
+# The path is computed, or the word is not only a public key's path, or the reader is not
+# the bare command word.
+NOT_A_LITERAL_PUBLIC_KEY_READ = [
+    "cat ~/.ssh/*.pub",
+    "cat $HOME/.ssh/id_rsa.pub",
+    'cat "$HOME/.ssh/id_rsa.pub"',
+    "cat ~/.ssh/id_{rsa,ed25519}.pub",
+    "cat $(echo ~/.ssh/id_rsa).pub",
+    "cat ~/.ssh/id_rsa.pub/../id_rsa",
+    "cat ~/.ssh/id_rsa\\ .pub",
+    "cat ~/.ssh/id_ed25519.pub ~/.ssh/id_ed25519",
+    "cat ~/.ssh/id_rsa.PUB",
+    "sudo cat ~/.ssh/id_rsa.pub",
+    "/tmp/cat ~/.ssh/id_rsa.pub",
+    "bash -c 'cat ~/.ssh/id_rsa.pub'",
+    "python3 -c \"print(open('/home/u/.ssh/id_rsa.pub').read())\"",
+]
+
+
+def test_printing_a_public_key_named_as_a_plain_path_is_not_a_secret_read():
+    assert kinds(READS_A_PUBLIC_KEY) == ["none"] * len(READS_A_PUBLIC_KEY)
+
+
+def test_writing_a_public_key_is_still_refused():
+    assert kinds(WRITES_A_PUBLIC_KEY) == ["deny"] * len(WRITES_A_PUBLIC_KEY)
+
+
+def test_a_public_key_read_that_is_not_a_plain_path_is_still_refused():
+    assert kinds(NOT_A_LITERAL_PUBLIC_KEY_READ) == ["deny"] * len(NOT_A_LITERAL_PUBLIC_KEY_READ)
+
+
 def test_naming_the_environment_alone_is_not_a_secret_read():
     assert kinds(NAMES_THE_ENVIRONMENT_ONLY) == ["none"] * len(NAMES_THE_ENVIRONMENT_ONLY)
 

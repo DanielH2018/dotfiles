@@ -255,6 +255,12 @@ operands, and a pipe into kill or a shell running a named script is judged at th
 Jinja `secret.yaml.j2` template is not a secrets file. That took the replay from 243 denies
 and 15 asks to 208 and 4, with nothing newly refused (2026-10-24).
 
+`secret_readers` passes a read of an SSH public key (dotfiles #1250). The command word
+must be a bare `cat`, `head`, `tail` or another reader that can write no file, and the key
+must be a plain path that ends in `.pub`, with no expansion, glob, brace or `..`. The secret
+table is unchanged, so the interpreter rules, the write rules and the Read tool still
+match every path under `.ssh/`, and a write to a `.pub` file stays refused.
+
 The push rules (`force_push`, `push_main`, `force_push_flag`, `push_config`,
 `push_no_verify`, `config_write`) match `git push` and `git config` as text anywhere in a
 segment, so that `bash -c '…'` and an ssh payload stay covered. `deny` skips them for a
