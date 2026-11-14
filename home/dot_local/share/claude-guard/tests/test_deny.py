@@ -2483,7 +2483,7 @@ SUDO_REFUSE = [
     "python3 - <<'EOF'\nimport pathlib\npathlib.os.system('sudo id')\nEOF",
     "python3 - <<'EOF'\nimport yaml\nyaml.unsafe_load('x: sudo')\nEOF",
     "python3 -c \"getattr(__import__('os'), 'system')('sudo id')\"",
-    "python3 - <<'EOF'\nfrom pathlib import Path\nPath('/u/.local/bin/g').write_text('sudo id')\nEOF",
+    "python3 - <<'EOF'\nfrom pathlib import Path\nPath('/u/.mcp.json').write_text('sudo id')\nEOF",
     # an unquoted delimiter: the shell runs the substitution before Python reads a word
     "python3 - <<EOF\nprint('$(sudo id)')\nEOF",
     # a script reads the heredoc as data, and may run it
