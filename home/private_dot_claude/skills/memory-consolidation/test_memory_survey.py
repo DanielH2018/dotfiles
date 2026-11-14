@@ -526,6 +526,19 @@ def test_a_test_under_a_role_or_host_lib_counts_as_a_check():
         assert _enforcement([role, lib], root)["enforced"] == ["r.md", "l.md"]
 
 
+def test_a_check_cited_through_a_checkout_path_or_url_resolves_repo_relative():
+    with _tmp() as tmp_path:
+        root = _repo(tmp_path, "tests/deploy/test_x.py", "hosts/lib/tests/test_y.py")
+        home = _memfile(tmp_path, "h.md", "See ~/server/tests/deploy/test_x.py.\n")
+        url = _memfile(
+            tmp_path,
+            "u.md",
+            "See https://github.com/o/r/blob/master/hosts/lib/tests/test_y.py.\n",
+        )
+        result = _enforcement([home, url], root)
+        assert result["enforced"] == ["h.md", "u.md"] and result["dangling"] == []
+
+
 def test_a_memory_citing_nothing_is_unenforced():
     with _tmp() as tmp_path:
         root = _repo(tmp_path, "tests/test_thing.py")
