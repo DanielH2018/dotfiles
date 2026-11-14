@@ -158,8 +158,6 @@ const PER_OS_KEYS = new Set([
   'user.signingkey', 'gpg.format', 'gpg "ssh".program', 'gpg "ssh".allowedSignersFile',
   'commit.gpgsign', 'tag.gpgsign', 'credential.helper', 'credential "https://github.com".helper',
   'core.autocrlf',
-  // Tracked in its own issue: the sops textconv is gated on sops, and on not being macOS.
-  'diff "sops".textconv',
 ]);
 function keysUnderAnOsCondition(text) {
   const isOs = (cond) => /\.chezmoi\.os|is-wsl/.test(cond);
@@ -190,6 +188,15 @@ test('only signing, credential and line-ending settings differ by OS', () => {
     assert.ok(found.includes(k), `the census still sees ${k}`);
   }
   assert.deepStrictEqual(found.filter((k) => !PER_OS_KEYS.has(k)), []);
+});
+
+// A `diff "sops"` textconv made `git diff` and `git log -S` print a secrets file tagged
+// `diff=sops` as plaintext (#1263). A secrets diff shows ciphertext; read a change with sops.
+test('no diff driver decrypts SOPS files', { skip }, (t) => {
+  if (process.platform !== 'linux') return t.skip('renders the darwin branch off Linux');
+  const out = render(fakeHome([]));
+  assert.doesNotMatch(out, /^\[diff "sops"\]/m);
+  assert.doesNotMatch(out, /textconv/);
 });
 
 test('Linux gets the same conflict and moved-line styles as macOS', { skip }, (t) => {
