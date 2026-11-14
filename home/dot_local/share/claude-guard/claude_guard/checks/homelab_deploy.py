@@ -30,9 +30,8 @@ stdout of its body wherever a file can stand: as a shell's script, after `<`, or
 operand of a stage that feeds a pipe. The body of a `>( )` reads the stdout of the stage
 that names it (dotfiles #1347).
 
-An `echo` or `printf` writes its arguments as script text (dotfiles #1346). The check does
-not expand a `printf` format. It over-reads again: the arguments joined, the arguments after
-the format joined, and each argument after the format are each a text.
+An `echo` or `printf` writes its arguments as script text (dotfiles #1346). A `printf`
+format is filled with its arguments in order, every conversion as `%s` is.
 
 `source` and `.` run a script file as a shell does (dotfiles #1347).
 
@@ -43,6 +42,7 @@ runs or a variable carries (dotfiles #1355). `gh api -X POST …/dispatches` alr
 """
 
 import posixpath
+import re
 from dataclasses import dataclass
 
 from claude_guard.deny import _segment_argv, _stage_argvs
@@ -83,9 +83,11 @@ _RUN_VERBS = frozenset(
 _ENABLE_VERBS = frozenset({"enable", "reenable"})
 _UNITS = frozenset({"homelab-reconcile", "homelab-reconcile.service"})
 _DEPTH = 2
-# The word a `<( )` or `>( )` is replaced by before the command is lexed, followed by its
-# index.
+# The word a `<( )` or `>( )` is replaced by before the command is lexed is this, its index,
+# then `_PROCSUB_END`, so no such word is a prefix of another.
 _PROCSUB = "/dev/fd/claude-guard-procsub-"
+_PROCSUB_END = "-end"
+_CONVERSION = re.compile(r"%%|%[-+ #0]*[\d*]*(?:\.[\d*]+)?[a-zA-Z]")
 
 
 def _positionals(args: list[str], valued: frozenset[str]) -> list[str]:
@@ -170,11 +172,11 @@ def _script(argv: list[str]) -> str | None:
 
 
 def _printed(argv: list[str]) -> tuple[str, ...]:
-    """The script texts an `echo` or `printf` `argv` can write, or none for another command.
+    """The script text an `echo` or `printf` `argv` writes, or none for another command.
 
-    A `\\n` escape is read both as a newline and as a space, whether or not the command
-    expands it: the newline ends a command, and the space keeps a `printf` format on one
-    line with the arguments that fill it.
+    A `printf` format is filled with the arguments in order and repeats while arguments
+    remain, as the shell fills it. Every conversion is filled as `%s` is. A `\\n` escape
+    is read as a newline, whether or not the command expands it.
     """
     for tool in ("echo", "printf"):
         found = unwrap(argv, tool)
@@ -183,11 +185,30 @@ def _printed(argv: list[str]) -> tuple[str, ...]:
         args = found[0][1:]
         while args and args[0].startswith("-"):
             args = args[1:]
-        texts = [" ".join(args)]
-        if tool == "printf":
-            texts += [" ".join(args[1:]), *args[1:]]
-        return tuple(text.replace("\\n", end) for text in texts if text for end in "\n ")
+        text = _filled(args[0], args[1:]) if tool == "printf" and args else " ".join(args)
+        return (text.replace("\\n", "\n"),) if text else ()
     return ()
+
+
+def _filled(template: str, args: list[str]) -> str:
+    """A `printf` format `template` with `args` put in place of its conversions."""
+    rest = iter(args)
+    used = 0
+
+    def fill(match: re.Match[str]) -> str:
+        nonlocal used
+        if match[0] == "%%":
+            return "%"
+        used += 1
+        return next(rest, "")
+
+    out = _CONVERSION.sub(fill, template)
+    while used and used < len(args):
+        before = used
+        out += _CONVERSION.sub(fill, template)
+        if used == before:
+            break
+    return out
 
 
 def _runs_bootstrap(argv: list[str]) -> bool:
@@ -340,7 +361,7 @@ def _read(
         if span.kind != "procsub":
             out.extend(_read(body, depth)[0])
             continue
-        word = f"{_PROCSUB}{i}"
+        word = f"{_PROCSUB}{i}{_PROCSUB_END}"
         if command[span.start] == "<":
             argvs, feeds[word] = _read(body, depth)
             out.extend(argvs)
@@ -378,18 +399,17 @@ def _read(
             if depth < _DEPTH:
                 for text in executed.texts:
                     out.extend(_read(text, depth + 1)[0])
-        operands = tuple(
-            word for word in words[1:] if not word.startswith("-") and word not in sinks
-        )
+        operands = tuple(word for word in words[1:] if not word.startswith("-"))
         stdout = (_Stream(operands, _printed(words)) + read).resolved(feeds)
-        for word in argv:
-            if word in sinks:
-                out.extend(_read(sinks[word], depth, stdout)[0])
+        for sink in [sink for sink in sinks if sink in seg.text]:
+            out.extend(_read(sinks.pop(sink), depth, stdout)[0])
         if seg.sep == "|":
             piped = stdout
         else:
             piped = stdin
             written += stdout
+    for body in sinks.values():
+        out.extend(_read(body, depth)[0])
     return out, written
 
 

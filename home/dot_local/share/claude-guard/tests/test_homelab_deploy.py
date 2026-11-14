@@ -56,6 +56,7 @@ BOOTSTRAPS = [
     "tee >(ssh daniel-pi sh) < hosts/bootstrap-host.sh",
     "cat hosts/bootstrap-host.sh > >(sh)",
     "cat hosts/bootstrap-host.sh | tee >(true; sh) > /dev/null",
+    "dd if=hosts/bootstrap-host.sh of=>(sh)",
     "source hosts/bootstrap-host.sh",
     ". hosts/bootstrap-host.sh daniel-pi",
     "source <(cat hosts/bootstrap-host.sh)",
@@ -82,7 +83,11 @@ RECONCILES = [
     "printf '%s\\n' 'cd /' 'systemctl start homelab-reconcile' | ssh daniel-pi sh",
     "printf '%s %s %s\\n' systemctl start homelab-reconcile | ssh daniel-pi sh",
     "printf 'systemctl start %s\\n' homelab-reconcile | ssh daniel-pi bash",
+    "printf 'systemctl start homelab-%s\\n' reconcile | ssh daniel-pi sh",
+    "printf 'systemctl %s homelab-reconcile\\n' start | ssh daniel-pi sh",
     "bash <(echo systemctl start homelab-reconcile)",
+    "dd if=/dev/zero of=>(systemctl start homelab-reconcile)",
+    "foo --out=>(ssh daniel-pi systemctl start homelab-reconcile)",
     "echo 'systemctl start homelab-reconcile' > >(ssh daniel-pi sh)",
 ]
 WRITES = DISPATCHES + BOOTSTRAPS + RECONCILES

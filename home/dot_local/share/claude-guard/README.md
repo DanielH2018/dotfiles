@@ -252,7 +252,8 @@ workflow, wherever `-R` sits in the argv; a run of `hosts/bootstrap-host.sh`; an
 the remote text of an `ssh` or `hl` call or a `sh -c` string. A shell or ssh call that
 executes its stdin also runs what it reads there: a `< file`, a heredoc or herestring body,
 or a `cat` piped into it. So `ssh host bash -s < hosts/bootstrap-host.sh` matches. An
-`echo` or `printf` piped into it writes its arguments as script text. A shell inside a
+`echo` or `printf` piped into it writes its arguments as script text, a `printf` format
+filled with its arguments. A shell inside a
 `>( )` reads the stdout of the stage that names it. `source` and `.` run a script file as
 a shell does. It asks only when the payload's
 `permission_mode` is `default`, `manual`, `acceptEdits` or `plan`. Auto mode is left to the
