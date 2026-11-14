@@ -12,6 +12,7 @@ import importlib.machinery
 import importlib.util
 import json
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -2149,6 +2150,7 @@ def test_a_force_push_chained_with_a_dangerous_command_is_still_denied():
 
 
 _RUN = "import subprocess; subprocess.run"
+_NODE_RUN = "require('child_process').execFileSync"
 
 
 @pytest.mark.parametrize(
@@ -2191,10 +2193,34 @@ _RUN = "import subprocess; subprocess.run"
         f"python3 -c \"{_RUN}(['git', *['push', '--force-with-lease']])\"",
         f"python3 -c \"a = ['log', '--force']; {_RUN}(['git'] + a)\"",
         "python3 -c \"a = ['push', '--force']; print(['git'] + a)\"",
+        # #1368: a node, perl or ruby program whose words hold a plain push, or no push.
+        f"node -e \"const a = ['push', 'origin', 'feat']; {_NODE_RUN}('git', a)\"",
+        f"node -e \"const a = []; a.push('--force'); {_NODE_RUN}('git', ['log', ...a])\"",
+        "perl -e 'my @a = qw(push --force-with-lease); system(\"git\", @a)'",
+        "ruby -e 'a = %w[log --force]; system(\"git\", *a)'",
     ],
 )
 def test_a_push_without_a_force_is_no_decision(command):
     assert d.deny(command, "", ENV) == d.NONE
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        f"node -e \"const a = ['push', '--force']; {_NODE_RUN}('git', a)\"",
+        f"node -e \"{_NODE_RUN}('git', [...['push', '--force']])\"",
+        f"node <<'EOF'\nconst a = ['push', '-f'];\n{_NODE_RUN}('git', a);\nEOF",
+        # An apostrophe in a comment pairs with no quote, so it hides no literal.
+        f"node -e \"/* don't */ const a = ['push', '+feat']; {_NODE_RUN}('git', a)\"",
+        f"node -e \"const a = ['pu' + 'sh', '--mirror']; {_NODE_RUN}('git', a)\"",
+        'perl -e \'my @a = ("push", "--force"); system("git", @a)\'',
+        "perl -e 'my @a = qw(push --force); system(\"git\", @a)'",
+        "ruby -e 'a = %w[push --force]; system(\"git\", *a)'",
+        'bash -c "ruby -e \'a = [\\"push\\", \\"-f\\"]; system(\\"git\\", *a)\'"',
+    ],
+)
+def test_a_force_push_another_interpreter_builds_from_words_kept_apart_is_denied(command):
+    assert d.deny(command, "", ENV).rule == "force-push-flag"
 
 
 @pytest.mark.parametrize(
@@ -3230,6 +3256,24 @@ def test_a_variable_an_executor_runs_is_refused_as_a_variable(command):
 def test_a_real_sudo_beside_a_variable_command_word_keeps_the_sudo_message():
     v = d.deny('"$H"; sudo -n true', "", ENV)
     assert v.reason == d.SUDO_MSG + d.ROOTQ_HINT
+
+
+def _nested(command: str, wrapper: str, levels: int) -> str:
+    for _ in range(levels):
+        command = f"{wrapper} {shlex.quote(command)}"
+    return command
+
+
+@pytest.mark.parametrize("wrapper", ["bash -c", "eval"])
+def test_a_nest_past_the_depth_limit_is_refused_as_unread_not_as_sudo(wrapper):
+    v = d.deny(_nested("true", wrapper, 8), "", ENV)
+    assert (v.kind, v.rule, v.reason) == ("deny", "nest-too-deep", d.NEST_TOO_DEEP_MSG)
+    assert d.deny(_nested("true", wrapper, 4), "", ENV) == d.NONE
+
+
+def test_a_sudo_nested_past_the_depth_limit_keeps_the_sudo_message():
+    v = d.deny(_nested("sudo id", "bash -c", 8), "", ENV)
+    assert (v.rule, v.reason) == ("sudo-boundary", d.SUDO_MSG + d.ROOTQ_HINT)
 
 
 # A refusal of text that only names a protected thing routes to the tool that handles text

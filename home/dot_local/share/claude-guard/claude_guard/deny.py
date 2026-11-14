@@ -61,7 +61,7 @@ import shlex
 import shutil
 import tokenize
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import NamedTuple
 
@@ -3149,6 +3149,24 @@ _FORCE_LITERAL = re.compile(r"--force|-[vqdnu46]*f[A-Za-z0-9]*|\+\S+|--mirror")
 _PUSH_LITERAL = re.compile(
     rf"(?:.*(?i:alias)\.[^=]+=!?)?(?:{'|'.join(sorted(PUSH_SUBCOMMANDS))})", re.DOTALL
 )
+# Two string literals a program joins: `'pu' + 'sh'`, and the `'pu' . 'sh'` of perl and php.
+_LITERAL_JOIN = re.compile(r"""["'`]\s*[+.]\s*["'`]""")
+# What ends a word of a program's text: a quote, whitespace, a bracket, a comma or a `;`.
+# A quote need not pair, so an apostrophe in a comment hides no literal after it. A bracket
+# ends a word so that the `qw(push --force)` of perl and the `%w[push --force]` of ruby
+# count, and so that the `push` of `list.push(x)` does not.
+_TEXT_WORD_END = re.compile(r"""["'`\s()\[\]{},;]+""")
+
+
+def _words_may_force_push(words: Iterable[str]) -> bool:
+    """Whether `words` hold `git`, a push subcommand or an alias for one, and a force
+    spelling. The three need not be adjacent or in order."""
+    words = list(words)
+    return (
+        any(posixpath.basename(w) == "git" for w in words)
+        and any(_PUSH_LITERAL.fullmatch(w) for w in words)
+        and any(_FORCE_LITERAL.fullmatch(w) for w in words)
+    )
 
 
 def _python_may_force_push(program: str, arguments: list[str], fed: list[str]) -> bool:
@@ -3157,14 +3175,18 @@ def _python_may_force_push(program: str, arguments: list[str], fed: list[str]) -
 
     The three words need not share a list, so a program that starts a plain push and
     passes `-f` to another command is refused too."""
-    if inert(program):
-        return False
-    words = literal_words(program)
-    return (
-        any(posixpath.basename(w) == "git" for w in words)
-        and any(_PUSH_LITERAL.fullmatch(w) for w in words)
-        and any(_FORCE_LITERAL.fullmatch(w) for w in words)
-    )
+    return not inert(program) and _words_may_force_push(literal_words(program))
+
+
+def _program_may_force_push(cli: _StdinCli, program: str, operands: list[str]) -> bool:
+    """Whether a program an interpreter other than Python runs holds, as words of its
+    text, `git`, a push subcommand or an alias for one, and a force spelling.
+
+    The guard parses none of these languages, so the words are those of the whole text
+    (`_TEXT_WORD_END`), with two joined literals read as one. A program that only prints
+    the three words is refused, and so is one that starts a plain push and passes `-f` to
+    another command."""
+    return _words_may_force_push(_TEXT_WORD_END.split(_LITERAL_JOIN.sub("", program)))
 
 
 def force_push_flag(sc: Scan, target: str) -> Verdict | None:
@@ -3194,10 +3216,14 @@ def force_push_flag(sc: Scan, target: str) -> Verdict | None:
 
     A Python program can keep `git`, `push` and the flag apart, in a list bound to a name,
     a starred list or a concatenation, so no text pattern matches (#1349). A `-c` or stdin
-    program is refused on the words of its literals instead (`_python_may_force_push`)."""
+    program is refused on the words of its literals instead (`_python_may_force_push`). A
+    node, perl, ruby or other `_STDIN_CLI` program is refused on the words of its text
+    (`_program_may_force_push`, #1368)."""
     if any(
         bdb_re(sc.segset, p) for p in (_FORCE_ANY, _FORCE_CLUSTER, _PLUS_REFSPEC, _MIRROR)
-    ) or _runs_python_program(sc.command, _python_may_force_push, _NEVER):
+    ) or _runs_python_program(
+        sc.command, _python_may_force_push, _NEVER, other_matches=_program_may_force_push
+    ):
         return Verdict(
             "deny",
             "force-push-flag",
@@ -3691,10 +3717,16 @@ SUDO_VARIABLE_MSG = (
     "sudo boundary cannot resolve and so refuses, since it could spell sudo. Spell the path "
     "as the command word instead."
 )
+NEST_TOO_DEEP_MSG = (
+    "Blocked: this command is nested too deep to read. It wraps a command line in more than "
+    "five levels of `bash -c`, `eval` or another executor, and the guard reads no further "
+    "than that, so it cannot tell what the innermost command runs. Run the inner command "
+    "directly, or with fewer wrappers around it."
+)
 # What a command shows the sudo boundary, in rising order: the highest rank found anywhere in
 # the command decides the message, so a real sudo beside a variable command word is still
 # reported as sudo.
-_SUDO_CLEAN, _SUDO_VARIABLE, _SUDO_ESCALATES = 0, 1, 2
+_SUDO_CLEAN, _SUDO_VARIABLE, _SUDO_UNREAD, _SUDO_ESCALATES = 0, 1, 2, 3
 # What a substitution reads as when a segment is split into words: one word, and an expansion.
 _SUB_PLACEHOLDER = "$CLAUDE_GUARD_SUB"
 
@@ -3907,7 +3939,8 @@ def _segment_sudo(
     contained: bool = False,
 ) -> int:
     """The rank of what one segment runs: an escalator other than the one allowed command
-    line, a command word only an expansion names, or neither. The allowed line counts only
+    line, a payload nested too deep to read (`_sudo_text`), a command word only an
+    expansion names, or none of them. The allowed line counts only
     as a whole top-level segment: inside a payload or a substitution it is refused too.
     `quoted` holds whether each heredoc's delimiter is quoted, as the parse reports it.
     `contained` is whether no other segment of the command can run a file this one writes
@@ -4104,10 +4137,11 @@ def _case_arms(segments: tuple[Segment, ...], nested: bool):
 
 def _sudo_text(text: str, depth: int = 0, nested: bool = False) -> int:
     """The highest rank anything in `text`, read as shell, reaches: an escalator other than
-    the one allowed line, a command word only an expansion names, or neither. A command the
-    parser refuses is searched word by word instead, which over-refuses."""
+    the one allowed line, a payload nested too deep to read, a command word only an
+    expansion names, or none of them. A command the parser refuses, or one nested too
+    deep, is searched word by word instead, which over-refuses."""
     if depth > 4:
-        return _SUDO_ESCALATES
+        return _SUDO_ESCALATES if _loose_hit(text) else _SUDO_UNREAD
     p = parse(text)
     if not p.ok:
         return _SUDO_ESCALATES if _loose_hit(text) else _SUDO_CLEAN
@@ -4297,6 +4331,8 @@ def sudo_boundary(sc: Scan, target: str) -> Verdict | None:
     if rank == _SUDO_ESCALATES:
         hint = TAKEOVER_CHECK_HINT if SUDO_WRAPPER in sc.command else ""
         return Verdict("deny", "sudo-boundary", SUDO_MSG + hint + ROOTQ_HINT)
+    if rank == _SUDO_UNREAD:
+        return Verdict("deny", "nest-too-deep", NEST_TOO_DEEP_MSG)
     if rank == _SUDO_VARIABLE:
         return Verdict("deny", "sudo-boundary", SUDO_VARIABLE_MSG)
     return None

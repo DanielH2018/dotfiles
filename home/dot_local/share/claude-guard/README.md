@@ -172,8 +172,9 @@ and `normalize` deletes the quotes of `subprocess.run(['git', 'push', '--force']
 keeping its commas. So `build_scan` adds a member for each text that holds an argument
 list, with a space in place of the comma between two string literals (dotfiles #1337). The
 member covers a Python list or tuple, the `'git', ['push', …]` of node's `execFileSync`, and
-a list `system` call in perl and ruby. A list that a node, perl or ruby program builds
-across statements, or from a variable, stays unread.
+a list `system` call in perl and ruby. The member does not cover a list that a program
+builds across statements or from a variable. The two readings below cover that list for a
+force push.
 
 A Python program gets a second reading that needs no adjacent literals (dotfiles #1349).
 For a `-c` or stdin program that `inert_python.inert` cannot prove starts no process,
@@ -183,6 +184,17 @@ The census folds `+` between literals and follows a name the program binds once 
 inline alias for one, and a force spelling. The three words need not share a list, so a program that starts a plain
 push and passes `-f` to another command is denied too. A word the program builds at run
 time (base64, `getattr`, `chr()`, `str.join`) is an accepted residual.
+
+A node, perl, ruby or other `_STDIN_CLI` program gets the same reading from its text
+(dotfiles #1368). The guard parses none of those languages, so `_program_may_force_push`
+splits the whole program at quotes, whitespace, brackets, commas and `;`. A quote does not
+have to pair, so an apostrophe in a comment hides no literal. A bracket ends a word, so
+perl's `qw(push --force)` and ruby's `%w[push --force]` count, and the `push` of
+`list.push(x)` does not. Two literals joined by `+` or `.` read as one word.
+`force_push_flag` denies the program on the same three words. No check proves that such a
+program starts no process, so a program that only prints the three words is denied too.
+The words after the program on the command line are not read, for Python or any other
+interpreter.
 
 Two rules are new with #709.
 `push_config` denies a push whose inline config (`-c`, `--config-env`, `GIT_CONFIG_*`) sets a
@@ -289,7 +301,11 @@ Python program keeps the text too, since it may run a file the first one wrote.
 `pipe_to_shell` matches a stage after a pipe at its start, unless the stage runs code. It
 counts `at` and `batch` as shells, because each reads a shell script on stdin. A stored
 heredoc stays in the scan when another segment runs code, and `at`, `batch` and `crontab`
-count as running code, since each runs a file it is given. The sudo boundary skips the word search in a closed-shape Python program that
+count as running code, since each runs a file it is given. The sudo boundary reads a
+command line that `bash -c`, `eval` or another executor wraps, to five levels. Past that
+it searches the text for an escalator's name and reports sudo when it finds one. Otherwise
+it denies under the `nest-too-deep` rule, whose reason says to run the inner command
+directly (dotfiles #1373). The sudo boundary skips the word search in a closed-shape Python program that
 `inert_python.py` proves starts no process. That module is an allowlist of imports, attributes
 and builtins, and it refuses a program naming a shell-startup, settings, hook or PATH file.
 A program that may change a file passes only when each write goes to a string literal with
