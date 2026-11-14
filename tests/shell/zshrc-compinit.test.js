@@ -38,9 +38,9 @@ test('the Docker completions fpath entry folds into the Phase-2 fpath block, not
   const fpathBlock = raw.slice(raw.indexOf('fpath must be set BEFORE compinit'), raw.indexOf('autoload -Uz compinit'));
   assert.match(fpathBlock, /fpath=\("\$HOME\/\.docker\/completions" \$fpath\)/, 'docker completions fpath must live in the Phase-2 block (A14-09)');
 
-  const sdkmanIdx = raw.indexOf('SDKMAN TO WORK');
-  assert.ok(sdkmanIdx !== -1, 'sanity: SDKMAN marker still present');
-  assert.doesNotMatch(raw.slice(sdkmanIdx), /\.docker\/completions/, 'docker completions must no longer be duplicated near EOF');
+  const localIdx = raw.indexOf('.config/zsh/local.zsh');
+  assert.ok(localIdx !== -1, 'sanity: machine-local source line still present');
+  assert.doesNotMatch(raw.slice(localIdx), /\.docker\/completions/, 'docker completions must no longer be duplicated near EOF');
 });
 
 test('the full compinit branch touches $ZCOMPDUMP immediately afterward, before the else', () => {
@@ -62,4 +62,10 @@ test('render on this host is syntactically valid and preserves both fixes', { sk
   assert.match(rendered, /touch "\$ZCOMPDUMP"/);
   const compinitAutoloads = rendered.match(/^autoload -Uz compinit$/gm) || [];
   assert.strictEqual(compinitAutoloads.length, 1, 'this host renders the non-darwin branch, so exactly one autoload either way');
+});
+
+test('neither shell template initialises SDKMAN, which no file in the repo installs', () => {
+  const bash = fs.readFileSync(srcPath('dot_bash_profile.tmpl'), 'utf8');
+  assert.doesNotMatch(raw, /sdkman/i);
+  assert.doesNotMatch(bash, /sdkman/i);
 });

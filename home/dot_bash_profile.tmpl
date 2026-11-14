@@ -1,6 +1,3 @@
-export SDKMAN_DIR="$HOME/.sdkman"
-[[ -s "$HOME/.sdkman/bin/sdkman-init.sh" ]] && source "$HOME/.sdkman/bin/sdkman-init.sh"
-
 # Non-interactive layer (PATH, chezmoi umask wrapper, cargo env) shared with zsh/sh — see
 # ~/.config/shell/env.sh for the WHY. Sourced here because non-interactive bash login shells
 # (`ssh host cmd`, bash -lc) read .bash_profile but never reach common.sh via .bashrc.

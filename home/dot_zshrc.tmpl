@@ -212,7 +212,3 @@ ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=#6c7086'
 
 # Machine-local shell config (provided per-machine; absent on portable machines)
 [[ -r "$HOME/.config/zsh/local.zsh" ]] && source "$HOME/.config/zsh/local.zsh"
-
-#THIS MUST BE AT THE END OF THE FILE FOR SDKMAN TO WORK!!!
-export SDKMAN_DIR="$HOME/.sdkman"
-[[ -s "$HOME/.sdkman/bin/sdkman-init.sh" ]] && source "$HOME/.sdkman/bin/sdkman-init.sh"
