@@ -339,6 +339,8 @@ QUOTED_PUSH_DENY = [
     "(bash <<'EOF'\ngit push --force origin feat\nEOF\n)",
     "{ bash; } <<'EOF'\ngit push --force origin feat\nEOF",
     "if true; then bash; fi <<'EOF'\ngit push --force origin feat\nEOF",
+    "case x in x) bash;; esac <<'EOF'\ngit push --force origin feat\nEOF",
+    "case x in a) true;; *) bash;; esac <<'EOF'\ngit push --force origin feat\nEOF",
     "while read l; do eval \"$l\"; done <<'EOF'\ngit push --force origin feat\nEOF",
     "cat > x.sh <<'EOF'; bash x.sh\ngit push --force origin feat\nEOF",
 ]

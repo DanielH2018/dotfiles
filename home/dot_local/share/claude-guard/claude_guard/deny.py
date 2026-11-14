@@ -2785,6 +2785,12 @@ def _runs_heredoc_lines(text: str) -> bool:
 _GROUP_CLOSERS = frozenset({"}", ")", "fi", "done", "esac"})
 
 
+# A case arm's head, `case x in x)` or `a|*.md)`, in front of the command the arm runs.
+_CASE_ARM_HEAD = re.compile(
+    r"^\s*(?:case\s+\S+\s+in\s+)?\(?[^()|;&<>\s]+(?:\s*\|\s*[^()|;&<>\s]+)*\s*\)"
+)
+
+
 def _heredocs_run_as_lines(segments: tuple[Segment, ...]) -> list[str]:
     """The heredoc bodies of `segments` whose lines run as commands.
 
@@ -2802,10 +2808,14 @@ def _heredocs_run_as_lines(segments: tuple[Segment, ...]) -> list[str]:
             if readers[-1].sep != "|":
                 break
             readers.append(later)
-        if (_words(seg.text) or [""])[0] in _GROUP_CLOSERS:
-            readers = list(segments)
+        texts = [r.text for r in readers]
+        closer = (_words(seg.text) or [""])[0]
+        if closer in _GROUP_CLOSERS:
+            texts = [s.text for s in segments]
+        if closer == "esac":
+            texts = [_CASE_ARM_HEAD.sub("", t, count=1) for t in texts]
         stored_then_run = runs_code and _is_data_sink(seg.text, seg.sep)
-        if stored_then_run or any(_runs_heredoc_lines(r.text) for r in readers):
+        if stored_then_run or any(_runs_heredoc_lines(t) for t in texts):
             bodies += seg.heredocs
     return bodies
 
