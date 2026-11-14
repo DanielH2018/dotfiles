@@ -237,6 +237,13 @@ check. When the payload's `agent_type` names an agent whose frontmatter under
 roots, a command that changes files outside them, a shell or `eval`, and any git or gh verb
 outside a read-only set. Its module docstring says why the rest is a denylist.
 
+`checks/promote_dispatch.py` (dotfiles #1321) asks on a `gh workflow run` of the server
+repo's `promote` workflow, wherever `-R` sits in the argv. It asks only when the payload's
+`permission_mode` is `default`, `manual`, `acceptEdits` or `plan`. Auto mode is left to the
+`soft_deny` prose, which clears the dispatch the server repo's post-merge procedure prints.
+A settings `ask` rule cannot make that split, because Claude Code honours an ask rule in
+auto mode too.
+
 Three rules read text that no command runs, and they skip it only where that is provable.
 `rm_root` matches each segment, substitution and heredoc body on its own. It leaves out a
 stored heredoc. It also leaves out a grep, echo or printf whose `rm` is only quoted, and an
