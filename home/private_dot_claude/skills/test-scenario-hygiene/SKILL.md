@@ -140,7 +140,7 @@ pytest idiom.
   doc contains a sentence copied out of that same doc proves only that the file equals itself:
   it breaks on any reword and passes while everything around it is wrong. Assert an
   identifier, a schema or an invariant instead. The server repo's
-  `ansible/tests/deploy/test_ci_cancelled_is_not_a_verdict.py` is the pattern — it asserts that
+  `tests/deploy/test_ci_cancelled_is_not_a_verdict.py` is the pattern — it asserts that
   `_CI_NO_VERDICT_CONCLUSIONS` and `cancelled` appear in that repo's CLAUDE.md, not the
   paragraph around them, so a rename breaks the test and a reword doesn't. A generated file is
   the other sound case: its generator re-derives the content, which is a real oracle.

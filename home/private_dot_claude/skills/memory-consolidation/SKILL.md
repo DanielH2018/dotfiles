@@ -139,10 +139,10 @@ Four headings, always all four, each entry naming the file and the evidence:
 - `c.md` → archive/ (superseded by the check in scripts/validate/foo.py, added PR #123)
 
 ## Re-verify
-- `d.md` — re-read 2026-08-29 against ansible/roles/k8s/bar/tasks/main.yml:41; still accurate.
+- `d.md` — re-read 2026-08-29 against k8s/roles/bar/tasks/main.yml:41; still accurate.
 
 ## Promote
-- `e.md` → a pytest guard in ansible/tests/, cited 6 times in 30d and mechanically checkable
+- `e.md` → a pytest guard in tests/, cited 6 times in 30d and mechanically checkable
 ```
 
 `Re-verify` is not filler. An entry nobody has contradicted is not thereby confirmed, and a dated

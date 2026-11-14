@@ -32,8 +32,8 @@ request cannot. ~50 files parse in single-digit milliseconds.
 Two siblings ship beside this one in the same ConfigMap: `artifact_meta.py` holds the
 taxonomy and the metadata parsers, and `_gui_html.py` holds the page served at `/`.
 
-Local copy: vendored from DanielH2018/Server ansible/roles/k8s/artifacts/files/ at 977d9bf3ab41
-and started by serve-artifacts.sh on each workstation. The star list (StarStore, POST
+Local copy: vendored from DanielH2018/Server at 977d9bf3ab41, from the role that master keeps at
+k8s/roles/artifacts/files/, and started by serve-artifacts.sh on each workstation. The star list (StarStore, POST
 /api/star) was ported from upstream later, in DanielH2018/Server#4430. It differs from upstream
 in eight places:
 

@@ -12,9 +12,6 @@
 	gpgsign = true
 [tag]
 	gpgsign = true
-[core]
-	excludesfile = ~/.gitignore_global
-	autocrlf = input
 {{- else }}
 {{- if eq .chezmoi.os "windows" }}
 [credential]
@@ -52,10 +49,6 @@
 [credential]
 	helper = cache --timeout=3600
 {{- end }}
-[core]
-	autocrlf = {{ if eq .chezmoi.os "windows" }}true{{ else }}input{{ end }}
-	excludesfile = ~/.gitignore_global
-	pager = less
 # Signing policy is emitted UNCONDITIONALLY, and only the key path is detected.
 # All of this used to sit inside the id_ed25519 stat below, so a machine whose key is
 # named something else rendered a gitconfig with no signing directives at all and every
@@ -78,20 +71,20 @@
 	signingkey = ~/.ssh/github-signing.pub
 {{- end }}
 {{- end }}
+[core]
+	autocrlf = {{ if eq .chezmoi.os "windows" }}true{{ else }}input{{ end }}
+	excludesfile = ~/.gitignore_global
+	pager = less
 [pull]
 	rebase = true
 [push]
 	autoSetupRemote = true
-{{- if ne .chezmoi.os "darwin" }}
 	default = simple
 	followTags = true
-{{- end }}
 [fetch]
 	prune = true
-{{- if ne .chezmoi.os "darwin" }}
 	pruneTags = true
 	all = true
-{{- end }}
 [branch]
 	sort = -committerdate
 # rerere stays on so a conflict resolved once in a stacked rebase replays on every layer above
@@ -104,13 +97,12 @@
 [rerere]
 	enabled = true
 [diff]
-	colorMoved = {{ if eq .chezmoi.os "darwin" }}zebra{{ else }}plain{{ end }}
-{{- if ne .chezmoi.os "darwin" }}
+	colorMoved = zebra
 	algorithm = histogram
 	mnemonicPrefix = true
 	renames = true
 	submodule = log
-{{- if lookPath "sops" }}
+{{- if and (ne .chezmoi.os "darwin") (lookPath "sops") }}
 [diff "sops"]
 	# Renders SOPS-encrypted files (e.g. the homelab's secrets/secrets.yml,
 	# tagged `diff=sops` in its .gitattributes) as their decrypted plaintext in
@@ -118,12 +110,10 @@
 	# `sops` being installed so a machine without it doesn't error on every diff=sops diff.
 	textconv = sops decrypt
 {{- end }}
-{{- end }}
 [merge]
-	conflictstyle = {{ if eq .chezmoi.os "darwin" }}zdiff3{{ else }}diff3{{ end }}
+	conflictstyle = zdiff3
 [init]
 	defaultBranch = main
-{{- if ne .chezmoi.os "darwin" }}
 [commit]
 	verbose = true
 [tag]
@@ -150,6 +140,5 @@
 	lgc = log --oneline --graph --decorate --all --date=relative --branches --tags
 [color]
 	ui = auto
-{{- end }}
 [include]
 	path = ~/.config/git/local.config

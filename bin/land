@@ -145,7 +145,7 @@ land() {
   # push fail. `cancelled`, `stale` and `skipped_by_concurrency` are no verdict for this
   # SHA (a newer run superseded it, or GitHub gave up on the run), so they keep waiting
   # like `queued`. That is the server's _CI_NO_VERDICT_CONCLUSIONS set in
-  # ansible/roles/setup/gitops_deploy/files/deploy_git.py, kept identical on purpose.
+  # hosts/lib/ci_verdict.py, kept identical on purpose: its `None` is the "" arm here.
   # Plain `skipped` is NOT in it: a skipped gate is a verdict, and waiting on it would
   # only burn the deadline. Any other completed conclusion stops the landing with the PR
   # left open.

@@ -150,3 +150,48 @@ test('rerere never stages a replayed resolution', { skip }, () => {
   assert.doesNotMatch(out, /^\s*autoupdate\s*=/m, 'nor does a render');
   assert.match(out, /^\[rerere\]\n\s*enabled = true$/m, 'rerere itself stays on for stacked rebases');
 });
+
+// A rebase or a conflict has to read the same on every machine, so an OS condition may only
+// hold what genuinely differs per OS: signing, credential helpers and line endings. Only
+// Linux renders this template here, so the template text is the one oracle for darwin.
+const PER_OS_KEYS = new Set([
+  'user.signingkey', 'gpg.format', 'gpg "ssh".program', 'gpg "ssh".allowedSignersFile',
+  'commit.gpgsign', 'tag.gpgsign', 'credential.helper', 'credential "https://github.com".helper',
+  'core.autocrlf',
+  // Tracked in its own issue: the sops textconv is gated on sops, and on not being macOS.
+  'diff "sops".textconv',
+]);
+function keysUnderAnOsCondition(text) {
+  const isOs = (cond) => /\.chezmoi\.os|is-wsl/.test(cond);
+  const stack = [];
+  const found = [];
+  let section = '';
+  for (const line of text.split('\n')) {
+    const directive = line.match(/^\{\{-?\s*(if|else if|else|end)\b(.*?)-?\}\}\s*$/);
+    if (directive) {
+      const [, kind, cond] = directive;
+      if (kind === 'if') stack.push(isOs(cond));
+      else if (kind === 'else if') stack.push(stack.pop() || isOs(cond));
+      else if (kind === 'end') stack.pop();
+      continue;
+    }
+    if (line.trimStart().startsWith('#')) continue;
+    const header = line.match(/^\[(.+)\]\s*$/);
+    if (header) { section = header[1]; continue; }
+    const key = line.match(/^\s+([\w.]+)\s*=/);
+    if (key && (stack.includes(true) || line.includes('.chezmoi.os'))) found.push(`${section}.${key[1]}`);
+  }
+  return found;
+}
+
+test('only signing, credential and line-ending settings differ by OS', () => {
+  const stray = keysUnderAnOsCondition(fs.readFileSync(TMPL, 'utf8')).filter((k) => !PER_OS_KEYS.has(k));
+  assert.deepStrictEqual(stray, []);
+});
+
+test('Linux gets the same conflict and moved-line styles as macOS', { skip }, (t) => {
+  if (process.platform !== 'linux') return t.skip('renders the darwin branch off Linux');
+  const out = render(fakeHome([]));
+  assert.match(out, /^\s*conflictstyle = zdiff3$/m);
+  assert.match(out, /^\s*colorMoved = zebra$/m);
+});

@@ -64,9 +64,9 @@ with tempfile.TemporaryDirectory() as tmp:
     # every such comparison miss on a prefix neither side chose.
     root = Path(tmp).resolve()
     repo = root / "repo"
-    (repo / "ansible" / "roles").mkdir(parents=True)
+    (repo / "k8s" / "roles").mkdir(parents=True)
     (repo / "docs").mkdir()
-    (repo / "ansible" / "roles" / "live.yml").write_text("x\n")
+    (repo / "k8s" / "roles" / "live.yml").write_text("x\n")
     (repo / "docs" / "kept.md").write_text("x\n")
 
     def stale(text):
@@ -76,12 +76,12 @@ with tempfile.TemporaryDirectory() as tmp:
 
     check(
         "a deleted file is reported",
-        stale("The check lives in `ansible/roles/gone.yml`.")
-        == ["ansible/roles/gone.yml"],
+        stale("The check lives in `k8s/roles/gone.yml`.")
+        == ["k8s/roles/gone.yml"],
     )
     check(
         "a file that still exists is not reported",
-        stale("The check lives in `ansible/roles/live.yml`.") == [],
+        stale("The check lives in `k8s/roles/live.yml`.") == [],
     )
     check(
         "two stale paths in one memory",
@@ -99,7 +99,7 @@ with tempfile.TemporaryDirectory() as tmp:
         "a kubernetes namespaced name is not a path",
         stale("restart `kube-system/coredns`") == [],
     )
-    check("an unquoted path is ignored", stale("see ansible/roles/gone.yml") == [])
+    check("an unquoted path is ignored", stale("see k8s/roles/gone.yml") == [])
     check("a URL is ignored", stale("`https://example.com/a/b`") == [])
     check(
         "a relative path is ignored",
@@ -125,11 +125,11 @@ with tempfile.TemporaryDirectory() as tmp:
 
     check(
         "a path the memory says no longer exists",
-        stale("guarded by `ansible/roles/gone.yml`, which no longer exists") == [],
+        stale("guarded by `k8s/roles/gone.yml`, which no longer exists") == [],
     )
     check(
         "a path the memory says was deleted",
-        stale("`ansible/roles/gone.yml` was deleted in commit abc1234") == [],
+        stale("`k8s/roles/gone.yml` was deleted in commit abc1234") == [],
     )
     # Same sentence, wrapped: `sentence_bounds` scopes the marker search to the sentence
     # rather than the line because these files wrap mid-sentence. Until 2026-09-19 this
@@ -142,7 +142,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check(
         "the marker may follow the path across a line break",
         stale(
-            "`AUTOMATIONS_YAML` still pointed at\n`ansible/roles/gone.yml`, a\n"
+            "`AUTOMATIONS_YAML` still pointed at\n`k8s/roles/gone.yml`, a\n"
             "directory that no longer exists, so it raised."
         )
         == [],
@@ -155,33 +155,33 @@ with tempfile.TemporaryDirectory() as tmp:
     check(
         "a marker in the next sentence does not suppress",
         stale(
-            "`AUTOMATIONS_YAML` still pointed at `ansible/roles/gone.yml`. That\n"
+            "`AUTOMATIONS_YAML` still pointed at `k8s/roles/gone.yml`. That\n"
             "directory has no build output, so it raised."
         )
-        == ["ansible/roles/gone.yml"],
+        == ["k8s/roles/gone.yml"],
     )
     check(
         "a live claim is still reported when the marker is far away",
         stale(
-            "The gate is `ansible/roles/gone.yml`.\n\n"
+            "The gate is `k8s/roles/gone.yml`.\n\n"
             + ("filler. " * 40)
             + "\nSomething unrelated was removed last week."
         )
-        == ["ansible/roles/gone.yml"],
+        == ["k8s/roles/gone.yml"],
     )
     check(
         "one live mention outweighs another that is marked gone",
         stale(
-            "`ansible/roles/gone.yml` no longer exists.\n\n"
+            "`k8s/roles/gone.yml` no longer exists.\n\n"
             + ("filler. " * 40)
-            + "\nRun the check in `ansible/roles/gone.yml` before deploying."
+            + "\nRun the check in `k8s/roles/gone.yml` before deploying."
         )
-        == ["ansible/roles/gone.yml"],
+        == ["k8s/roles/gone.yml"],
     )
 
     # A path whose own filename contains a marker word must not suppress itself. This is
     # the failure mode with teeth: it silences exactly the files most likely to have
-    # been deleted, and it does so silently. `ansible/roles/gone.yml` above is the same
+    # been deleted, and it does so silently. `k8s/roles/gone.yml` above is the same
     # guard from the other direction — it is reported only because the needle is cut out
     # of its own window.
     check(
@@ -273,12 +273,12 @@ with tempfile.TemporaryDirectory() as tmp:
     check("silent when every path resolves", quiet.stdout == "")
     check("exits 0 when silent", quiet.returncode == 0)
 
-    (memories / "drifted.md").write_text("The gate is `ansible/roles/gone.yml`.\n")
+    (memories / "drifted.md").write_text("The gate is `k8s/roles/gone.yml`.\n")
     loud = subprocess.run(
         [sys.executable, str(SCRIPT)], cwd=repo, capture_output=True, text=True, env=env
     )
     check("names the drifted memory", "drifted.md" in loud.stdout)
-    check("names the missing path", "ansible/roles/gone.yml" in loud.stdout)
+    check("names the missing path", "k8s/roles/gone.yml" in loud.stdout)
     check("does not name the healthy memory", "fine.md" not in loud.stdout)
     # The index links memories rather than describing code, so a stale path in a link
     # hook is the linked memory's problem, reported there.
@@ -353,7 +353,7 @@ with tempfile.TemporaryDirectory() as tmp:
     )
     check(
         "a path in no checkout is still stale from the main checkout",
-        "ansible/roles/gone.yml" in from_main.stdout,
+        "k8s/roles/gone.yml" in from_main.stdout,
     )
     check(
         "sibling_checkouts lists the worktree from the main checkout",

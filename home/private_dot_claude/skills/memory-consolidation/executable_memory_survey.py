@@ -334,10 +334,11 @@ def last_referenced(
 
 # A path that looks like a check a repo could own. The shapes are the homelab repo's
 # test and validator layout plus `.claude/hooks/`. Deliberately narrow: a memory naming
-# `ansible/roles/k8s/traefik/templates/deployment.yaml.j2` is citing the thing it
-# describes, not a check that enforces it.
+# `k8s/roles/traefik/templates/deployment.yaml.j2` is citing the thing it describes,
+# not a check that enforces it. A `tests/` directory sits at any depth: the repo root,
+# `hosts/lib/`, or a role such as `k8s/roles/traefik/`.
 _CHECK_PATH = re.compile(
-    r"(?:ansible/tests/[\w./-]+\.py"
+    r"(?:(?<![\w.-])(?:[\w.-]+/)*tests/[\w./-]+\.py"
     r"|scripts/[\w./-]*test_[\w./-]+\.py"
     r"|scripts/validate/[\w./-]+\.py"
     r"|\.claude/hooks/[\w./-]+\.(?:py|sh)"
