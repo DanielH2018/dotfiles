@@ -1384,7 +1384,9 @@ def secret_interpreter(sc: Scan, target: str) -> Verdict | None:
     if _CIPHERTEXT_CHECK.fullmatch(sc.command.strip()):
         return None
     sc = _without_python_attributes(_without_stored_heredocs(sc))
-    if bdb_re(sc.scan, rf"{_INTERPRETER_WORD}.*{SECRET_PATHS}"):
+    if bdb_re(sc.scan, rf"{_INTERPRETER_WORD}.*{SECRET_PATHS}") or _runs_python_program(
+        sc.command, _names_secret, SECRET_PATHS
+    ):
         return Verdict(
             "deny",
             "secret-read-interpreter",
@@ -2258,11 +2260,17 @@ def inplace_edit(sc: Scan, target: str) -> Verdict | None:
 # the exception the shell text of `grep -c foo ~/.bashrc` is read as a program that is not
 # Python, and a read-only heredoc after it is refused (dotfiles #1288).
 #
+# `uv run -` and `uv run --script -` run the Python program on stdin with no `python` word
+# (dotfiles #1286), so a `uv` runner whose command word is a descriptor counts as an
+# interpreter (`_python_arguments`). `secret_interpreter` reads the same programs for a
+# secret path: its own pattern needs an interpreter word before the path, and a program on
+# stdin comes before that word or with none.
+#
 # Residual: the program a script file holds (`python3 fix.py ~/.bashrc`), and one that
 # reaches the path with no segment naming it (`'.bash' + 'rc'`, a file of paths). The
 # guard never reads a file it did not see written.
 _PYTHON_WORD = re.compile(r"python[0-9.]*")
-_PYTHON_NAMES_TARGET = rf"{_INTERPRETER_WORD}.*{WRITE_TARGETS}"
+_PYTHON_LAUNCH = rf"({_INTERPRETER_WORD}|\buv\s+run\b)"
 # CPython's options that take a value: the rest of the word, or the next word.
 _PY_VALUE_OPTS = "WX"
 # An operand that makes Python read its program from a descriptor the shell filled.
@@ -2377,6 +2385,31 @@ def _command_line_programs(
     return read_from("-", [])
 
 
+def _python_arguments(args: list[str]) -> list[list[str]]:
+    """The words after each Python interpreter that `args` may start, redirects removed.
+
+    An interpreter is a word whose basename is `python…`, wherever it sits, and a `uv`
+    runner whose command word is a descriptor (`_PY_DESCRIPTOR`): `uv run -` reads its
+    program as `python -` does. The words of the `uv` form start at that descriptor."""
+    found: list[list[str]] = []
+    for i, w in enumerate(args):
+        name = posixpath.basename(w)
+        if _PYTHON_WORD.fullmatch(name):
+            found.append(args[i + 1 :])
+        elif name == "uv":
+            at = _runner_command(args[i:])
+            command = args[i + at :] if at is not None else []
+            if command and _PY_DESCRIPTOR.fullmatch(command[0]):
+                found.append(command)
+    return found
+
+
+def _names_secret(program: str, inputs: list[str]) -> bool:
+    """Whether a Python `program` names a SECRET_PATHS path, its attribute accesses masked
+    as `_changes_target` masks them. The `inputs` it is given are other rules' to read."""
+    return bdb_re(normalize(_masked_attributes(program) or program), SECRET_PATHS)
+
+
 def _changes_target(program: str, inputs: list[str]) -> bool:
     """Whether a Python `program` names a WRITE_TARGETS path, or is given one in `inputs`,
     and may change it. The program's attribute accesses are masked as `secret_interpreter`
@@ -2388,47 +2421,57 @@ def _changes_target(program: str, inputs: list[str]) -> bool:
     return "$" in program or "`" in program or not read_only(program)
 
 
-def _python_changes_target(text: str, depth: int = 0) -> bool:
-    """Whether a Python program in `text` names a WRITE_TARGETS path and may change it
-    (`_changes_target`). A word that holds a whole command line, as `bash -c` and ssh take,
-    a substitution body and a heredoc body are each read in turn, except a word or body
-    already read as the Python program. Text the parser or the word splitter refuses is
-    refused when a `python` word comes before a target, because no program can be read out
-    of it."""
+def _runs_python_program(
+    text: str, matches: Callable[[str, list[str]], bool], paths: str, depth: int = 0
+) -> bool:
+    """Whether `text` runs a Python program from a command line that `matches` accepts.
+
+    A word that holds a whole command line, as `bash -c` and ssh take, a substitution body
+    and a heredoc body are each read in turn, except a word or body already read as the
+    Python program.
+
+    Args:
+        text: A command line.
+        matches: Called with each program and the texts it can read a path from
+            (`_command_line_programs`).
+        paths: The pattern of the paths `matches` looks for. Text the parser or the word
+            splitter refuses is accepted when a Python launch comes before one of them,
+            because no program can be read out of it.
+        depth: How many command lines deep `text` sits.
+    """
+    unreadable = rf"{_PYTHON_LAUNCH}.*{paths}"
     p = parse(text)
     if not p.ok or depth > 4:
-        return bdb_re(normalize(text), _PYTHON_NAMES_TARGET)
+        return bdb_re(normalize(text), unreadable)
     earlier: list[str] = []
     for seg in p.segments:
         words = _words(seg.text)
         if words is None:
-            if bdb_re(normalize("\n".join((seg.text, *seg.heredocs))), _PYTHON_NAMES_TARGET):
+            if bdb_re(normalize("\n".join((seg.text, *seg.heredocs))), unreadable):
                 return True
             continue
         args, redirected, fills_stdin = _without_redirects(words)
         substituted = p.substitutions if "<(" in words else ()
         redirected = [*seg.heredocs, *redirected, *substituted]
         programs: set[str] = set()
-        for i, w in enumerate(args):
-            if not _PYTHON_WORD.fullmatch(posixpath.basename(w)):
-                continue
-            for program, inputs in _command_line_programs(
-                args[i + 1 :], redirected, earlier, fills_stdin
-            ):
-                if _changes_target(program, inputs):
+        for after in _python_arguments(args):
+            for program, inputs in _command_line_programs(after, redirected, earlier, fills_stdin):
+                if matches(program, inputs):
                     return True
                 programs.add(program)
         nested = [w for w in words if any(c.isspace() for c in w)] + list(seg.heredocs)
-        if any(_python_changes_target(t, depth + 1) for t in nested if t not in programs):
+        if any(
+            _runs_python_program(t, matches, paths, depth + 1) for t in nested if t not in programs
+        ):
             return True
         earlier += [seg.text, *seg.heredocs]
-    return any(_python_changes_target(t, depth + 1) for t in p.substitutions)
+    return any(_runs_python_program(t, matches, paths, depth + 1) for t in p.substitutions)
 
 
 def python_write(sc: Scan, target: str) -> Verdict | None:
     """A `python -c` or stdin program that names a WRITE_TARGETS path, in its text or in an
     argument after it, and is not provably read-only (#1251)."""
-    if _python_changes_target(sc.command):
+    if _runs_python_program(sc.command, _changes_target, WRITE_TARGETS):
         return Verdict(
             "deny",
             "python-write",

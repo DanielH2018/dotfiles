@@ -1667,6 +1667,47 @@ def test_a_python_program_that_only_reads_or_names_no_protected_file_is_allowed(
     assert kinds(PYTHON_WRITE_ALLOW) == ["none"] * len(PYTHON_WRITE_ALLOW)
 
 
+# dotfiles #1286: `uv run -` and `uv run --script -` run the Python program on stdin with no
+# `python` word in the command.
+UV_STDIN_WRITE_DENY = [
+    f"uv run - <<'EOF'\nopen('{BASHRC}','w')\nEOF",
+    f"uv run --script - <<'EOF'\nopen('{BASHRC}','w')\nEOF",
+    f"echo \"open('{BASHRC}','w')\" | uv run -",
+    # uv's own options, one with a value, and a leader in front
+    f"timeout 5 uv run -q --with six - <<'EOF'\nopen('{BASHRC}','w')\nEOF",
+    # the path is an argument after the program
+    "uv run - ~/.zshrc <<'EOF'\nimport sys\nopen(sys.argv[1], 'a').write('x')\nEOF",
+    # a command line another command runs, and text the parser refuses
+    f"bash -c \"echo \\\"open('{BASHRC}','w')\\\" | uv run -\"",
+    f"uv run - <<< \"open('{BASHRC}','w')",
+]
+UV_STDIN_SECRET_DENY = [
+    "uv run - <<'EOF'\nprint(open('server.key').read())\nEOF",
+    "uv run --script - <<'EOF'\nprint(open('server.key').read())\nEOF",
+    "echo \"print(open('server.key').read())\" | uv run -",
+    # a secret that is no write target, in a program piped to a `python` word after it
+    "tee /dev/null <<'EOF' | python3\nprint(open('/run/homelab-secrets/x').read())\nEOF",
+]
+UV_STDIN_ALLOW = [
+    "uv run - <<'EOF'\nprint(1)\nEOF",
+    f"uv run - <<'EOF'\nprint(open('{BASHRC}').read())\nEOF",
+    "uv run - <<'EOF'\nfor v in rows:\n    print(v.key)\nEOF",
+    # the heredoc is data to a command that is not Python reading stdin
+    f"uv run script.py <<'EOF'\nopen('{BASHRC}','w')\nEOF",
+    f"uv run ruff check - <<'EOF'\nopen('{BASHRC}','w')\nEOF",
+    "uv run pytest tests/test_deny.py -k bashrc",
+]
+
+
+def test_a_program_uv_run_reads_from_stdin_is_judged_as_a_python_program():
+    assert rules(UV_STDIN_WRITE_DENY) == ["python-write"] * len(UV_STDIN_WRITE_DENY)
+    assert rules(UV_STDIN_SECRET_DENY) == ["secret-read-interpreter"] * len(UV_STDIN_SECRET_DENY)
+
+
+def test_uv_run_of_a_harmless_program_or_another_command_is_allowed():
+    assert kinds(UV_STDIN_ALLOW) == ["none"] * len(UV_STDIN_ALLOW)
+
+
 # --- terraform / tofu / terragrunt (:1086-1118) -----------------------------------------------
 
 TF_DENY = [

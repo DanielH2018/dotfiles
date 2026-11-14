@@ -293,8 +293,12 @@ passes only when `inert_python.read_only` proves it changes no file. That proof 
 passes an `open` only as a call whose mode is a literal read mode, read at the position
 each opener keeps it: second for the builtin, first or second for an `x.open(…)`. The
 interpreter is any word whose basename is `python…`, so a path-spelled interpreter and an
-`env`, `timeout` or `nice` leader are covered without a list of leaders. A script file's
-program stays out of reach. The rule also reads what the program is given: whatever its
+`env`, `timeout` or `nice` leader are covered without a list of leaders. `uv run -` and
+`uv run --script -` run the program on stdin with no `python` word, so a `uv` runner whose
+command word is `-` or another descriptor counts as an interpreter too (dotfiles #1286).
+`secret_interpreter` reads the same programs for a secret path, because its own pattern
+needs an interpreter word before the path. A script file's program stays out of reach. The
+rule also reads what the program is given: whatever its
 segment redirects in, and every earlier segment of the command, which may be the program
 itself or its arguments under `xargs`. Reading every earlier segment needs no model of
 pipes, groups or descriptors, and costs a writer refused after an unrelated segment that
