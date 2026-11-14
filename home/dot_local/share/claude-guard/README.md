@@ -267,8 +267,10 @@ match every path under `.ssh/`, and a write to a `.pub` file stays refused.
 The push rules (`force_push`, `push_main`, `force_push_flag`, `push_config`,
 `push_no_verify`, `config_write`) match `git push` and `git config` as text anywhere in a
 segment, so that `bash -c '…'` and an ssh payload stay covered. Each line of a heredoc
-body is a member of the segment set too, so the rules read a body that a shell, make or
-cron runs (dotfiles #1289). A stored heredoc is stripped before that. A flag such as
+body is a member of the segment set too when a shell, a scheduler, `make` or `ssh` reads
+the body on stdin, directly, behind a wrapper such as `env` or `sudo`, or at the end of a
+pipe (dotfiles #1289). A body fed to any other command is data, so
+`grep -c x <<'EOF'` over push text passes. A stored heredoc is stripped before that. A flag such as
 `--force` ends at any character that cannot continue the word, because a flag that closes
 a quoted program is followed by `)` or `;` once the quotes are removed. `deny` skips the
 push rules for a

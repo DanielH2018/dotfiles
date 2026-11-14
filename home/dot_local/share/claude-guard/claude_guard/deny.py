@@ -14,7 +14,8 @@ Three subjects, as the bash has them (:238-317):
     scanset  BDB_SCANSET — SCAN, then one normalised line per segment.parse segment and per
              substitution body. The command-position-anchored families read this, so a
              command after a newline is in command position. Not the bash's: one more line
-             per line of a heredoc body, which a shell, make or cron runs as a command.
+             per line of a heredoc body that a shell, make or a scheduler runs as commands
+             (`_runs_heredoc_lines`). A body fed to anything else is data.
     segset   BDB_SEGSET — the same set without SCAN, for the pair rules that need both halves
              from ONE command. When the parse refuses, both collapse to SCAN alone, which is
              the bash's degradation path: a refusal lands on the whole-string rules, never on
@@ -219,7 +220,7 @@ def build_scan(command: str) -> Scan:
     members += [
         normalize(line) for text in texts for line in canonical_lines(text, PUSH_SUBCOMMANDS)
     ]
-    for body in (b for seg in p.segments for b in seg.heredocs):
+    for body in _heredocs_run_as_lines(p.segments):
         for line in body.replace("\\\n", " ").split("\n"):
             members += [normalize(t) for t in (line, *canonical_lines(line, PUSH_SUBCOMMANDS))]
     gits = tuple(inv for text in texts for inv in invocations(text))
@@ -2750,6 +2751,44 @@ _EXECUTORS = frozenset(
         "script", "entr", "sg", "systemd-run", "firejail", "bwrap", "fakeroot", "sshpass",
     }
 )  # fmt: skip
+
+# Commands that run each line of their stdin as a command: a shell, a scheduler, make
+# reading its makefile from `-f -`, and ssh, whose remote shell reads the same stdin.
+_LINE_RUNNERS = _SHELLS | _SCHEDULERS | {"source", ".", "make", "ssh", "hl"}
+
+
+def _runs_heredoc_lines(text: str) -> bool:
+    """Whether the segment `text` runs each line of its stdin as a command.
+
+    True for a line runner, and for a wrapper (`sudo`, `env`, `timeout`) with a line runner
+    among its words. A segment that cannot be split into words counts, since nothing proves
+    its stdin is data."""
+    words = _words(text)
+    if words is None:
+        return True
+    names = [posixpath.basename(w) for w in _argv(words)]
+    if not names:
+        return False
+    if names[0] in _LINE_RUNNERS:
+        return True
+    return names[0] in _EXECUTORS | {"sudo", "doas"} and not _LINE_RUNNERS.isdisjoint(names)
+
+
+def _heredocs_run_as_lines(segments: tuple[Segment, ...]) -> list[str]:
+    """The heredoc bodies of `segments` whose lines run as commands: a body on a line
+    runner's own stdin, or on a stage piped into one (`cat <<EOF | bash`)."""
+    bodies: list[str] = []
+    for i, seg in enumerate(segments):
+        if not seg.heredocs:
+            continue
+        pipeline = [seg]
+        for later in segments[i + 1 :]:
+            if pipeline[-1].sep != "|":
+                break
+            pipeline.append(later)
+        if any(_runs_heredoc_lines(stage.text) for stage in pipeline):
+            bodies += seg.heredocs
+    return bodies
 
 
 def _takes(one: str = "", two: str = "") -> dict[str, int]:

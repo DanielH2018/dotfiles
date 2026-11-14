@@ -333,6 +333,9 @@ QUOTED_PUSH_DENY = [
     "bash <<'EOF'\ngit -C 'a b' push -f origin feat\nEOF",
     "bash <<'EOF'\ngit push origin main\nEOF",
     "bash <<'EOF'\ngit push --no-verify origin feat\nEOF",
+    "cat <<'EOF' | crontab -\n* * * * * git push --force origin feat\nEOF",
+    "env LC_ALL=C bash <<'EOF'\ngit push --force origin feat\nEOF",
+    "ssh daniel-server <<'EOF'\ngit push --force origin feat\nEOF",
 ]
 
 
@@ -1753,6 +1756,10 @@ def test_a_force_push_chained_with_a_dangerous_command_is_still_denied():
         "bash <<'EOF'\ngit push origin feature-x\nls -f\nEOF",
         "bash -c '(git push --force-with-lease)'",
         "cat > notes.md <<'EOF'\ngit push --force origin feat\nEOF",
+        # A heredoc fed to a command that runs none of its lines is data.
+        "grep -c x <<'EOF'\ngit push --force\nEOF",
+        "python3 <<'EOF'\nprint('docs say: git push origin main')\nEOF",
+        'claude-guard replay /dev/stdin --deny <<\'EOF\'\n{"command": "git push --force"}\nEOF',
     ],
 )
 def test_a_push_without_a_force_is_no_decision(command):
