@@ -32,11 +32,12 @@ edits. A memory can be perfectly correct about a file that was deliberately remo
 the point is to put that in front of a person, not to decide it.
 
 What counts as a path. A backtick-quoted token containing `/` whose FIRST segment is a
-directory that exists in the repo root. That second condition is what keeps the report
-usable: without it every `refs/heads/x`, `kube-system/foo` and `and/or` reads as a
-missing file. The cost is that a memory naming a path in a directory that was itself
-deleted goes unreported — a miss, which is the right direction for a hook that only
-nudges.
+top-level directory of the repo: one the default branch tracks or once tracked, or one
+the session's checkout holds. That second condition is what keeps the report usable:
+without it every `refs/heads/x`, `kube-system/foo` and `and/or` reads as a missing file.
+
+Which tree answers. The default branch, not a checkout: `Tree` has the rule. A repo with
+many worktrees always has one stale enough to still hold a deleted file.
 
 2. Stale checks. An entry MEMORY.md marks `[ENFORCED]` or `(SCOPED)` is a memory
 promoted to a test or a hook and kept as a pointer; the pointer outlives the check when
@@ -133,9 +134,8 @@ def main_checkout(repo: Path) -> Path:
     points at; its parent is the main checkout. In the main checkout itself the answer
     is already that repo, so this costs one git call and changes nothing.
 
-    Use it for the memory slug ONLY. Path existence must stay against the caller's own
-    worktree: a file added on a branch does not exist in the main checkout, and checking
-    there would report a live path as stale.
+    It names the checkout for the memory slug and for `Tree`'s ignored-path rule.
+    `Tree` decides whether a path exists.
 
     Falls back to `repo` whenever the answer is unusable — git failing, an empty answer,
     a bare repo whose .git parent is not a checkout. A wrong slug is silence, which is
@@ -167,19 +167,9 @@ def sibling_checkouts(repo: Path, primary: Path) -> list[Path]:
     """Every other checkout of this repository: the main checkout and each linked
     worktree, minus `repo` itself.
 
-    A memory is written by the session that created the file it names, ahead of that
-    session's merge. Until the PR lands the file exists in exactly one place — that
-    session's worktree — and a hook run from any other checkout reported it as gone at
-    every session start (dotfiles #557: `evals/review_coverage/2026-09-18.json`, live on
-    a sibling worktree's branch, flagged from `master` for a day). Checking the sibling
-    working trees rather than their branch refs costs one `git worktree list` instead of
-    a `git cat-file` per candidate and branch, and covers an untracked file in a sibling
-    the same way the main-checkout check covers a gitignored one.
-
-    The main checkout comes first so the existing pair — the session's tree, then the
-    primary — keeps its order. `primary` is included even when `git worktree list`
-    fails: that call is the only new failure mode here, and a failed listing must not
-    lose the check that worked before it.
+    `Tree` reads them for a path the default branch does not track. The main checkout
+    comes first. `primary` is included even when `git worktree list` fails, so a failed
+    listing loses only the linked worktrees.
     """
     others: list[Path] = []
     if primary != repo:
@@ -203,6 +193,124 @@ def sibling_checkouts(repo: Path, primary: Path) -> list[Path]:
         if path not in (repo, primary) and path not in others and path.is_dir():
             others.append(path)
     return others
+
+
+def _git(cwd: Path, *args: str) -> str | None:
+    """A git command's stdout, or None when git fails or is missing."""
+    try:
+        result = subprocess.run(
+            ["git", *args], cwd=cwd, capture_output=True, text=True, check=False
+        )
+    except OSError:
+        return None
+    return result.stdout if result.returncode == 0 else None
+
+
+def _with_parents(paths: Sequence[str]) -> set[str]:
+    """`paths` and every directory above each one."""
+    out: set[str] = set()
+    for path in paths:
+        while path and path not in out:
+            out.add(path)
+            path = path.rpartition("/")[0]
+    return out
+
+
+class Tree:
+    """What the repository holds, judged by its default branch and not by one checkout.
+
+    A path is present when one of three things is true:
+
+    1. The default branch tracks it.
+    2. The main checkout holds it and git ignores it there. Measured on 2026-08-29: two
+       of three flagged memories named `docs/superpowers/`, which is gitignored.
+    3. Some checkout holds it and the default branch never tracked it. That is a file on
+       a branch that has not landed, or an untracked scratch file (dotfiles #557: a
+       memory written ahead of its session's merge was flagged for a day).
+
+    A path the default branch once tracked and no longer does is gone, whichever
+    checkouts still hold it. Before this rule any checkout holding the path counted. The
+    homelab repo had 140 worktrees on 2026-11-13, and the hook reported none of the 10
+    cited paths that master had deleted (dotfiles #1262).
+
+    The default branch is `origin/HEAD`, or the main checkout's `HEAD` in a repo with no
+    remote. A file's text comes from that branch too, so a test renamed on the default
+    branch is missing even while a stale worktree still defines it. The cost is that a
+    symbol added to a tracked file on an unlanded branch is missing until it lands.
+
+    Outside a git repo, or before the first commit, nothing is tracked and rule 3 holds
+    for every path a checkout has.
+    """
+
+    def __init__(self, repo: Path, primary: Path | None = None) -> None:
+        self._repo = repo
+        self._primary = primary or repo
+        self._checkouts = [repo, *sibling_checkouts(repo, self._primary)]
+        self._ref = None
+        for ref in ("refs/remotes/origin/HEAD", "HEAD"):
+            if _git(self._primary, "rev-parse", "--verify", "-q", ref + "^{commit}"):
+                self._ref = ref
+                break
+        listed = self._ref and _git(
+            self._primary, "ls-tree", "-r", "--name-only", self._ref
+        )
+        self._files = set((listed or "").splitlines())
+        self._tracked = _with_parents(sorted(self._files))
+        self._removed: set[str] | None = None
+
+    def _once_tracked(self, path: str) -> bool:
+        """Whether the default branch's history deleted or renamed away `path`.
+
+        One walk of the whole history, made the first time it is needed: about half a
+        second on 7,500 commits.
+        """
+        if self._removed is None:
+            log = self._ref and _git(
+                self._primary,
+                "log",
+                "--format=",
+                "--name-only",
+                "--diff-filter=D",
+                "--no-renames",
+                self._ref,
+            )
+            self._removed = _with_parents((log or "").split("\n"))
+        return path in self._removed
+
+    def has_top(self, name: str) -> bool:
+        """Whether the repo has or had a top-level directory `name`."""
+        return (
+            name in self._tracked
+            or (self._repo / name).is_dir()
+            or self._once_tracked(name)
+        )
+
+    def holds(self, path: str) -> bool:
+        """Whether `path`, a file or a directory, is present by the three rules."""
+        path = path.rstrip("/")
+        if path in self._tracked:
+            return True
+        holders = [c for c in self._checkouts if (c / path).exists()]
+        if not holders:
+            return False
+        if self._primary in holders and (
+            _git(self._primary, "check-ignore", "-q", "--", path) is not None
+        ):
+            return True
+        return not self._once_tracked(path)
+
+    def read(self, path: str) -> str | None:
+        """The text of the file at `path`, or None when no such file is present."""
+        if path in self._files:
+            return _git(self._primary, "show", f"{self._ref}:{path}")
+        if not self.holds(path):
+            return None
+        for checkout in self._checkouts:
+            try:
+                return (checkout / path).read_text()
+            except OSError:
+                continue
+        return None
 
 
 def memory_dir(config_dir: Path, repo: Path) -> Path | None:
@@ -344,25 +452,9 @@ def already_says_it_is_gone(text: str, token: str) -> bool:
         start = i + len(needle)
 
 
-def stale_paths(text: str, repo: Path, also: Sequence[Path] = ()) -> list[str]:
-    """Paths this memory names that are gone, given their top directory still exists.
-
-    `also` is every other checkout of the repository — the main checkout when `repo` is
-    a linked worktree, and each sibling worktree (`sibling_checkouts`). A path present
-    in ANY of them counts as present. Existence is checked against `repo` first because
-    that is the tree the session is working in, but an untracked path — a gitignored
-    directory, a scratch file — exists only in the checkout it was created in and never
-    in a worktree, so checking the worktree alone reported it as deleted. Measured on
-    2026-08-29: two of the three memories the hook flagged named `docs/superpowers/`,
-    which is gitignored, present in the main checkout, absent from every worktree.
-
-    The cost is a miss in one direction: a branch that DELETES a tracked file still
-    finds it in the main checkout and stays quiet, and a file that exists only on a
-    sibling's unmerged branch stays quiet until that worktree is gone. That is the
-    failure direction this hook already takes everywhere else — a miss costs nothing, a
-    false alarm costs the report's credibility. The second case is also self-correcting:
-    an abandoned branch's worktree is pruned, and the path is reported from then on.
-    """
+def stale_paths(text: str, tree: Tree) -> list[str]:
+    """Paths this memory names that `tree` does not hold, given their top directory is
+    one the repo has or had."""
     gone = []
     for token in candidate_paths(text):
         head = token.split("/", 1)[0]
@@ -370,11 +462,9 @@ def stale_paths(text: str, repo: Path, also: Sequence[Path] = ()) -> list[str]:
             # `./repos` is written relative to somewhere the memory names in prose, not
             # to the repo root, so resolving it here answers a question nobody asked.
             continue
-        if not (repo / head).is_dir():
-            continue  # not a path into this repo, or its whole directory is gone
-        if (repo / token).exists():
-            continue
-        if any((other / token).exists() for other in also):
+        if not tree.has_top(head):
+            continue  # not a path into this repo
+        if tree.holds(token):
             continue
         if already_says_it_is_gone(text, token):
             continue
@@ -499,45 +589,30 @@ def named_checks(text: str) -> list[tuple[str, str | None]]:
     return checks
 
 
-def find_file(rel: str, repo: Path, also: Sequence[Path]) -> Path | None:
-    """The check's file, in the session's worktree first and the other checkouts after —
-    the same list `stale_paths` uses, for the same reason."""
-    for base in (repo, *also):
-        if (base / rel).is_file():
-            return base / rel
-    return None
-
-
-def defines(path: Path, symbol: str) -> bool:
-    try:
-        text = path.read_text()
-    except OSError:
-        return False
+def defines(text: str, symbol: str) -> bool:
     name = re.escape(symbol)
     pattern = rf"^\s*(?:async\s+def|def|class)\s+{name}\b|^\s*{name}\s*="
     return re.search(pattern, text, re.MULTILINE) is not None
 
 
-def stale_checks(
-    text: str, repo: Path, also: Sequence[Path] = ()
-) -> tuple[list[str], list[str]]:
+def stale_checks(text: str, tree: Tree) -> tuple[list[str], list[str]]:
     """(missing, resolved) check references for one marked memory.
 
-    A reference is missing when its file is absent from both trees, or when the file
-    exists and does not define the named symbol. No absence-marker suppression here,
-    deliberately: a memory whose body says its check "no longer" exists is exactly the
-    entry to report, where for a plain path the same words are a reason to stay quiet.
+    A reference is missing when `tree` holds no such file, or when the file does not
+    define the named symbol. No absence-marker suppression here, deliberately: a memory
+    whose body says its check "no longer" exists is exactly the entry to report, where
+    for a plain path the same words are a reason to stay quiet.
     """
     missing, resolved = [], []
     for file, symbol in named_checks(text):
         head = file.split("/", 1)[0]
-        if head in (".", "..") or not (repo / head).is_dir():
+        if head in (".", "..") or not tree.has_top(head):
             # The path scan's rule, for the same reason: a memory writes
             # `pre_tasks/load_secrets.yml` relative to a directory it names in prose,
             # and reporting it as a missing check would be a false alarm.
             continue
         label = f"{file}::{symbol}" if symbol else file
-        found = find_file(file, repo, also)
+        found = tree.read(file)
         if found is None or (symbol and not defines(found, symbol)):
             missing.append(label)
         else:
@@ -545,9 +620,7 @@ def stale_checks(
     return missing, resolved
 
 
-def enforced_findings(
-    memories: Path, repo: Path, also: Sequence[Path]
-) -> list[tuple[str, bool, list[str]]]:
+def enforced_findings(memories: Path, tree: Tree) -> list[tuple[str, bool, list[str]]]:
     """(memory name, scoped, missing checks) for every marked entry with a stale check.
 
     An entry whose memory names no check at all is reported with an empty list: a
@@ -564,7 +637,7 @@ def enforced_findings(
             text = (memories / name).read_text()
         except OSError:
             continue  # a dangling index link is a different defect, not this one
-        missing, resolved = stale_checks(text, repo, also)
+        missing, resolved = stale_checks(text, tree)
         if missing or not resolved:
             findings.append((name, scoped, missing))
     return findings
@@ -582,7 +655,7 @@ def count_pointers(text: str) -> int:
 # the run before the next one reads the tree.
 
 
-def report_stale_paths(memories: Path, repo: Path, also: Sequence[Path]) -> None:
+def report_stale_paths(memories: Path, tree: Tree) -> None:
     findings = []
     for path in sorted(memories.glob("*.md")):
         if path.name == "MEMORY.md":
@@ -591,7 +664,7 @@ def report_stale_paths(memories: Path, repo: Path, also: Sequence[Path]) -> None
             text = path.read_text()
         except OSError:
             continue
-        gone = stale_paths(text, repo, also)
+        gone = stale_paths(text, tree)
         if gone:
             findings.append((path.name, gone))
 
@@ -607,11 +680,11 @@ def report_stale_paths(memories: Path, repo: Path, also: Sequence[Path]) -> None
             print(f"  ... and {len(findings) - MAX_REPORTED} more")
 
 
-def report_stale_checks(memories: Path, repo: Path, also: Sequence[Path]) -> None:
+def report_stale_checks(memories: Path, tree: Tree) -> None:
     # The path scan skips the index, because the index links memories rather than
     # describing code. Here it is read for its markers, and the linked memory for the
     # check the marker stands on.
-    enforced = enforced_findings(memories, repo, also)
+    enforced = enforced_findings(memories, tree)
     if enforced:
         subject = "entry names" if len(enforced) == 1 else "entries name"
         print(
@@ -671,19 +744,16 @@ def main() -> int:
         return 0
 
     config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
-    # Slug from the main checkout so a worktree session finds the memories; `repo`
-    # itself stays the yardstick for path existence below.
+    # Slug from the main checkout so a worktree session finds the memories.
     primary = main_checkout(repo)
     memories = memory_dir(config_dir, primary)
     if memories is None:
         return 0
 
     if check_paths:
-        # The main checkout (when this is not it) and every sibling worktree: a path
-        # that exists in any of them is not stale, it is unmerged.
-        also = sibling_checkouts(repo, primary)
-        report_stale_paths(memories, repo, also)
-        report_stale_checks(memories, repo, also)
+        tree = Tree(repo, primary)
+        report_stale_paths(memories, tree)
+        report_stale_checks(memories, tree)
     if check_index:
         report_index_size(memories, args.max)
     return 0

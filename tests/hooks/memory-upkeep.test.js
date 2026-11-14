@@ -107,7 +107,7 @@ test('a marker suppresses only within its own sentence', { skip }, () => {
   assert.match(report(nextSentence), /scripts\/moved\.py/);
 });
 
-// Existence is checked against the caller's worktree first, then the main checkout. An
+// A path the default branch never tracked is present while any checkout holds it. An
 // untracked path — a gitignored directory, a scratch file — exists only in the checkout
 // it was made in and never in a worktree, so checking the worktree alone called it
 // deleted. Two of the three real findings on 2026-08-29 were exactly that.

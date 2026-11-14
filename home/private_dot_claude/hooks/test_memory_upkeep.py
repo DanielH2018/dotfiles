@@ -62,7 +62,7 @@ with tempfile.TemporaryDirectory() as tmp:
     (repo / "docs" / "kept.md").write_text("x\n")
 
     def stale(text):
-        return mod.stale_paths(text, repo)
+        return mod.stale_paths(text, mod.Tree(repo))
 
     # ── it finds what it should ──────────────────────────────────────────────────────
 
@@ -191,7 +191,7 @@ with tempfile.TemporaryDirectory() as tmp:
     (repo / "docs" / "test_x.py").write_text("def test_live():\n    pass\n")
 
     def checks(text):
-        return mod.stale_checks(text, repo)
+        return mod.stale_checks(text, mod.Tree(repo))
 
     check(
         "a node id whose file is gone is missing",
@@ -274,12 +274,13 @@ with tempfile.TemporaryDirectory() as tmp:
     # ── the worktree case ────────────────────────────────────────────────────────────
     # Memory is keyed to the main checkout, so a session in .claude/worktrees/<name>
     # has to resolve back to it or this hook is silent in most of the repo's sessions.
-    # Path existence is checked against every checkout of the repo: the session's own
-    # first, then the main checkout and each sibling worktree. A file added on a branch
-    # is therefore not stale from anywhere while a worktree holds it — a memory written
-    # by the session that created the file, ahead of its merge, is correct, and the hook
-    # flagged one from `master` at every session start until the PR landed (dotfiles
-    # #557). Once the worktree is gone the path reads as stale again.
+    # The default branch decides whether a path exists (`Tree`). A file the default
+    # branch never tracked is not stale from anywhere while a worktree holds it — a
+    # memory written by the session that created the file, ahead of its merge, is
+    # correct, and the hook flagged one from `master` at every session start until the
+    # PR landed (dotfiles #557). Once the worktree is gone the path is stale again. A
+    # file the default branch deleted is stale from everywhere, although a worktree that
+    # lags still holds it (dotfiles #1262).
     git = [
         "git",
         "-c",
@@ -291,6 +292,10 @@ with tempfile.TemporaryDirectory() as tmp:
     ]
     (repo / "docs").mkdir(exist_ok=True)
     (repo / "docs" / "kept.md").write_text("x\n")
+    (repo / "docs" / "dropped.md").write_text("x\n")
+    (repo / "docs" / "local").mkdir()
+    (repo / "docs" / "local" / "notes.md").write_text("x\n")
+    (repo / "docs" / "test_y.py").write_text("def test_old():\n    pass\n")
     subprocess.run(
         [*git, "add", "-A"], cwd=repo, check=True, capture_output=True, text=True
     )
@@ -347,6 +352,63 @@ with tempfile.TemporaryDirectory() as tmp:
     check(
         "sibling_checkouts keeps the main checkout when git fails",
         mod.sibling_checkouts(root / "not-a-repo", repo) == [repo],
+    )
+
+    # The default branch drops one file, renames a test, and stops tracking a file that
+    # it ignores from then on. The worktree was made before that commit, so it holds
+    # all three as they were.
+    (repo / ".gitignore").write_text("docs/local/\n")
+    (repo / "docs" / "test_y.py").write_text("def test_new():\n    pass\n")
+    for args in (
+        ["rm", "-q", "docs/dropped.md"],
+        ["rm", "-q", "--cached", "docs/local/notes.md"],
+        ["add", ".gitignore", "docs/test_y.py"],
+        ["commit", "-q", "-m", "drop one file, rename a test, ignore a file"],
+    ):
+        subprocess.run(
+            [*git, *args], cwd=repo, check=True, capture_output=True, text=True
+        )
+    (memories / "lagging.md").write_text("The page is `docs/dropped.md`.\n")
+    (memories / "ignored.md").write_text("Notes are in `docs/local/notes.md`.\n")
+    for where, cwd in (("the main checkout", repo), ("a worktree that lags", wt)):
+        out = subprocess.run(
+            [sys.executable, str(SCRIPT)],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            env=env,
+        ).stdout
+        check(
+            f"a path the default branch deleted is stale from {where}",
+            "lagging.md: docs/dropped.md" in out,
+        )
+        check(
+            f"an ignored path the main checkout holds is not stale from {where}",
+            "ignored.md" not in out,
+        )
+    (memories / "lagging.md").unlink()
+    (memories / "ignored.md").unlink()
+    check(
+        "a test the default branch renamed is missing from a worktree that lags",
+        mod.stale_checks("ENFORCED by `docs/test_y.py::test_old`.", mod.Tree(wt, repo))
+        == (["docs/test_y.py::test_old"], []),
+    )
+    # The remote's default branch outranks the main checkout's HEAD. Here it points at
+    # the commit before the drop, so the dropped file is tracked again.
+    origin_head = "refs/remotes/origin/HEAD"
+    subprocess.run(
+        ["git", "update-ref", origin_head, "wt"], cwd=repo, check=True, text=True
+    )
+    check(
+        "origin/HEAD decides what is tracked, not the main checkout's HEAD",
+        mod.Tree(repo).holds("docs/dropped.md"),
+    )
+    subprocess.run(
+        ["git", "update-ref", "-d", origin_head], cwd=repo, check=True, text=True
+    )
+    check(
+        "without a remote, the main checkout's HEAD decides",
+        not mod.Tree(repo).holds("docs/dropped.md"),
     )
 
     subprocess.run(
