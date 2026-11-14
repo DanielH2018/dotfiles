@@ -268,8 +268,9 @@ filled with its arguments. A shell inside a
 `>( )` reads the stdout of the stage that names it. `source` and `.` run a script file as
 a shell does. A shell inside an ssh remote text or a `-c` string executes the stdin of the
 stage that carries it, so `bash -c 'sh' < hosts/bootstrap-host.sh` matches. `eval` runs
-its arguments as script text, and a `$( )` in them stands for the stdout of its body. A
-variable is expanded when the same command assigns it a literal value or a `$( )`, so
+its arguments as script text. A `$( )` in them, in a remote text or in a `-c` string
+stands for the stdout of its body. A variable is expanded to every value the same command
+assigns it, whether or not the shell reaches the assignment, so
 `x='systemctl start homelab-reconcile'; ssh host "$x"` matches. It asks only when the payload's
 `permission_mode` is `default`, `manual`, `acceptEdits` or `plan`. Auto mode is left to the
 `soft_deny` prose, which clears the dispatch the server repo's post-merge procedure prints.

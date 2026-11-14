@@ -15,8 +15,8 @@ the argv and reads the payload's `permission_mode`, and asks only in a mode that
 
 `route()` reads every top-level segment and `$( )` body, past the wrappers that
 `gitargv.unwrap` skips (`timeout`, `nohup`, `nice`, `time`, `xargs`, `sudo`, ...). It also
-reads the remote text of an `ssh` or `hl` call and the text of a `bash -c` / `sh -c`, three
-levels deep. A stage that executes its stdin runs what it reads there: a `< file`, a heredoc
+reads the remote text of an `ssh` or `hl` call and the text of a `bash -c` / `sh -c`, to
+`_DEPTH` levels. A stage that executes its stdin runs what it reads there: a `< file`, a heredoc
 or herestring body, or the stage piped into it. Such a stage is a shell given no script or
 `-s`, or an ssh or hl call whose remote command is empty. The remote text and the `-c` text
 read the stdin of the stage that carries them, so a shell inside either executes it
@@ -37,14 +37,16 @@ format is filled with its arguments in order, every conversion as `%s` is.
 `source` and `.` run a script file as a shell does (dotfiles #1347).
 
 `eval` runs its arguments as script text. A `$( )` or a backtick pair stands for the stdout
-of its body wherever its text lands: in the arguments of an `eval`, in what an `echo` or
-`printf` writes, or as an operand of a stage that feeds a pipe (dotfiles #1355).
+of its body wherever its text lands: in the arguments of an `eval`, in a remote text or a
+`-c` string, in what an `echo` or `printf` writes, or as an operand of a stage that feeds a
+pipe (dotfiles #1355).
 
-A variable is followed when the same command assigns it (dotfiles #1355). The assignment
-is a segment of its own (`x='...'`) or an argument of `export`, `declare`, `typeset`,
-`local` or `readonly`, and its value is literal, another such variable, or a `$( )`. Every
-later `$x` and `${x}` is expanded before the segment is read, in a `$( )` body and an
-unquoted heredoc body too.
+A variable is followed when the same command assigns it (dotfiles #1355). Every word of
+the form `NAME=value` or `NAME+=value` assigns, wherever it stands in its segment, so the
+check does not decide whether the shell reaches the assignment or keeps it. A variable
+holds every value the command gives it, and a later `$x` or `${x}` is expanded once for
+each, in a `$( )` body and an unquoted heredoc body too. The check over-reads here as it
+does for a pipe: `x='systemctl start homelab-reconcile'; x=uptime; ssh host "$x"` asks.
 
 Known residuals: a numeric workflow ID, which cannot be resolved offline; and a variable
 set any other way, such as by `read`, a `for` loop, a `${x:-default}` or the environment.
@@ -55,10 +57,10 @@ import itertools
 import posixpath
 import re
 import shlex
+from collections.abc import Callable
 from dataclasses import dataclass
 
-from claude_guard.assignments import split_assignments
-from claude_guard.deny import _segment_argv
+from claude_guard.deny import _segment_argv, _words
 from claude_guard.gitargv import unwrap
 from claude_guard.segment import parse, substitution_spans
 
@@ -95,8 +97,9 @@ _RUN_VERBS = frozenset(
 )
 _ENABLE_VERBS = frozenset({"enable", "reenable"})
 _UNITS = frozenset({"homelab-reconcile", "homelab-reconcile.service"})
-_DECLARES = ("export", "declare", "typeset", "local", "readonly")
-_DEPTH = 3
+# Bounds the recursion: a variable can hold an `eval` of itself.
+_DEPTH = 8
+_ALTERNATIVES = 8
 # The word a substitution is replaced by before the command is lexed is this, a number no
 # other substitution has, then `_SUBSTITUTION_END`, so no such word is a prefix of another.
 _SUBSTITUTION = "/dev/fd/claude-guard-substitution-"
@@ -104,7 +107,8 @@ _SUBSTITUTION_END = "-end"
 _substitution_ids = itertools.count()
 _NAME = r"[A-Za-z_][A-Za-z0-9_]*"
 _REFERENCE = re.compile(rf"\$(?:({_NAME})|\{{({_NAME})\}})")
-_DECLARED = re.compile(rf"({_NAME})=(.*)", re.DOTALL)
+_ASSIGNED = re.compile(rf"({_NAME})(\+?)=(.*)", re.DOTALL)
+_ANSI_QUOTE = re.compile(r"\$(?=')")
 _CONVERSION = re.compile(r"%%|%[-+ #0]*[\d*]*(?:\.[\d*]+)?[a-zA-Z]")
 
 
@@ -286,6 +290,36 @@ def _substituted(text: str, variables: dict[str, str]) -> str:
     return _REFERENCE.sub(lambda ref: variables.get(ref[1] or ref[2], ref[0]), text)
 
 
+def _alternatives(
+    text: str,
+    variables: dict[str, tuple[str, ...]],
+    expand: Callable[[str, dict[str, str]], str],
+) -> list[str]:
+    """`text` expanded by `expand` once for each choice of a value for the variables it
+    names, the values assigned last first, `_ALTERNATIVES` texts at most."""
+    names = sorted({ref[1] or ref[2] for ref in _REFERENCE.finditer(text)} & variables.keys())
+    choices = itertools.product(*(reversed(variables[name]) for name in names))
+    return [
+        expand(text, dict(zip(names, choice, strict=True)))
+        for choice in itertools.islice(choices, _ALTERNATIVES)
+    ]
+
+
+def _assign(text: str, variables: dict[str, tuple[str, ...]]) -> None:
+    """Add to `variables` every value a `NAME=value` or `NAME+=value` word of the segment
+    `text` assigns. A variable keeps its earlier values, `_ALTERNATIVES` at most."""
+    for word in _words(text) or []:
+        assigned = _ASSIGNED.fullmatch(word)
+        if assigned is None:
+            continue
+        name = assigned[1]
+        values = _alternatives(assigned[3], variables, _substituted)
+        if assigned[2]:
+            values = [old + value for old in variables.get(name, ("",)) for value in values]
+        kept = dict.fromkeys(variables.get(name, ()) + tuple(values))
+        variables[name] = tuple(kept)[-_ALTERNATIVES:]
+
+
 def _expanded(text: str, variables: dict[str, str]) -> str:
     """`text` with each `$NAME` and `${NAME}` that `variables` holds replaced by its value,
     as the shell expands a command.
@@ -404,7 +438,7 @@ def _read(
     command: str,
     depth: int = 0,
     stdin: _Stream | None = None,
-    variables: dict[str, str] | None = None,
+    variables: dict[str, tuple[str, ...]] | None = None,
 ) -> tuple[list[list[str]], _Stream]:
     """Every argv `command` runs, with redirections dropped, and what `command` writes to
     stdout. A script file fed to a stage that executes it appears as a one-word argv naming
@@ -415,7 +449,7 @@ def _read(
         depth: how many shells deep `command` sits inside the command the check was given.
         stdin: what `command` itself reads on stdin, nothing when omitted. Every stage
           that heads a pipeline reads it.
-        variables: the value of each variable assigned before `command` runs.
+        variables: the values each variable can hold when `command` starts.
     """
     stdin = stdin or _Stream()
     variables = dict(variables or {})
@@ -434,9 +468,9 @@ def _read(
         target[word] = command[span.body : span.end - 1]
         masked += command[last : span.start] + word
         last = span.end
-    masked += command[last:]
+    masked = _ANSI_QUOTE.sub("", masked + command[last:])
 
-    def nested(text: str, read: _Stream, known: dict[str, str] | None = None) -> None:
+    def nested(text: str, read: _Stream, known: dict[str, tuple[str, ...]] | None = None) -> None:
         if depth < _DEPTH:
             out.extend(_read(text, depth + 1, read, known)[0])
 
@@ -448,42 +482,39 @@ def _read(
         for word in [word for word in bodies if word in seg.text]:
             argvs, feeds[word] = _read(bodies.pop(word), depth, variables=variables)
             out.extend(argvs)
-        assigned = split_assignments(seg.text)
-        if assigned is not None and not assigned.rest:
-            for assignment in assigned.assignments:
-                variables[assignment.name] = _substituted(assignment.value, variables)
-        argv = _segment_argv(_expanded(seg.text, variables)) or []
-        words, fed = _redirects(argv)
+        _assign(seg.text, variables)
         heredocs = tuple(
-            body if quoted else _substituted(body, variables)
+            text
             for body, quoted in zip(seg.heredocs, seg.heredoc_quoted, strict=True)
+            for text in ([body] if quoted else _alternatives(body, variables, _substituted))
         )
-        read = fed + _Stream(texts=heredocs) + piped
-        if words:
-            out.append(words)
-            if words[0] in _DECLARES:
-                for declared in filter(None, map(_DECLARED.fullmatch, words[1:])):
-                    variables[declared[1]] = declared[2]
-            inner = _inner_text(words)
-            if inner:
-                nested(inner, read)
-            script = _script(words)
-            evaluated = _evaluated(words)
-            if _runs_stdin(words):
-                executed = read
-            elif script in feeds:
-                executed = _Stream((script,))
-            else:
-                executed = _Stream()
-            executed = (executed + _Stream(texts=evaluated)).resolved(feeds)
-            out.extend([path] for path in executed.files)
-            for text in executed.texts:
-                if text in evaluated:
-                    nested(text, read, variables)
+        stdout = _Stream()
+        for text in _alternatives(seg.text, variables, _expanded):
+            words, fed = _redirects(_segment_argv(text) or [])
+            read = fed + _Stream(texts=heredocs) + piped
+            if words:
+                out.append(words)
+                script = _script(words)
+                inner = _inner_text(words)
+                evaluated = _evaluated(words)
+                if _runs_stdin(words):
+                    executed = read
+                elif script in feeds:
+                    executed = _Stream((script,))
                 else:
-                    nested(text, _Stream())
-        operands = tuple(word for word in words[1:] if not word.startswith("-"))
-        stdout = (_Stream(operands, _printed(words)) + read).resolved(feeds)
+                    executed = _Stream()
+                handed = evaluated + ((inner,) if inner else ())
+                executed = (executed + _Stream(texts=handed)).resolved(feeds)
+                out.extend([path] for path in executed.files)
+                for script_text in executed.texts:
+                    if script_text in evaluated:
+                        nested(script_text, read, variables)
+                    elif script_text == inner:
+                        nested(script_text, read)
+                    else:
+                        nested(script_text, _Stream())
+            operands = tuple(word for word in words[1:] if not word.startswith("-"))
+            stdout += (_Stream(operands, _printed(words)) + read).resolved(feeds)
         for sink in [sink for sink in sinks if sink in seg.text]:
             out.extend(_read(sinks.pop(sink), depth, stdout, variables)[0])
         if seg.sep == "|":
