@@ -1455,6 +1455,12 @@ PYTHON_WRITE_DENY = [
     # a command line another command runs
     f"bash -c \"python3 -c \\\"open('{BASHRC}','w')\\\"\"",
     f"echo $(python3 -c \"open('{BASHRC}','w')\")",
+    # the program, or the path it is given, arrives on stdin or from an earlier stage
+    f"python3 <<< \"open('{BASHRC}','w').write('x')\"",
+    "python3 -c \"import sys; open(sys.stdin.readline().strip(), 'w')\" <<< ~/.zshrc",
+    "python3 -c \"import sys; open(sys.stdin.readline().strip(), 'w')\" <<'EOF'\n~/.zshrc\nEOF",
+    "echo ~/.zshrc | xargs python3 -c \"import sys; open(sys.argv[1], 'w').write('x')\"",
+    f"echo \"open('{BASHRC}','w')\" | python3",
     # text the parser refuses, and a program the shell rewrites first
     f"python3 -c \"open('{BASHRC}','w')",
     "python3 -c \"print(open('$HOME/.bashrc').read())\"",
@@ -1469,6 +1475,9 @@ PYTHON_WRITE_ALLOW = [
     "python3 -m json.tool ~/.claude/settings.json",
     "uv run python scripts/dev/findings.py open --title 'the .bashrc guard'",
     "grep -c python ~/.bashrc",
+    # a read-only program given a protected file on stdin, and a writer after `||`
+    'cat ~/.claude/settings.json | python3 -c "import json, sys; print(json.load(sys.stdin))"',
+    "test -f ~/.bashrc || python3 -c \"open('out.txt','w').write('x')\"",
 ]
 
 

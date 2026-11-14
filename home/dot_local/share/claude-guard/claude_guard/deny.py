@@ -2191,11 +2191,16 @@ def inplace_edit(sc: Scan, target: str) -> Verdict | None:
 # open on every spelling outside its list, so the proof is an allowlist and the refusal is
 # the default. The interpreter is any word whose basename is `python…`, wherever it sits in
 # the segment. That covers a path-spelled interpreter and every leader (`env`, `timeout`,
-# `nice`, `uv run`, `xargs`) without a list of leaders to fall behind.
+# `nice`, `uv run`) without a list of leaders to fall behind.
 #
-# Residual: the program a script file holds (`python3 fix.py ~/.bashrc`), one that reaches
-# the path without naming it (a `cd`, an environment variable, `'.bash' + 'rc'`), and one
-# fed through a pipe. The guard never reads a file it did not see written.
+# A program can also take the path from what it is given, so the rule reads three inputs
+# beside the program text: the words after the program, the interpreter's stdin (a heredoc
+# body or a here-string), and the earlier stages of its pipeline. The last covers a leader
+# that turns its stdin into arguments, as `xargs` does, again without naming the leader.
+#
+# Residual: the program a script file holds (`python3 fix.py ~/.bashrc`), and one that
+# reaches the path without naming it (a `cd`, an environment variable, `'.bash' + 'rc'`, a
+# file of paths). The guard never reads a file it did not see written.
 _PYTHON_WORD = re.compile(r"python[0-9.]*")
 _PYTHON_NAMES_TARGET = rf"{_INTERPRETER_WORD}.*{WRITE_TARGETS}"
 # CPython's options that take a value: the rest of the word, or the next word.
@@ -2203,42 +2208,45 @@ _PY_VALUE_OPTS = "WX"
 _PY_STDIN = frozenset({"-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"})
 
 
-def _without_redirects(words: list[str]) -> list[str]:
-    """`words` less each redirect: its operator, its target and a file descriptor before it."""
+def _without_redirects(words: list[str]) -> tuple[list[str], list[str]]:
+    """`words` less each redirect (its operator, its target and a file descriptor before
+    it), and the words the redirects gave as here-strings."""
     kept: list[str] = []
-    skip = False
+    here_strings: list[str] = []
+    operator = ""
     for w in words:
-        if skip:
-            skip = False
+        if operator:
+            if operator.endswith("<<<"):
+                here_strings.append(w)
+            operator = ""
         elif _REDIRECT_WORD.fullmatch(w):
             if kept and kept[-1].isdigit():
                 kept.pop()
-            skip = True
+            operator = w
         else:
             kept.append(w)
-    return kept
+    return kept, here_strings
 
 
-def _command_line_programs(
-    args: list[str], heredocs: tuple[str, ...]
-) -> list[tuple[str, list[str]]]:
-    """The programs a Python interpreter runs from its command line, each with the words it
-    receives as `sys.argv[1:]`.
+def _command_line_programs(args: list[str], stdin: list[str]) -> list[tuple[str, list[str]]]:
+    """The programs a Python interpreter runs from its command line, each with the texts it
+    can read a path from.
 
     Args:
         args: The words after the interpreter, redirects removed (`_without_redirects`).
-        heredocs: The heredoc bodies of the interpreter's segment.
+        stdin: The texts the interpreter's stdin may carry: the heredoc bodies and
+            here-strings of its segment, and the earlier stages of its pipeline.
 
     Returns:
-        The `-c` program, or every heredoc body when the interpreter reads its program
-        from stdin. Empty for a script file and for `-m`, whose later words belong to the
-        script or the module.
+        The `-c` program with the words after it and `stdin`, or each of `stdin` as the
+        program when the interpreter reads its program there. Empty for a script file and
+        for `-m`, whose later words belong to the script or the module.
     """
     i = 0
     while i < len(args):
         w = args[i]
         if w in _PY_STDIN:
-            return [(body, args[i + 1 :]) for body in heredocs]
+            return [(text, args[i + 1 :]) for text in stdin]
         if not w.startswith("-"):
             return []
         if w.startswith("--"):
@@ -2249,24 +2257,24 @@ def _command_line_programs(
             if c == "c":
                 rest = args[i + 1 :]
                 if glued:
-                    return [(glued, rest)]
-                return [(rest[0], rest[1:])] if rest else []
+                    return [(glued, rest + stdin)]
+                return [(rest[0], rest[1:] + stdin)] if rest else []
             if c == "m":
                 return []
             if c in _PY_VALUE_OPTS:
                 i += not glued
                 break
         i += 1
-    return [(body, []) for body in heredocs]
+    return [(text, []) for text in stdin]
 
 
-def _changes_target(program: str, argv: list[str]) -> bool:
-    """Whether a Python `program` run with `argv` names a WRITE_TARGETS path and may change
-    it. The program's attribute accesses are masked as `secret_interpreter` masks them, so
-    `self.env.filters` names no `.env`. A program the shell may rewrite first, one holding
-    `$` or a backtick, is never read-only."""
+def _changes_target(program: str, inputs: list[str]) -> bool:
+    """Whether a Python `program` names a WRITE_TARGETS path, or is given one in `inputs`,
+    and may change it. The program's attribute accesses are masked as `secret_interpreter`
+    masks them, so `self.env.filters` names no `.env`. A program the shell may rewrite
+    first, one holding `$` or a backtick, is never read-only."""
     text = _masked_attributes(program) or program
-    if not bdb_re(text, WRITE_TARGETS) and not any(bdb_re(a, WRITE_TARGETS) for a in argv):
+    if not bdb_re(text, WRITE_TARGETS) and not any(bdb_re(a, WRITE_TARGETS) for a in inputs):
         return False
     return "$" in program or "`" in program or not read_only(program)
 
@@ -2281,24 +2289,27 @@ def _python_changes_target(text: str, depth: int = 0) -> bool:
     p = parse(text)
     if not p.ok or depth > 4:
         return bdb_re(normalize(text), _PYTHON_NAMES_TARGET)
+    upstream: list[str] = []
     for seg in p.segments:
         words = _words(seg.text)
         if words is None:
             if bdb_re(normalize("\n".join((seg.text, *seg.heredocs))), _PYTHON_NAMES_TARGET):
                 return True
             continue
-        args = _without_redirects(words)
+        args, here_strings = _without_redirects(words)
+        stdin = [*seg.heredocs, *here_strings, *upstream]
         programs: set[str] = set()
         for i, w in enumerate(args):
             if not _PYTHON_WORD.fullmatch(posixpath.basename(w)):
                 continue
-            for program, argv in _command_line_programs(args[i + 1 :], seg.heredocs):
-                if _changes_target(program, argv):
+            for program, inputs in _command_line_programs(args[i + 1 :], stdin):
+                if _changes_target(program, inputs):
                     return True
                 programs.add(program)
         nested = [w for w in words if any(c.isspace() for c in w)] + list(seg.heredocs)
         if any(_python_changes_target(t, depth + 1) for t in nested if t not in programs):
             return True
+        upstream = [*upstream, seg.text, *seg.heredocs] if seg.sep == "|" else []
     return any(_python_changes_target(t, depth + 1) for t in p.substitutions)
 
 

@@ -264,8 +264,11 @@ passes an `open` only as a call whose mode is a literal read mode, read at the p
 each opener keeps it: second for the builtin, first or second for an `x.open(…)`. The
 interpreter is any word whose basename is `python…`, so a path-spelled interpreter and an
 `env`, `timeout` or `nice` leader are covered without a list of leaders. A script file's
-program stays out of reach, as does a program fed through a pipe. Over 27,144 distinct
-commands from this host's transcripts the rule refused 60 (2026-11-14). Most were edit
+program stays out of reach. The rule also reads what the program is given: the
+interpreter's heredoc or here-string, and the earlier stages of its pipeline, which may be
+the program itself or its arguments under `xargs`. Over 27,233 distinct commands from this
+host's transcripts the rule refused 71 (2026-11-14), 10 of them probes of the guard
+itself. Most of the rest were edit
 scripts that rewrite a file under `.claude/hooks/`, or whose replaced text names
 `secrets.yml` or `.bashrc`; the denial points those at the Edit tool.
 
