@@ -1701,6 +1701,9 @@ UV_STDIN_ALLOW = [
 
 def test_a_program_uv_run_reads_from_stdin_is_judged_as_a_python_program():
     assert rules(UV_STDIN_WRITE_DENY) == ["python-write"] * len(UV_STDIN_WRITE_DENY)
+
+
+def test_a_secret_named_in_a_program_python_reads_from_stdin_is_refused():
     assert rules(UV_STDIN_SECRET_DENY) == ["secret-read-interpreter"] * len(UV_STDIN_SECRET_DENY)
 
 
