@@ -6,7 +6,9 @@ in practice only edit a file by string replacement, and the word is in the text 
 `inert(program)` lets a rule tell those apart. `read_only(program)` is the narrower proof that
 the program also changes no file, for a rule that guards a file the program names.
 `literal_words(program)` is for a program that is not inert: the words its string literals
-hold, for a rule that asks which command the program could start.
+hold, for a rule that asks which command the program could start. `call_arguments(program)`
+keeps those literals apart by the call they are written in, for a rule whose words must
+reach one process together.
 
 It is an allowlist, and anything it does not recognise refuses. A program is inert only when
 it parses, and when every import, every attribute it reads and every builtin it names is one
@@ -35,6 +37,7 @@ Typical usage example:
 import ast
 import builtins
 import re
+from collections.abc import Iterable
 from typing import NamedTuple
 
 # Modules whose public API holds nothing that runs a process.
@@ -237,6 +240,148 @@ def literal_words(program: str) -> frozenset[str]:
     for node in ast.walk(tree):
         _fold(node, values, folded, words)
     return frozenset(w for w in words if w and len(w) <= _WORD_LIMIT)
+
+
+# DECIDED (dotfiles #1372, operator ruling 2026-11-14): the per-call census resolves the
+# same three spellings as `literal_words`, and the words of two calls never combine. A list
+# the program builds at run time (`append`, `+=`, a parameter, a loop) stays the residual
+# the marker above accepts.
+def call_arguments(program: str) -> list[list[str]] | None:
+    """Returns the string literals of each call in `program`, as that call's argument list.
+
+    A call's list holds every literal written inside the call, in source order: in its
+    arguments, in a list, a starred list or a nested call among them, and in the object
+    its method is called on. `+` between two literals makes one word, an f-string is one
+    word with each value it cannot read left empty, and a name the program binds once
+    stands for what it is bound to. A dict entry whose key and value are both literals is
+    the one word `key=value`, the way an environment is written on a command line.
+
+    Each string literal is also a list of its own, wherever it sits, so a literal that
+    holds a whole command line is read even when no call names it.
+
+    Args:
+        program: The program text an interpreter runs: a heredoc body or a `-c` argument.
+
+    Returns:
+        One list per call and one per literal, in no fixed order. None for a program that
+        does not parse, nests deeper than the interpreter's stack, or spells a list of
+        more than `_SPELLED_LIMIT` characters, since none of those can be read call by call.
+    """
+    tree = _parsed(program)
+    if tree is None:
+        return None
+    bound = _bindings(tree)
+    spelled = _Spelled(
+        {
+            node.targets[0].id: node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and bound[node.targets[0].id] == 1
+        }
+    )
+    found: list[list[str]] = []
+    try:
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                or isinstance(node, ast.Constant)
+                and isinstance(node.value, str | bytes)
+            ):
+                found.append(spelled.words(node))
+    except RecursionError, _TooLong:
+        return None
+    return [words for words in found if words]
+
+
+# More than a command line can hold. A name that doubles itself (`a = b + b`) grows a list
+# without bound, so a program that spells a longer one is not read call by call.
+_SPELLED_LIMIT = 1 << 20
+
+
+class _TooLong(Exception):
+    """A list of words that passed `_SPELLED_LIMIT`."""
+
+
+class _Spelled:
+    """The words each expression of one program spells out, read without running it."""
+
+    def __init__(self, values: dict[str, ast.expr]) -> None:
+        """Initializes the reader.
+
+        Args:
+            values: The expression each name bound once is assigned.
+        """
+        self._values = values
+        self._read: dict[int, tuple[bool, list[str]]] = {}
+        self._reading: set[int] = set()
+
+    def words(self, node: ast.AST) -> list[str]:
+        """Returns the words `node` spells, in source order.
+
+        Raises:
+            _TooLong: The words passed `_SPELLED_LIMIT`.
+            RecursionError: `node` nests deeper than the interpreter's stack.
+        """
+        return self._spell(node)[1]
+
+    def _spell(self, node: ast.AST) -> tuple[bool, list[str]]:
+        """Returns whether `node` is one string, and the words it spells."""
+        key = id(node)
+        if key in self._read:
+            return self._read[key]
+        if key in self._reading:  # `a = a + 'x'` refers to itself
+            return False, []
+        self._reading.add(key)
+        result = self._spell_unread(node)
+        self._reading.discard(key)
+        if sum(len(word) + 1 for word in result[1]) > _SPELLED_LIMIT:
+            raise _TooLong
+        self._read[key] = result
+        return result
+
+    def _spell_unread(self, node: ast.AST) -> tuple[bool, list[str]]:
+        if isinstance(node, ast.Constant):
+            value = node.value
+            if isinstance(value, bytes):
+                return True, [value.decode("utf-8", "replace")]
+            return (True, [value]) if isinstance(value, str) else (False, [])
+        if isinstance(node, ast.Name):
+            value = self._values.get(node.id)
+            return self._spell(value) if value is not None else (False, [])
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            # A chain of `+` nests as deep as it is long, so its operands are read in a loop.
+            operands = [node.right]
+            while isinstance(node.left, ast.BinOp) and isinstance(node.left.op, ast.Add):
+                node = node.left
+                operands.append(node.right)
+            operands.append(node.left)
+            return self._joined(map(self._spell, reversed(operands)))
+        if isinstance(node, ast.JoinedStr):
+            parts = [self._spell(part) for part in node.values]
+            return True, ["".join(words[0] if text else "" for text, words in parts)]
+        if isinstance(node, ast.FormattedValue):
+            return self._spell(node.value)
+        if isinstance(node, ast.Dict):
+            words: list[str] = []
+            for name, value in zip(node.keys, node.values, strict=True):
+                pair = [self._spell(part) for part in (name, value) if part is not None]
+                if len(pair) == 2 and pair[0][0] and pair[1][0]:
+                    words.append(f"{pair[0][1][0]}={pair[1][1][0]}")
+                else:
+                    words += [word for _, part in pair for word in part]
+            return False, words
+        children = map(self._spell, ast.iter_child_nodes(node))
+        return False, [word for _, part in children for word in part]
+
+    @staticmethod
+    def _joined(operands: Iterable[tuple[bool, list[str]]]) -> tuple[bool, list[str]]:
+        """Returns the operands of a `+` chain as one string, or as one list of words."""
+        operands = list(operands)
+        if all(text for text, _ in operands):
+            return True, ["".join(words[0] for _, words in operands)]
+        return False, [word for _, words in operands for word in words]
 
 
 # Longer than a path, a subcommand or a ref name can be. A name that doubles itself

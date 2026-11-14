@@ -173,8 +173,9 @@ keeping its commas. So `build_scan` adds a member for each text that holds an ar
 list, with a space in place of the comma between two string literals (dotfiles #1337). The
 member covers a Python list or tuple, the `'git', ['push', …]` of node's `execFileSync`, and
 a list `system` call in perl and ruby. The member does not cover a list that a program
-builds across statements or from a variable. The two readings below cover that list for a
-force push.
+builds across statements or from a variable. The readings below cover that list: two for a
+force push, and one for a push to main/master, a push that takes inline config, and a push
+that skips the hook.
 
 A Python program gets a second reading that needs no adjacent literals (dotfiles #1349).
 For a `-c` or stdin program that `inert_python.inert` cannot prove starts no process,
@@ -184,6 +185,28 @@ The census folds `+` between literals and follows a name the program binds once 
 inline alias for one, and a force spelling. The three words need not share a list, so a program that starts a plain
 push and passes `-f` to another command is denied too. A word the program builds at run
 time (base64, `getattr`, `chr()`, `str.join`) is an accepted residual.
+
+`push_main`, `push_config` and `push_no_verify` read a Python program one call at a time
+(dotfiles #1372 and #1380). `inert_python.call_arguments` lists the string literals written
+inside each call, in source order, with the same three resolutions: `+` between literals,
+a starred list, and a name the program binds once. Each list is read as the command line
+it spells, by the same patterns that read a shell command. So `a = ['push', 'origin',
+'main']; subprocess.run(['git'] + a)` is denied as `push-main`. The words of two calls
+never combine: a call that fetches `main` and a call that pushes a feature branch is no
+decision, and so is a `git commit --no-verify` in one call and a plain push in the next.
+Each string literal is also read on its own, so the command line an `os.system` call takes
+is still read.
+
+For these three rules the per-call reading replaces the program's text, where the text
+is certain to be Python and nothing else. That is a closed-shape program
+(`_plain_python_sources`) that parses, holds no `$` or backtick, and sits in the command
+once. Any other program keeps its text reading, with its argument lists joined, and gets
+the per-call reading on top. A program that `inert` proves starts no process adds no call.
+Three things are out of reach of the per-call reading. A list the program builds at run
+time, with `append`, `+=`, a loop variable or a parameter, is the residual the #1349
+ruling accepts. A comment is no literal, so text in one is no longer read. A config file
+that the shell command swaps in for a push the program starts (`export
+GIT_CONFIG_GLOBAL=…; python3 -c …`) is read only when the program's text is.
 
 A node, perl, ruby or other `_STDIN_CLI` program gets the same reading from its text
 (dotfiles #1368). The guard parses none of those languages, so `_program_may_force_push`

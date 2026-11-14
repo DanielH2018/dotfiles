@@ -2327,6 +2327,70 @@ def test_a_force_push_whose_words_a_python_program_keeps_apart_is_denied(program
         assert (v.kind, v.rule) == ("deny", "force-push-flag"), command
 
 
+@pytest.mark.parametrize(
+    ("program", "rule"),
+    [
+        (f"a = ['push', 'origin', 'main']; {_RUN}(['git'] + a)", "push-main"),
+        (f"{_RUN}(['git', *['push', 'origin', 'master']])", "push-main"),
+        (f"b = 'main'; {_RUN}(['git', 'push', 'origin', b])", "push-main"),
+        (f"{_RUN}('git push origin main'.split())", "push-main"),
+        (f"a = ['-c', 'alias.p=push', 'p', 'origin', 'main']; {_RUN}(['git'] + a)", "push-main"),
+        (f"a = ['push', '--no-verify']; {_RUN}(['git'] + a)", "push-no-verify"),
+        (f"{_RUN}(['git', '-C', 'a dir', 'push', '--no-verify'])", "push-no-verify"),
+        (f"a = ['-c', 'core.hooksPath=/x', 'push']; {_RUN}(['git'] + a)", "push-no-verify"),
+        (f"a = ['-c', 'remote.origin.mirror=true', 'push']; {_RUN}(['git'] + a)", "push-config"),
+        (f"a = ['-c', 'remote.o.push=+HEAD:feat', 'push']; {_RUN}(['git'] + a)", "push-config"),
+        (f"e = {{'GIT_CONFIG_GLOBAL': '/tmp/c'}}; {_RUN}(['git', 'push'], env=e)", "push-config"),
+        # The argument list of one call starts a second Python program.
+        (
+            f"p = 'a = [\\'push\\', \\'origin\\', \\'main\\']; {_RUN}([\\'git\\'] + a)'; "
+            f"{_RUN}(['python3', '-c', p])",
+            "push-main",
+        ),
+    ],
+)
+def test_a_push_whose_words_one_call_of_a_python_program_keeps_apart_is_denied(program, rule):
+    for command in (f'python3 -c "{program}"', f"python3 - <<'EOF'\n{program}\nEOF"):
+        v = d.deny(command, "", ENV)
+        assert (v.kind, v.rule) == ("deny", rule), command
+
+
+# DECIDED (dotfiles #1372 and #1380, operator ruling 2026-11-14): the push rules read a
+# Python program one call at a time, and the words of two calls never combine.
+@pytest.mark.parametrize(
+    "program",
+    [
+        f"{_RUN}(['git', 'fetch', 'origin', 'main']); {_RUN}(['git', 'push', 'origin', 'feat'])",
+        "import os; os.system('git fetch origin main'); os.system('git push origin feat')",
+        f"{_RUN}(['git', 'push', 'origin', 'feat']); print('merged to main')",
+        f"{_RUN}(['git', 'commit', '--no-verify']); {_RUN}(['git', 'push', 'origin', 'feat'])",
+        f"{_RUN}(['git', '-c', 'core.hooksPath=/x', 'commit']); {_RUN}(['git', 'push'])",
+        f"{_RUN}(['git', '-c', 'remote.o.mirror=true', 'fetch']); {_RUN}(['git', 'push'])",
+        f"{_RUN}(['git', 'push', 'origin', 'feat'])  # not git push origin main",
+        # No process to start, so the words are data.
+        "a = ['push', 'origin', 'main']; print(['git'] + a)",
+    ],
+)
+def test_push_words_in_two_calls_of_a_python_program_are_no_decision(program):
+    for command in (f'python3 -c "{program}"', f"cd /repo && python3 - <<'EOF'\n{program}\nEOF"):
+        assert d.deny(command, "", ENV) == d.NONE, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # The shell may rewrite the program before Python reads it.
+        f"python3 -c \"{_RUN}(['git', 'fetch', 'origin', 'main']); {_RUN}(['git', 'push', '$B'])\"",
+        # Not Python, so there are no calls to read.
+        f"python3 -c \"{_RUN}(['git', 'fetch', 'origin', 'main']); {_RUN}(['git', 'push'\"",
+        # An earlier command may have changed what `python3` runs.
+        f"p=python3; python3 -c \"{_RUN}(['git', 'fetch', 'main']); {_RUN}(['git', 'push'])\"",
+    ],
+)
+def test_a_python_program_that_cannot_be_read_call_by_call_is_read_as_text(command):
+    assert d.deny(command, "", ENV).rule == "push-main"
+
+
 # --- git's global options before the subcommand (dotfiles #709) ------------------------------
 
 # Every global option `git --help` lists that may precede a subcommand, in each spelling git

@@ -2,7 +2,7 @@
 
 import pytest
 
-from claude_guard.inert_python import inert, literal_words, read_only
+from claude_guard.inert_python import call_arguments, inert, literal_words, read_only
 
 INERT = [
     "from pathlib import Path\np = Path('a.md')\np.write_text(p.read_text().replace('x', 'y'))",
@@ -159,3 +159,42 @@ def test_literal_words_folds_a_chain_of_any_length():
 def test_literal_words_leaves_out_a_word_a_name_doubles_past_the_limit():
     doubling = "\n".join(f"x{i + 1} = x{i} + x{i}" for i in range(64))
     assert literal_words(f"x0 = 'ab'\n{doubling}") == {"ab" * 2**n for n in range(13)}
+
+
+@pytest.mark.parametrize(
+    ("program", "calls"),
+    [
+        ("run(['git'] + a)\na = ['push', b'-f']", [["git", "push", "-f"]]),
+        ("run(['git', *['push', 'pu' + 'sh']], check=True)", [["git", "push", "push"]]),
+        ("b = 'main'\nrun(['git', f'{b}:{c}'])", [["git", "main:"]]),
+        ("run('a b'.split(), env={'HOME': '/x', **e, k: 'v'})", [["a b", "HOME=/x", "v"]]),
+        ("run(['git', 'fetch']); run(['ls', '-l'])", [["git", "fetch"], ["ls", "-l"]]),
+        ("run(x(['git', '-C']), 'push')", [["git", "-C", "push"], ["git", "-C"]]),
+        # A name bound twice has no one value, and a name bound to itself adds nothing.
+        ("a = ['push', '-f']\na = ['log']\nrun(['git'] + a)", []),
+        ("a = a + ['push']\nrun(['git'] + a)", [["git", "push"]]),
+    ],
+)
+def test_call_arguments_keeps_the_literals_of_each_call_apart(program, calls):
+    found = [words for words in call_arguments(program) if len(words) > 1]
+    assert sorted(found) == sorted(calls)
+
+
+def test_call_arguments_lists_each_string_literal_on_its_own():
+    assert call_arguments("c = 'git push'\nd = ['-f']") == [["git push"], ["-f"]]
+
+
+def test_call_arguments_folds_a_chain_of_any_length():
+    assert ["ab"] in call_arguments("run(" + "'' + " * 5000 + "'a' + 'b')")
+
+
+@pytest.mark.parametrize(
+    "program",
+    [
+        "run(['git'",
+        "x0 = ['ab']\n" + "\n".join(f"x{i + 1} = x{i} + x{i}" for i in range(64)) + "\nrun(x64)",
+        "x0 = 'ab'\n" + "\n".join(f"x{i + 1} = x{i}" for i in range(5000)) + "\nrun(x5000)",
+    ],
+)
+def test_call_arguments_is_none_for_a_program_it_cannot_read(program):
+    assert call_arguments(program) is None

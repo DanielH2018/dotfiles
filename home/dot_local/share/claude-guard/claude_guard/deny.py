@@ -52,6 +52,7 @@ denials name the words that matched, with the exclude arguments for a recursive 
 """
 
 import fnmatch
+import functools
 import io
 import itertools
 import os
@@ -61,7 +62,7 @@ import shlex
 import shutil
 import tokenize
 from collections import Counter
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import NamedTuple
 
@@ -79,6 +80,7 @@ from claude_guard.gitargv import (
 from claude_guard.gitread import config_read
 from claude_guard.inert_python import (
     SHELL_STARTUP_FILES,
+    call_arguments,
     inert,
     literal_words,
     names_data_file,
@@ -500,13 +502,21 @@ def force_push(sc: Scan, target: str) -> Verdict | None:
     return None
 
 
+_MAIN_DEST = r"([[:space:]]|:)(refs/heads/)?(main|master)([[:space:]]|\)|\]|,|`|$)"
+
+
+def _pushes_to_main(sc: Scan) -> bool:
+    return bdb_re_pair(sc.segset, r"git[[:space:]]+push\b", _MAIN_DEST) or bdb_re(
+        sc.segset, rf"{GIT_PUSH_AT}.*{_MAIN_DEST}"
+    )
+
+
 def push_main(sc: Scan, target: str) -> Verdict | None:
     """:725-728. Any push whose DESTINATION is main/master; `:` is deliberately not a
-    terminator here so `main:feature` stays a push to feature."""
-    dest = r"([[:space:]]|:)(refs/heads/)?(main|master)([[:space:]]|\)|\]|,|`|$)"
-    if bdb_re_pair(sc.segset, r"git[[:space:]]+push\b", dest) or bdb_re(
-        sc.segset, rf"{GIT_PUSH_AT}.*{dest}"
-    ):
+    terminator here so `main:feature` stays a push to feature. A Python program is read
+    one call at a time (`_in_text_or_python_call`), so a fetch of main in one call and a
+    push of a feature branch in the next is no push to main."""
+    if _in_text_or_python_call(sc, _pushes_to_main):
         return Verdict(
             "deny",
             "push-main",
@@ -1620,25 +1630,33 @@ def _masked_attributes(program: str) -> str | None:
     return "".join(chars)
 
 
-def _without_python_attributes(sc: Scan) -> Scan:
-    """`sc` rebuilt with the attribute accesses of certain Python source masked
-    (`_masked_attributes`). Segments are read in order: a `_BEFORE_PYTHON` command is
-    passed over, a closed-shape Python segment (`_python_source`) is masked, and anything
-    else stops the masking for the rest of the command. A command with a substitution is
-    left as it is, and so is a program whose text the command holds other than once."""
-    p = parse(sc.command)
+def _plain_python_sources(command: str) -> Iterator[str]:
+    """Yields each program of `command` that only a Python interpreter reads.
+
+    Segments are read in order: a `_BEFORE_PYTHON` command is passed over, a closed-shape
+    Python segment (`_python_source`) yields its program, and anything else ends the
+    reading, since it could change what the word `python3` runs. A command the parser
+    refuses, or one with a substitution, yields nothing."""
+    p = parse(command)
     if not p.ok or p.substitutions:
-        return sc
-    command = sc.command
+        return
     for seg in p.segments:
         words = _words(seg.text)
         if not words:
-            break
+            return
         source = _python_source(words, seg.heredocs)
-        if source is None:
-            if words[0] in _BEFORE_PYTHON:
-                continue
-            break
+        if source is not None:
+            yield source
+        elif words[0] not in _BEFORE_PYTHON:
+            return
+
+
+def _without_python_attributes(sc: Scan) -> Scan:
+    """`sc` rebuilt with the attribute accesses of certain Python source masked
+    (`_masked_attributes`). The source is each program of `_plain_python_sources`, except
+    one whose text the command holds other than once."""
+    command = sc.command
+    for source in _plain_python_sources(sc.command):
         masked = _masked_attributes(source)
         if masked is not None and command.count(source) == 1:
             command = command.replace(source, masked)
@@ -3008,6 +3026,65 @@ def _runs_python_program(
     return any(within(t) for t in p.substitutions)
 
 
+@functools.lru_cache(maxsize=16)
+def _python_call_lines(program: str) -> tuple[str, ...]:
+    """Each argument list of a Python `program` that names git, as a shell command line.
+
+    The lists are those of `call_arguments`. A list of one word is a line as written, so
+    the string an `os.system` call takes is read as the shell reads it. Empty for a
+    program that provably starts no process (`inert`), and for one `call_arguments`
+    cannot read."""
+    if inert(program):
+        return ()
+    lists = call_arguments(program) or ()
+    lines = {words[0] if len(words) == 1 else shlex.join(words) for words in lists}
+    return tuple(sorted(line for line in lines if "git" in line))
+
+
+def _without_python_calls(sc: Scan) -> Scan:
+    """`sc` rebuilt without the text of each Python program that is read call by call.
+
+    The text is each program of `_plain_python_sources` that `call_arguments` can read.
+    A program holding `$` or a backtick stays, because the shell may rewrite it before
+    Python reads it, and so does one whose text the command holds other than once."""
+    command = sc.command
+    for source in _plain_python_sources(sc.command):
+        if "$" in source or "`" in source or call_arguments(source) is None:
+            continue
+        if command.count(source) == 1:
+            command = command.replace(source, "")
+    return sc if command == sc.command else build_scan(command)
+
+
+# DECIDED (dotfiles #1372 and #1380, operator ruling 2026-11-14): `push_main`,
+# `push_config` and `push_no_verify` read a Python program one call at a time. The words of
+# two calls never combine, so a call that fetches `main` and a call that pushes a feature
+# branch is no decision.
+def _in_text_or_python_call(sc: Scan, found: Callable[[Scan], bool], depth: int = 0) -> bool:
+    """Whether `found` accepts the command, with each Python program read call by call.
+
+    `found` reads the command's text without the Python programs that can be read call
+    by call (`_without_python_calls`). Each call of each Python program the command runs
+    (`_runs_python_program`) is then read on its own, as the command line its argument
+    list spells (`_python_call_lines`). That line may itself run a Python program.
+
+    Args:
+        sc: The command.
+        found: Whether one command's scan holds what the rule denies.
+        depth: How many Python programs deep `sc` sits. Past four, the text is read whole.
+    """
+    if depth > 4:
+        return found(sc)
+
+    def in_a_call(program: str, arguments: list[str], fed: list[str]) -> bool:
+        return any(
+            _in_text_or_python_call(build_scan(line), found, depth + 1)
+            for line in _python_call_lines(program)
+        )
+
+    return found(_without_python_calls(sc)) or _runs_python_program(sc.command, in_a_call, _NEVER)
+
+
 def python_write(sc: Scan, target: str) -> Verdict | None:
     """A `python -c` or stdin program that names a WRITE_TARGETS path, in its text or in an
     argument after it, and is not provably read-only (#1251)."""
@@ -3294,19 +3371,9 @@ def push_config(sc: Scan, target: str) -> Verdict | None:
     GIT_CONFIG_PARAMETERS) supplies a `+` refspec, a refspec onto main/master, or
     `remote.<name>.mirror`: a force push, or a push to main, that no flag in the command
     shows. An alias whose value `--config-env` hides counts too, since nothing shows what it
-    runs. `push.default` stays no decision: `matching` pushes what `git push --all` does."""
-    hit = any(
-        (inv.sub in PUSH_SUBCOMMANDS and any(_config_forces(k, v) for k, v in inv.config))
-        or (not inv.sub and not inv.shell)
-        for inv in sc.gits
-    )
-    hit = hit or bdb_rei(sc.segset, _HIDDEN_ALIAS_TEXT)
-    hit = hit or any(
-        bdb_re(line, GIT_PUSH_AT) and bdb_rei(line, _PUSH_CONFIG_TEXT)
-        for line in sc.segset.split("\n")
-    )
-    hit = hit or (bdb_re(sc.segset, GIT_PUSH_AT) and bdb_re(sc.scan, _CONFIG_FILE_ENV))
-    if hit:
+    runs. `push.default` stays no decision: `matching` pushes what `git push --all` does.
+    A Python program is read one call at a time (`_in_text_or_python_call`)."""
+    if _in_text_or_python_call(sc, _push_takes_config):
         return Verdict(
             "deny",
             "push-config",
@@ -3318,6 +3385,20 @@ def push_config(sc: Scan, target: str) -> Verdict | None:
             "`git push --force-with-lease <remote> <branch>`.",
         )
     return None
+
+
+def _push_takes_config(sc: Scan) -> bool:
+    hit = any(
+        (inv.sub in PUSH_SUBCOMMANDS and any(_config_forces(k, v) for k, v in inv.config))
+        or (not inv.sub and not inv.shell)
+        for inv in sc.gits
+    )
+    hit = hit or bdb_rei(sc.segset, _HIDDEN_ALIAS_TEXT)
+    hit = hit or any(
+        bdb_re(line, GIT_PUSH_AT) and bdb_rei(line, _PUSH_CONFIG_TEXT)
+        for line in sc.segset.split("\n")
+    )
+    return hit or (bdb_re(sc.segset, GIT_PUSH_AT) and bdb_re(sc.scan, _CONFIG_FILE_ENV))
 
 
 def _skips_hooks(inv: Invocation) -> bool:
@@ -3335,14 +3416,20 @@ def _skips_hooks(inv: Invocation) -> bool:
     return False
 
 
+def _push_skips_hooks(sc: Scan) -> bool:
+    return any(_skips_hooks(inv) for inv in sc.gits) or any(
+        bdb_re(line, GIT_PUSH_AT) and bdb_rei(line, _NO_VERIFY_TEXT)
+        for line in sc.segset.split("\n")
+    )
+
+
 def push_no_verify(sc: Scan, target: str) -> Verdict | None:
     """A push that skips the pre-push hook, the repo's signature gate: `--no-verify` behind
     a global option, where the settings glob `git push *--no-verify*` cannot see it, or
-    `core.hooksPath` set inline, which is the same skip by another name."""
-    if any(_skips_hooks(inv) for inv in sc.gits) or any(
-        bdb_re(line, GIT_PUSH_AT) and bdb_rei(line, _NO_VERIFY_TEXT)
-        for line in sc.segset.split("\n")
-    ):
+    `core.hooksPath` set inline, which is the same skip by another name. A Python program
+    is read one call at a time (`_in_text_or_python_call`), so a `git commit --no-verify`
+    in one call and a plain push in the next is no skip."""
+    if _in_text_or_python_call(sc, _push_skips_hooks):
         return Verdict(
             "deny",
             "push-no-verify",
