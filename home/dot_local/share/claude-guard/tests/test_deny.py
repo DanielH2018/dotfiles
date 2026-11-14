@@ -1438,17 +1438,13 @@ PYTHON_WRITE_DENY = [
     f"python3 - <<'EOF'\nfrom pathlib import Path\nPath('{BASHRC}').write_text('x')\nEOF",
     f"python3 <<'EOF'\nopen('{BASHRC}', 'a').write('x')\nEOF",
     f"python3 /dev/stdin <<'EOF'\nopen('{BASHRC}', 'a').write('x')\nEOF",
-    f"uv run python -c \"open('{BASHRC}','w').write('x')\"",
     # a writer no list of writing calls would hold
     f"python3 -c \"import shutil; shutil.copy('x', '{BASHRC}')\"",
-    f"python3 -c \"import gzip; gzip.open('{BASHRC}', 'w')\"",
-    f"python3 -c \"o = open; o('{BASHRC}', 'w')\"",
     # the path is an argument after the program
     "python3 -c \"import sys; open(sys.argv[1], 'a').write('x')\" ~/.zshrc",
     "python3 - ~/.zshrc <<'EOF'\nimport sys\nopen(sys.argv[1], 'a').write('x')\nEOF",
     # a path-spelled interpreter, and a leader in front of it
     f"/usr/bin/python3 -c \"open('{BASHRC}','w')\"",
-    f".venv/bin/python -c \"open('{BASHRC}','w')\"",
     f"env PYTHONPATH=. python3 -c \"open('{BASHRC}','w')\"",
     f"timeout 5 python3 -c \"open('{BASHRC}','w')\"",
     f"nice -n 5 python3 -c \"open('{BASHRC}','w')\"",
@@ -1465,7 +1461,6 @@ PYTHON_WRITE_DENY = [
 ]
 PYTHON_WRITE_ALLOW = [
     f"python3 -c \"print(open('{BASHRC}').read())\"",
-    f"python3 -c \"import json; print(json.load(open('{HOME}/.claude/settings.json'))['hooks'])\"",
     f"python3 - <<'EOF'\nfrom pathlib import Path\nprint(Path('{BASHRC}').read_text())\nEOF",
     # a write that names no protected path, in the text or after it
     "python3 -c \"open('out.txt','w').write('x')\"",

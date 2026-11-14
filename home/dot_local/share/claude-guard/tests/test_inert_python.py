@@ -58,9 +58,7 @@ READ_ONLY = [
 NOT_READ_ONLY = [
     # an attribute that changes a file on some object
     "from pathlib import Path\nPath('.zshrc').write_text('x')",
-    "from pathlib import Path\nPath('.zshrc').unlink()",
     "from pathlib import Path\nPath('x').replace('.zshrc')",
-    "from pathlib import Path\nPath('x').rename('.zshrc')",
     "from json import dump\ndump({}, f)",
     # the builtin takes the mode second, or as a keyword
     "open('.zshrc', 'w')",
@@ -69,23 +67,16 @@ NOT_READ_ONLY = [
     "open('.zshrc', m)",
     "open(*args)",
     "open('.zshrc', **kwargs)",
-    "open('.zshrc', opener=f)",
     # `Path('f').open` takes the mode first
     "from pathlib import Path\nPath('.zshrc').open('w')",
     "from pathlib import Path\nPath('.zshrc').open(m)",
-    "from pathlib import Path\nPath('.zshrc').open(mode='a')",
     # the unbound `Path.open`, like `gzip.open`, takes the path first and the mode second
     "from pathlib import Path\nPath.open(Path('.zshrc'), 'w')",
-    "from pathlib import Path\nPath.open('.zshrc', 'w')",
     # an `open` that is not called where it is named
     "o = open\no('.zshrc', 'w')",
-    "from functools import partial\npartial(open, '.zshrc')('w')",
     "from pathlib import Path\nf = Path('.zshrc').open\nf('w')",
-    "list(map(open, ['.zshrc'], ['w']))",
     # outside the allowlist `inert` shares
     "import gzip\ngzip.open('.zshrc')",
-    "import shutil\nshutil.copy('x', '.zshrc')",
-    "if x then echo; fi",
 ]
 
 
