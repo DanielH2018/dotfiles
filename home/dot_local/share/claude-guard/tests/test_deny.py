@@ -1898,6 +1898,10 @@ OTHER_INLINE_WRITE_DENY = [
     f"perl -pe 's#$h{{unlink(q({BASHRC}))}}#y#' docs/a.md",
     f"perl -pe 's#x#$a[unlink(q({BASHRC}))]#' docs/a.md",
     f"echo 's#x#$h{{unlink(q({BASHRC}))}}#' | perl -p",
+    # a substitution-shaped program for ruby, which reads `s#` as a comment start
+    f"ruby -e \"s#\nBEGIN {{ File.write '{BASHRC}', 'x' }}\n#y#\"",
+    f"echo \"s#\nBEGIN {{ File.write '{BASHRC}', 'x' }}\n#y#\" | ruby",
+    f"ruby -e \"s#\nBEGIN {{ File.write '{BASHRC}', 'x' }}\n#y#\" docs/a.md",
     # an interpreter named with a version, and Debian's name for node
     f"ruby3.2 -e \"File.write('{BASHRC}', 'x')\"",
     f"/usr/bin/perl5.36 -e \"unlink('{BASHRC}')\"",

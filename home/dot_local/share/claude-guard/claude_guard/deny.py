@@ -2837,7 +2837,7 @@ def _other_interpreter_arguments(args: list[str]) -> list[tuple[_StdinCli, list[
     return [(cli, after) for cli, after in named if cli is not None]
 
 
-def _stdin_program_names_secret(program: str) -> bool:
+def _stdin_program_names_secret(cli: _StdinCli, program: str) -> bool:
     """Whether a program another interpreter reads from a descriptor names a SECRET_PATHS
     path. Nothing is masked: the text is not known to be Python source."""
     return bdb_re(normalize(program), SECRET_PATHS)
@@ -2868,7 +2868,7 @@ def _runs_python_program(
     matches: Callable[[str, list[str], list[str]], bool],
     paths: str,
     depth: int = 0,
-    other_matches: Callable[[str], bool] | None = None,
+    other_matches: Callable[[_StdinCli, str], bool] | None = None,
 ) -> bool:
     """Whether `text` runs a Python program from a command line that `matches` accepts, or
     gives another interpreter a program that `other_matches` accepts.
@@ -2885,7 +2885,7 @@ def _runs_python_program(
             splitter refuses is accepted when a Python launch comes before one of them,
             because no program can be read out of it.
         depth: How many command lines deep `text` sits.
-        other_matches: Called with each program an interpreter other than Python reads
+        other_matches: Called with each interpreter other than Python and a program it reads
             from a descriptor (`_program_descriptor`) or takes inline (`_inline_programs`).
             None leaves those programs unread.
     """
@@ -2927,7 +2927,7 @@ def _runs_python_program(
             if operand is not None:
                 given += _descriptor_programs(operand, redirected, piped, substituted, earlier)
             for program in given:
-                if other_matches(program):
+                if other_matches(cli, program):
                     return True
                 programs.add(program)
         nested = [w for w in words if any(c.isspace() for c in w)] + list(seg.heredocs)
@@ -2957,19 +2957,20 @@ def python_write(sc: Scan, target: str) -> Verdict | None:
 # One perl substitution that runs no code: three delimiters, flags without `e`, and a
 # pattern and a replacement of literal text. Perl evaluates code through a `$` or `@`
 # interpolation, a `\` escape and a `(?{…})` group, so the text holds no `$`, `@`, `\` or
-# `(` at all. Its text names no file, as `_inplace_edits_only_safe_files` holds for
+# `(` at all. It holds no newline either: ruby reads `s#` as `s` and a comment, then runs
+# the next line. Its text names no file, as `_inplace_edits_only_safe_files` holds for
 # `perl -pi -e`.
-_PERL_LITERAL = r"(?:(?!(?P=d))[^$@\\(])*"
+_PERL_LITERAL = r"(?:(?!(?P=d))[^$@\\(\n])*"
 _PERL_SUBSTITUTION = re.compile(
     rf"s(?P<d>[/#|,!]){_PERL_LITERAL}(?P=d){_PERL_LITERAL}(?P=d)[gimsxnpadlur]*;?",
     re.DOTALL,
 )
 
 
-def _names_write_target(program: str) -> bool:
+def _names_write_target(cli: _StdinCli, program: str) -> bool:
     """Whether a program an interpreter other than Python runs names a WRITE_TARGETS path.
-    A program that is one plain perl substitution (`_PERL_SUBSTITUTION`) names none."""
-    if _PERL_SUBSTITUTION.fullmatch(program.strip()):
+    A program perl runs as one plain substitution (`_PERL_SUBSTITUTION`) names none."""
+    if cli is _STDIN_CLI["perl"] and _PERL_SUBSTITUTION.fullmatch(program.strip()):
         return False
     return bdb_re(program, WRITE_TARGETS)
 
