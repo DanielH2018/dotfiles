@@ -1586,6 +1586,11 @@ PYTHON_WRITE_DENY = [
     f"exec 3<<< \"open('{BASHRC}','w')\"; python3 /dev/fd/3 <<< 'print(1)'",
     f"exec 3<<< \"open('{BASHRC}','w')\"; python3 < <(cat <&3)",
     f"echo \"open('{BASHRC}','w')\" | python3 3<<< 'print(1)'",
+    f"echo \"open('{BASHRC}','w')\" | python3 - {{fd}}<<< 'print(1)'",
+    f"echo \"open('{BASHRC}','w')\" | python3 - {{fd}}<<'EOF'\nprint(1)\nEOF",
+    # a file on stdin may hold what an earlier segment wrote
+    f"echo \"open('{BASHRC}','w')\" > x; python3 - < x",
+    f"echo \"open('{BASHRC}','w')\" > x && python3 < x",
     # text the parser refuses, and a program the shell rewrites first
     f"python3 -c \"open('{BASHRC}','w')",
     "python3 -c \"print(open('$HOME/.bashrc').read())\"",

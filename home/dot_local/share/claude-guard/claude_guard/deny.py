@@ -2260,7 +2260,9 @@ _PY_VALUE_OPTS = "WX"
 # An operand that makes Python read its program from a descriptor the shell filled.
 _PY_DESCRIPTOR = re.compile(r"-|<\(|/dev/stdin|/dev/fd/\d+|/proc/(self|\d+)/fd/\d+")
 _PY_STDIN = re.compile(r"-|/dev/stdin|/dev/fd/0|/proc/self/fd/0")
-_FILLS_STDIN = ("<", "<<", "<<<")
+_FILLS_STDIN = ("<<", "<<<")
+# The word before a redirect operator that names its descriptor: `3<f`, `{fd}<f`.
+_DESCRIPTOR_WORD = re.compile(r"[0-9]+|\{\w+\}")
 _PUNCTUATION = re.compile(r"[()<>|&;]+")
 
 
@@ -2272,11 +2274,12 @@ def _without_redirects(words: list[str]) -> tuple[list[str], list[str], bool]:
     A process substitution's words are dropped through its closing `)`. One that is an
     operand, not a redirect's target, leaves its opening `<(` in place of the operand.
 
-    The segment fills its own stdin when a heredoc, a here-string or a file redirect lands
-    on stdin and nothing else in the segment can put another descriptor there. A redirect
-    on a numbered descriptor, a duplication such as `<&3` and a process substitution as
-    the target each count as something else, since the words alone do not say which
-    descriptor they move or what an earlier segment left open on it."""
+    The segment fills its own stdin when a heredoc or a here-string lands on stdin and
+    nothing else in the segment can put another descriptor there. A redirect on a numbered
+    or named (`{fd}`) descriptor, a duplication such as `<&3` and a process substitution
+    as the target each count as something else, since the words alone do not say which
+    descriptor they move or what an earlier segment left open on it. A `<` file redirect
+    counts as something else too: an earlier segment may have written the file."""
     kept: list[str] = []
     inputs: list[str] = []
     operator = ""
@@ -2299,7 +2302,8 @@ def _without_redirects(words: list[str]) -> tuple[list[str], list[str], bool]:
                 inputs.append(w)
             operator = ""
         elif _REDIRECT_WORD.fullmatch(w):
-            descriptor = kept.pop() if kept and kept[-1].isdigit() else ""
+            named = bool(kept) and _DESCRIPTOR_WORD.fullmatch(kept[-1]) is not None
+            descriptor = kept.pop() if named else ""
             if w in _FILLS_STDIN and descriptor in ("", "0"):
                 fills_stdin = True
             elif "<" in w or descriptor == "0":
