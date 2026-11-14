@@ -16,6 +16,9 @@ expansion or substitution, a heredoc, a subshell or group, backgrounding, and ev
 except `>/dev/null`, `2>/dev/null`, `>&1` and `>&2` written as one unquoted word. Quoted
 text joined to a redirect (`>'x'`, `>/dev/null'x'`) is part of the redirect's target, so it
 is refused with the rest. False means "not proven", never "runs something".
+
+`printed` reads the text an `echo` or a `printf` segment writes, for a rule that judges what
+the next command of a pipe is fed.
 """
 
 import re
@@ -247,6 +250,36 @@ def _segment_reads_or_prints(text: str) -> bool:
         first, first_glob = args[0]
         return not first_glob and (first == "--" or not first.startswith("-"))
     return False
+
+
+_ECHO_FLAGS = re.compile(r"-[neE]+")
+
+
+def printed(text: str) -> str | None:
+    r"""The text the segment `text` writes to stdout when it is one `echo` or `printf`.
+
+    None means the text cannot be read from the words: another command, a word outside
+    `_words`' grammar, a glob, or a backslash that `echo` or `printf` may turn into another
+    character. `echo` joins its operands with a space after any `-n`, `-e` and `-E` flags.
+    `printf` is read in two shapes: a format of `%s` or `%s\n` with its arguments, and a
+    format with no `%` and no escape but `\n`, alone.
+    """
+    words = _words(text)
+    if not words or any(glob for _, glob in words):
+        return None
+    name, *args = (word for word, _ in words)
+    if name == "echo":
+        while args and _ECHO_FLAGS.fullmatch(args[0]):
+            del args[0]
+        return None if any("\\" in a for a in args) else " ".join(args)
+    if name != "printf" or not args:
+        return None
+    layout, *values = args
+    if layout in ("%s", r"%s\n"):
+        end = "\n" if layout.endswith("n") else ""
+        return "".join(v + end for v in values)
+    written = layout.replace(r"\n", "\n")
+    return None if values or "%" in written or "\\" in written else written
 
 
 def segment_reads_or_prints(seg: Segment) -> bool:
