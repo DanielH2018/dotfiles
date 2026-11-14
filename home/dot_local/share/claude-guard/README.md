@@ -264,12 +264,13 @@ passes an `open` only as a call whose mode is a literal read mode, read at the p
 each opener keeps it: second for the builtin, first or second for an `x.open(…)`. The
 interpreter is any word whose basename is `python…`, so a path-spelled interpreter and an
 `env`, `timeout` or `nice` leader are covered without a list of leaders. A script file's
-program stays out of reach. The rule also reads what the program is given: the
-interpreter's heredoc or here-string, and the earlier stages of its pipeline, which may be
-the program itself or its arguments under `xargs`. Over 27,233 distinct commands from this
-host's transcripts the rule refused 71 (2026-11-14), 10 of them probes of the guard
-itself. Most of the rest were edit
-scripts that rewrite a file under `.claude/hooks/`, or whose replaced text names
+program stays out of reach. The rule also reads what the program is given: whatever its
+segment redirects in, and every earlier segment of the command, which may be the program
+itself or its arguments under `xargs`. Reading every earlier segment needs no model of
+pipes, groups or descriptors, and costs a writer refused after an unrelated segment that
+names a protected file. Over 27,268 distinct commands from this host's transcripts the rule
+refused 77 (2026-11-14), 12 of them probes of the guard itself. Most of the rest were
+edit scripts that rewrite a file under `.claude/hooks/`, or whose replaced text names
 `secrets.yml` or `.bashrc`; the denial points those at the Edit tool.
 
 When nothing above decides, `readonly.py` (dotfiles #628, ported from the server repo's

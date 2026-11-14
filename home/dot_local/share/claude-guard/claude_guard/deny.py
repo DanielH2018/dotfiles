@@ -2194,30 +2194,49 @@ def inplace_edit(sc: Scan, target: str) -> Verdict | None:
 # `nice`, `uv run`) without a list of leaders to fall behind.
 #
 # A program can also take the path from what it is given, so the rule reads three inputs
-# beside the program text: the words after the program, the interpreter's stdin (a heredoc
-# body or a here-string), and the earlier stages of its pipeline. The last covers a leader
-# that turns its stdin into arguments, as `xargs` does, again without naming the leader.
+# beside the program text: the words after the program, whatever the segment redirects in
+# (a heredoc body, a here-string, a file name, a process substitution), and every earlier
+# segment of the command. The last covers a pipe, a group, a descriptor an `exec` opened
+# and a leader that turns its stdin into arguments, as `xargs` does, without reading how
+# the segments connect. Its cost is a writer refused after an unrelated segment that names
+# a target. Each input is the program itself when the interpreter reads its program from
+# stdin, a numbered descriptor or a `<(…)` operand.
 #
 # Residual: the program a script file holds (`python3 fix.py ~/.bashrc`), and one that
-# reaches the path without naming it (a `cd`, an environment variable, `'.bash' + 'rc'`, a
-# file of paths). The guard never reads a file it did not see written.
+# reaches the path with no segment naming it (`'.bash' + 'rc'`, a file of paths). The
+# guard never reads a file it did not see written.
 _PYTHON_WORD = re.compile(r"python[0-9.]*")
 _PYTHON_NAMES_TARGET = rf"{_INTERPRETER_WORD}.*{WRITE_TARGETS}"
 # CPython's options that take a value: the rest of the word, or the next word.
 _PY_VALUE_OPTS = "WX"
-_PY_STDIN = frozenset({"-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"})
+# An operand that makes Python read its program from a descriptor the shell filled.
+_PY_DESCRIPTOR = re.compile(r"-|<\(|/dev/stdin|/dev/fd/\d+|/proc/(self|\d+)/fd/\d+")
+_PUNCTUATION = re.compile(r"[()<>|&;]+")
 
 
 def _without_redirects(words: list[str]) -> tuple[list[str], list[str]]:
     """`words` less each redirect (its operator, its target and a file descriptor before
-    it), and the words the redirects gave as here-strings."""
+    it), and the targets of the redirects that feed input.
+
+    A process substitution's words are dropped through its closing `)`. One that is an
+    operand, not a redirect's target, leaves its opening `<(` in place of the operand."""
     kept: list[str] = []
-    here_strings: list[str] = []
+    inputs: list[str] = []
     operator = ""
+    depth = 0
     for w in words:
-        if operator:
-            if operator.endswith("<<<"):
-                here_strings.append(w)
+        punctuation = _PUNCTUATION.fullmatch(w) is not None
+        if depth:
+            if punctuation:
+                depth = max(depth + w.count("(") - w.count(")"), 0)
+        elif punctuation and w in ("<(", ">("):
+            depth = 1
+            if not operator:
+                kept.append(w)
+            operator = ""
+        elif operator:
+            if "<" in operator:
+                inputs.append(w)
             operator = ""
         elif _REDIRECT_WORD.fullmatch(w):
             if kept and kept[-1].isdigit():
@@ -2225,7 +2244,7 @@ def _without_redirects(words: list[str]) -> tuple[list[str], list[str]]:
             operator = w
         else:
             kept.append(w)
-    return kept, here_strings
+    return kept, inputs
 
 
 def _command_line_programs(args: list[str], stdin: list[str]) -> list[tuple[str, list[str]]]:
@@ -2234,18 +2253,20 @@ def _command_line_programs(args: list[str], stdin: list[str]) -> list[tuple[str,
 
     Args:
         args: The words after the interpreter, redirects removed (`_without_redirects`).
-        stdin: The texts the interpreter's stdin may carry: the heredoc bodies and
-            here-strings of its segment, and the earlier stages of its pipeline.
+        stdin: The texts a descriptor of the interpreter may carry: the heredoc bodies,
+            input redirect targets and process substitutions of its segment, and the
+            earlier segments of the command.
 
     Returns:
         The `-c` program with the words after it and `stdin`, or each of `stdin` as the
-        program when the interpreter reads its program there. Empty for a script file and
-        for `-m`, whose later words belong to the script or the module.
+        program when the interpreter reads its program from a descriptor
+        (`_PY_DESCRIPTOR`). Empty for a script file and for `-m`, whose later words belong
+        to the script or the module.
     """
     i = 0
     while i < len(args):
         w = args[i]
-        if w in _PY_STDIN:
+        if _PY_DESCRIPTOR.fullmatch(w):
             return [(text, args[i + 1 :]) for text in stdin]
         if not w.startswith("-"):
             return []
@@ -2289,15 +2310,16 @@ def _python_changes_target(text: str, depth: int = 0) -> bool:
     p = parse(text)
     if not p.ok or depth > 4:
         return bdb_re(normalize(text), _PYTHON_NAMES_TARGET)
-    upstream: list[str] = []
+    earlier: list[str] = []
     for seg in p.segments:
         words = _words(seg.text)
         if words is None:
             if bdb_re(normalize("\n".join((seg.text, *seg.heredocs))), _PYTHON_NAMES_TARGET):
                 return True
             continue
-        args, here_strings = _without_redirects(words)
-        stdin = [*seg.heredocs, *here_strings, *upstream]
+        args, redirected = _without_redirects(words)
+        substituted = p.substitutions if "<(" in words else ()
+        stdin = [*seg.heredocs, *redirected, *earlier, *substituted]
         programs: set[str] = set()
         for i, w in enumerate(args):
             if not _PYTHON_WORD.fullmatch(posixpath.basename(w)):
@@ -2309,7 +2331,7 @@ def _python_changes_target(text: str, depth: int = 0) -> bool:
         nested = [w for w in words if any(c.isspace() for c in w)] + list(seg.heredocs)
         if any(_python_changes_target(t, depth + 1) for t in nested if t not in programs):
             return True
-        upstream = [*upstream, seg.text, *seg.heredocs] if seg.sep == "|" else []
+        earlier += [seg.text, *seg.heredocs]
     return any(_python_changes_target(t, depth + 1) for t in p.substitutions)
 
 

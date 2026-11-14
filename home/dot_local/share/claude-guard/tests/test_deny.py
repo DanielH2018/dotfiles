@@ -1455,12 +1455,19 @@ PYTHON_WRITE_DENY = [
     # a command line another command runs
     f"bash -c \"python3 -c \\\"open('{BASHRC}','w')\\\"\"",
     f"echo $(python3 -c \"open('{BASHRC}','w')\")",
-    # the program, or the path it is given, arrives on stdin or from an earlier stage
+    # the program, or the path it is given, arrives on a descriptor or from an earlier segment
     f"python3 <<< \"open('{BASHRC}','w').write('x')\"",
     "python3 -c \"import sys; open(sys.stdin.readline().strip(), 'w')\" <<< ~/.zshrc",
     "python3 -c \"import sys; open(sys.stdin.readline().strip(), 'w')\" <<'EOF'\n~/.zshrc\nEOF",
     "echo ~/.zshrc | xargs python3 -c \"import sys; open(sys.argv[1], 'w').write('x')\"",
     f"echo \"open('{BASHRC}','w')\" | python3",
+    f"python3 < <(echo \"open('{BASHRC}','w')\")",
+    f"python3 <(echo \"open('{BASHRC}','w')\")",
+    f"python3 /dev/fd/3 3<<'EOF'\nopen('{BASHRC}','w')\nEOF",
+    f"exec 3<<< \"open('{BASHRC}','w')\"; python3 /dev/fd/3",
+    f"echo \"open('{BASHRC}','w')\" |& python3",
+    f"{{ echo \"open('{BASHRC}','w')\"; }} | python3",
+    "python3 -c \"import sys; open(sys.stdin.readline().strip(), 'w')\" < <(echo ~/.zshrc)",
     # text the parser refuses, and a program the shell rewrites first
     f"python3 -c \"open('{BASHRC}','w')",
     "python3 -c \"print(open('$HOME/.bashrc').read())\"",
@@ -1475,9 +1482,10 @@ PYTHON_WRITE_ALLOW = [
     "python3 -m json.tool ~/.claude/settings.json",
     "uv run python scripts/dev/findings.py open --title 'the .bashrc guard'",
     "grep -c python ~/.bashrc",
-    # a read-only program given a protected file on stdin, and a writer after `||`
+    # a read-only program given a protected file, and a writer before a segment naming one
     'cat ~/.claude/settings.json | python3 -c "import json, sys; print(json.load(sys.stdin))"',
-    "test -f ~/.bashrc || python3 -c \"open('out.txt','w').write('x')\"",
+    "python3 -c \"open('out.txt','w').write('x')\"; cat ~/.bashrc",
+    'python3 -c "import sys; print(len(sys.stdin.read()))" < <(cat ~/.bashrc)',
 ]
 
 
