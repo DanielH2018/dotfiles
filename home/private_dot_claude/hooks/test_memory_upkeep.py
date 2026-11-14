@@ -356,8 +356,11 @@ with tempfile.TemporaryDirectory() as tmp:
 
     # The default branch drops one file, renames a test, and stops tracking a file that
     # it ignores from then on. The worktree was made before that commit, so it holds
-    # all three as they were.
-    (repo / ".gitignore").write_text("docs/local/\n")
+    # all three as they were. The main checkout keeps its ignored copy of the third,
+    # and gains an ignored directory that no commit ever held.
+    (repo / ".gitignore").write_text("docs/local/\ndocs/scratch/\n")
+    (repo / "docs" / "scratch").mkdir()
+    (repo / "docs" / "scratch" / "page.md").write_text("x\n")
     (repo / "docs" / "test_y.py").write_text("def test_new():\n    pass\n")
     for args in (
         ["rm", "-q", "docs/dropped.md"],
@@ -369,7 +372,8 @@ with tempfile.TemporaryDirectory() as tmp:
             [*git, *args], cwd=repo, check=True, capture_output=True, text=True
         )
     (memories / "lagging.md").write_text("The page is `docs/dropped.md`.\n")
-    (memories / "ignored.md").write_text("Notes are in `docs/local/notes.md`.\n")
+    (memories / "debris.md").write_text("Notes are in `docs/local/notes.md`.\n")
+    (memories / "scratch.md").write_text("Drafts are in `docs/scratch/page.md`.\n")
     for where, cwd in (("the main checkout", repo), ("a worktree that lags", wt)):
         out = subprocess.run(
             [sys.executable, str(SCRIPT)],
@@ -383,11 +387,16 @@ with tempfile.TemporaryDirectory() as tmp:
             "lagging.md: docs/dropped.md" in out,
         )
         check(
-            f"an ignored path the main checkout holds is not stale from {where}",
-            "ignored.md" not in out,
+            f"a deleted path is stale from {where}, ignored copy or not",
+            "debris.md: docs/local/notes.md" in out,
+        )
+        check(
+            f"an ignored path no commit ever held is not stale from {where}",
+            "scratch.md" not in out,
         )
     (memories / "lagging.md").unlink()
-    (memories / "ignored.md").unlink()
+    (memories / "debris.md").unlink()
+    (memories / "scratch.md").unlink()
     check(
         "a test the default branch renamed is missing from a worktree that lags",
         mod.stale_checks("ENFORCED by `docs/test_y.py::test_old`.", mod.Tree(wt, repo))

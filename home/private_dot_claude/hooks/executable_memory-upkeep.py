@@ -134,8 +134,8 @@ def main_checkout(repo: Path) -> Path:
     points at; its parent is the main checkout. In the main checkout itself the answer
     is already that repo, so this costs one git call and changes nothing.
 
-    It names the checkout for the memory slug and for `Tree`'s ignored-path rule.
-    `Tree` decides whether a path exists.
+    It names the checkout for the memory slug, and `Tree` runs git there. `Tree`
+    decides whether a path exists.
 
     Falls back to `repo` whenever the answer is unusable — git failing, an empty answer,
     a bare repo whose .git parent is not a checkout. A wrong slug is silence, which is
@@ -219,26 +219,31 @@ def _with_parents(paths: Sequence[str]) -> set[str]:
 class Tree:
     """What the repository holds, judged by its default branch and not by one checkout.
 
-    A path is present when one of three things is true:
+    A path is present when one of two things is true:
 
     1. The default branch tracks it.
-    2. The main checkout holds it and git ignores it there. Measured on 2026-08-29: two
-       of three flagged memories named `docs/superpowers/`, which is gitignored.
-    3. Some checkout holds it and the default branch never tracked it. That is a file on
-       a branch that has not landed, or an untracked scratch file (dotfiles #557: a
-       memory written ahead of its session's merge was flagged for a day).
+    2. Some checkout holds it and the default branch never tracked it. That is a file on
+       a branch that has not landed (dotfiles #557: a memory written ahead of its
+       session's merge was flagged for a day), or an untracked path such as a gitignored
+       directory. Measured on 2026-08-29: two of three flagged memories named
+       `docs/superpowers/`, which is gitignored and lives only in the main checkout.
 
     A path the default branch once tracked and no longer does is gone, whichever
     checkouts still hold it. Before this rule any checkout holding the path counted. The
     homelab repo had 140 worktrees on 2026-11-13, and the hook reported none of the 10
     cited paths that master had deleted (dotfiles #1262).
 
+    Whether git ignores the path does not enter into it. A deleted tree leaves ignored
+    debris behind, such as `__pycache__`, and a rule that kept an ignored path present
+    kept three deleted directories present on the one host whose main checkout held
+    that debris.
+
     The default branch is `origin/HEAD`, or the main checkout's `HEAD` in a repo with no
     remote. A file's text comes from that branch too, so a test renamed on the default
     branch is missing even while a stale worktree still defines it. The cost is that a
     symbol added to a tracked file on an unlanded branch is missing until it lands.
 
-    Outside a git repo, or before the first commit, nothing is tracked and rule 3 holds
+    Outside a git repo, or before the first commit, nothing is tracked and rule 2 holds
     for every path a checkout has.
     """
 
@@ -286,17 +291,12 @@ class Tree:
         )
 
     def holds(self, path: str) -> bool:
-        """Whether `path`, a file or a directory, is present by the three rules."""
+        """Whether `path`, a file or a directory, is present by the two rules."""
         path = path.rstrip("/")
         if path in self._tracked:
             return True
-        holders = [c for c in self._checkouts if (c / path).exists()]
-        if not holders:
+        if not any((c / path).exists() for c in self._checkouts):
             return False
-        if self._primary in holders and (
-            _git(self._primary, "check-ignore", "-q", "--", path) is not None
-        ):
-            return True
         return not self._once_tracked(path)
 
     def read(self, path: str) -> str | None:
