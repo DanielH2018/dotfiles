@@ -74,7 +74,7 @@ from claude_guard.gitargv import (
     subcommand_at,
 )
 from claude_guard.gitread import config_read
-from claude_guard.inert_python import inert
+from claude_guard.inert_python import inert, starts_no_process
 from claude_guard.rules import load_rules
 from claude_guard.segment import Segment, mask_substitutions, parse, substitution_spans
 
@@ -297,6 +297,32 @@ RM_MSG = "Blocked: rm -rf targeting home or root directory. Use a specific path 
 
 # Commands whose quoted arguments are a pattern or a message that nothing runs.
 _INERT_QUOTE_HEADS = frozenset({"grep", "egrep", "fgrep", "rg", "echo", "printf"})
+# Commands that run nothing and write no file, whatever their arguments, so a command made of
+# them and the heads above cannot run the text a quoted argument holds.
+_INERT_HEADS = _INERT_QUOTE_HEADS | {"head", "tail", "wc", "cd", "pwd", "true"}
+# A redirect that writes no file: a dup onto another descriptor, or into /dev/null.
+_HARMLESS_REDIRECT = re.compile(r"[0-9]*>&[0-9-]|[0-9&]*>>?\s*/dev/null(?![\w/.-])")
+
+
+def _only_inert_segments(segments: tuple[Segment, ...]) -> bool:
+    """Whether every segment is an `_INERT_HEADS` command with no heredoc, no substitution and
+    no redirect that writes a file. rg's `--pre` runs a program on each file, so an rg that
+    names it is not inert. An allowlist, so a command that hands text to anything else, such
+    as `at`, `crontab`, a pager or a later shell, keeps every segment's text."""
+    for seg in segments:
+        words = _words(seg.text) or []
+        head = posixpath.basename(words[0]) if words else ""
+        bare = _unquoted(seg.text)
+        if (
+            head not in _INERT_HEADS
+            or seg.heredocs
+            or bare is None
+            or ">" in _HARMLESS_REDIRECT.sub(" ", bare)
+            or _holds_substitution(seg.text)
+            or (head == "rg" and any(w.startswith("--pre") for w in words))
+        ):
+            return False
+    return True
 
 
 def _inert_program(source: str | None, expands: bool) -> bool:
@@ -317,16 +343,15 @@ def _heredoc_program_expands(source: str | None, heredocs: tuple[str, ...], quot
 
 def _names_only_in_quotes(text: str, pattern: str) -> bool:
     """Whether the segment `text` is a grep, echo or printf (`_INERT_QUOTE_HEADS`) that matches
-    `pattern` only inside its quoted arguments. A segment holding a substitution is never one,
-    since the shell runs a `$( )` even inside double quotes."""
-    words = _words(text)
-    argv = _argv(words) if words else []
+    `pattern` only inside its quoted arguments. A caller drops such a segment only when the
+    whole command passes `_only_inert_segments`, since otherwise a later command may run
+    what the segment only names."""
+    words = _words(text) or []
     bare = _unquoted(text)
     return (
-        bool(argv)
-        and posixpath.basename(argv[0]) in _INERT_QUOTE_HEADS
+        bool(words)
+        and posixpath.basename(words[0]) in _INERT_QUOTE_HEADS
         and bare is not None
-        and not _holds_substitution(text)
         and not bdb_re(bare, pattern)
     )
 
@@ -338,21 +363,21 @@ def _rm_members(sc: Scan) -> list[str]:
     `sed 's/^/--role /'`. Three things are left out. A heredoc body that is only stored
     (`_without_stored_heredocs`). The program of a closed-shape Python segment that starts no
     process (`_inert_program`). And a grep, echo or printf segment whose `rm` sits only
-    inside quotes. The last two are dropped only when no segment of the command runs code,
-    since `echo 'rm -rf ~' > x.sh; bash x.sh` runs what the first segment only names. A
-    command the parser refuses is matched whole, as before."""
+    inside quotes, dropped only when every segment is inert (`_only_inert_segments`), since
+    `echo 'rm -rf ~' | at now` runs what the echo only names. A command the parser refuses
+    is matched whole, as before."""
     sc = _without_stored_heredocs(sc)
     p = parse(sc.command)
     if not p.ok:
         return [sc.scan]
-    runs_code = any(_runs_code(s.text) for s in p.segments)
+    inert_command = _only_inert_segments(p.segments)
     members: list[str] = []
     for seg in p.segments:
         words = _words(seg.text) or []
         source = _python_source(words, seg.heredocs) if words else None
         expands = _heredoc_program_expands(source, seg.heredocs, seg.heredoc_quoted)
         inert_source = _inert_program(source, expands)
-        quoted_only = not runs_code and _names_only_in_quotes(seg.text, r"\brm\b")
+        quoted_only = inert_command and _names_only_in_quotes(seg.text, r"\brm\b")
         if not quoted_only and not (inert_source and source in seg.text):
             members.append(normalize(seg.text))
         members += [normalize(b) for b in seg.heredocs if not (inert_source and b == source)]
@@ -401,16 +426,16 @@ _REFSPEC_MAIN = r".*\+\s*(main|master|refs/heads/(main|master))\b"
 def _without_quoted_pushes(sc: Scan) -> Scan:
     """`sc` rebuilt with each segment that names a push only in a grep, echo or printf
     pattern (`_names_only_in_quotes`) read as `true`. Every push rule reads this, since their
-    regexes anchor on GIT_PUSH_AT anywhere in a member's text. A segment with a heredoc is
-    kept, and so is every segment of a command where some segment runs code, since
-    `printf 'git push -f' > x.sh; bash x.sh` runs what the printf only names. A command the
-    parser refuses is left as it is."""
+    regexes anchor on GIT_PUSH_AT anywhere in a member's text. Only a command made wholly of
+    inert segments (`_only_inert_segments`) is rebuilt, so any command that could hand the
+    text to something that runs it keeps it. A command the parser refuses is left as it
+    is."""
     p = parse(sc.command)
-    if not p.ok or any(_runs_code(s.text) for s in p.segments):
+    if not p.ok or not _only_inert_segments(p.segments):
         return sc
     command = sc.command
     for seg in p.segments:
-        if not seg.heredocs and _names_only_in_quotes(seg.text, GIT_PUSH_AT):
+        if _names_only_in_quotes(seg.text, GIT_PUSH_AT):
             command = command.replace(seg.text, "true", 1)
     return sc if command == sc.command else build_scan(command)
 
@@ -1281,6 +1306,31 @@ def _member_read(text: str, depth: int = 0) -> str | None:
     return next((hit for body in bodies if (hit := _member_read(body, depth + 1))), None)
 
 
+_PUBLIC_KEY = re.compile(r"[\w~/.-]*[\w~-]\.pub")
+_SHELL_EXPANDS = re.compile(r"[$`{}*?\[\]]")
+
+
+def _without_public_keys(sc: Scan) -> Scan:
+    """`sc` rebuilt with each word that names an SSH public key (`*.pub`, no `..` component)
+    read as `public-key`, since a `.pub` file holds no secret. A command holding an
+    expansion, a glob or a brace keeps every word, because the shell can turn the `.pub`
+    word into the private key's name (`${_%.pub}`). A command the parser refuses is left as
+    it is."""
+    p = parse(sc.command)
+    if not p.ok or _SHELL_EXPANDS.search(sc.command):
+        return sc
+    keys = {
+        w
+        for seg in p.segments
+        for w in _words(seg.text) or []
+        if _PUBLIC_KEY.fullmatch(w) and ".." not in w.split("/")
+    }
+    command = sc.command
+    for key in keys:
+        command = re.sub(rf"(?<![^\s'\"]){re.escape(key)}(?![^\s'\";&|])", "public-key", command)
+    return sc if command == sc.command else build_scan(command)
+
+
 def secret_readers(sc: Scan, target: str) -> Verdict | None:
     """:893-944. SCAN split on every `;&|` character (a NAIVE split, deliberately: it is what
     catches a read hidden behind quoting), each piece word-split. The env-dump arm fires
@@ -1295,8 +1345,9 @@ def secret_readers(sc: Scan, target: str) -> Verdict | None:
     segment, substitution or heredoc body must read a secret path too (`_member_read`),
     and the denial names what that piece reads. When no naive piece reads, a quote-aware
     member that reads still denies on its own, since a quoted `;&|` in a file name splits
-    the naive scan (#1004)."""
-    sc = _without_stored_heredocs(sc)
+    the naive scan (#1004). A word naming a public key reads nothing secret
+    (`_without_public_keys`)."""
+    sc = _without_public_keys(_without_stored_heredocs(sc))
     confirmed: str | None = None
     for piece in re.split(r"[;&|]", sc.scan):
         words = piece.split()
@@ -2213,112 +2264,120 @@ def inplace_edit(sc: Scan, target: str) -> Verdict | None:
     return None
 
 
-# Calls that write, move, remove or re-mode the file they name. `open` is a write only with a
-# write mode (`_opens_for_write`); `copy`, `move` and the rest need two arguments, so
-# `d.copy()` is not one; `rename` and `replace` need one, or `os.` before them, so
-# `s.replace(a, b)` is not one; `remove` needs `os.`, so `xs.remove(x)` is not one.
-_PY_WRITERS = frozenset(
-    {
-        "write_text",
-        "write_bytes",
-        "touch",
-        "symlink_to",
-        "hardlink_to",
-        "unlink",
-        "chmod",
-        "rmtree",
-        "truncate",
-    }
+# The attributes on inert_python's allowlist that write, move or remove a file however they
+# are called. `open`, `replace` and `copy` write only in some calls (`_call_writes`).
+_PY_WRITE_ATTRIBUTES = frozenset(
+    {"write_text", "write_bytes", "touch", "unlink", "rename", "mkdir"}
 )
-_PY_TWO_ARG_WRITERS = frozenset(
-    {"copy", "copy2", "copyfile", "copytree", "move", "symlink", "link"}
-)
-_PY_MODE = re.compile(r"[rwxabtU+]*[wxa+][rwxabtU+]*")
+_PY_READ_MODE = re.compile(r"[rbtU]*")
 
 
-def _receiver(func: ast.expr) -> str | None:
-    """The plain name a called method is looked up on (`os` in `os.open`), else None."""
-    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
-        return func.value.id
-    return None
-
-
-def _opens_for_write(call: ast.Call) -> bool:
-    """Whether `call`, an `open`, opens for writing: a mode literal holding `w`, `x`, `a` or
-    `+`, a mode the program computes, or `os.open`, whose flags are never a literal. The
-    mode is the second argument of `open`, `io.open` and `codecs.open`, and the first of a
-    method such as `Path.open`."""
-    receiver = _receiver(call.func)
-    if receiver == "os":
+def _call_writes(call: ast.Call) -> bool:
+    """Whether `call` writes a file through `open`, `Path.replace` or `Path.copy`. `open`
+    writes unless its mode is a literal of read letters: the second argument of the builtin,
+    the first of `Path.open`. `replace` writes with fewer than the two arguments `str.replace`
+    takes, and `copy` with any argument, unless it is the `copy` module's function. A
+    starred argument or `**` keyword hides what the call passes, so it writes."""
+    func = call.func
+    name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+    if name not in ("open", "replace", "copy"):
+        return False
+    if any(isinstance(a, ast.Starred) for a in call.args) or any(
+        k.arg is None for k in call.keywords
+    ):
         return True
-    method = isinstance(call.func, ast.Attribute) and receiver not in ("io", "codecs", "builtins")
-    position = 0 if method else 1
-    modes = [k.value for k in call.keywords if k.arg in ("mode", None)]
-    modes += call.args[position : position + 1]
+    if name == "replace":
+        return isinstance(func, ast.Attribute) and len(call.args) < 2
+    if name == "copy":
+        receiver = func.value if isinstance(func, ast.Attribute) else None
+        return bool(call.args) and not (isinstance(receiver, ast.Name) and receiver.id == "copy")
+    position = 0 if isinstance(func, ast.Attribute) else 1
+    modes = [k.value for k in call.keywords if k.arg == "mode"] + call.args[position : position + 1]
     return any(
         not (isinstance(m, ast.Constant) and isinstance(m.value, str))
-        or _PY_MODE.fullmatch(m.value) is not None
+        or not _PY_READ_MODE.fullmatch(m.value)
         for m in modes
     )
 
 
-def _edits_in_place(call: ast.Call) -> bool:
-    """Whether `call`, a `fileinput.input` or `FileInput`, rewrites its files: an `inplace`
-    keyword or second argument that is anything but a false literal. The builtin `input`
-    takes neither."""
-    values = [k.value for k in call.keywords if k.arg in ("inplace", None)]
-    values += call.args[1:2]
-    return any(not (isinstance(v, ast.Constant) and not v.value) for v in values)
-
-
 def _python_writes(program: str) -> bool:
-    """Whether the Python `program` holds a call that writes a file (`_PY_WRITERS`), or does
-    not parse, so its calls cannot be read."""
-    try:
-        tree = ast.parse(program)
-    except SyntaxError, ValueError:
+    """Whether the Python `program` may write a file. A program `starts_no_process` cannot
+    clear may, since its writes are on no closed list: `os`, `shutil`, `gzip`, `exec` and
+    the rest. Inside that allowlist a write is a write attribute (`_PY_WRITE_ATTRIBUTES`), a
+    call `_call_writes` reads as one, or `open`, `replace` or `copy` named other than as the
+    function of a call, since an alias (`o = open`) hides the call."""
+    if not starts_no_process(program):
         return True
+    tree = ast.parse(program)
+    called = {id(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call)}
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-        on_os = _receiver(func) == "os"
-        if (
-            (name == "open" and _opens_for_write(node))
-            or (name in ("input", "FileInput") and _edits_in_place(node))
-            or name in _PY_WRITERS
-            or (name in _PY_TWO_ARG_WRITERS and len(node.args) >= 2)
-            or (name in ("rename", "replace") and (on_os or len(node.args) == 1))
-            or (name == "remove" and on_os)
-        ):
+        if isinstance(node, ast.Call) and _call_writes(node):
+            return True
+        if isinstance(node, ast.Attribute) and node.attr in _PY_WRITE_ATTRIBUTES:
+            return True
+        name = node.attr if isinstance(node, ast.Attribute) else getattr(node, "id", None)
+        named = isinstance(node, ast.Attribute) or name == "open"
+        if named and name in ("open", "replace", "copy") and id(node) not in called:
             return True
     return False
 
 
+def _segment_programs(seg: Segment, depth: int) -> list[tuple[str, bool]]:
+    """(program, whether the shell expands it first) for each closed-shape Python program
+    (`_python_source`) the segment runs. The interpreter may be spelled as a path and may
+    follow executors and runners (`_command_tails`: env, timeout, nice, `uv run`), and a
+    shell's `-c` command line is read as a command of its own."""
+    words = _words(seg.text)
+    queue = [_argv(words)] if words else []
+    found: list[tuple[str, bool]] = []
+    while queue:
+        argv = queue.pop()
+        if not argv:
+            continue
+        name = posixpath.basename(argv[0])
+        if re.fullmatch(r"python[0-9.]*", name):
+            source = _python_source(["python3", *argv[1:]], seg.heredocs)
+            if source is not None:
+                expands = _heredoc_program_expands(source, seg.heredocs, seg.heredoc_quoted)
+                found.append((source, expands))
+        elif name in _SHELLS:
+            flag = next((i for i, w in enumerate(argv[:-1]) if re.fullmatch(r"-\w*c\w*", w)), None)
+            if flag is not None:
+                found += _python_programs_run(argv[flag + 1], depth + 1)
+        queue += _command_tails(argv)
+    return found
+
+
+def _python_programs_run(command: str, depth: int = 0) -> list[tuple[str, bool]]:
+    """`_segment_programs` for every segment and substitution of `command`."""
+    p = parse(command)
+    if not p.ok or depth > 4:
+        return []
+    found = [prog for seg in p.segments for prog in _segment_programs(seg, depth)]
+    return found + [
+        prog for sub in p.substitutions for prog in _python_programs_run(sub, depth + 1)
+    ]
+
+
 def python_write(sc: Scan, target: str) -> Verdict | None:
-    """A closed-shape Python program (`_python_source`) that names a WRITE_TARGETS path and
-    writes a file (`_python_writes`), in a segment or a substitution. The path and the write
-    need not be the same call: a program that reads `~/.bashrc` and writes elsewhere is
-    refused too. `uv run python <file>` is out of reach, since the guard never reads the
-    file."""
-    p = parse(sc.command)
-    if not p.ok:
+    """A command that names a WRITE_TARGETS path anywhere, in a program, a script argument or
+    an assignment, and runs a closed-shape Python program (`_python_programs_run`) that may
+    write a file (`_python_writes`). A program the shell expands before Python reads it
+    counts as writing when it holds a `$` or a backtick. The path and the write need not be
+    the same call, so a program that reads `~/.bashrc` and writes elsewhere is refused too.
+    `uv run python <file>` is out of reach, since the guard never reads the file. An
+    attribute access such as `v.key` names no path (`_without_python_attributes`)."""
+    if not bdb_re(_without_python_attributes(sc).command, WRITE_TARGETS):
         return None
-    segments = list(p.segments)
-    for sub in p.substitutions:
-        q = parse(sub)
-        segments += q.segments if q.ok else []
-    for seg in segments:
-        words = _words(seg.text)
-        source = _python_source(_argv(words), seg.heredocs) if words else None
-        if source and bdb_re(source, WRITE_TARGETS) and _python_writes(source):
+    for source, expands in _python_programs_run(sc.command):
+        if (expands and ("$" in source or "`" in source)) or _python_writes(source):
             return Verdict(
                 "deny",
                 "python-write",
-                "Blocked: a Python program that writes a file and names a secrets, "
-                "shell-startup, or git config/hook file. Ask the user to make this change "
-                "manually; an ordinary git setting goes through `git config <key> <value>`.",
+                "Blocked: a Python program that may write a file, in a command that names a "
+                "secrets, shell-startup, or git config/hook file. Ask the user to make this "
+                "change manually; an ordinary git setting goes through "
+                "`git config <key> <value>`. To read the file, use the Read tool.",
             )
     return None
 

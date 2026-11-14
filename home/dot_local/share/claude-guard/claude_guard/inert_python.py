@@ -125,8 +125,13 @@ def inert(program: str) -> bool:
         False for any program this module cannot prove inert, including one that does not
         parse.
     """
-    if _PLANTS.search(program):
-        return False
+    return not _PLANTS.search(program) and starts_no_process(program)
+
+
+def starts_no_process(program: str) -> bool:
+    """True when `program` parses as Python and every import, attribute and builtin it names
+    is on the allowlists above, whatever files its text names. `inert` adds the plant check.
+    """
     try:
         tree = ast.parse(program)
     except SyntaxError, ValueError:

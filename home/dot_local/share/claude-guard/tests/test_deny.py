@@ -193,6 +193,8 @@ RM_DENY = [
     'echo "`rm -rf /`"',
     # a quoted or stored rm still counts once another segment runs code (2026-10-24)
     "echo 'rm -rf ~' > x.sh; bash x.sh",
+    "echo 'rm -rf /' | at now",
+    "echo '* * * * * rm -rf /' | crontab -",
     "cat > x.sh <<'EOF'\nrm -rf ~\nEOF\nbash x.sh",
     "bash -c 'rm -rf ~'",
     "python3 - <<'EOF'\nimport os\nos.system('rm -rf ~')\nEOF",
@@ -297,8 +299,9 @@ QUOTED_PUSH_ALLOW = [
     "grep -n 'git -c remote.o.push=+main push' README.md",
     "echo 'git push --force'",
 ]
-# A shell or ssh runs its quoted text, a later segment may run what printf wrote, and the shell
-# runs a substitution inside double quotes.
+# A shell or ssh runs its quoted text, and the shell runs a substitution inside double quotes.
+# Any command outside the inert set may run what an echo or printf hands it: a scheduler, a
+# pager, a git alias, rg's `--pre`, a terminal multiplexer or a later shell.
 QUOTED_PUSH_DENY = [
     "bash -c 'git push --force'",
     "ssh daniel-server 'cd r && git push --force'",
@@ -306,6 +309,15 @@ QUOTED_PUSH_DENY = [
     "grep x f; git push -f origin feat",
     'echo "$(git push -f origin feat)"',
     "grep 'git push -f origin feat",
+    "echo 'git push -f origin main' | at now",
+    "echo '* * * * * git push -f origin main' | crontab -",
+    "printf '* * * * * git push -f origin main\\n' > c; crontab c",
+    "printf 'git push -f origin main' > p.sh; chmod +x p.sh; rg --pre ./p.sh x .",
+    "rg --pre ./p.sh 'git push -f origin main' .",
+    "printf 'git push -f origin main' > p.sh; git -c core.pager=./p.sh log",
+    "printf 'git push -f origin main' > p.sh; GIT_PAGER=./p.sh git log",
+    "printf 'git push -f origin main' > p.sh; git -c alias.x='!./p.sh' x",
+    "echo 'git push -f origin main' | tmux load-buffer -; tmux paste-buffer",
 ]
 
 
@@ -790,6 +802,10 @@ PUBLIC_KEY_DENY = [
     "cat ~/.ssh/id_ed25519.pubkey",
     "cat ~/.ssh/*.pub",
     "cat ~/.ssh/config",
+    "cat ~/.ssh/id_ed25519..pub",
+    # an expansion or a program can strip the suffix and reach the private key
+    "cat ~/.ssh/id_ed25519.pub && cat ${_%.pub}",
+    "python3 -c \"print(open('/home/u/.ssh/id_ed25519.pub'[:-4]).read())\"",
 ]
 
 
@@ -798,7 +814,7 @@ def test_reading_an_ssh_public_key_is_allowed():
 
 
 def test_a_private_key_named_beside_or_through_a_public_one_is_still_denied():
-    assert rules(PUBLIC_KEY_DENY) == ["secret-read"] * len(PUBLIC_KEY_DENY)
+    assert kinds(PUBLIC_KEY_DENY) == ["deny"] * len(PUBLIC_KEY_DENY)
 
 
 # dotfiles #861. The sampled shapes the secret-read rules refused although the text only named
@@ -1485,9 +1501,23 @@ def test_a_fixture_outside_the_scratch_directory_or_beside_another_write_is_deni
     assert "$CLAUDE_JOB_DIR/tmp/" in d.deny(SCRATCH_FIXTURE_DENY[0], "", SCRATCH_ENV).reason
 
 
-# dotfiles #1251: a Python program that writes a file and names a protected one. The write
-# need not be the call that names the path.
+# dotfiles #1251: a Python program that may write a file, in a command that names a protected
+# one. The write need not be the call that names the path, and a program outside
+# inert_python's allowlist counts as writing, however it spells the write.
 PYTHON_WRITE_DENY = [
+    "python3 -c \"import gzip; gzip.open('/home/u/.bashrc','wt').write('x')\"",
+    "python3 -c \"o=open; o('/home/u/.bashrc','w').write('x')\"",
+    "python3 -c \"from pathlib import Path; m=Path('/home/u/.bashrc').write_text; m('x')\"",
+    "python3 -c \"exec(\\\"open('/home/u/.bashrc','w').write('x')\\\")\"",
+    "python3 -c \"import os; os.chown('/home/u/.bashrc',0,0)\"",
+    "python3 -c \"import subprocess; subprocess.run(['cp','/tmp/x','/home/u/.bashrc'])\"",
+    "python3 -c \"from pathlib import Path; Path('/tmp/x').replace('/home/u/.gitconfig')\"",
+    # the path as a script argument, and the launches past a path, an executor or a shell
+    "python3 -c \"import sys; open(sys.argv[1],'w').write('x')\" /home/u/.bashrc",
+    "/usr/bin/python3 -c \"open('/home/u/.bashrc','w').write('x')\"",
+    "env python3 -c \"open('/home/u/.bashrc','w').write('x')\"",
+    "timeout 5 nice python3 -c \"open('/home/u/.bashrc','w').write('x')\"",
+    "bash -c \"python3 -c \\\"open('/home/u/.bashrc','w').write('x')\\\"\"",
     "python3 -c \"open('/home/u/.bashrc','w').write('x')\"",
     "python3 -c \"open('/home/u/.bashrc', mode=m)\"",
     "uv run python - <<'EOF'\nfrom pathlib import Path\nPath.home().joinpath('.zshrc')"
@@ -1505,8 +1535,10 @@ PYTHON_WRITE_ALLOW = [
     "python3 -c \"print(open('/home/u/.bashrc').read())\"",
     "python3 -c \"import json; print(json.load(open('/home/u/.claude/settings.json')))\"",
     "python3 -c \"print(open('/home/u/.bashrc').read().replace('a', 'b'))\"",
-    "python3 -c \"d = {}; e = d.copy(); xs = ['.bashrc']; xs.remove('.bashrc')\"",
-    "python3 -c \"import fileinput; print(list(fileinput.input('/home/u/.bashrc')))\"",
+    "python3 -c \"import copy; d = {}; e = d.copy(); f = copy.copy(d); xs = ['.bashrc']; "
+    "xs.remove('.bashrc')\"",
+    "python3 - <<'EOF'\nfrom pathlib import Path\n"
+    "print(Path('/home/u/.claude/settings.json').read_text())\nEOF",
     "python3 -c \"open('/tmp/out','w').write('x')\"",
 ]
 

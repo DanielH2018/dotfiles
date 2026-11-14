@@ -240,10 +240,13 @@ outside a read-only set. Its module docstring says why the rest is a denylist.
 
 Four rule groups read text that no command runs, and they skip it only where that is provable.
 `rm_root` matches each segment, substitution and heredoc body on its own. It leaves out a
-stored heredoc, and a grep, echo or printf whose `rm` is only quoted, unless another segment
-runs code. The push rules leave out a grep, echo or printf whose `git push` is only quoted,
-with the same exception (dotfiles #1249). `pipe_to_shell` matches a stage after a pipe at its start, unless the stage runs
-code. The sudo boundary skips the word search in a closed-shape Python program that
+stored heredoc, and a grep, echo or printf whose `rm` is only quoted. The push rules leave
+out a grep, echo or printf whose `git push` is only quoted (dotfiles #1249). Both skips
+apply only when every segment of the command is grep, rg without `--pre`, echo, printf,
+head, tail, wc, cd, pwd or true, with no heredoc, substitution or redirect that writes a
+file: an allowlist, so a command that hands the text to a scheduler, a pager or a later
+shell keeps it. `pipe_to_shell` matches a stage after a pipe at its start, unless the
+stage runs code. The sudo boundary skips the word search in a closed-shape Python program that
 `inert_python.py` proves starts no process. That module is an allowlist of imports, attributes
 and builtins, and it refuses a program naming a shell-startup, settings, hook or PATH file.
 A week's replay over 32,188 commands took the deny count from 316 to 262. No command went
@@ -256,11 +259,18 @@ operands, and a pipe into kill or a shell running a named script is judged at th
 Jinja `secret.yaml.j2` template is not a secrets file. That took the replay from 243 denies
 and 15 asks to 208 and 4, with nothing newly refused (2026-10-24).
 
-`python_write` (dotfiles #1251) refuses a closed-shape Python program that names a
-secrets, shell-startup, or git config or hook file and holds a call that writes a file:
-`open` with a write mode, `Path.write_text`, `shutil.copy`, `os.replace` and the like. The
-path and the write need not be the same call. A program that only reads such a file passes,
-and `uv run python <file>` stays out of reach, since the guard never reads the file.
+`python_write` (dotfiles #1251) refuses a command that names a secrets, shell-startup, or
+git config or hook file anywhere and runs a closed-shape Python program that may write a
+file. The interpreter may be spelled as a path, follow an executor or runner, or sit in a
+shell's `-c` line. A program may write unless `inert_python.starts_no_process` clears it
+and none of the allowlisted calls it makes writes (`open` with a write mode,
+`Path.write_text`, `Path.replace` and the rest), so `os`, `shutil` or `exec` count as a
+write. A program that reads such a file with the allowlisted calls passes. `uv run python
+<file>` stays out of reach, since the guard never reads the file.
+
+`secret_readers` reads a word naming an SSH public key (`*.pub`) as no path, in a command
+with no expansion, glob or brace (dotfiles #1250). The secret table itself still matches
+every file under `.ssh/`.
 
 When nothing above decides, `readonly.py` (dotfiles #628, ported from the server repo's
 `auto-approve-readonly.py`) allows a command whose every stage is provably read-only. It
