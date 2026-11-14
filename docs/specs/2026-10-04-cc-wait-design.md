@@ -201,6 +201,17 @@ with a scratch PreToolUse hook added through `--settings`:
   they appear in the detail and the wait continues. The homelab had no pod-reason set to
   reuse: it detects crash loops by restart count after the rollout
   (`ansible/post_tasks/k8s_stabilise_gate.yml`).
+- **`k8s-field` waits on one field of any resource, so no custom resource needs its own
+  source.** The homelab's runbooks waited by hand on a Longhorn volume reading `detached` and
+  a BackupTarget reading `available: true`. The source reads with `kubectl get -o jsonpath=`,
+  so the read-only ServiceAccount's get permission is enough. It compares the printed value
+  exactly. A missing key prints nothing and exits 0, so an empty value keeps the wait open.
+  A failed read, Forbidden included, is retried and never taken as a match. NotFound ends
+  the wait with exit 1, as `kubectl wait --for=jsonpath` does: the value cannot arrive on an
+  object that does not exist, and cc-wait refuses a source with no failure state. A re-run
+  after exit 75 keeps no memory, so a "seen, then deleted" rule is not possible. Waiting for
+  every item of a list to read a value, such as each Longhorn engine following its manager,
+  is out of scope: a target names one object.
 - **A `systemd` wait on a finished oneshot reports that run at once,** with the time it
   ended. A baseline taken when the wait starts would be lost when the wait is re-run, so the
   caller reads the timestamp instead.

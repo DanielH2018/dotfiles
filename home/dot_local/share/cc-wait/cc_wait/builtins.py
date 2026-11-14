@@ -176,6 +176,7 @@ BUILTINS = {
         github.CiSource(),
         systemd.UnitSource(),
         k8s.RolloutSource(),
+        k8s.FieldSource(),
         clock.TimeSource(),
     )
 }

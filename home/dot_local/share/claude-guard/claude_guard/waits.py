@@ -243,7 +243,9 @@ WATCH_REASON = (
 KUBECTL_REASON = (
     "Blocked: `kubectl ... --watch` never exits on its own. Wait on a rollout or a Job with "
     "`cc-wait k8s-rollout <kind>/<name> -n <namespace>`, which also fails at once on a new pod "
-    "that cannot run; or stream the watch under a Monitor."
+    "that cannot run. Wait on any resource's field with "
+    "`cc-wait k8s-field <resource>/<name> '<jsonpath>' --equals <value> -n <namespace>`. "
+    "Or stream the watch under a Monitor."
 )
 
 

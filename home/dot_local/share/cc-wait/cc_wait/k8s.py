@@ -1,4 +1,8 @@
-"""The `k8s-rollout` source: a workload finishes rolling out, or a Job finishes.
+"""The Kubernetes sources: `k8s-rollout` and `k8s-field`.
+
+`k8s-field` comes after `k8s-rollout`, with its own description at `FieldSource`.
+
+THE `k8s-rollout` SOURCE: a workload finishes rolling out, or a Job finishes.
 
 `cc-wait k8s-rollout <kind>/<name> [-n NAMESPACE] [--context CONTEXT]` takes a Deployment,
 StatefulSet or DaemonSet (judged as `kubectl rollout status` judges it), or a Job:
@@ -52,8 +56,37 @@ KINDS = {
     "jobs": "job",
 }
 _NAME = re.compile(r"^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$")
+_RESOURCE = re.compile(r"^[a-zA-Z][a-zA-Z0-9.-]*$")
 
 Runner = Callable[..., subprocess.CompletedProcess]
+
+
+class NotFound(ReadError):
+    """The API server answered that the object does not exist."""
+
+
+def kubectl(run: Runner, context: str | None, namespace: str | None, args: list[str]) -> str:
+    """The stdout of one `kubectl` call, or ReadError naming why it failed.
+
+    NotFound is the one failure the API server states as a fact about the object, so it
+    alone raises the NotFound subclass. Forbidden, an unknown resource type or an unreachable
+    server is a failed read.
+    """
+    cmd = ["kubectl"]
+    if context:
+        cmd += ["--context", context]
+    if namespace:
+        cmd += ["--namespace", namespace]
+    cmd += args
+    try:
+        out = run(cmd, capture_output=True, text=True, timeout=KUBECTL_TIMEOUT_S, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ReadError(f"kubectl did not run: {exc}") from exc
+    if out.returncode != 0:
+        stderr = out.stderr.strip()
+        error = NotFound if "(NotFound)" in stderr else ReadError
+        raise error(f"kubectl {' '.join(args[:2])} exited {out.returncode}: {stderr[-300:]}")
+    return out.stdout
 
 
 def _status(obj: dict) -> dict:
@@ -217,24 +250,9 @@ class RolloutWait:
         )
 
     def _kubectl(self, args: list[str]) -> dict:
-        cmd = ["kubectl"]
-        if self.context:
-            cmd += ["--context", self.context]
-        if self.namespace:
-            cmd += ["--namespace", self.namespace]
-        cmd += [*args, "--output", "json"]
+        out = kubectl(self.run, self.context, self.namespace, [*args, "--output", "json"])
         try:
-            out = self.run(
-                cmd, capture_output=True, text=True, timeout=KUBECTL_TIMEOUT_S, check=False
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise ReadError(f"kubectl did not run: {exc}") from exc
-        if out.returncode != 0:
-            raise ReadError(
-                f"kubectl {' '.join(args[:2])} exited {out.returncode}: {out.stderr.strip()[-300:]}"
-            )
-        try:
-            return json.loads(out.stdout)
+            return json.loads(out)
         except ValueError as exc:
             raise ReadError(f"kubectl {' '.join(args[:2])} printed no JSON") from exc
 
@@ -285,3 +303,81 @@ class RolloutSource(ParsedSource):
                 "daemonset or job"
             )
         return RolloutWait(KINDS[kind.lower()], name, ns.namespace, ns.context)
+
+
+@dataclass(frozen=True)
+class FieldWait:
+    target: str
+    jsonpath: str
+    equals: str
+    fail: tuple[str, ...]
+    namespace: str | None
+    context: str | None
+    run: Runner = field(default=subprocess.run, compare=False, repr=False)
+
+    def describe(self) -> Description:
+        return Description(
+            terminal={"matched": 0, "failed": 1, "not-found": 1}, interval_s=INTERVAL_S
+        )
+
+    def read(self) -> Reading:
+        args = ["get", self.target, "--output", f"jsonpath={self.jsonpath}"]
+        try:
+            value = kubectl(self.run, self.context, self.namespace, args)
+        except NotFound as exc:
+            return Reading("not-found", str(exc))
+        shown = f"{self.jsonpath} = {value!r}"
+        if value == self.equals:
+            return Reading("matched", shown)
+        if value in self.fail:
+            return Reading("failed", shown)
+        return Reading("waiting", f"{shown}, want {self.equals!r}")
+
+
+class FieldSource(ParsedSource):
+    """`cc-wait k8s-field <resource>/<name> '<jsonpath>' --equals VALUE [--fail VALUE]...`
+
+    Waits until a field of any resource, a custom resource included, reads VALUE, as
+    `kubectl wait --for=jsonpath` does. It reads with one `kubectl get -o jsonpath=`, so it
+    needs only get on that resource:
+
+        matched    0   the jsonpath prints exactly VALUE
+        failed     1   it prints exactly one of the --fail values
+        not-found  1   the API server answers NotFound for the object
+
+    Any other output keeps the wait open, the empty output of a key not yet set included.
+    A failed read is retried, Forbidden and an unknown resource type included, and is never
+    taken as a match. NotFound ends the wait because the value cannot arrive on an object that
+    does not exist, and because `kubectl wait` fails on it the same way.
+    """
+
+    name = "k8s-field"
+    summary = "a resource's jsonpath field reads --equals (0), a --fail value or NotFound (1)"
+
+    def parser(self) -> ArgParser:
+        parser = ArgParser(prog="cc-wait k8s-field", add_help=False)
+        parser.add_argument("target", metavar="RESOURCE/NAME")
+        parser.add_argument("jsonpath", metavar="JSONPATH", help="e.g. '{.status.state}'")
+        parser.add_argument("--equals", required=True, help="success: the field reads this")
+        parser.add_argument(
+            "--fail", action="append", default=[], help="failure: the field reads this"
+        )
+        parser.add_argument("-n", "--namespace")
+        parser.add_argument("--context")
+        return parser
+
+    def bind(self, args: list[str]) -> FieldWait:
+        parser = self.parser()
+        ns = parser.parse_args(args)
+        resource, _, name = ns.target.partition("/")
+        if not _RESOURCE.match(resource) or not _NAME.match(name):
+            parser.error(
+                f"{ns.target!r} is not RESOURCE/NAME, such as volumes.longhorn.io/pvc-1234"
+            )
+        if not (ns.jsonpath.startswith("{") and ns.jsonpath.endswith("}")):
+            parser.error(f"{ns.jsonpath!r} is not a jsonpath template such as '{{.status.state}}'")
+        if ns.equals in ns.fail:
+            parser.error(f"{ns.equals!r} is both the --equals value and a --fail value")
+        return FieldWait(
+            ns.target, ns.jsonpath, ns.equals, tuple(ns.fail), ns.namespace, ns.context
+        )

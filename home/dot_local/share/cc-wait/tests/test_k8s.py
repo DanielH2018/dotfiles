@@ -1,4 +1,4 @@
-"""`k8s-rollout` against a fake `kubectl`: object and pod JSON in, a state out.
+"""`k8s-rollout` and `k8s-field` against a fake `kubectl`: its output in, a state out.
 
 The objects carry only the fields the source reads, in the shapes a live k3s cluster returned
 on 2026-10-04 (homepage's Deployment and ReplicaSets, alloy's DaemonSet and pods).
@@ -223,3 +223,85 @@ def test_bind_takes_kubectl_short_kinds_and_refuses_others():
     assert (wait.kind, wait.name, wait.namespace) == ("deployment", "homepage", "homelab")
     with pytest.raises(SourceError, match="KIND/NAME"):
         k8s.RolloutSource().bind(["cronjob/x"])
+
+
+# `k8s-field`. The stderr lines are what the homelab's read-only ServiceAccount got back on
+# 2026-11-14.
+NOT_FOUND = 'Error from server (NotFound): volumes.longhorn.io "pvc-1" not found'
+FORBIDDEN = (
+    'Error from server (Forbidden): secrets "x" is forbidden: User '
+    '"system:serviceaccount:kube-system:homelab-readonly" cannot get resource "secrets"'
+)
+
+
+def field_read(stdout: str = "", stderr: str = "", rc: int = 0, fail=(), calls=None):
+    def run(cmd, **_kwargs):
+        if calls is not None:
+            calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, rc, stdout, stderr)
+
+    wait = k8s.FieldWait(
+        "volumes.longhorn.io/pvc-1", "{.status.state}", "detached", tuple(fail), "ls", None, run
+    )
+    validate(wait.describe())
+    return wait.read()
+
+
+def test_the_field_reading_the_value_matches_through_one_jsonpath_get():
+    calls = []
+    assert field_read("detached", calls=calls).state == "matched"
+    assert calls == [
+        [
+            "kubectl",
+            "--namespace",
+            "ls",
+            "get",
+            "volumes.longhorn.io/pvc-1",
+            "--output",
+            "jsonpath={.status.state}",
+        ]
+    ]
+
+
+def test_another_value_or_an_unset_key_keeps_the_wait_open():
+    reading = field_read("attached")
+    assert reading.state == "waiting"
+    assert "'attached'" in reading.detail
+    assert field_read("").state == "waiting"
+
+
+def test_a_fail_value_ends_the_wait_failed():
+    assert field_read("faulted", fail=["faulted"]).state == "failed"
+
+
+def test_a_forbidden_read_is_a_failed_read_never_a_match():
+    with pytest.raises(ReadError, match="Forbidden"):
+        field_read(stderr=FORBIDDEN, rc=1)
+
+
+def test_an_object_that_does_not_exist_ends_the_wait_not_found():
+    reading = field_read(stderr=NOT_FOUND, rc=1)
+    assert reading.state == "not-found"
+
+
+def test_field_bind_refuses_a_bad_target_a_bare_path_or_a_value_that_is_also_a_failure():
+    source = k8s.FieldSource()
+    wait = source.bind(
+        [
+            "backuptargets.longhorn.io/default",
+            "{.status.available}",
+            "--equals",
+            "true",
+            "-n",
+            "longhorn-system",
+        ]
+    )
+    assert (wait.target, wait.equals) == ("backuptargets.longhorn.io/default", "true")
+    with pytest.raises(SourceError, match="RESOURCE/NAME"):
+        source.bind(["pvc-1", "{.status.state}", "--equals", "detached"])
+    with pytest.raises(SourceError, match="jsonpath template"):
+        source.bind(["volumes.longhorn.io/pvc-1", ".status.state", "--equals", "detached"])
+    with pytest.raises(SourceError, match="both"):
+        source.bind(
+            ["volumes.longhorn.io/pvc-1", "{.status.state}", "--equals", "x", "--fail", "x"]
+        )
