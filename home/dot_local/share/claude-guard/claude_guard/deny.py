@@ -81,6 +81,7 @@ from claude_guard.gitread import config_read
 from claude_guard.inert_python import (
     SHELL_STARTUP_FILES,
     call_arguments,
+    calls_are_all_literal,
     inert,
     literal_words,
     names_data_file,
@@ -3044,12 +3045,13 @@ def _python_call_lines(program: str) -> tuple[str, ...]:
 def _without_python_calls(sc: Scan) -> Scan:
     """`sc` rebuilt without the text of each Python program that is read call by call.
 
-    The text is each program of `_plain_python_sources` that `call_arguments` can read.
-    A program holding `$` or a backtick stays, because the shell may rewrite it before
-    Python reads it, and so does one whose text the command holds other than once."""
+    The text is each program of `_plain_python_sources` whose calls are given nothing
+    but the literals `call_arguments` lists (`calls_are_all_literal`). A program holding
+    `$` or a backtick stays, because the shell may rewrite it before Python reads it, and
+    so does one whose text the command holds other than once."""
     command = sc.command
     for source in _plain_python_sources(sc.command):
-        if "$" in source or "`" in source or call_arguments(source) is None:
+        if "$" in source or "`" in source or not calls_are_all_literal(source):
             continue
         if command.count(source) == 1:
             command = command.replace(source, "")

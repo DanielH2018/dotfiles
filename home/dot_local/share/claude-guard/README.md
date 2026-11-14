@@ -197,16 +197,19 @@ decision, and so is a `git commit --no-verify` in one call and a plain push in t
 Each string literal is also read on its own, so the command line an `os.system` call takes
 is still read.
 
-For these three rules the per-call reading replaces the program's text, where the text
-is certain to be Python and nothing else. That is a closed-shape program
-(`_plain_python_sources`) that parses, holds no `$` or backtick, and sits in the command
-once. Any other program keeps its text reading, with its argument lists joined, and gets
-the per-call reading on top. A program that `inert` proves starts no process adds no call.
-Three things are out of reach of the per-call reading. A list the program builds at run
-time, with `append`, `+=`, a loop variable or a parameter, is the residual the #1349
-ruling accepts. A comment is no literal, so text in one is no longer read. A config file
-that the shell command swaps in for a push the program starts (`export
-GIT_CONFIG_GLOBAL=…; python3 -c …`) is read only when the program's text is.
+For these three rules the per-call reading replaces the program's text only where the
+lists are everything the program's calls are given. That takes two conditions. The text
+is certain to be Python: a closed-shape program (`_plain_python_sources`) that holds no
+`$` or backtick and sits in the command once. And `inert_python.calls_are_all_literal`
+passes it: no call takes a name the census has no one value for, the program changes no
+bound name in place, and it does not name the process environment. Any other program
+keeps its text reading, with its argument lists joined, and gets the per-call reading on
+top. A program that `inert` proves starts no process adds no call.
+
+The per-call reading adds nothing for a list the program builds at run time, with
+`append`, `+=`, a loop variable or a parameter. That is the residual the #1349 ruling
+accepts, and such a program is read as text, as it was before #1372. A comment is no
+literal, so text in one is read only when the program's text is.
 
 A node, perl, ruby or other `_STDIN_CLI` program gets the same reading from its text
 (dotfiles #1368). The guard parses none of those languages, so `_program_may_force_push`

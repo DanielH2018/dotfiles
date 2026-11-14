@@ -8,7 +8,8 @@ the program also changes no file, for a rule that guards a file the program name
 `literal_words(program)` is for a program that is not inert: the words its string literals
 hold, for a rule that asks which command the program could start. `call_arguments(program)`
 keeps those literals apart by the call they are written in, for a rule whose words must
-reach one process together.
+reach one process together, and `calls_are_all_literal(program)` says whether those lists
+are everything the program's calls are given.
 
 It is an allowlist, and anything it does not recognise refuses. A program is inert only when
 it parses, and when every import, every attribute it reads and every builtin it names is one
@@ -36,7 +37,9 @@ Typical usage example:
 
 import ast
 import builtins
+import functools
 import re
+from collections import Counter
 from collections.abc import Iterable
 from typing import NamedTuple
 
@@ -254,7 +257,8 @@ def call_arguments(program: str) -> list[list[str]] | None:
     its method is called on. `+` between two literals makes one word, an f-string is one
     word with each value it cannot read left empty, and a name the program binds once
     stands for what it is bound to. A dict entry whose key and value are both literals is
-    the one word `key=value`, the way an environment is written on a command line.
+    the one word `key=value`, the way an environment is written on a command line, and so
+    is a keyword argument whose value is a literal.
 
     Each string literal is also a list of its own, wherever it sits, so a literal that
     holds a whole command line is read even when no call names it.
@@ -267,21 +271,77 @@ def call_arguments(program: str) -> list[list[str]] | None:
         does not parse, nests deeper than the interpreter's stack, or spells a list of
         more than `_SPELLED_LIMIT` characters, since none of those can be read call by call.
     """
+    census = _call_census(program)
+    return None if census is None else [list(words) for words in census.arguments]
+
+
+def calls_are_all_literal(program: str) -> bool:
+    """Whether the lists of `call_arguments` are all that the calls of `program` are given.
+
+    True only when no call can be handed a word from outside its own list, so that the
+    lists can stand in for the program's text. Each of these makes it False:
+
+    - A call names something the census has no value for: a loop variable, a parameter,
+      a name bound twice or by unpacking, a function or class the program defines, or an
+      attribute of one. A module the program imports and a builtin it does not rebind
+      hold no literal of the program, so they do not count.
+    - The program changes a name it binds once after binding it: a subscript assignment
+      or a `_MUTATORS` method call on the name.
+    - The program names the process environment (`_ENVIRONMENT`), which every process
+      it starts inherits, whichever call starts it.
+
+    Args:
+        program: The program text an interpreter runs: a heredoc body or a `-c` argument.
+
+    Returns:
+        False for a program `call_arguments` cannot read.
+    """
+    census = _call_census(program)
+    return census is not None and census.all_literal
+
+
+class _CallCensus(NamedTuple):
+    """What `call_arguments` and `calls_are_all_literal` report for one program."""
+
+    arguments: tuple[tuple[str, ...], ...]
+    all_literal: bool
+
+
+# The attributes of `os` that read or set the environment a started process inherits.
+_ENVIRONMENT = frozenset({"environ", "environb", "putenv", "unsetenv"})
+# Methods that change a list, dict or set in place.
+_MUTATORS = frozenset(
+    {
+        "append", "extend", "insert", "remove", "pop", "clear", "reverse", "sort",
+        "update", "setdefault", "add", "discard", "popitem",
+    }
+)  # fmt: skip
+
+
+@functools.lru_cache(maxsize=16)
+def _call_census(program: str) -> _CallCensus | None:
     tree = _parsed(program)
     if tree is None:
         return None
     bound = _bindings(tree)
-    spelled = _Spelled(
-        {
-            node.targets[0].id: node.value
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Assign)
-            and len(node.targets) == 1
-            and isinstance(node.targets[0], ast.Name)
-            and bound[node.targets[0].id] == 1
-        }
+    values = {
+        node.targets[0].id: node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and bound[node.targets[0].id] == 1
+    }
+    imported = Counter(
+        alias.asname or alias.name.split(".")[0]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import | ast.ImportFrom)
+        for alias in node.names
     )
-    found: list[list[str]] = []
+    holds_no_literal = {name for name, count in imported.items() if bound[name] == count}
+    holds_no_literal |= {name for name in _BUILTIN_NAMES if name not in bound}
+    spelled = _Spelled(values, frozenset(holds_no_literal))
+    found: list[tuple[str, ...]] = []
     try:
         for node in ast.walk(tree):
             if (
@@ -289,10 +349,45 @@ def call_arguments(program: str) -> list[list[str]] | None:
                 or isinstance(node, ast.Constant)
                 and isinstance(node.value, str | bytes)
             ):
-                found.append(spelled.words(node))
+                found.append(tuple(spelled.words(node)))
     except RecursionError, _TooLong:
         return None
-    return [words for words in found if words]
+    all_literal = (
+        spelled.all_literal
+        and not _names_environment(tree)
+        and not any(name in values for name in _changed_in_place(tree))
+    )
+    return _CallCensus(tuple(words for words in found if words), all_literal)
+
+
+def _names_environment(tree: ast.Module) -> bool:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
+            names = [node.attr]
+        elif isinstance(node, ast.Name):
+            names = [node.id]
+        elif isinstance(node, ast.Import | ast.ImportFrom):
+            names = [alias.name for alias in node.names]
+        else:
+            continue
+        if _ENVIRONMENT.intersection(names) or "*" in names:
+            return True
+    return False
+
+
+def _changed_in_place(tree: ast.Module) -> set[str]:
+    """The names `tree` assigns into by subscript, or calls a `_MUTATORS` method on."""
+    changed: list[ast.expr] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript) and not isinstance(node.ctx, ast.Load):
+            changed.append(node.value)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in _MUTATORS
+        ):
+            changed.append(node.func.value)
+    return {node.id for node in changed if isinstance(node, ast.Name)}
 
 
 # More than a command line can hold. A name that doubles itself (`a = b + b`) grows a list
@@ -307,13 +402,20 @@ class _TooLong(Exception):
 class _Spelled:
     """The words each expression of one program spells out, read without running it."""
 
-    def __init__(self, values: dict[str, ast.expr]) -> None:
+    def __init__(self, values: dict[str, ast.expr], holds_no_literal: frozenset[str]) -> None:
         """Initializes the reader.
 
         Args:
             values: The expression each name bound once is assigned.
+            holds_no_literal: The names that stand for no literal of the program: a
+                module it imports, a builtin it does not rebind.
+
+        Attributes:
+            all_literal: False once a name read so far is in neither argument.
         """
+        self.all_literal = True
         self._values = values
+        self._holds_no_literal = holds_no_literal
         self._read: dict[int, tuple[bool, list[str]]] = {}
         self._reading: set[int] = set()
 
@@ -349,7 +451,10 @@ class _Spelled:
             return (True, [value]) if isinstance(value, str) else (False, [])
         if isinstance(node, ast.Name):
             value = self._values.get(node.id)
-            return self._spell(value) if value is not None else (False, [])
+            if value is not None:
+                return self._spell(value)
+            self.all_literal = self.all_literal and node.id in self._holds_no_literal
+            return False, []
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
             # A chain of `+` nests as deep as it is long, so its operands are read in a loop.
             operands = [node.right]
@@ -372,6 +477,9 @@ class _Spelled:
                 else:
                     words += [word for _, part in pair for word in part]
             return False, words
+        if isinstance(node, ast.keyword) and node.arg is not None:
+            text, words = self._spell(node.value)
+            return False, [f"{node.arg}={words[0]}"] if text else words
         children = map(self._spell, ast.iter_child_nodes(node))
         return False, [word for _, part in children for word in part]
 

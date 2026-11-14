@@ -2,7 +2,13 @@
 
 import pytest
 
-from claude_guard.inert_python import call_arguments, inert, literal_words, read_only
+from claude_guard.inert_python import (
+    call_arguments,
+    calls_are_all_literal,
+    inert,
+    literal_words,
+    read_only,
+)
 
 INERT = [
     "from pathlib import Path\np = Path('a.md')\np.write_text(p.read_text().replace('x', 'y'))",
@@ -169,6 +175,8 @@ def test_literal_words_leaves_out_a_word_a_name_doubles_past_the_limit():
         ("b = 'main'\nrun(['git', f'{b}:{c}'])", [["git", "main:"]]),
         ("run('a b'.split(), env={'HOME': '/x', **e, k: 'v'})", [["a b", "HOME=/x", "v"]]),
         ("run(['git', 'fetch']); run(['ls', '-l'])", [["git", "fetch"], ["ls", "-l"]]),
+        ("run(['git'], check=True, env=dict(K='v'))", [["git", "K=v"]]),
+        ("run(['git'], cwd='/r')", [["git", "cwd=/r"]]),
         ("run(x(['git', '-C']), 'push')", [["git", "-C", "push"], ["git", "-C"]]),
         # A name bound twice has no one value, and a name bound to itself adds nothing.
         ("a = ['push', '-f']\na = ['log']\nrun(['git'] + a)", []),
@@ -198,3 +206,42 @@ def test_call_arguments_folds_a_chain_of_any_length():
 )
 def test_call_arguments_is_none_for_a_program_it_cannot_read(program):
     assert call_arguments(program) is None
+
+
+@pytest.mark.parametrize(
+    "program",
+    [
+        "import subprocess\nsubprocess.run(['git', 'fetch'], check=True, stdout=subprocess.PIPE)",
+        "import x as s\nimport x as s\na = ['fetch']\nprint(len(a)); s.run(['git'] + a)",
+        "from subprocess import run as r\nimport sys\nr(['git', *sys.argv[1:]], cwd=f'/x/{1}')",
+    ],
+)
+def test_a_program_whose_calls_take_literals_modules_and_builtins_is_all_literal(program):
+    assert calls_are_all_literal(program)
+
+
+@pytest.mark.parametrize(
+    "program",
+    [
+        "for c in [['git']]:\n    run(c)",
+        "c = ['git']\nc = ['ls']\nrun(c)",
+        "a, b = ['git'], ['ls']\nrun(a)",
+        "def f(c):\n    run(c)",
+        "def g():\n    return ['git']\nrun(g())",
+        "class C:\n    cmd = ['git']\nrun(C.cmd)",
+        "run([c for c in ['git']])",
+        "print = run\nprint(['git'])",
+        "import subprocess\nsubprocess = other\nsubprocess.run(['git'])",
+        # A name bound once and then changed in place.
+        "c = ['git', 'x']\nc[1] = 'y'\nrun(c)",
+        "c = ['git']\nc.append('y')\nrun(c)",
+        # The process environment.
+        "import os\nos.environ['K'] = 'v'",
+        "import os\nos.putenv('K', 'v')",
+        "from os import environ as e\ne.update(K='v')",
+        "from os import *",
+        "run(['git'",
+    ],
+)
+def test_a_program_whose_calls_may_take_more_than_their_literals_is_not_all_literal(program):
+    assert not calls_are_all_literal(program)

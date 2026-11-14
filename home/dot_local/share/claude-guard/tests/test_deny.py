@@ -2391,6 +2391,44 @@ def test_a_python_program_that_cannot_be_read_call_by_call_is_read_as_text(comma
     assert d.deny(command, "", ENV).rule == "push-main"
 
 
+_OS_RUN = "import os, subprocess; subprocess.run"
+
+
+@pytest.mark.parametrize(
+    ("program", "rule"),
+    [
+        # The process environment reaches every call, whichever statement sets it.
+        (
+            f"os.environ.update(GIT_CONFIG_GLOBAL='/tmp/c'); {_OS_RUN}(['git', 'push'])",
+            "push-config",
+        ),
+        (f"{_OS_RUN}(['git', 'push'], env=dict(os.environ, HOME='/tmp/h'))", "push-config"),
+        (f"{_RUN}(['git', 'push'], env=dict(GIT_CONFIG_GLOBAL='/tmp/c'))", "push-config"),
+        (
+            f"os.environ['GIT_CONFIG_PARAMETERS'] = 'core.hookspath=/dev/null'; "
+            f"{_OS_RUN}(['git', 'push'])",
+            "push-no-verify",
+        ),
+        # A call that is handed a name the census has no one value for.
+        (
+            f"import subprocess\nfor c in [['git', 'push', 'origin', 'main']]:\n    {_RUN}(c)",
+            "push-main",
+        ),
+        (
+            f"c = ['git', 'status']; {_RUN}(c); c = ['git', 'push', 'origin', 'main']; {_RUN}(c)",
+            "push-main",
+        ),
+        (f"class C:\n    cmd = ['git', 'push', 'origin', 'main']\n{_RUN}(C.cmd)", "push-main"),
+        (f"def g():\n    return ['git', 'push', 'origin', 'main']\n{_RUN}(g())", "push-main"),
+        (f"def g(c=['git', 'push', 'origin', 'main']):\n    {_RUN}(c)\ng()", "push-main"),
+    ],
+)
+def test_a_push_the_calls_of_a_python_program_do_not_spell_is_still_read_as_text(program, rule):
+    for command in (f'python3 -c "{program}"', f"python3 - <<'EOF'\n{program}\nEOF"):
+        v = d.deny(command, "", ENV)
+        assert (v.kind, v.rule) == ("deny", rule), command
+
+
 # --- git's global options before the subcommand (dotfiles #709) ------------------------------
 
 # Every global option `git --help` lists that may precede a subcommand, in each spelling git
