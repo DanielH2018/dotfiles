@@ -77,8 +77,9 @@ test the subagent marked `discard` back to `keep` when either applies, and say y
   members (`KNOWN_CONSUMERS`, `assert len(found) >= n`) is load-bearing however trivial it reads.
 
 Both carve-outs stand on their own reasoning above. Where a repo states them itself, defer to
-its wording — the server repo's `CLAUDE.md` carries both, with the incidents behind them, under
-*Python & Tests*.
+its wording. The server repo states both in `.claude/rules/python-layout.md`, under *A new
+check ships with a proof it can go red* and *A check that finds its subject by pattern names a
+member it must find*.
 
 ## Step 4 — Present and ask
 

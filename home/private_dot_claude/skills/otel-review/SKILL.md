@@ -79,7 +79,7 @@ single-replica Deployments with no `nodeSelector`. They publish their query port
 `hostPort` bound to `127.0.0.1`, so whichever node they land on is the only node whose
 loopback answers — and a reboot moves that. On 2026-08-23 all three moved from daniel-box to
 daniel-server, and every loopback probe from daniel-box read `unreachable` while the
-telemetry itself was completely healthy. `otelq` and `otel-sweep` now fall back to the
+telemetry itself was completely healthy. `otelq` and `otel-sweep` fall back to the
 ClusterIP, which is routed on every node, so both work from either machine.
 
 Do not carry a belief about where they run. Ask:
@@ -181,7 +181,7 @@ Judge each machine against what it should look like, then report only what depar
   those files — a retention sweep touched four transcripts from 2026-08-18/19 on 2026-08-23,
   and each then looked like a live session holding zero events, which is the exact shape of a
   silent session. Read the last `"timestamp"` in the file's own content instead. `--deep`
-  does this now; do it by hand too if you are checking a candidate yourself.
+  does this; do it by hand too if you are checking a candidate yourself.
 - **A silent session is the finding that matters.** A transcript being written while Loki
   holds none of its events means that session exports nowhere. The cause is almost always
   that it started before the telemetry config or the collector existed — the exporter binds
