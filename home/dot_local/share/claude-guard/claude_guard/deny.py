@@ -210,9 +210,10 @@ class Scan:
 # The gap between two string literals of an argument list: `'git', 'push'`, and the
 # `'git', ['push'` of node's `execFileSync`. A quote may be escaped for the shell (`\"`),
 # the next literal may carry a prefix (`b'push'`), and whitespace or a `#` or `//` comment
-# may sit anywhere in the gap. A line may end in the two characters `\n`, as it does in a
-# `$'…'` program.
-_GAP_FILL = r"(?:\s|\\[nrt]|(?:#|//)(?:(?!\\n)[^\n])*(?:\n|\\n))*"
+# may sit anywhere in the gap. A comment ends at a real newline, and may hold the text
+# `\n` and quotes. Failing that, it ends at the two characters `\n`, as a line does in a
+# `$'…'` program, where `\\` is an escaped backslash.
+_GAP_FILL = r"(?:\s|\\[nrt]|(?:#|//)(?:[^\n]*\n|(?:\\\\|(?!\\n)[^\n])*\\n))*"
 _LIST_GAP = re.compile(
     rf"""(\\?["']){_GAP_FILL},{_GAP_FILL}[\[(]?{_GAP_FILL}[bBfFrRtTuU]{{0,2}}(\\?["'])"""
 )

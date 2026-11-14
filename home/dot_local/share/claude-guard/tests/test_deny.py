@@ -2022,6 +2022,18 @@ _RUN = "import subprocess; subprocess.run"
             'node -e $\'require("child_process").spawnSync("git", // x\\n ["push", "-f"])\'',
             "force-push-flag",
         ),
+        # A comment holding the text `\n` in a program with real newlines.
+        (
+            "python3 <<'EOF'\nimport subprocess\n"
+            "subprocess.run(['git', # print(\"x\\n\")\n 'push', '--force'])\nEOF",
+            "force-push-flag",
+        ),
+        # An escaped backslash before n in a `$'…'` comment is not a line end.
+        (
+            "python3 -c $'import subprocess\\n"
+            'subprocess.run(["git", # a\\\\nb\\n "push", "--force"])\'',
+            "force-push-flag",
+        ),
     ],
 )
 def test_a_push_an_interpreter_starts_from_an_argument_list_is_denied(command, rule):
