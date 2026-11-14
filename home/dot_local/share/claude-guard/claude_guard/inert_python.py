@@ -102,6 +102,14 @@ BUILTINS = frozenset(
     }
 )  # fmt: skip
 
+# The files bash and zsh run at startup, login or logout. The alternation reads the same in
+# Python `re` and in the ERE dialect of `deny.py`, whose `WRITE_TARGETS` refuses a shell
+# write to the same names.
+SHELL_STARTUP_FILES = (
+    r"\.bashrc|\.bash_profile|\.bash_login|\.bash_logout|\.profile|"
+    r"\.zshenv|\.zshrc|\.zprofile|\.zlogin|\.zlogout"
+)
+
 # Files that a later shell, ssh, git, systemd or Claude Code runs, a user-writable directory
 # on PATH, and /proc, whose `self/mem` rewrites the running interpreter. A program that names
 # one could plant a command there, so it is never inert. zsh reads `.zshenv` for every
@@ -110,8 +118,7 @@ BUILTINS = frozenset(
 # start MCP servers. A root-owned directory such as /etc or /usr/local/bin is not listed: an
 # inert program starts no `sudo`, so it cannot write one.
 _PLANTS = re.compile(
-    r"\.bashrc|\.bash_profile|\.bash_login|\.bash_logout|\.profile\b|"
-    r"\.zshenv|\.zshrc|\.zprofile|\.zlogin|\.zlogout|"
+    rf"{SHELL_STARTUP_FILES}|"
     r"\.ssh/|\.config/|\.claude/settings|\.claude/hooks|\.claude\.json|\.mcp\.json|"
     r"\.git/hooks|\.git/config|\.gitconfig|crontab|/proc/|"
     r"\.local/bin|~/bin\b|/home/[^/\s]+/bin\b"

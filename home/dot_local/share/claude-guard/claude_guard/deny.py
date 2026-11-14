@@ -75,7 +75,7 @@ from claude_guard.gitargv import (
     subcommand_at,
 )
 from claude_guard.gitread import config_read
-from claude_guard.inert_python import inert, read_only
+from claude_guard.inert_python import SHELL_STARTUP_FILES, inert, read_only
 from claude_guard.inert_shell import only_reads_or_prints, segment_reads_or_prints
 from claude_guard.rules import load_rules
 from claude_guard.segment import Segment, mask_substitutions, parse, substitution_spans
@@ -1935,8 +1935,8 @@ GIT_CONFIG_PATHS = (
 )
 # :1064. SOPS basenames on the WRITE side only (:1057-1063).
 WRITE_TARGETS = (
-    rf"({SECRET_PATHS}|{SOPS_BASENAMES}|authorized_keys|\.bashrc|\.zshrc|\.bash_profile|"
-    rf"\.zprofile|\.profile|\.claude/settings\.json|\.claude/hooks/|{GIT_CONFIG_PATHS})"
+    rf"({SECRET_PATHS}|{SOPS_BASENAMES}|authorized_keys|{SHELL_STARTUP_FILES}|"
+    rf"\.claude/settings\.json|\.claude/hooks/|{GIT_CONFIG_PATHS})"
 )
 # :1081. Editors that unambiguously rewrite the file they name; cp/mv deliberately absent.
 # GNU sed reads everything after `-i` in the word as the backup suffix, so `-ie` is `-i`
@@ -2163,7 +2163,7 @@ def _inplace_edits_only_safe_files(command: str) -> bool:
 # later shell, git or Claude Code reads. Only a secret-NAMED fixture is let through there.
 _PLANT_TARGETS = re.compile(
     _ere(
-        r"(authorized_keys|\.bashrc|\.zshrc|\.bash_profile|\.zprofile|\.profile|"
+        rf"(authorized_keys|{SHELL_STARTUP_FILES}|"
         rf"\.claude/settings\.json|\.claude/hooks/|{GIT_CONFIG_PATHS})"
     )
 )

