@@ -49,6 +49,8 @@ HEADLESS = [
     "grep -c 'credentials.json\\|\\*\\*/.env' home/.chezmoitemplates/settings.base.json",
     "sed -n '/cluster-vars.sops.env/p' docs/landing.md",
     "grep -n 'git push --force' README.md",
+    "git commit -m 'Deny git push --force on any branch'",
+    "git grep -n 'git push --force' -- docs",
     # prose that mentions a privileged command
     "echo 'run sudo systemctl restart k3s by hand'",
     'python3 - <<EOF\nopen("/tmp/x.md","w").write("run sudo systemctl restart foo")\nEOF',

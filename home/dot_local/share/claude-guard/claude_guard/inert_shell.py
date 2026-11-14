@@ -1,7 +1,7 @@
-"""Whether a Bash command only reads files and prints text, so none of its words can run.
+"""Whether a Bash command runs none of the words it names.
 
-`only_reads_or_prints` is an allowlist. It answers True only when it can read every word of
-every segment and each segment is one of:
+`runs_none_of_its_words` is an allowlist. It answers True only when it can read every word
+of every segment and each segment is one of:
 
     grep, egrep, fgrep        any arguments; no grep option runs a program
     rg                        options from `_RG_BARE` and `_RG_VALUED` only, which leaves out
@@ -10,6 +10,13 @@ every segment and each segment is one of:
     printf                    a format first, never an option (`-v NAME` assigns a variable)
                               and never a glob, which could expand to one
     head tail wc cat cut tr nl    any arguments
+    git commit, git log       `git` then the subcommand, so no global option sets config or
+                              an alias; never a glob
+    git grep                  the same, and never the pager option, which runs its value
+
+The rows above the git ones only read files and print text: `segment_reads_or_prints`. A
+git row runs git, and `git commit` runs the repository's hooks, but git hands none of its
+arguments to a shell.
 
 Anything else is False: a command name spelled as a path or behind an assignment, any
 expansion or substitution, a heredoc, a subshell or group, backgrounding, and every redirect
@@ -21,6 +28,7 @@ is refused with the rest. False means "not proven", never "runs something".
 the next command of a pipe is fed.
 """
 
+import itertools
 import re
 
 from claude_guard.segment import Segment, parse
@@ -287,12 +295,38 @@ def segment_reads_or_prints(seg: Segment) -> bool:
     return seg.sep in _SEPARATORS and not seg.heredocs and _segment_reads_or_prints(seg.text)
 
 
-def only_reads_or_prints(command: str) -> bool:
-    """Whether every segment of `command` is a reader or a printer the module docstring lists.
+_GIT_TEXT_SUBCOMMANDS = frozenset({"commit", "grep", "log"})
+
+
+def _git_runs_no_word(text: str) -> bool:
+    """Whether the segment `text` is a `git commit`, `git grep` or `git log` that runs none
+    of its arguments. `git grep -O<pager>` and `--open-files-in-pager=<pager>` run the pager,
+    and git accepts any unique prefix of the long name and an `O` inside a short cluster."""
+    words = _words(text)
+    if words is None or len(words) < 2 or any(glob for _, glob in words):
+        return False
+    name, sub, *args = (word for word, _ in words)
+    if name != "git" or sub not in _GIT_TEXT_SUBCOMMANDS:
+        return False
+    if sub != "grep":
+        return True
+    options = itertools.takewhile(lambda arg: arg != "--", args)
+    return not any(
+        arg.startswith("--o") or (arg.startswith("-") and not arg.startswith("--") and "O" in arg)
+        for arg in options
+    )
+
+
+def runs_none_of_its_words(command: str) -> bool:
+    """Whether every segment of `command` is one the module docstring lists.
 
     True means no word of the command, quoted or not, reaches anything that runs it.
     """
     p = parse(command)
     if not p.ok or p.substitutions:
         return False
-    return all(segment_reads_or_prints(seg) for seg in p.segments)
+    return all(
+        segment_reads_or_prints(seg)
+        or (seg.sep in _SEPARATORS and not seg.heredocs and _git_runs_no_word(seg.text))
+        for seg in p.segments
+    )

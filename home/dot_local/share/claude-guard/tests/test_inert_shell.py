@@ -2,7 +2,7 @@
 
 import pytest
 
-from claude_guard.inert_shell import only_reads_or_prints, printed
+from claude_guard.inert_shell import printed, runs_none_of_its_words
 
 READS_OR_PRINTS = [
     "grep -n 'git push --force' README.md",
@@ -17,6 +17,10 @@ READS_OR_PRINTS = [
     "rg -n -e 'git push --force' -g '*.md' docs",
     "rg -ine 'git push --force' --glob='*.md' -- *.md",
     "rg --hidden --type md -C3 'git push --force'",
+    "git commit -m 'Deny git push --force on any branch'",
+    "git grep -n 'git push --force' -- docs",
+    "git log --oneline --grep='git push --force' | head -5",
+    "git grep -n 'git push --force' -- -O",
 ]
 NOT_PROVEN = [
     # a command off the list, or one whose name is not the bare word
@@ -34,6 +38,16 @@ NOT_PROVEN = [
     "rg -e -- --pre=cat 'git push --force'",
     "rg 'git push --force' *",
     "rg -e * 'git push --force'",
+    # git behind a global option, another subcommand, a glob, or git grep's pager option
+    "git -c alias.x='!git push --force' commit -m x",
+    "git -C /tmp/r log --grep='git push --force'",
+    "git show 'git push --force'",
+    "git",
+    "git grep 'git push --force' *.md",
+    "git grep -O'git push --force' x",
+    "git grep -nOsh x",
+    "git grep --open-files-in-pager='git push --force' x",
+    "git grep --open='git push --force' x",
     "printf -v PATH '%s' /tmp/e",
     "printf [-]v PATH /tmp/e",
     # a redirect that is not a whole unquoted /dev/null or fd word
@@ -60,12 +74,12 @@ NOT_PROVEN = [
 
 @pytest.mark.parametrize("command", READS_OR_PRINTS)
 def test_a_command_of_listed_readers_and_printers_is_proven(command):
-    assert only_reads_or_prints(command)
+    assert runs_none_of_its_words(command)
 
 
 @pytest.mark.parametrize("command", NOT_PROVEN)
 def test_anything_outside_the_list_is_not_proven(command):
-    assert not only_reads_or_prints(command)
+    assert not runs_none_of_its_words(command)
 
 
 PRINTED = [

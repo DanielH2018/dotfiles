@@ -77,7 +77,7 @@ from claude_guard.gitargv import (
 )
 from claude_guard.gitread import config_read
 from claude_guard.inert_python import SHELL_STARTUP_FILES, inert, read_only
-from claude_guard.inert_shell import only_reads_or_prints, printed, segment_reads_or_prints
+from claude_guard.inert_shell import printed, runs_none_of_its_words, segment_reads_or_prints
 from claude_guard.rules import load_rules
 from claude_guard.segment import Parsed, Segment, mask_substitutions, parse, substitution_spans
 
@@ -4248,8 +4248,8 @@ RULES: tuple[Rule, ...] = (
 )
 
 # These rules match `git push`, `git config`, `dd`/`mkfs` and `curl … | sh` as text anywhere
-# in a segment, so that `bash -c '…'` and an ssh payload stay covered. A command that only
-# reads and prints runs none of them, whatever its quoted words say.
+# in a segment, so that `bash -c '…'` and an ssh payload stay covered. A command that
+# `runs_none_of_its_words` proves runs none of them, whatever its quoted words say.
 _TEXT_RULES: frozenset[Rule] = frozenset(
     {
         force_push,
@@ -4276,7 +4276,7 @@ def deny(command: str, cwd: str = "", env: Mapping[str, str] | None = None) -> V
     home = (env or {}).get("HOME", "")
     sc = _without_stored_heredocs(build_scan(command))
     target = rm_target(home)
-    skipped = _TEXT_RULES if only_reads_or_prints(command) else ()
+    skipped = _TEXT_RULES if runs_none_of_its_words(command) else ()
     for rule in RULES:
         if rule in skipped:
             continue

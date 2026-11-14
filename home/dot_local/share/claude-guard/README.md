@@ -298,11 +298,14 @@ refused. A body fed to any other command is data, so
 `--force` ends at any character that cannot continue the word, because a flag that closes
 a quoted program is followed by `)` or `;` once the quotes are removed. `deny` skips the
 push rules for a
-command that `inert_shell.only_reads_or_prints` proves runs nothing it names, so
+command that `inert_shell.runs_none_of_its_words` proves runs nothing it names, so
 `grep -n 'git push --force' README.md` passes (dotfiles #1249). That proof is an allowlist.
 Every segment must be grep, rg with options from a fixed list, echo, printf with a format
-first, or one of head, tail, wc, cat, cut, tr and nl. The command name must be the bare
-word. The proof refuses an expansion, a substitution, a heredoc, a group, backgrounding,
+first, one of head, tail, wc, cat, cut, tr and nl, or a `git commit`, `git grep` or
+`git log` (dotfiles #1272). The command name must be the bare
+word. A git segment spells the subcommand straight after `git`, because a global option
+can set an alias or config that a hook's child git reads. It holds no glob, and a
+`git grep` holds no `-O` or `--open-files-in-pager`, which runs its value. The proof refuses an expansion, a substitution, a heredoc, a group, backgrounding,
 and every redirect except `/dev/null` and `&1`/`&2` written as one unquoted word. One
 segment outside the list keeps the push rules on for the whole command. rg reads
 `RIPGREP_CONFIG_PATH` from the environment, which the command cannot set under this proof

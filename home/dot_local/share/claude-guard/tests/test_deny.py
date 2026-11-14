@@ -290,6 +290,10 @@ QUOTED_PUSH_ALLOW = [
     "printf '%s\\n' 'git -c remote.origin.mirror=true push'",
     "grep -n 'git push --no-verify' README.md",
     "grep -n 'git config core.hooksPath /tmp/h' README.md",
+    # dotfiles #1272: git commit, grep and log run none of their arguments.
+    "git commit -m 'Deny git push --force on any branch'",
+    "git grep -n 'git push --force' -- docs",
+    "git log --oneline --grep='git push --force origin main'",
 ]
 # The same text where something may run it. Each row is denied without the quoted-text skip.
 QUOTED_PUSH_DENY = [
@@ -310,7 +314,11 @@ QUOTED_PUSH_DENY = [
     "printf [-]v PATH /tmp/e; grep -n 'git push --force' README.md",
     "rg --pre 'git push --force' x docs",
     "rg -z 'git push --force' docs",
-    "git grep -n 'git push --force'",
+    "git -c alias.x='!git push -f' commit -m x",
+    "git grep -O'git push --force' x",
+    "git grep --open-files-in-pager='git push --force' x",
+    "git commit -m 'git push --force'; make",
+    "git show 'git push --force'",
     "grep -n \"$(echo 'git push --force')\" README.md",
     "grep -n 'git push --force' README.md &",
     "(grep -n 'git push --force' README.md)",
