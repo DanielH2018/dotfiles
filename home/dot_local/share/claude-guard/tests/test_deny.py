@@ -1862,6 +1862,60 @@ def test_a_secret_named_in_the_data_piped_to_another_interpreter_is_allowed():
     assert kinds(OTHER_STDIN_ALLOW) == ["none"] * len(OTHER_STDIN_ALLOW)
 
 
+# DECIDED (dotfiles #1344, operator ruling 2026-11-14): a program another interpreter reads
+# from stdin or takes inline is refused when it names a protected path, read-only or not.
+NODE_WRITES_BASHRC = "require('fs').writeFileSync(process.env.HOME + '/.bashrc', 'x')"
+OTHER_STDIN_WRITE_DENY = [
+    f'echo "{NODE_WRITES_BASHRC}" | node',
+    "echo \"require('fs').appendFileSync('/home/u/.zshrc', 'x')\" | node",
+    f"echo \"unlink('{BASHRC}')\" | perl",
+    f"echo \"File.write('{BASHRC}', 'x')\" | ruby -",
+    f"node <<'EOF'\n{NODE_WRITES_BASHRC}\nEOF",
+    f'echo "{NODE_WRITES_BASHRC}" | timeout 5 node --no-warnings',
+    # no read-only proof exists for these languages, so a read is refused too
+    f"echo \"puts File.read('{BASHRC}')\" | ruby",
+]
+OTHER_INLINE_WRITE_DENY = [
+    f'node -e "{NODE_WRITES_BASHRC}"',
+    f'node --eval="{NODE_WRITES_BASHRC}"',
+    f'node --no-warnings -p "{NODE_WRITES_BASHRC}"',
+    f"perl -e \"unlink('{BASHRC}')\"",
+    f"perl -e\"unlink('{BASHRC}')\"",
+    f"ruby -rjson -e \"File.write('{BASHRC}', 'x')\"",
+    f"php -r \"file_put_contents('{BASHRC}', 'x');\"",
+    f'bun run -e "{NODE_WRITES_BASHRC}"',
+    # a second inline program, after one the option word holds and after one it does not
+    f"perl -e'$x = 1;' -e \"unlink('{BASHRC}')\"",
+    f"ruby -e 'x = 1' -e \"File.write('{BASHRC}', 'x')\"",
+    f'timeout 5 node -e "{NODE_WRITES_BASHRC}"',
+    f'bash -c "ruby -e \\"File.write(\'{BASHRC}\', 1)\\""',
+]
+OTHER_WRITE_ALLOW = [
+    "node -e 'console.log(process.env.HOME)'",
+    "ruby -e 'puts 1'",
+    # the path is a file the program reads as data, or belongs to a script file
+    "perl -ne 'print if /PATH/' ~/.zshrc",
+    "node count.js -e ~/.bashrc",
+    "cat ~/.bashrc | perl -ne 'print if /PATH/'",
+    # an interpreter's name as the argument of a command that runs none
+    "grep -c PATH ~/.bashrc && brew install node",
+]
+
+
+def test_a_program_piped_to_another_interpreter_that_names_a_protected_file_is_refused():
+    expected = ["interpreter-write"] * len(OTHER_STDIN_WRITE_DENY)
+    assert rules(OTHER_STDIN_WRITE_DENY) == expected
+
+
+def test_an_inline_program_of_another_interpreter_that_names_a_protected_file_is_refused():
+    expected = ["interpreter-write"] * len(OTHER_INLINE_WRITE_DENY)
+    assert rules(OTHER_INLINE_WRITE_DENY) == expected
+
+
+def test_another_interpreter_whose_program_names_no_protected_file_is_allowed():
+    assert kinds(OTHER_WRITE_ALLOW) == ["none"] * len(OTHER_WRITE_ALLOW)
+
+
 # --- terraform / tofu / terragrunt (:1086-1118) -----------------------------------------------
 
 TF_DENY = [

@@ -362,7 +362,16 @@ exception is a command that `_NAMES_ONLY` lists, which runs none of the words af
 So `brew install node` and `grep node` after a segment that names a secret path pass, and
 a command missing from that list keeps the refusal.
 `python_write` leaves those programs alone, because its read-only proof reads Python
-source. A script file's program stays out of reach. The rule also reads what the program is given: whatever its
+source. `interpreter_write` covers them instead (dotfiles #1344). It refuses a program one
+of those interpreters reads from stdin or a descriptor, or takes inline with `-e` or its
+equivalent, when the program names a secrets, shell-startup or git config/hook file. No
+read-only proof exists for those languages, so the rule refuses a program that only reads
+the file as well. The operator accepted that over-refusal on 2026-11-14. The rule reads the
+program text only. A path in the words after the program passes, because
+`perl -ne 'print' ~/.zshrc` reads its operand as data. The program of `deno eval` is not
+read either.
+
+A script file's program stays out of reach. `python_write` also reads what the program is given: whatever its
 segment redirects in, and every earlier segment of the command, which may be the program
 itself or its arguments under `xargs`. Reading every earlier segment needs no model of
 pipes, groups or descriptors, and costs a writer refused after an unrelated segment that

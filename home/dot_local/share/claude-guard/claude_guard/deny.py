@@ -2366,12 +2366,19 @@ def inplace_edit(sc: Scan, target: str) -> Verdict | None:
 # path, and a program on stdin comes before that word or with none.
 #
 # `node`, `perl`, `ruby` and the other `_INTERPRETER_WORD` names read a program from stdin
-# too (dotfiles #1324). Only `secret_interpreter` reads those programs. `python_write` does
+# too (dotfiles #1324). `secret_interpreter` reads those programs, and `python_write` does
 # not: its read-only proof is a proof about Python source.
+#
+# DECIDED (dotfiles #1344, operator ruling 2026-11-14): `interpreter_write` refuses a
+# program one of those interpreters reads from a descriptor or takes inline (`-e`) when the
+# program names a WRITE_TARGETS path, read-only or not. No read-only proof exists for those
+# languages, so the over-refusal is accepted.
 #
 # Residual: the program a script file holds (`python3 fix.py ~/.bashrc`), and one that
 # reaches the path with no segment naming it (`'.bash' + 'rc'`, a file of paths). The
-# guard never reads a file it did not see written.
+# guard never reads a file it did not see written. For an interpreter other than Python,
+# also a path the program takes from the words after it (`perl -ne 'print' ~/.zshrc` is a
+# read) and the program of `deno eval`.
 _PYTHON_WORD = re.compile(r"python[0-9.]*")
 _PYTHON_LAUNCH = rf"({_INTERPRETER_WORD}|\buv\s+run\b)"
 # CPython's options that take a value: the rest of the word, or the next word.
@@ -2687,6 +2694,36 @@ def _program_descriptor(cli: _StdinCli, args: list[str]) -> str | None:
     return "-"
 
 
+def _inline_programs(cli: _StdinCli, args: list[str]) -> list[str]:
+    """The programs an interpreter other than Python takes on its command line.
+
+    Args:
+        cli: The interpreter's options.
+        args: The words after the interpreter, redirects removed.
+
+    Returns:
+        Each inline option (`cli.inline`) ahead of the first operand, and the word after
+        it. The option word is kept because some hold the program themselves, as
+        `--eval=…` and perl's `-e…` do. The words do not say which, so the word after a
+        self-contained option is returned too.
+    """
+    found: list[str] = []
+    after_inline = False
+    i = 1 if args[:1] and args[0] in cli.subcommands else 0
+    while i < len(args):
+        w = args[i]
+        if re.fullmatch(cli.inline, w, re.DOTALL):
+            found += args[i : i + 2]
+            after_inline = True
+            i += 1
+            continue
+        if not w.startswith("-") and not after_inline:
+            break
+        after_inline = False
+        i += 2 if re.fullmatch(cli.valued, w) else 1
+    return found
+
+
 def _command_line_programs(
     args: list[str],
     redirected: list[str],
@@ -2821,7 +2858,7 @@ def _runs_python_program(
     other_matches: Callable[[str], bool] | None = None,
 ) -> bool:
     """Whether `text` runs a Python program from a command line that `matches` accepts, or
-    feeds another interpreter a program that `other_matches` accepts.
+    gives another interpreter a program that `other_matches` accepts.
 
     A word that holds a whole command line, as `bash -c` and ssh take, a substitution body
     and a heredoc body are each read in turn, except a word or body already read as the
@@ -2836,7 +2873,8 @@ def _runs_python_program(
             because no program can be read out of it.
         depth: How many command lines deep `text` sits.
         other_matches: Called with each program an interpreter other than Python reads
-            from a descriptor (`_program_descriptor`). None leaves those programs unread.
+            from a descriptor (`_program_descriptor`) or takes inline (`_inline_programs`).
+            None leaves those programs unread.
     """
 
     def within(nested: str) -> bool:
@@ -2872,9 +2910,12 @@ def _runs_python_program(
                 programs.add(found[0])
         for cli, after in _other_interpreter_arguments(args) if other_matches else ():
             operand = _program_descriptor(cli, after)
-            if operand is None:
-                continue
-            for program in _descriptor_programs(operand, redirected, piped, substituted, earlier):
+            given = (
+                _inline_programs(cli, after)
+                if operand is None
+                else _descriptor_programs(operand, redirected, piped, substituted, earlier)
+            )
+            for program in given:
                 if other_matches(program):
                     return True
                 programs.add(program)
@@ -2898,6 +2939,29 @@ def python_write(sc: Scan, target: str) -> Verdict | None:
             "and print the result; `str.replace`, `write` and every import outside "
             "`inert_python.py`'s list count as a change. Ask the user before changing the "
             f"file itself.{EDIT_TOOL_HINT}",
+        )
+    return None
+
+
+def _names_write_target(program: str) -> bool:
+    """Whether a program an interpreter other than Python runs names a WRITE_TARGETS path."""
+    return bdb_re(program, WRITE_TARGETS)
+
+
+def interpreter_write(sc: Scan, target: str) -> Verdict | None:
+    """A program that `node`, `perl`, `ruby` or another `_STDIN_CLI` interpreter reads from
+    a descriptor or takes inline, and that names a WRITE_TARGETS path (#1344)."""
+    if _runs_python_program(
+        sc.command, lambda *_: False, WRITE_TARGETS, other_matches=_names_write_target
+    ):
+        return Verdict(
+            "deny",
+            "interpreter-write",
+            "Blocked: a node, perl, ruby or other interpreter program, piped in or given "
+            "inline, that names a secrets, shell-startup, or git config/hook file. The "
+            "guard cannot prove such a program read-only, so it refuses one that only "
+            "reads as well. To read the file, use the Read tool or `cat`, and pipe the "
+            f"text to the program. Ask the user before changing the file itself.{EDIT_TOOL_HINT}",
         )
     return None
 
@@ -4594,6 +4658,7 @@ RULES: tuple[Rule, ...] = (
     write_targets,
     inplace_edit,
     python_write,
+    interpreter_write,
     terraform,
     force_push_flag,
     push_config,

@@ -108,6 +108,8 @@ MUST_REFUSE = [
     ("python-write", f"python3 - <<'EOF'\nopen('{BASHRC}','w').write('x')\nEOF"),
     ("python-write", f"uv run python -c \"open('{BASHRC}','w').write('x')\""),
     ("python-write", f"uv run python - <<'EOF'\nopen('{BASHRC}','w').write('x')\nEOF"),
+    ("interpreter-write", f"node -e \"require('fs').writeFileSync('{BASHRC}', 'x')\""),
+    ("interpreter-write", f"echo \"require('fs').writeFileSync('{BASHRC}', 'x')\" | node"),
 ]
 
 
