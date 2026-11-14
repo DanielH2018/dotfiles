@@ -61,7 +61,7 @@ import shlex
 import shutil
 import tokenize
 from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 
 from claude_guard import secret_table
@@ -2849,6 +2849,20 @@ def config_write(sc: Scan, target: str) -> Verdict | None:
 
 
 _MACHINE_SCOPES = frozenset({"--global", "--system"})
+_CONFIG_ARGS_TEXT = rf"git{GLOBALS_RE}\s+config\b([^;&|]*)"
+
+
+def _writes_machine_config(args: Sequence[str]) -> bool:
+    return bool(_MACHINE_SCOPES & set(args)) and not config_read(args)
+
+
+def _config_args_in_text(segset: str) -> Iterator[list[str]]:
+    """The arguments of each `git config` that `segset` holds as text: in a `bash -c`
+    argument, a heredoc line a shell runs, or a command the parser refuses."""
+    pattern = _pattern(_CONFIG_ARGS_TEXT, False)
+    for line in segset.split("\n"):
+        for match in pattern.finditer(line):
+            yield re.findall(r"[^\s()`]+", match.group(1))
 
 
 def machine_config_write(sc: Scan, target: str) -> Verdict | None:
@@ -2858,9 +2872,8 @@ def machine_config_write(sc: Scan, target: str) -> Verdict | None:
     before any hook runs and so also refused `git config --global --get …`. Reads go on to
     the judge, which approves them through `gitread.config_read`, the same test used here.
     """
-    if any(
-        inv.sub == "config" and _MACHINE_SCOPES & set(inv.args) and not config_read(inv.args)
-        for inv in sc.gits
+    if any(inv.sub == "config" and _writes_machine_config(inv.args) for inv in sc.gits) or any(
+        map(_writes_machine_config, _config_args_in_text(sc.segset))
     ):
         return Verdict(
             "deny",
@@ -4258,6 +4271,7 @@ _TEXT_RULES: frozenset[Rule] = frozenset(
         push_config,
         push_no_verify,
         config_write,
+        machine_config_write,
         disk_wipe,
         curl_pipe,
     }

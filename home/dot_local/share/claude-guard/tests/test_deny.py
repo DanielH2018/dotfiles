@@ -2107,6 +2107,8 @@ def test_an_ordinary_config_write_is_no_decision(command):
         "git config --global --unset rerere.autoupdate",
         "git config --global --edit",
         "cd /tmp && git config --global --add safe.directory '*'",
+        "bash -c 'git config --global user.name x'",
+        "bash <<'EOF'\ngit config --global user.name x\nEOF",
     ],
 )
 def test_a_machine_wide_config_write_is_denied(command):
@@ -2120,6 +2122,8 @@ def test_a_machine_wide_config_write_is_denied(command):
         "git config --global --get-all rerere.autoupdate",
         "git config --global --list --show-origin",
         "git config get --system core.editor",
+        "bash -c 'git config --global --get user.name'",
+        "git commit -m 'refuse git config --global user.name x'",
     ],
 )
 def test_a_machine_wide_config_read_is_no_decision(command):
