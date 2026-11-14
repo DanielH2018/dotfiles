@@ -208,8 +208,13 @@ class Scan:
 
 
 # The gap between two string literals of an argument list: `'git', 'push'`, and the
-# `'git', ['push'` of node's `execFileSync`.
-_LIST_GAP = re.compile(r"""(["'])\s*,\s*[\[(]?\s*(["'])""")
+# `'git', ['push'` of node's `execFileSync`. A quote may be escaped for the shell (`\"`),
+# the next literal may carry a prefix (`b'push'`), and whitespace or a `#` or `//` comment
+# may sit anywhere in the gap.
+_GAP_FILL = r"(?:\s|#[^\n]*\n|//[^\n]*\n)*"
+_LIST_GAP = re.compile(
+    rf"""(\\?["']){_GAP_FILL},{_GAP_FILL}[\[(]?{_GAP_FILL}[bBfFrRtTuU]{{0,2}}(\\?["'])"""
+)
 
 
 def _with_joined_lists(text: str) -> list[str]:
@@ -424,7 +429,7 @@ _FLAG_END = r"([^[:alnum:]_-]|$)"
 _FORCE_WORD = rf"(--force{_FLAG_END}|[ ]-f{_FLAG_END})"
 _FORCE_FLAG = rf"git\s+push.*{_FORCE_WORD}"
 _LEASE = r"\-\-force-with-lease"
-_MAIN_DEST_F = r"(^|[[:space:]]|:)(main|master)([[:space:]]|:|\)|\]|`|$)"
+_MAIN_DEST_F = r"(^|[[:space:]]|:)(main|master)([[:space:]]|:|\)|\]|,|`|$)"
 
 # Not the bash's (#709): git, any run of git's global options, then a push, for text the
 # canonical `git push` lines do not cover (a refused parse, `bash -c '...'`). An inline alias
@@ -462,7 +467,7 @@ def force_push(sc: Scan, target: str) -> Verdict | None:
 def push_main(sc: Scan, target: str) -> Verdict | None:
     """:725-728. Any push whose DESTINATION is main/master; `:` is deliberately not a
     terminator here so `main:feature` stays a push to feature."""
-    dest = r"([[:space:]]|:)(refs/heads/)?(main|master)([[:space:]]|\)|\]|`|$)"
+    dest = r"([[:space:]]|:)(refs/heads/)?(main|master)([[:space:]]|\)|\]|,|`|$)"
     if bdb_re_pair(sc.segset, r"git[[:space:]]+push\b", dest) or bdb_re(
         sc.segset, rf"{GIT_PUSH_AT}.*{dest}"
     ):

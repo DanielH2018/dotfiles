@@ -1959,6 +1959,7 @@ def test_a_force_push_chained_with_a_dangerous_command_is_still_denied():
         "python3 -c \"import subprocess; subprocess.run(['git', 'log', '--force'])\"",
         "python3 -c \"import subprocess as s; s.run(['git', 'status']); s.run(['ls', '-f'])\"",
         "python3 <<'EOF'\nprint(['git', 'push', '--force'])\nEOF",
+        "python3 -c \"import subprocess; subprocess.run(['git', 'push', 'origin', 'feat',])\"",
     ],
 )
 def test_a_push_without_a_force_is_no_decision(command):
@@ -1995,6 +1996,22 @@ _RUN = "import subprocess; subprocess.run"
         (f"python3 -c \"{_RUN}(['git', 'push', 'origin', 'main'])\"", "push-main"),
         (f"python3 -c \"{_RUN}(['git', 'push', '--force', 'origin', 'main'])\"", "force-push-main"),
         (f"python3 -c \"{_RUN}(['git', 'push', '--no-verify'])\"", "push-no-verify"),
+        (f'python3 -c "{_RUN}([\\"git\\", \\"push\\", \\"--force\\"])"', "force-push-flag"),
+        (f"python3 -c \"{_RUN}([b'git', rb'push', f'--force'])\"", "force-push-flag"),
+        (f"python3 -c \"{_RUN}(['git', 'push', 'origin', 'main',])\"", "push-main"),
+        (
+            'ruby -e \'system("git", "push", "--force", "origin", "main", exception: true)\'',
+            "force-push-main",
+        ),
+        (
+            "python3 <<'EOF'\nimport subprocess\n"
+            "subprocess.run(['git',  # it's\n 'push', '--force'])\nEOF",
+            "force-push-flag",
+        ),
+        (
+            "node <<'EOF'\nrequire('child_process').spawnSync('git', // x\n ['push', '-f'])\nEOF",
+            "force-push-flag",
+        ),
     ],
 )
 def test_a_push_an_interpreter_starts_from_an_argument_list_is_denied(command, rule):
