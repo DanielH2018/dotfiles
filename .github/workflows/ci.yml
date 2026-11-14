@@ -9,7 +9,9 @@
 #
 # The `gate` job is the check main's `main CI gate` ruleset requires, so it blocks as well as
 # reports: main cannot move onto a commit until this job has passed on it. Rename the job and
-# the ruleset's required check (and bin/land's LAND_REQUIRED_CHECK default) together.
+# the ruleset's required check (and bin/land's LAND_REQUIRED_CHECK default) together. `gate`
+# runs nothing itself; it passes only when `suite`, `render` and `bootstrap` all passed, so a
+# job added to its `needs:` blocks a landing without a ruleset edit.
 #
 # The gate is invoked as bin/gate rather than reimplemented step by step, so CI and a hand
 # run cannot drift into checking different things. Since #694 the pre-push hook runs only the
@@ -42,7 +44,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The required check. A job whose `needs:` failed is SKIPPED, and the ruleset counts a
+  # skipped required check as passing, so this runs `always()` and reads each result itself.
   gate:
+    needs: [suite, render, bootstrap]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every job to have passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "suite, render legs, bootstrap: $RESULTS"
+          for r in $RESULTS; do
+            [ "$r" = success ] || { echo "::error::a job the gate requires ended $r"; exit 1; }
+          done
+
+  suite:
     # A named release image, not the rolling alias: this job relies on the image's preinstalled
     # shellcheck, and the alias moves to a new Ubuntu release with no commit here.
     runs-on: ubuntu-24.04
@@ -219,12 +237,12 @@ jobs:
           esac
           bin/check-push-signatures --range "$base" "$head"
 
-  # The gate runs on Linux, and a template branch for darwin or windows that fails to render
+  # The suite runs on Linux, and a template branch for darwin or windows that fails to render
   # would otherwise surface on the next `chezmoi apply` on that machine. This job renders the
   # whole source tree on the other two systems, under each answer to the `work` prompt, since
-  # the work laptop is a Mac. It does not run the suite there; the gate stays on Linux.
+  # the work laptop is a Mac. It does not run the suite there, and `gate` waits on it.
   #
-  # Named release images rather than the rolling `-latest` aliases, for the same reason the gate
+  # Named release images rather than the rolling `-latest` aliases, for the same reason the suite
   # names ubuntu-24.04: an alias moves with no commit here.
   #
   # `chezmoi init` writes the config from home/.chezmoi.toml.tmpl, which is itself one of the
@@ -280,7 +298,7 @@ jobs:
           esac
           cm --destination "$scratch/home" apply --dry-run --exclude=externals --no-tty
 
-  # Bootstraps a machine from nothing, the path docs/RESTORE.md exists for. The gate writes
+  # Bootstraps a machine from nothing, the path docs/RESTORE.md exists for. The suite writes
   # its chezmoi config by hand, so neither the prompts in home/.chezmoi.toml.tmpl nor the
   # run_once_ install scripts ever run there.
   #

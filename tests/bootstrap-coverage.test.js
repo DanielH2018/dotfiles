@@ -42,3 +42,16 @@ test('CI runs chezmoi init --apply from zero in a clean container', () => {
   assert.match(body, /^    container: ubuntu:/m);
   assert.match(body, /chezmoi" init --apply/);
 });
+
+// The ruleset and bin/land wait on the `gate` check alone, so a job outside its `needs:` cannot
+// stop a landing. A skipped required check counts as passing, hence `always()` plus a result read.
+test('the required gate check waits on render and bootstrap', () => {
+  const body = job('gate');
+  const needs = /^    needs: \[([^\]]*)\]/m.exec(body);
+  assert.ok(needs, 'gate has no needs: list');
+  for (const name of ['suite', 'render', 'bootstrap']) {
+    assert.ok(needs[1].split(/,\s*/).includes(name), `gate does not wait on ${name}`);
+  }
+  assert.match(body, /^    if: always\(\)$/m, 'a skipped gate reads as passing to the ruleset');
+  assert.match(body, /needs\.\*\.result/);
+});
