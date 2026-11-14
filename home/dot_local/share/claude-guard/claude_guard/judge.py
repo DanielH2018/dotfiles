@@ -1303,30 +1303,28 @@ def judge(
     # and a bare unlisted command still returns Decision(False, "segment:0:unlisted", …) —
     # nothing here ever returns "deny".
 
-    # F0 (fix round 1, findings 3/6/7). readonly_remote_safe, trusted_host_safe and
-    # clean_reset_safe port THREE STANDALONE PermissionRequest hooks
-    # (allow-readonly-remote.sh, allow-daniel-server.sh, allow-clean-reset.sh) — none of them is delegated to from inside
-    # allow-compound-bash.sh's own segment loop (only curl and rm are, :117-122,
-    # :130-135), so they belong here, tried against the WHOLE, unsegmented `command` —
-    # the harness invokes each of the real standalone hooks against the full raw command
-    # the same way, independent of what allow-compound-bash.sh's own loop concludes. No
-    # `word == …` prefilter guards these calls: each check parses the whole command
-    # itself and is the one place that gets to decide whether it applies — a prefilter
-    # keyed on the chain's first segment (a segment-loop optimisation that does not
-    # transfer here) would skip e.g. clean_reset_safe on a command carrying an unrelated
+    # F0 (fix round 1, findings 3/6/7). readonly_remote_safe, trusted_host_safe and clean_reset_safe
+    # port THREE STANDALONE PermissionRequest hooks (allow-readonly-remote.sh,
+    # allow-daniel-server.sh, allow-clean-reset.sh) — none of them is delegated to from inside
+    # allow-compound-bash.sh's own segment loop (only curl and rm are, :117-122, :130-135), so they
+    # belong here, tried against the WHOLE, unsegmented `command` — the harness invokes each of the
+    # real standalone hooks against the full raw command the same way, independent of what
+    # allow-compound-bash.sh's own loop concludes. No `word == …` prefilter guards these calls: each
+    # check parses the whole command itself and is the one place that gets to decide whether it
+    # applies — a prefilter keyed on the chain's first segment (a segment-loop optimisation that
+    # does not transfer here) would skip e.g. clean_reset_safe on a command carrying an unrelated
     # prefix. Each of the three already self-refuses a compound shape on its own terms —
     # readonly_remote_safe and clean_reset_safe via segment.parse's own segment count,
-    # trusted_host_safe via its own local-split-risk character scan — so e.g. `ssh daniel-server uptime
-    # && rm -rf /` cannot ride in on the first segment being provably read-only. curl and
-    # rm need no equivalent arm here: confirmed directly against the bash oracles, not
-    # just their Python ports — allow-safe-curl.sh:107/allow-safe-rm.sh:88 each refuse an
-    # unquoted `;`/`&`/`|`/`(`/`$`/backtick/etc. inside their own tokenizer's unquoted-
-    # state case, before any curl/rm-specific logic runs, so neither bash hook can ever
-    # say "allow" for a chained command in the first place — curl_safe/rm_confined carry
-    # the identical refusal (checks/curl.py, checks/scratch.py's tokenize). So for a bare,
-    # one-segment command the existing per-segment delegation in judge_segment below
-    # reaches the identical verdict a whole-command arm would — adding one would be a
-    # no-op.
+    # trusted_host_safe via its own local-split-risk character scan — so e.g. `ssh daniel-server
+    # uptime && rm -rf /` cannot ride in on the first segment being provably read-only. curl and rm
+    # need no equivalent arm here: confirmed directly against the bash oracles, not just their
+    # Python ports — allow-safe-curl.sh:107/allow-safe-rm.sh:88 each refuse an unquoted
+    # `;`/`&`/`|`/`(`/`$`/backtick/etc. inside their own tokenizer's unquoted- state case, before
+    # any curl/rm-specific logic runs, so neither bash hook can ever say "allow" for a chained
+    # command in the first place — curl_safe/rm_confined carry the identical refusal
+    # (checks/curl.py, checks/scratch.py's tokenize). So for a bare, one-segment command the
+    # existing per-segment delegation in judge_segment below reaches the identical verdict a
+    # whole-command arm would — adding one would be a no-op.
     # Fix round 1, finding 6: two distinct rule labels, not one shared `remote-check`.
     # D1 ruled readonly_remote_safe/trusted_host_safe are two separate checks (no host
     # filter in allow-readonly-remote.sh, no verb table in allow-daniel-server.sh,
