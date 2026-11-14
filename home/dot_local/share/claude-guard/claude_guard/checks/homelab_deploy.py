@@ -31,7 +31,7 @@ import posixpath
 
 from claude_guard.deny import _segment_argv, _stage_argvs
 from claude_guard.gitargv import unwrap
-from claude_guard.segment import parse
+from claude_guard.segment import parse, substitution_spans
 
 RULE = "homelab-deploy"
 # Modes in which Claude Code itself prompts. Auto, bypassPermissions and dontAsk are left out,
@@ -269,6 +269,8 @@ def _argvs(command: str, depth: int = 0) -> list[list[str]]:
     piped_files: list[str] = []
     piped_texts: list[str] = []
     for seg in parsed.segments:
+        if not seg.text.strip():
+            continue  # `|&` parses as `|` then an empty `&` segment
         argv = _segment_argv(seg.text)
         words, source, herestring = _redirects(argv) if argv else ([], None, None)
         files = [source] if source else piped_files
@@ -283,10 +285,8 @@ def _argvs(command: str, depth: int = 0) -> list[list[str]]:
         piped_files, piped_texts = (
             _cat_output(words, files, texts) if seg.sep == "|" and words else ([], [])
         )
-    for text in parsed.substitutions:
-        argv = _segment_argv(text)
-        if argv and (words := _redirects(argv)[0]):
-            add(words)
+    for span in substitution_spans(command) or ():
+        out.extend(_argvs(command[span.body : span.end - 1], depth))
     return out
 
 

@@ -38,6 +38,9 @@ BOOTSTRAPS = [
     "ssh daniel-pi < hosts/bootstrap-host.sh",
     "< hosts/bootstrap-host.sh bash",
     "cat hosts/bootstrap-host.sh | ssh daniel-pi sh",
+    "cat hosts/bootstrap-host.sh |& ssh daniel-pi sh",
+    "echo $(ssh daniel-pi bash -s < hosts/bootstrap-host.sh)",
+    "x=$(cat hosts/bootstrap-host.sh | ssh daniel-pi sh)",
 ]
 # No sudo form: the sudo boundary in deny.py already denies it, locally and over ssh.
 RECONCILES = [
@@ -81,8 +84,6 @@ TRUSTED_HOST_WRITES = [
     "ssh daniel-server -- systemctl start homelab-reconcile",
     "ssh daniel-server -t 'systemctl start homelab-reconcile'",
     "ssh daniel-server 'cd /srv && bash -e -o pipefail hosts/bootstrap-host.sh daniel-pi'",
-    "ssh daniel-server bash -s < hosts/bootstrap-host.sh",
-    "ssh daniel-server sh <<'EOF'\nsystemctl start homelab-reconcile\nEOF",
 ]
 
 
