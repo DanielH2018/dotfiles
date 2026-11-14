@@ -1,6 +1,8 @@
-{{- if eq .chezmoi.os "windows" -}}
+{{- if and (eq .chezmoi.os "windows") (eq .profile "workstation") -}}
 # Managed by chezmoi (run_onchange). Installs the curated GUI/app list from
 # .chezmoidata/packages.toml via winget so a fresh PC matches Computer Specs.md.
+# Workstation profile only: these are desktop applications, so a server or minimal box
+# skips the file, as the os-linux counterpart does through is-desktop-linux.
 # Idempotent: skips anything winget already reports installed. Re-runs only when this
 # file OR the rendered package list below changes (add a line to packages.toml → reinstall
 # on next apply).

@@ -125,17 +125,21 @@ test('the requested Linux apps really do resolve to a route', { skip }, (t) => {
   }
 });
 
+// The Windows installer is OS-gated and renders empty on this host, so render it as Windows.
+const WIN_SRC = srcPath('.chezmoiscripts', 'os-windows', 'run_onchange_after_install-apps.ps1.tmpl');
+const asWindows = (file) => `{{ $_ := set .chezmoi "os" "windows" }}${fs.readFileSync(file, 'utf8')}`;
+
+test('a server-profile Windows box skips the GUI app installer', { skip }, () => {
+  const rendered = renderTemplate(asWindows(WIN_SRC), { source: srcPath(), profile: 'server' });
+  assert.strictEqual(rendered.trim(), '');
+});
+
 test('the shared packages.toml still feeds the Windows installer', { skip }, () => {
   // packages.toml is now shared, so a Linux-side edit can break Windows in a way nothing else
   // here would catch. Two concrete hazards: a bare `.winget` on a Linux-only entry is a template
   // ERROR (not an empty string), which would abort the whole Windows apply; and a restructure can
-  // quietly drop ids. The Windows script is OS-gated and renders empty here, so strip the guard
-  // and render the body directly.
-  const winSrc = srcPath('.chezmoiscripts', 'os-windows', 'run_onchange_after_install-apps.ps1.tmpl');
-  const stripped = fs.readFileSync(winSrc, 'utf8')
-    .replace('{{- if eq .chezmoi.os "windows" -}}', '')
-    .replace(/{{- end -}}\s*$/, '');
-  const rendered = render(stripped);
+  // quietly drop ids.
+  const rendered = render(asWindows(WIN_SRC));
   const ids = [...rendered.matchAll(/^ {4}'([^']+)'$/gm)].map((m) => m[1]).sort();
   const declared = [...packages.matchAll(/^winget = "([^"]+)"/gm)].map((m) => m[1]).sort();
   assert.deepStrictEqual(ids, declared, 'every winget id in packages.toml must reach the Windows list');

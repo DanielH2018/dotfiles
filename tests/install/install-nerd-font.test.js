@@ -27,10 +27,20 @@ test('script is gated to Windows', { skip }, () => {
 //    against (chezmoi_available/skip above only gates the render, not execution), so unlike the
 //    Linux counterpart below, nothing behavioural can reach it.
 test('Windows branch carries the install + VS Code wiring', { skip }, () => {
-  assert.match(body, /if eq \.chezmoi\.os "windows"/);
+  assert.match(body, /if and \(eq \.chezmoi\.os "windows"\)/);
   assert.match(body, /IosevkaTerm Nerd Font Mono/);
   assert.match(body, /Invoke-WebRequest/);
   assert.match(body, /terminal\.integrated\.fontFamily/);
+});
+
+// 3. Only a workstation installs the font: a server or minimal box has no desktop terminal, and
+//    the UAC prompt would wait on a person who is not there.
+test('Windows installs the font on a workstation only', { skip }, () => {
+  const asWindows = `{{ $_ := set .chezmoi "os" "windows" }}${body}`;
+  const as = (profile) => renderTemplate(asWindows, { source: srcPath(), profile });
+  assert.match(as('workstation'), /IosevkaTerm Nerd Font Mono/);
+  assert.strictEqual(as('server').trim(), '');
+  assert.strictEqual(as('minimal').trim(), '');
 });
 
 // ---------------------------------------------------------------------------------------------

@@ -10,8 +10,8 @@
 # The `gate` job is the check main's `main CI gate` ruleset requires, so it blocks as well as
 # reports: main cannot move onto a commit until this job has passed on it. Rename the job and
 # the ruleset's required check (and bin/land's LAND_REQUIRED_CHECK default) together. `gate`
-# runs nothing itself; it passes only when `suite`, `render` and `bootstrap` all passed, so a
-# job added to its `needs:` blocks a landing without a ruleset edit.
+# runs nothing itself; it passes only when `suite`, `render`, `bootstrap` and `bootstrap-windows`
+# all passed, so a job added to its `needs:` blocks a landing without a ruleset edit.
 #
 # The gate is invoked as bin/gate rather than reimplemented step by step, so CI and a hand
 # run cannot drift into checking different things. Since #694 the pre-push hook runs only the
@@ -47,7 +47,7 @@ jobs:
   # The required check. A job whose `needs:` failed is SKIPPED, and the ruleset counts a
   # skipped required check as passing, so this runs `always()` and reads each result itself.
   gate:
-    needs: [suite, render, bootstrap]
+    needs: [suite, render, bootstrap, bootstrap-windows]
     if: always()
     runs-on: ubuntu-24.04
     steps:
@@ -55,7 +55,7 @@ jobs:
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          echo "suite, render legs, bootstrap: $RESULTS"
+          echo "suite, render legs, bootstrap, bootstrap-windows: $RESULTS"
           for r in $RESULTS; do
             [ "$r" = success ] || { echo "::error::a job the gate requires ended $r"; exit 1; }
           done
@@ -347,3 +347,57 @@ jobs:
           SH
           chown dev:dev /home/dev/bootstrap.sh
           su - dev -c 'script -qec "bash \"\$HOME/bootstrap.sh\"" /dev/null'
+
+  # The Windows half of `bootstrap`: home/dot_config/windows-provisioning/WINDOWS-SETUP.md's
+  # `chezmoi init --apply` from PowerShell, so the os-windows run_ scripts execute rather than
+  # only render. `server` keeps the job within a hosted runner's reach: it skips the winget GUI
+  # inventory and the system-wide font, both workstation-only, and still runs the CLI toolchain,
+  # Claude Code, the PATH tweaks and the Git Bash scripts.
+  #
+  # The runner is not a bare machine. It ships git, node, python and pwsh, so install-cli-tools
+  # skips whatever is already on PATH. winget is checked first because winget-install.ps1 warns
+  # and returns without it, which would let the apply pass having installed nothing; the checks
+  # after the apply name things only the run_ scripts put there.
+  bootstrap-windows:
+    name: bootstrap (windows-2025, profile=server)
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Require winget
+        shell: pwsh
+        run: winget --version
+
+      - name: Install chezmoi
+        shell: bash
+        run: |
+          bin/ci-install-chezmoi
+          cygpath -w "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: chezmoi init --apply
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          chezmoi init --apply --no-tty --promptDefaults `
+            --promptString 'Machine profile (workstation/server/minimal)=server' `
+            $env:GITHUB_WORKSPACE
+          $data = chezmoi execute-template 'work={{ .work }} profile={{ .profile }} agent={{ .agent }}'
+          Write-Host $data
+          if ($data -ne 'work=false profile=server agent=false') { throw "init wrote the wrong answers: $data" }
+
+      - name: Check what the run_ scripts installed
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $missing = @()
+          winget list --exact --id Starship.Starship --accept-source-agreements | Out-Null
+          if ($LASTEXITCODE -ne 0) { $missing += 'Starship.Starship (install-cli-tools)' }
+          if (-not (Test-Path "$HOME\.local\bin\claude.exe")) { $missing += 'claude.exe (install-claude)' }
+          if (-not (Test-Path "$HOME\.local\share\blesh\ble.sh")) { $missing += 'ble.sh (install-blesh)' }
+          $userPath = [Environment]::GetEnvironmentVariable('Path', 'User') -split ';'
+          if ($userPath -notcontains "$env:USERPROFILE\.local\bin") { $missing += '~\.local\bin on the User PATH (setup-windows-tweaks)' }
+          if ($missing) { throw "bootstrap left these missing: $($missing -join ', ')" }
