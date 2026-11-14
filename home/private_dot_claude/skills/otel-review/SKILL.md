@@ -113,7 +113,7 @@ two cluster nodes and prints no line for the workstation; report any machine the
 reach as unknown, never as healthy.
 
 For anything deeper on daniel-box, the authority is
-`~/server/ansible/roles/k8s/claude-otel/CLAUDE.md` **on that host** — read it rather than
+`~/server/k8s/roles/observability/CLAUDE.md` **on that host** — read it rather than
 restating it here, so the two cannot drift.
 
 ## Writing the query
