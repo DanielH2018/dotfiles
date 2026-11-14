@@ -25,8 +25,13 @@ own session or subagent, and do not fold it into the end of a working session.
   apply.
 - **A run that only appends is a failed run.** Every run reports under all four headings below,
   and `Retire` and `Merge` may not both be empty without an explicit statement of why.
-- **Retiring is not deleting.** Move the file to `memory/archive/` and add its pointer to
-  `archive/README.md`. A retired memory that turns out to still be true is then one `git mv` back.
+- **Retiring is not deleting.** Move the file to `memory/archive/`. A retired memory that turns
+  out to still be true is then one `git mv` back. When a doc or a check owns the claim, name the
+  owner in the archived file's frontmatter: `promoted_to: <repo path>[#<heading>]` for a doc
+  (`~/…` for a file outside the repo), or `enforced_by: <test node id>` for a check. The owner
+  table in `archive/README.md` is built from those keys, so never edit it by hand. The proposal
+  ends with the command that rebuilds it:
+  `python3 ~/.claude/skills/memory-consolidation/memory_survey.py --write-archive-table`.
 - **Never retire on the survey alone.** `unreferenced` means no session cited it in the window,
   not that it is wrong. A fact about a rarely touched system goes unmentioned for a month and is
   still true the moment someone touches that system. Age is a reason to *read* an entry, never a
@@ -56,7 +61,8 @@ python3 ~/.claude/skills/memory-consolidation/memory_survey.py --duplicate-thres
 ```
 
 The survey reports the injected cost of the index, dead index links, duplicate index links,
-orphans, per-entry last-reference dates, and near-duplicate candidates. It makes no judgement;
+orphans, per-entry last-reference dates, near-duplicate candidates, and archived memories
+whose owner no longer resolves. It makes no judgement;
 that is this pass. To survey another project's store, pass `--memory-dir` and
 `--transcript-dir`. To resolve cited checks against a different checkout, pass `--repo-root`.
 
@@ -84,6 +90,10 @@ For every entry the survey flags, open it. The survey ranks; you decide. Specifi
   the claims of several retired memories.
 - **Orphans**: a file nothing links to. It is invisible to every session, so it is either worth
   an index line or worth archiving. Leaving it is the one option that is always wrong.
+- **Owner gone**: an archived memory's `promoted_to:` or `enforced_by:` key names a path, a
+  heading or a test that the default branch no longer has. Find where the claim went and
+  re-point the key. When the subject itself was retired, drop the key: the file is history
+  with no live owner. A path under `docs/archive/` never counts as an owner.
 - **Near-duplicates**: read both bodies. Merge into whichever is better written, keep the
   surviving name, and make the other's `[[links]]` point at it.
 - **Unreferenced**: read it and ask whether it is still true. Then treat age as evidence about

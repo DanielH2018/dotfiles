@@ -7,7 +7,8 @@ cannot disagree about a path one checkout holds and the default branch deleted.
 
 Tree answers "does this repo path exist", judged by the default branch and not by one
 checkout. index_state answers "do the index and the store agree", and asks Tree for
-every repo path it meets.
+every repo path it meets. archived_owners answers "does each archived memory's owner
+still exist".
 
 Each caller puts lib/ beside the hooks on sys.path and imports this module from there.
 That holds in the source tree and in ~/.claude, where chezmoi strips the mode prefix. A
@@ -45,6 +46,9 @@ INDEX_MARKER = re.compile(r"\[(ENFORCED[^\]]*)\]|\((SCOPED)\)")
 # `::`, which is why node ids were invisible to the path scan. A parametrize suffix
 # (`test_x[param]`) is dropped from the last segment.
 NODE_ID = re.compile(r"^([\w.@+/-]+)((?:::[\w]+)+)(?:\[[^\]]*\])?$")
+
+# The text of an ATX heading, without its hashes.
+_HEADING = re.compile(r"^#{1,6}[ \t]+(.*?)[ \t]*#*[ \t]*$", re.MULTILINE)
 
 
 def _git(cwd: Path, *args: str) -> str | None:
@@ -399,3 +403,81 @@ def index_state(memories: Path, tree: Tree) -> IndexState:
         ],
         marker_mismatch=mismatch,
     )
+
+
+@dataclass(frozen=True)
+class ArchivedOwner:
+    """The owner one archived memory names in its frontmatter.
+
+    file: the archived file's name.
+    key: `promoted_to` or `enforced_by`.
+    owner: the key's value as written.
+    problem: None when the owner resolves, else why it does not, in a few words.
+    """
+
+    file: str
+    key: str
+    owner: str
+    problem: str | None
+
+
+def _promoted_problem(owner: str, tree: Tree) -> str | None:
+    path, _, heading = owner.partition("#")
+    outside = path.startswith("~/")
+    if not outside and f"{path}/".startswith("docs/archive/"):
+        return "docs/archive/ holds history, not a live owner"
+    if not (Path(path).expanduser().exists() if outside else tree.holds(path)):
+        return "the path is gone"
+    if not heading:
+        return None
+    if outside:
+        try:
+            text = Path(path).expanduser().read_text(errors="replace")
+        except OSError:
+            text = None
+    else:
+        text = tree.read(path)
+    if text is None or heading not in _HEADING.findall(text):
+        return f"it has no heading {heading!r}"
+    return None
+
+
+def archived_owners(memories: Path, tree: Tree) -> list[ArchivedOwner]:
+    """The owner keys of the files in `memories`/archive, each judged against `tree`.
+
+    An archived memory names where its claim lives with one of two frontmatter keys:
+
+    - `promoted_to: <path>[#<heading>]`. The path is relative to the repo, or starts
+      with `~/` for a file outside it. It resolves when the path is present and, with
+      a heading, when the file has an ATX heading of exactly that text. A path under
+      `docs/archive/` never resolves.
+    - `enforced_by: <node id>`, which resolves as it does on a live memory.
+
+    A file with both keys gives two rows, and a file with neither gives none. README.md
+    is not a memory. Rows are sorted by file name.
+    """
+    rows: list[ArchivedOwner] = []
+    for path in sorted((memories / "archive").glob("*.md")):
+        if path.name == "README.md":
+            continue
+        try:
+            text = path.read_text(errors="replace")
+        except OSError:
+            continue
+        promoted = frontmatter_value(text, "promoted_to")
+        if promoted:
+            rows.append(
+                ArchivedOwner(
+                    path.name,
+                    "promoted_to",
+                    promoted,
+                    _promoted_problem(promoted, tree),
+                )
+            )
+        node = frontmatter_value(text, "enforced_by")
+        if node:
+            problem = (
+                None if _node_resolves(node, tree) else "the check does not resolve"
+            )
+            rows.append(ArchivedOwner(path.name, "enforced_by", node, problem))
+    return rows

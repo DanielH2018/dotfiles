@@ -851,6 +851,167 @@ def test_outside_a_git_repository_the_slug_is_the_directory_itself():
         assert memory == home / ".claude" / "projects" / slug / "memory"
 
 
+# --- archive owners --------------------------------------------------------------
+
+
+def _archive(tmp_path: Path, files: dict[str, str], readme: str | None = None) -> Path:
+    """A store whose archive/ holds `files`, each given as its frontmatter keys."""
+    d = _mem(tmp_path, "", {})
+    (d / "archive").mkdir()
+    for name, keys in files.items():
+        (d / "archive" / name).write_text(f"---\nname: x\n{keys}\n---\nbody\n")
+    if readme is not None:
+        (d / "archive" / "README.md").write_text(readme)
+    return d
+
+
+def _owner_repo(tmp_path: Path) -> Path:
+    root = _repo(tmp_path, "docs/owner.md", "docs/archive/old.md", "tests/test_x.py")
+    (root / "docs" / "owner.md").write_text("# Owner\n\n## Traps\n\ntext\n")
+    (root / "tests" / "test_x.py").write_text("def test_live():\n    pass\n")
+    return root
+
+
+def _stale(tmp_path: Path, keys: str) -> list[str]:
+    d = _archive(tmp_path, {"a.md": keys})
+    tree = memory_survey.Tree(_owner_repo(tmp_path))
+    return memory_survey.archive_survey(d, tree)["stale"]
+
+
+def test_an_archived_owner_is_clean_when_the_doc_and_its_heading_exist():
+    with _tmp() as tmp_path:
+        assert _stale(tmp_path, "promoted_to: docs/owner.md#Traps") == []
+
+
+def test_an_archived_owner_is_flagged_when_its_path_is_gone():
+    with _tmp() as tmp_path:
+        assert _stale(tmp_path, "promoted_to: docs/moved.md") == [
+            "a.md: promoted_to docs/moved.md, the path is gone"
+        ]
+
+
+def test_an_archived_owner_is_flagged_when_the_doc_lost_the_heading():
+    with _tmp() as tmp_path:
+        assert _stale(tmp_path, "promoted_to: docs/owner.md#Gotchas") == [
+            "a.md: promoted_to docs/owner.md#Gotchas, it has no heading 'Gotchas'"
+        ]
+
+
+def test_an_archived_owner_under_docs_archive_is_flagged():
+    with _tmp() as tmp_path:
+        assert _stale(tmp_path, "promoted_to: docs/archive/old.md") == [
+            "a.md: promoted_to docs/archive/old.md, "
+            "docs/archive/ holds history, not a live owner"
+        ]
+
+
+def test_an_archived_check_is_flagged_when_its_node_is_gone():
+    with _tmp() as tmp_path:
+        assert _stale(tmp_path, "enforced_by: tests/test_x.py::test_gone") == [
+            "a.md: enforced_by tests/test_x.py::test_gone, the check does not resolve"
+        ]
+
+
+def test_an_owner_outside_the_repo_resolves_against_the_home_directory():
+    with _tmp() as tmp_path:
+        home = tmp_path / "home"
+        (home / ".claude").mkdir(parents=True)
+        (home / ".claude" / "CLAUDE.md").write_text("## Shell facts\n")
+        before = os.environ.get("HOME")
+        os.environ["HOME"] = str(home)
+        try:
+            d = _archive(
+                tmp_path,
+                {
+                    "a.md": "promoted_to: ~/.claude/CLAUDE.md#Shell facts",
+                    "b.md": "promoted_to: ~/.claude/gone.md",
+                },
+            )
+            tree = memory_survey.Tree(_owner_repo(tmp_path))
+            stale = memory_survey.archive_survey(d, tree)["stale"]
+        finally:
+            if before is None:
+                del os.environ["HOME"]
+            else:
+                os.environ["HOME"] = before
+        assert stale == ["b.md: promoted_to ~/.claude/gone.md, the path is gone"]
+
+
+def test_the_owner_table_replaces_the_old_one_and_keeps_the_prose_around_it():
+    with _tmp() as tmp_path:
+        readme = (
+            "# Archived memories\n\nWhy these were retired.\n\n"
+            f"{memory_survey.TABLE_OPEN}\n| memory | owner |\n|---|---|\n"
+            f"| `old` | `docs/old.md` |\n{memory_survey.TABLE_CLOSE}\n"
+            "\nA closing note.\n"
+        )
+        d = _archive(
+            tmp_path,
+            {
+                "a.md": "promoted_to: docs/owner.md#Traps\n"
+                "enforced_by: tests/test_x.py::test_live",
+                "b.md": "promoted_to: docs/moved.md",
+                "c.md": "",
+            },
+            readme,
+        )
+        tree = memory_survey.Tree(_owner_repo(tmp_path))
+        assert memory_survey.archive_survey(d, tree)["table_current"] is False
+        assert memory_survey.write_archive_table(d, tree) == 3
+        written = (d / "archive" / "README.md").read_text()
+        assert written == (
+            "# Archived memories\n\nWhy these were retired.\n\n"
+            f"{memory_survey.TABLE_OPEN}\n| memory | owner |\n|---|---|\n"
+            "| `a` | `docs/owner.md#Traps` |\n"
+            "| `a` | `tests/test_x.py::test_live` |\n"
+            "| `b` | `docs/moved.md` (does not resolve: the path is gone) |\n"
+            f"{memory_survey.TABLE_CLOSE}\n\nA closing note.\n"
+        )
+        state = memory_survey.archive_survey(d, tree)
+        assert state["table_current"] is True
+        assert (state["files"], state["owned"]) == (3, 2)
+
+
+def test_the_owner_table_is_appended_to_a_readme_that_has_none():
+    with _tmp() as tmp_path:
+        d = _archive(
+            tmp_path, {"a.md": "promoted_to: docs/owner.md"}, "# Archived\n\nProse.\n"
+        )
+        memory_survey.write_archive_table(d, memory_survey.Tree(_owner_repo(tmp_path)))
+        written = (d / "archive" / "README.md").read_text()
+        assert written.startswith(
+            "# Archived\n\nProse.\n\n## Where each archived claim"
+        )
+        assert written.endswith(
+            f"| `a` | `docs/owner.md` |\n{memory_survey.TABLE_CLOSE}\n"
+        )
+
+
+def test_the_flag_creates_a_missing_readme_and_the_survey_then_reads_it_as_current():
+    with _tmp() as tmp_path:
+        d = _archive(
+            tmp_path,
+            {
+                "a.md": "promoted_to: docs/owner.md",
+                "b.md": "promoted_to: docs/moved.md",
+            },
+        )
+        argv = ["--memory-dir", str(d), "--repo-root", str(_owner_repo(tmp_path))]
+        argv += ["--transcript-dir", str(tmp_path / "no-transcripts")]
+        _, before = _main(argv)
+        assert "OWNER GONE (1)" in before
+        assert "archive/README.md is out of date" in before
+
+        code, out = _main([*argv, "--write-archive-table"])
+        assert (code, out) == (0, f"{d / 'archive' / 'README.md'}: 2 owner rows\n")
+        readme = (d / "archive" / "README.md").read_text()
+        assert readme.startswith("# Archived memories\n\n## Where each archived claim")
+
+        _, after = _main(argv)
+        assert "OWNER GONE (1)" in after
+        assert "out of date" not in after
+
+
 if __name__ == "__main__":
     # Discovered, not hand-listed: tests/python-suites.test.js counts the test_* defs
     # itself and fails when that count and the OK line disagree.
