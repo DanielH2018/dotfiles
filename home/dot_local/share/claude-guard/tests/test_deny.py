@@ -1643,6 +1643,12 @@ PYTHON_WRITE_DENY = [
     # a printer piped to an interpreter that may read something else
     f"echo \"-copen('{BASHRC}','w')\" | xargs -d '\\n' python3",
     f"exec 3<<< \"open('{BASHRC}','w')\"; echo 'print(1)' | python3 <&3",
+    # a substitution that reads the stdin it inherits
+    f"echo \"open('{BASHRC}','w')\" | python3 <(cat)",
+    f"echo \"open('{BASHRC}','w')\" > p; python3 <(cat) < p",
+    # a printer's name that an earlier segment redefined
+    f"echo() {{ printf '%s' \"open('{BASHRC}','w')\"; }}; echo 'print(1)' | python3",
+    f"grep -c foo {BASHRC}; function cat {{ tac w.py; }}; python3 <(echo 'print(1)')",
     # text the parser refuses, and a program the shell rewrites first
     f"python3 -c \"open('{BASHRC}','w')",
     "python3 -c \"print(open('$HOME/.bashrc').read())\"",

@@ -2260,7 +2260,9 @@ def inplace_edit(sc: Scan, target: str) -> Verdict | None:
 #
 # - The interpreter's segment fills stdin itself (`_without_redirects`). No earlier segment
 #   reaches a program read from stdin.
-# - The program is a `<(…)` operand. Only that substitution's output reaches it.
+# - The program is a `<(…)` operand and every substitution of the command only prints. A
+#   substitution inherits the segment's stdin, so one that may read it, as `<(cat)` does,
+#   keeps every earlier segment a candidate.
 # - The interpreter is the first word of its segment, the segment leaves stdin alone, and
 #   the segment piped into it only prints (`_printed_program`). A printer reads no stdin,
 #   so the text it prints is the whole program. A leader in front of the interpreter keeps
@@ -2268,7 +2270,8 @@ def inplace_edit(sc: Scan, target: str) -> Verdict | None:
 #
 # A substitution body and a piped segment that only print are read as the text they print.
 # Every other producer stays shell text, because the guard cannot read what an arbitrary
-# command prints. A function or an alias named `echo`, `printf` or `cat` is not looked for.
+# command prints. No segment is read as a printer once an earlier segment may have
+# redefined `echo`, `printf` or `cat` (`_PRINTER_REDEFINED`).
 #
 # `uv run -` and `uv run --script -` run the Python program on stdin with no `python` word
 # (dotfiles #1286), so a `uv` runner whose command word is a descriptor counts as an
@@ -2354,6 +2357,12 @@ def _printed_program(seg: Segment) -> str | None:
     return seg.heredocs[0] if forwards else None
 
 
+# A function definition for a printer's name, or any alias, in shell text.
+_PRINTER_REDEFINED = re.compile(
+    r"\b(echo|printf|cat)\s*\(\s*\)|\bfunction\s+(echo|printf|cat)\b|\balias\b"
+)
+
+
 def _piped_programs(
     args: list[str], stdin: str, previous: Segment | None, earlier: list[str]
 ) -> list[str]:
@@ -2363,7 +2372,8 @@ def _piped_programs(
     Args:
         args: The words of the interpreter's segment, redirects removed.
         stdin: Where the segment's stdin comes from (`_without_redirects`).
-        previous: The segment before the interpreter's, if any.
+        previous: The segment before the interpreter's, if it can be trusted to be the
+            command its first word names. None otherwise.
         earlier: The text of every earlier segment and heredoc body.
 
     Returns:
@@ -2382,7 +2392,11 @@ def _piped_programs(
 
 
 def _command_line_programs(
-    args: list[str], redirected: list[str], piped: list[str], earlier: list[str]
+    args: list[str],
+    redirected: list[str],
+    piped: list[str],
+    substituted: list[str],
+    earlier: list[str],
 ) -> list[tuple[str, list[str], list[str]]]:
     """The programs a Python interpreter runs from its command line, each with the words after
     it and the other texts it can read a path from.
@@ -2393,6 +2407,8 @@ def _command_line_programs(
             bodies, input redirect targets and process substitutions.
         piped: The texts from earlier segments that may be a program read from stdin
             (`_piped_programs`).
+        substituted: The texts from earlier segments that may be the program a `<(…)`
+            operand yields: `earlier`, or nothing when every substitution only prints.
         earlier: The earlier segments of the command, which may reach a descriptor of the
             interpreter through a pipe, a group or an `exec`.
 
@@ -2401,15 +2417,15 @@ def _command_line_programs(
         with the words after it, then `redirected` and `earlier`. When the interpreter
         reads its program from a descriptor (`_PY_DESCRIPTOR`), each of `redirected` is
         the program, with the words after the operand, then `earlier`. So is each of
-        `piped` when the descriptor is stdin, and each of `earlier` when it is neither
-        stdin nor a `<(…)` operand.
+        `piped` when the descriptor is stdin, each of `substituted` when it is a `<(…)`
+        operand, and each of `earlier` when it is neither.
         Empty for a script file and for `-m`, whose later words belong to the script or
         the module.
     """
 
     def read_from(operand: str, rest: list[str]) -> list[tuple[str, list[str], list[str]]]:
         if operand == "<(":
-            programs = redirected
+            programs = redirected + substituted
         elif _PY_STDIN.fullmatch(operand):
             programs = redirected + piped
         else:
@@ -2514,12 +2530,17 @@ def _runs_python_program(
             previous = seg
             continue
         args, redirected, stdin = _without_redirects(words)
-        substituted = [printed(t) or t for t in p.substitutions] if "<(" in words else []
-        redirected = [*seg.heredocs, *redirected, *substituted]
-        piped = _piped_programs(args, stdin, previous, earlier)
+        trusted = _PRINTER_REDEFINED.search("\n".join(earlier)) is None
+        bodies = p.substitutions if "<(" in words else ()
+        prints = [printed(t) if trusted else None for t in bodies]
+        redirected += seg.heredocs
+        redirected += [t if out is None else out for t, out in zip(bodies, prints, strict=True)]
+        piped = _piped_programs(args, stdin, previous if trusted else None, earlier)
+        substituted = [] if None not in prints else earlier
         programs: set[str] = set()
         for after in _python_arguments(args):
-            for found in _command_line_programs(after, redirected, piped, earlier):
+            found_all = _command_line_programs(after, redirected, piped, substituted, earlier)
+            for found in found_all:
                 if matches(*found):
                     return True
                 programs.add(found[0])

@@ -327,8 +327,10 @@ segment before it is a candidate: `grep -c foo ~/.bashrc; echo 'print(1)' | pyth
 passes. Every other producer is still refused when an earlier segment names a protected
 file, because the rule reads that producer's shell text as the program. So is a printer
 behind a leader such as `xargs` or `timeout`, a printer inside a group, and an `echo`
-whose operand holds a backslash. The rule does not look for a function or an alias that
-redefines `echo`, `printf` or `cat`.
+whose operand holds a backslash. A `<(…)` operand narrows the candidates only when every
+substitution of the command is a printer, because a substitution such as `<(cat)` reads
+the stdin it inherits. No segment is read as a printer after an earlier segment that
+defines a function named `echo`, `printf` or `cat`, or any alias.
 
 Over 27,268 distinct commands from this
 host's transcripts the rule refused 77 (2026-11-14), 12 of them probes of the guard itself. Most of the rest were
