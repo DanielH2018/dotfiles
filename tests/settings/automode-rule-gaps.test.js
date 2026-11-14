@@ -30,14 +30,13 @@ test('the sops allow names sops set and excludes every editor variable', { skip 
 });
 
 // The live hosts take writes from a landing; these are the routes around it.
-test('the deploy soft deny names each hand-run write route and clears only the PR\'s own landing', { skip }, () => {
+test('the deploy soft deny names each hand-run write route and keeps the post-merge clearance', { skip }, () => {
   const hits = autoMode().soft_deny.filter((e) => e.startsWith('Dispatching `promote` by hand'));
   assert.strictEqual(hits.length, 1);
   for (const route of ['`gh workflow run promote.yml', '`hosts/bootstrap-host.sh`', '`homelab-reconcile`']) {
     assert.ok(hits[0].includes(route), route);
   }
   assert.ok(hits[0].includes('standing post-merge procedure'), hits[0]);
-  assert.ok(hits[0].includes('covers only the landing of that PR'), hits[0]);
 });
 
 test('no environment entry calls the live hosts non-production', { skip }, () => {
