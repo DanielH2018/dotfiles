@@ -1,7 +1,9 @@
-"""`gh-pr` and `gh-ci` against a fake `gh`: canned API data in, a state out."""
+"""`gh-pr` and `gh-ci` against a fake `ghread`: canned API data in, a state out."""
 
 import json
+import os
 import subprocess
+import time
 from datetime import UTC, datetime
 
 import pytest
@@ -17,7 +19,7 @@ ACTIONS = f"api repos/o/r/actions/runs?head_sha={SHA}&per_page=100"
 
 
 def gh(responses: dict[str, object], calls: list | None = None):
-    """A runner answering `gh` by the first two words of its arguments, as JSON."""
+    """A runner answering `ghread` by the first two words of its arguments, as JSON."""
 
     def run(cmd, **_kwargs):
         if calls is not None:
@@ -212,6 +214,44 @@ def test_pr_mode_reads_the_head_commit_each_time():
 def test_gh_failing_is_a_read_error_the_loop_retries():
     with pytest.raises(ReadError, match="no fake"):
         ci({})
+
+
+def test_every_read_goes_through_ghread_never_bare_gh():
+    """ghread is what counts a read in the host's GitHub quota ledger."""
+    calls = []
+    responses = {
+        "pr view": {"headRefOid": SHA, "state": "OPEN"},
+        RUNS: runs(("p", "completed", "success")),
+        SUITES: suites(),
+        ACTIONS: {"workflow_runs": []},
+    }
+    github.CiWait("o/r", None, "7", gh(responses, calls), now=lambda: NOW).read()
+    github.PrWait("o/r", "7", gh(responses, calls)).read()
+    assert {cmd[0] for cmd in calls} == {"ghread"}
+
+
+def test_a_timed_out_read_also_kills_the_gh_that_ghread_started(tmp_path, monkeypatch):
+    pid_file = tmp_path / "gh.pid"
+    ghread = tmp_path / "ghread"
+    ghread.write_text(f"#!/bin/sh\nsleep 60 &\necho $! > {pid_file}\nwait\n")
+    ghread.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    monkeypatch.setattr(github, "GH_TIMEOUT_S", 1)
+    with pytest.raises(ReadError, match="ghread did not run: .*timed out"):
+        github.gh_json(["pr", "view", "7"])
+    gh_pid = int(pid_file.read_text())
+    deadline = time.monotonic() + 5
+    while _alive(gh_pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not _alive(gh_pid)
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
 
 
 @pytest.mark.parametrize(("state", "expected"), [("MERGED", "merged"), ("CLOSED", "closed")])

@@ -192,7 +192,9 @@ because their allow rules already run workspace code or load none. The DECIDED c
 
 `wrapper_route` refuses a raw command that a wrapper replaces, and its message names the
 wrapper, so no `CLAUDE.md` bullet has to. `gh pr|issue|run` reads, `gh search` and
-`gh stack view` route to `ghread`; `docker ps|images|info|logs`, `docker manifest inspect`
+`gh stack view` route to `ghread`, and so does a `gh api` GET that `ghread api` sends
+unchanged (`_ghread_api_takes`; `rate_limit` included), so the GitHub quota ledger counts it.
+A field on an explicit `-X GET` is a query parameter, so `gh_api` does not ask about it. `docker ps|images|info|logs`, `docker manifest inspect`
 and `docker compose ps|logs` route to `dockq`; `docker run|pull` route to `dockrun`
 when dockrun passes every flag, its value and the image to docker unchanged
 (`_DOCKRUN_FLAGS`, binds excluded). A bare `-e FOO`, a `-p` without `127.0.0.1:`, or an

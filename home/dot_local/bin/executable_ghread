@@ -32,6 +32,12 @@ constants and validated values:
     every DYLD_/LD_ variable, with HOME pinned to the account's home. So a
     prefix such as `PATH=./bin ghread ...` or `GH_HOST=x ghread ...` cannot
     choose the binary or aim the token at another host.
+  - On a host with the homelab package, each call is counted in the GitHub quota
+    ledger before gh runs. The ledger module loads from one fixed path, never
+    through sys.path, and its GH_QUOTA_DIR override is dropped with the variables
+    above, so no caller value picks the module or the directory it writes. A
+    module that is absent or fails to load leaves the call as it would be without
+    it.
 
   ghread pr view 123 -R owner/repo --json title,state
   ghread pr comments 123 -R owner/repo --kind issue
@@ -50,6 +56,7 @@ gh's exit status is ghread's exit status. A refusal ghread raises itself exits 2
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import pwd
 import re
@@ -69,7 +76,10 @@ _DROP_ENV = (
     "GITHUB_ENTERPRISE_TOKEN",
     "DYLD_",
     "LD_",
+    "GH_QUOTA_DIR",
 )
+# The GitHub quota ledger from the homelab host package. Absent off those hosts.
+GH_QUOTA = "/usr/lib/homelab/gh_quota.py"
 
 # A selector is a PR or issue number, a branch name, or a github.com URL. The
 # first character class is what keeps a value from ever reading as a flag.
@@ -588,6 +598,24 @@ def gh_env() -> dict:
     return env
 
 
+def record_quota(gh_args: list[str], env: dict, gh: str) -> None:
+    """Count this gh call in the GitHub quota ledger, when the host has one.
+
+    Loads the ledger module from GH_QUOTA only. Any failure to load or record is
+    swallowed: the ledger only counts, and must never stop a read.
+    """
+    if not os.path.isfile(GH_QUOTA):
+        return
+    try:
+        spec = importlib.util.spec_from_file_location("gh_quota", GH_QUOTA)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["gh_quota"] = module
+        spec.loader.exec_module(module)
+        module.record(gh_args, env=env, gh=gh)
+    except Exception:
+        pass
+
+
 def parse(argv: list[str]) -> argparse.Namespace:
     # A search query goes after `--`, and ghread hands it to argparse only after
     # parsing the rest. Once an option follows a `nargs="*"` positional, argparse
@@ -612,6 +640,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{PROG}: {exc}", file=sys.stderr)
         return 2
     env = gh_env()
+    record_quota(gh_args, env, gh)
     try:
         return subprocess.run(
             [gh, *gh_args],

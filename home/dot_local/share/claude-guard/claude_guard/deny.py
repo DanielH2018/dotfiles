@@ -496,6 +496,9 @@ def gh_api(sc: Scan, target: str) -> Verdict | None:
             "gh-api-method",
             "Mutating request (POST/PUT/PATCH/DELETE).",
         )
+    # A field on an explicit GET is a query parameter, not a body: `wrapper_route` routes it.
+    if not secret and _only_ghread_gets(sc.command):
+        return None
     arms = (
         (
             "gh-api-field-long",
@@ -3906,6 +3909,17 @@ _GH_READS = {
     "run": frozenset({"view", "list"}),
     "stack": frozenset({"view"}),
 }
+# What `ghread api` sends to gh unchanged, mirrored from ghread: its path pattern, its field
+# key pattern, the jq names and the control characters it refuses. A route ghread would then
+# refuse leaves the session no way to run the read.
+_GHREAD_API_PATH = re.compile(r"/?[A-Za-z0-9{][A-Za-z0-9_.~{}/?=&,%:+@-]*")
+_GHREAD_FIELD_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\[\])?")
+_GHREAD_JQ_ENV = re.compile(r"\$ENV\b|\benv\b|\$__prog_env\b")
+_GHREAD_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+_GHREAD_API_VALUED = frozenset(
+    {"-X", "--method", "-f", "--raw-field", "-F", "--field", "-q", "--jq"}
+)
+_GH_API_WORD = re.compile(r"(?:^|[^\w.-])gh\s+api\b")
 _DOCKQ_VERBS = frozenset(
     {"ps", "images", "info", "logs", "manifest inspect", "compose ps", "compose logs"}
 )
@@ -4020,6 +4034,9 @@ def _route(argv: list[str], has: Callable[[str], bool]) -> Verdict | None:
     if tool == "gh" and args[:1] == ["search"] and has("ghread"):
         msg = GHREAD_MSG.format(verb="search", route="search")
         return Verdict("deny", "ghread-route", msg)
+    if tool == "gh" and args[:1] == ["api"] and _ghread_api_takes(args[1:]) and has("ghread"):
+        msg = GHREAD_MSG.format(verb="api", route="api")
+        return Verdict("deny", "ghread-route", msg)
     if tool != "docker" or not args:
         return None
     verb = args[0]
@@ -4055,6 +4072,73 @@ def _dockrun_takes(verb: str, args: list[str]) -> bool:
             return False
         i += 1
     return i < len(args) and _DOCKRUN_IMAGE.fullmatch(args[i]) is not None
+
+
+def _ghread_api_takes(args: list[str]) -> bool:
+    """Whether `gh api` with the arguments `args` sends a GET that `ghread api` sends unchanged.
+
+    gh sends GET until a field is given, then POST unless `-X GET` names the method.
+    """
+    method, fields, paths = None, False, []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        i += 1
+        if arg == "--paginate":
+            continue
+        if not arg.startswith("-"):
+            paths.append(arg)
+            continue
+        flag, eq, value = arg.partition("=")
+        if not arg.startswith("--") and len(arg) > 2:
+            flag, eq, value = arg[:2], "attached", arg[2:]
+            if value.startswith("="):
+                return False  # argparse reads `-X=GET` as the value `=GET`.
+        if flag not in _GHREAD_API_VALUED:
+            return False
+        if not eq:
+            if i == len(args):
+                return False
+            value = args[i]
+            i += 1
+        if len(value) > 4096 or _GHREAD_CONTROL.search(value):
+            return False
+        if flag in ("-X", "--method"):
+            if value != "GET":
+                return False
+            method = value
+        elif flag in ("-q", "--jq"):
+            if _GHREAD_JQ_ENV.search(value):
+                return False
+        else:
+            key, sep, field_value = value.partition("=")
+            if not sep or not _GHREAD_FIELD_KEY.fullmatch(key):
+                return False
+            if flag in ("-F", "--field") and field_value.startswith("@"):
+                return False
+            fields = True
+    if (fields and method is None) or len(paths) != 1:
+        return False
+    path = paths[0]
+    return (
+        _GHREAD_API_PATH.fullmatch(path) is not None
+        and "//" not in path
+        and "graphql" not in path.lower()
+    )
+
+
+def _only_ghread_gets(command: str) -> bool:
+    """Whether every `gh api` in `command` is a top-level GET that `ghread api` sends unchanged.
+
+    Every `gh api` in the raw text must be one of those, so one hidden in a quoted
+    `bash -c` payload keeps the command out.
+    """
+    gets = [argv for argv in _stage_argvs(command) if argv[:2] == ["gh", "api"]]
+    return (
+        bool(gets)
+        and len(gets) == len(_GH_API_WORD.findall(command))
+        and all(_ghread_api_takes(argv[2:]) for argv in gets)
+    )
 
 
 def _reads_log(args: list[str]) -> bool:

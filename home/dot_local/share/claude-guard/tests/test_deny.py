@@ -3050,6 +3050,99 @@ def test_the_ghread_refusal_carries_the_sandbox_and_out_advice(wrappers_env):
     assert "sandbox off" in reason and "--out <path>" in reason and "printenv TMPDIR" in reason
 
 
+# --- a bare `gh api` GET routes to `ghread api` (GitHub quota ledger, slice 1) --------------
+#
+# gh sends GET until a field or body flag is given, then POST unless `-X GET` names the
+# method. Every bare read ghread can send unchanged is refused, so each one goes through
+# ghread and is counted in the host's quota ledger. `gh api rate_limit` is routed as well:
+# GitHub does not count it and ghread sends it unchanged, so it needs no exemption.
+
+GH_API_ROUTED = [
+    "gh api repos/o/r",
+    "gh api repos/o/r/pulls --paginate --jq '.[].number'",
+    "gh api --method=GET repos/o/r",
+    "gh api -XGET repos/o/r",
+    "gh api -X GET search/issues -f q='repo:o/r is:open' -F per_page=10",
+    "gh api --method GET search/issues --raw-field q=x --field per_page=5",
+    "gh api -X GET search/issues -fq=x",
+    "gh api -X GET search/issues -f q=x --jq '.items[] | .number'",
+    "gh api 'repos/{owner}/{repo}/pulls?state=open'",
+    "gh api rate_limit",
+    "gh api rate_limit --jq '.resources | {core, graphql}'",
+    "n=$(gh api repos/o/r/pulls/5 --jq .state)",
+    "/usr/bin/gh api user",
+    "cd x && gh api repos/o/r/commits/abc/check-runs",
+]
+# Each form keeps the verdict it had before the route existed.
+GH_API_NOT_ROUTED = [
+    # a non-GET method
+    ("gh api -X POST repos/o/r/issues -f title=x", "gh-api-method"),
+    ("gh api --method=PATCH repos/o/r/pulls/1 -f state=closed", "gh-api-method"),
+    ("gh api -X DELETE repos/o/r/git/refs/heads/x", "gh-api-method"),
+    ("gh api -XPUT repos/o/r/pulls/1/merge", "gh-api-method"),
+    # a field or body with no explicit GET, which gh sends as a POST
+    ("gh api repos/o/r/issues -f title=x", "gh-api-field-short"),
+    ("gh api repos/o/r/issues -F title=x", "gh-api-field-short"),
+    ("gh api repos/o/r/issues --field title=x", "gh-api-field-long"),
+    ("gh api repos/o/r/issues --raw-field title=x", "gh-api-field-long"),
+    ("gh api repos/o/r/issues --input body.json", "gh-api-input"),
+    ("gh api -X GET repos/o/r --input body.json", "gh-api-input"),
+    # graphql keeps its own verdict and route (`ghread graphql`)
+    ("gh api graphql -f query='{ viewer { login } }'", "gh-api-field-short"),
+    ("gh api -X GET graphql -f query='{ viewer { login } }'", "gh-api-field-short"),
+    ("gh api graphql", "gh-api-graphql"),
+    # a GET ghread would refuse or change, so it stays at the settings prompt
+    ("gh api -H 'Accept: application/vnd.github.raw' repos/o/r/contents/f", ""),
+    ("gh api -i repos/o/r", ""),
+    ("gh api --hostname github.example repos/o/r", ""),
+    ("gh api -t '{{.name}}' repos/o/r", ""),
+    ("gh api --cache 1h repos/o/r", ""),
+    ("gh api --slurp --paginate repos/o/r/pulls", ""),
+    ("gh api https://api.github.com/repos/o/r", ""),
+    ("gh api -X get repos/o/r", ""),
+    ("gh api -X=GET repos/o/r", ""),
+    ("gh api repos/o/r --jq env.HOME", ""),
+    ("gh api -X GET search/issues -F q=@query.txt", "gh-api-field-short"),
+    # a GET beside a `gh api` hidden in a quoted payload, which may be a POST
+    ('gh api -X GET a -f q=1; bash -c "gh api repos/o/r/issues -f title=x"', "gh-api-field-short"),
+    # writes through gh's own commands
+    ("gh pr create --title t --body b", ""),
+    ("gh pr edit 1 --title t", ""),
+    ("gh pr comment 1 --body done", ""),
+    ("gh pr ready 1", ""),
+    ("gh pr merge 1 --squash", ""),
+    ("gh issue create --title t --body b", ""),
+    ("gh issue edit 1 --add-label x", ""),
+    ("gh issue comment 1 --body x", ""),
+    ("gh run rerun 4567 --failed", ""),
+    # ghread itself
+    ("ghread api repos/o/r", ""),
+    ("ghread api -X GET search/issues -f q=x", ""),
+    ("ghread pr list -R o/r --limit 1", ""),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("command", GH_API_ROUTED)
+def test_a_bare_gh_api_get_is_routed_to_ghread_api(command, wrappers_env):
+    v = d.deny(command, "", wrappers_env)
+    assert (v.kind, v.rule) == ("deny", "ghread-route")
+    assert "`ghread api …`" in v.reason
+
+
+@pytest.mark.parametrize(("command", "rule"), GH_API_NOT_ROUTED)
+def test_a_gh_api_write_or_a_get_ghread_cannot_send_keeps_its_verdict(command, rule, wrappers_env):
+    assert d.deny(command, "", wrappers_env).rule == rule
+
+
+def test_every_gh_api_get_routed_to_ghread_is_one_ghread_sends():
+    # A route ghread then refuses would leave the session no way to make the read.
+    ghread = _load_script("ghread")
+    for command in GH_API_ROUTED:
+        (argv,) = [a for a in d._stage_argvs(command) if a[:2] == ["gh", "api"]]
+        ns = ghread.parse(argv[1:])
+        assert ghread.build_api(ns)[-2:] == ["--", ns.path], command
+
+
 @pytest.mark.parametrize("verb", sorted(d._DOCKRUN_FLAGS))
 def test_every_flag_routed_to_dockrun_is_one_dockrun_accepts(verb):
     # A flag routed here that dockrun refuses would leave the session no way to run it.
@@ -3062,10 +3155,10 @@ def test_every_flag_routed_to_dockrun_is_one_dockrun_accepts(verb):
     assert set(valued) | bare <= accepted
 
 
-def _load_dockrun():
-    script = REPO / "home" / "dot_local" / "bin" / "executable_dockrun"
-    loader = importlib.machinery.SourceFileLoader("dockrun", str(script))
-    module = importlib.util.module_from_spec(importlib.util.spec_from_loader("dockrun", loader))
+def _load_script(name: str):
+    script = REPO / "home" / "dot_local" / "bin" / f"executable_{name}"
+    loader = importlib.machinery.SourceFileLoader(name, str(script))
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader(name, loader))
     loader.exec_module(module)
     return module
 
@@ -3109,7 +3202,7 @@ def test_dockrun_passes_every_routed_value_to_docker_unchanged(argv, flag, value
     # neither the raw command nor the run it asked for (dotfiles #1225).
     if not d._dockrun_takes(argv[0], argv[1:]):
         return
-    dockrun = _load_dockrun()
+    dockrun = _load_script("dockrun")
     ns = dockrun._parser().parse_args(argv)
     built = dockrun.build_run(ns, []) if argv[0] == "run" else dockrun.build_pull(ns)
     if flag:

@@ -1,9 +1,10 @@
 """GitHub sources: `gh-pr` (a pull request is merged or closed) and `gh-ci` (a commit's checks).
 
-Both read through the `gh` CLI, so a wait spends the session's authenticated 5,000 requests an
-hour, never the anonymous 60 a host shares with everything else that polls GitHub from it.
-Both declare `remote`, so cc-wait shares one read per interval among every wait on the same
-arguments on this host (`cc_wait.cache`).
+Both read through `ghread`, so a wait spends the session's authenticated 5,000 requests an
+hour, never the anonymous 60 a host shares with everything else that polls GitHub from it, and
+a host with the GitHub quota ledger counts each read against the session. Both declare
+`remote`, so cc-wait shares one read per interval among every wait on the same arguments on
+this host (`cc_wait.cache`).
 
 `gh-ci` judges every check run on the commit: any failed run fails the wait at once, and the
 wait passes only when every run has completed without one. An empty list of check runs is a
@@ -33,8 +34,11 @@ name, and the newest workflow run of each workflow. A newest run that ended `can
 replaces it or the budget elapses (issue #1098).
 """
 
+import contextlib
 import json
+import os
 import re
+import signal
 import subprocess
 import time
 from collections.abc import Callable
@@ -80,27 +84,51 @@ def repo_for(explicit: str | None, cwd: Path, run: Runner = subprocess.run) -> s
     return f"{match.group(1)}/{match.group(2)}"
 
 
-def gh_json(args: list[str], run: Runner = subprocess.run):
-    """`gh <args>`'s JSON output, or ReadError when gh fails or prints something else."""
+def run_group(cmd: list[str], *, timeout: float, **kwargs) -> subprocess.CompletedProcess:
+    """`subprocess.run` that kills the child's whole process group when it times out.
+
+    ghread runs gh as its own child, so killing ghread alone would leave a hung gh running.
+
+    Raises:
+      subprocess.TimeoutExpired: the command outlived `timeout`; its group is already killed.
+    """
+    kwargs.pop("check", None)
+    if kwargs.pop("capture_output", False):
+        kwargs.update(stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    with subprocess.Popen(cmd, start_new_session=True, **kwargs) as proc:
+        try:
+            out, err = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
+            raise
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
+def gh_json(args: list[str], run: Runner = run_group):
+    """`ghread <args>`'s JSON output, or ReadError when ghread fails or prints something else."""
     try:
-        out = run(["gh", *args], capture_output=True, text=True, timeout=GH_TIMEOUT_S, check=False)
+        out = run(
+            ["ghread", *args], capture_output=True, text=True, timeout=GH_TIMEOUT_S, check=False
+        )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise ReadError(f"gh did not run: {exc}") from exc
+        raise ReadError(f"ghread did not run: {exc}") from exc
     if out.returncode != 0:
         raise ReadError(
-            f"gh {' '.join(args[:2])} exited {out.returncode}: {out.stderr.strip()[-300:]}"
+            f"ghread {' '.join(args[:2])} exited {out.returncode}: {out.stderr.strip()[-300:]}"
         )
     try:
         return json.loads(out.stdout)
     except ValueError as exc:
-        raise ReadError(f"gh {' '.join(args[:2])} printed no JSON") from exc
+        raise ReadError(f"ghread {' '.join(args[:2])} printed no JSON") from exc
 
 
 @dataclass(frozen=True)
 class PrWait:
     repo: str
     number: str
-    run: Runner = field(default=subprocess.run, compare=False, repr=False)
+    run: Runner = field(default=run_group, compare=False, repr=False)
 
     def describe(self) -> Description:
         return Description(terminal={"merged": 0, "closed": 1}, interval_s=INTERVAL_S, remote=True)
@@ -138,7 +166,7 @@ class CiWait:
     repo: str
     ref: str | None
     pr: str | None
-    run: Runner = field(default=subprocess.run, compare=False, repr=False)
+    run: Runner = field(default=run_group, compare=False, repr=False)
     now: Callable[[], float] = field(default=time.time, compare=False, repr=False)
 
     def describe(self) -> Description:

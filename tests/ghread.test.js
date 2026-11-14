@@ -6,6 +6,8 @@
 // --out cannot leave scratch, and the caller's environment cannot choose gh. ghread looks gh up in fixed directories, never $PATH, so the tests load it
 // as a module and point GH_DIRS at a fake `gh` that prints the argv it was given. Each test
 // asserts the exact invocation, and an empty stdout proves gh was never started.
+// The quota ledger module path is a seam too, pointed at a missing file unless a test hands
+// it a fake, so no test run records into a host's real ledger.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
@@ -48,13 +50,27 @@ loader = importlib.machinery.SourceFileLoader('ghread', sys.argv[1])
 mod = importlib.util.module_from_spec(importlib.util.spec_from_loader('ghread', loader))
 loader.exec_module(mod)
 mod.GH_DIRS = (sys.argv[2],)
-sys.exit(mod.main(sys.argv[3:]))
+mod.GH_QUOTA = sys.argv[3]
+sys.exit(mod.main(sys.argv[4:]))
 `;
+const NO_QUOTA = path.join(DIR, 'no-gh-quota.py');
 
-function ghread(args, env = {}) {
-  return run('python3', ['-c', SEAM, GHREAD, BIN, ...args], {
+function ghread(args, env = {}, { quota = NO_QUOTA, cwd } = {}) {
+  return run('python3', ['-c', SEAM, GHREAD, BIN, quota, ...args], {
+    cwd,
     env: { ...process.env, TMPDIR: DIR, ...env },
   });
+}
+
+// A quota module that writes what ghread handed record() to `out`.
+function fakeQuota(dir, out) {
+  const file = path.join(dir, 'gh_quota.py');
+  fs.writeFileSync(file, `import json
+def record(args, env=None, gh="gh"):
+    with open(${JSON.stringify(out)}, "w") as f:
+        json.dump({"args": list(args), "env": dict(env), "gh": gh}, f)
+`);
+  return file;
 }
 
 function argvOf(args) {
@@ -235,4 +251,50 @@ test('the caller cannot choose gh through PATH or aim it at another host', { ski
   const seen = JSON.parse(env.stdout);
   assert.strictEqual(seen.host, null);
   assert.ok(!seen.path.includes(DECOY), seen.path);
+});
+
+test('records the gh argv, the environment gh runs in and the gh it resolved', { skip }, (t) => {
+  const dir = scratch(DIR, 'quota-', t);
+  const out = path.join(dir, 'recorded.json');
+  const r = ghread(['pr', 'list', '-R', 'o/r', '--limit', '1'], {
+    CLAUDE_CODE_SESSION_ID: 'session-1',
+    GH_HOST: 'evil.example',
+    GH_QUOTA_DIR: dir,
+    PATH: `${DECOY}:${process.env.PATH}`,
+  }, { quota: fakeQuota(dir, out) });
+  assert.strictEqual(r.code, 0, r.stderr);
+  const { args, env, gh } = JSON.parse(fs.readFileSync(out, 'utf8'));
+  assert.deepStrictEqual(args, JSON.parse(r.stdout));
+  assert.strictEqual(gh, path.join(BIN, 'gh'));
+  // The ledger keys on the session id, and a caller must not move the ledger's directory.
+  assert.strictEqual(env.CLAUDE_CODE_SESSION_ID, 'session-1');
+  assert.ok(!('GH_QUOTA_DIR' in env));
+  assert.ok(!('GH_HOST' in env));
+  assert.ok(!env.PATH.includes(DECOY), env.PATH);
+});
+
+test('a quota module that fails to load or to record leaves the call unchanged', { skip }, (t) => {
+  const broken = {
+    raises: 'raise RuntimeError("boom")\n',
+    syntax: 'def (\n',
+    record: 'def record(*a, **k):\n    raise ValueError("boom")\n',
+  };
+  for (const [name, source] of Object.entries(broken)) {
+    const file = path.join(scratch(DIR, `quota-${name}-`, t), 'gh_quota.py');
+    fs.writeFileSync(file, source);
+    const r = ghread(['pr', 'view', '1'], {}, { quota: file });
+    assert.strictEqual(r.code, 0, `${name}: ${r.stderr}`);
+    assert.deepStrictEqual(JSON.parse(r.stdout), ['pr', 'view', '--', '1'], name);
+  }
+});
+
+test('the caller cannot choose the quota module through PYTHONPATH or the cwd', { skip }, (t) => {
+  const dir = scratch(DIR, 'quota-planted-', t);
+  const marker = path.join(dir, 'loaded');
+  fs.writeFileSync(path.join(dir, 'gh_quota.py'),
+    `open(${JSON.stringify(marker)}, "w").close()\ndef record(*a, **k): pass\n`);
+  const r = ghread(['pr', 'view', '1'], { PYTHONPATH: dir }, { cwd: dir });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.deepStrictEqual(JSON.parse(r.stdout), ['pr', 'view', '--', '1']);
+  assert.ok(!fs.existsSync(marker), 'a planted gh_quota.py was loaded');
 });
