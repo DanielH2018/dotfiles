@@ -76,9 +76,10 @@ The cheapest reliable grader wins, because grading reruns on every iteration:
 
 1. **Code grading** — exact match, regex, set membership, a threshold. Reformat the task until
    this works (multiple choice, a required `ANSWER: X` line) before reaching for a model.
-2. **Model grading** — an LLM judges against a rubric, reasoning inside `<thinking>` before a
-   single `<correctness>correct|incorrect</correctness>` tag. Use only when correctness cannot
-   be pattern-matched.
+2. **Model grading** — an LLM judges against a rubric and returns only
+   `<correctness>correct|incorrect</correctness>` (or a structured-output field). The grader
+   reasons in its own thinking, not in the output. Use only when correctness cannot be
+   pattern-matched.
 3. **Human grading** — reserve for the few cases used to calibrate the model grader.
 
 A case the skill always passes measures nothing. Report the pass rate with the set size and
