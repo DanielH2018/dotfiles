@@ -539,6 +539,17 @@ def test_a_check_cited_through_a_checkout_path_or_url_resolves_repo_relative():
         assert result["enforced"] == ["h.md", "u.md"] and result["dangling"] == []
 
 
+def test_a_nested_or_lookalike_tests_dir_is_not_read_as_the_root_one():
+    with _tmp() as tmp_path:
+        root = _repo(tmp_path, "tests/conftest.py")
+        nested = _memfile(tmp_path, "n.md", "See scripts/dev/tests/conftest.py.\n")
+        lookalike = _memfile(tmp_path, "l.md", "See pytests/conftest.py.\n")
+        result = _enforcement([nested, lookalike], root)
+        assert result["enforced"] == []
+        assert "scripts/dev/tests/conftest.py" in result["dangling"][0]
+        assert result["unenforced"] == ["l.md"]
+
+
 def test_a_memory_citing_nothing_is_unenforced():
     with _tmp() as tmp_path:
         root = _repo(tmp_path, "tests/test_thing.py")

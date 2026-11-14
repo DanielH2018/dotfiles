@@ -337,9 +337,10 @@ def last_referenced(
 # `k8s/roles/traefik/templates/deployment.yaml.j2` is citing the thing it describes,
 # not a check that enforces it. The `tests/` prefixes are spelled out rather than taken
 # at any depth, so `~/server/tests/x.py` or a blob URL yields the repo-relative suffix.
+# The lookbehind admits `/` but not a word character, so `pytests/` is no `tests/`.
 _CHECK_PATH = re.compile(
-    r"(?:(?:(?:k8s/roles|hosts/components|\.claude/plugins)/[\w.-]+/|hosts/lib/|hosts/"
-    r"|evals/)?tests/[\w./-]+\.py"
+    r"(?:(?<![\w.-])(?:(?:k8s/roles|hosts/components|\.claude/plugins|scripts)/[\w.-]+/"
+    r"|hosts/lib/|hosts/|evals/)?tests/[\w./-]+\.py"
     r"|scripts/[\w./-]*test_[\w./-]+\.py"
     r"|scripts/validate/[\w./-]+\.py"
     r"|\.claude/hooks/[\w./-]+\.(?:py|sh)"
