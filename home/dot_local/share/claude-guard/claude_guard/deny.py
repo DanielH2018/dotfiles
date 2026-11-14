@@ -2341,12 +2341,13 @@ _LONG_WITH_VALUE = r"--[\w-]+=.*"
 _PERL_SWITCHES = r"(?:[acnpsStTuUwWX]|0[0-7]*|l[0-7]*)"
 _RUBY_SWITCHES = r"[acdlnpsSvwyU]"
 # An option missing from an entry is read as leaving the program on stdin, so a short list
-# costs a refusal and never a pass.
+# costs a refusal and never a pass. A wrong entry passes: `flags` holds an option, or a
+# pattern of options, only when none it matches takes a separate word as its value.
 _STDIN_CLI = {
     "node": _StdinCli(
         inline=r"-e|-p|-pe|--eval|--print|--(eval|print)=.*",
         valued=r"-r|--require|--import|-C|--conditions|--loader|--experimental-loader",
-        flags=rf"-i|--interactive|-c|--check|--no-[\w-]+|--experimental-[\w-]+|{_LONG_WITH_VALUE}",
+        flags=rf"-i|--interactive|-c|--check|--no-[\w-]+|{_LONG_WITH_VALUE}",
     ),
     "deno": _StdinCli(
         inline=r"(?!)",
@@ -2376,8 +2377,12 @@ _STDIN_CLI = {
         valued=r"-d|--define|-c|--php-ini|-z|--zend-extension",
         flags=rf"-f|--file|-a|--interactive|-[nqCH]|{_LONG_WITH_VALUE}",
     ),
-    "Rscript": _StdinCli(inline=r"-e|--expression=.*", valued=r"(?!)", flags=r"--[\w-]+(=.*)?"),
-    "osascript": _StdinCli(inline=r"-e", valued=r"-l", flags=r"-i|-s[hseo]*"),
+    "Rscript": _StdinCli(
+        inline=r"-e|--expression=.*",
+        valued=r"(?!)",
+        flags=rf"--vanilla|--verbose|--quiet|--silent|--no-[\w-]+|{_LONG_WITH_VALUE}",
+    ),
+    "osascript": _StdinCli(inline=r"-e", valued=r"-[ls]", flags=r"-i|-l.+|-s[hseo]+"),
 }
 _INTERPRETER_NAME = re.compile("|".join((_PYTHON_WORD.pattern, *_STDIN_CLI)))
 
@@ -2601,10 +2606,19 @@ def _python_arguments(args: list[str]) -> list[list[str]]:
 
 def _other_interpreter_arguments(args: list[str]) -> list[tuple[_StdinCli, list[str]]]:
     """The options of each interpreter other than Python that `args` may start, with the
-    words after it. An interpreter is a word whose basename is a `_STDIN_CLI` name,
-    wherever it sits."""
-    named = ((_STDIN_CLI.get(posixpath.basename(w)), args[i + 1 :]) for i, w in enumerate(args))
-    return [(cli, after) for cli, after in named if cli is not None]
+    words after it.
+
+    An interpreter is a word whose basename is a `_STDIN_CLI` name and which is the
+    segment's command word, or any later word when the command word is an executor, an
+    escalator or a runner in a mode that runs a command. Under any other command the word
+    is an argument: `brew install node`, `npm view bun` and `which ruby` start no
+    interpreter."""
+    argv = _argv(_command_words(args))
+    anywhere = bool(argv) and (
+        posixpath.basename(argv[0]) in _EXECUTORS | _ESCALATORS or _runner_command(argv) is not None
+    )
+    named = ((_STDIN_CLI.get(posixpath.basename(w)), argv[i + 1 :]) for i, w in enumerate(argv))
+    return [(cli, after) for i, (cli, after) in enumerate(named) if cli and (anywhere or i == 0)]
 
 
 def _stdin_program_names_secret(program: str) -> bool:

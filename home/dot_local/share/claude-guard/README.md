@@ -333,6 +333,11 @@ to `node`, `deno`, `bun`, `perl`, `ruby`, `php`, `Rscript` or `osascript` too (d
 #1324). Each of those reads stdin as its program when its words give no inline program
 (`-e`) and no script file. `_STDIN_CLI` lists each interpreter's options, and an option the
 list lacks leaves the program on stdin, so a gap in the list refuses and never passes.
+One of those names counts as an interpreter when it is the segment's command word, or a
+later word of an executor, an escalator or a runner (`timeout 5 node`, `xargs perl`,
+`uv run node`). Under any other command it is an argument, so `brew install node` and
+`grep node` after a segment that names a secret path pass. A leader outside those lists
+is the residual.
 `python_write` leaves those programs alone, because its read-only proof reads Python
 source. A script file's program stays out of reach. The rule also reads what the program is given: whatever its
 segment redirects in, and every earlier segment of the command, which may be the program

@@ -1788,6 +1788,10 @@ OTHER_STDIN_SECRET_DENY = [
     f"{READS_KEY} | ruby -rjson -W0",
     f"{READS_KEY} | php -d display_errors=1",
     f"{READS_KEY} | node --title x",
+    # an option whose value is a separate word
+    f"{READS_KEY} | node --experimental-default-type module",
+    f"{READS_KEY} | osascript -s h",
+    f"{READS_KEY} | Rscript --encoding latin1",
     # a leader in front, a path-spelled interpreter and a command line another command runs
     f"{READS_KEY} | timeout 5 node",
     f"{READS_KEY} | /usr/bin/perl",
@@ -1804,6 +1808,11 @@ OTHER_STDIN_ALLOW = [
     "git log --oneline -- server.key | node --no-warnings count.js",
     "git log --oneline -- server.key | php -f count.php",
     "git log --oneline -- server.key | deno fmt -",
+    # an interpreter's name as the argument of a command that runs none
+    "git log --stat -- server.key && brew install node",
+    "git log --stat -- server.key | grep node",
+    "git diff -- config/master.key | wc -l; which ruby",
+    "git log --stat -- server.key && npm view bun",
 ]
 
 
