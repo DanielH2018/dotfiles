@@ -36,8 +36,10 @@ the format joined, and each argument after the format are each a text.
 
 `source` and `.` run a script file as a shell does (dotfiles #1347).
 
-Known residual: a numeric workflow ID, which cannot be resolved offline.
-`gh api -X POST …/dispatches` already asks through `deny.gh_api`.
+Known residuals: a numeric workflow ID, which cannot be resolved offline; a shell inside a
+`-c` string that reads the outer stage's stdin (dotfiles #1354); and a script that `eval`
+runs or a variable carries (dotfiles #1355). `gh api -X POST …/dispatches` already asks through
+`deny.gh_api`.
 """
 
 import posixpath
