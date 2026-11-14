@@ -165,6 +165,22 @@ def test_an_absolute_link_to_a_missing_repo_doc_is_flagged():
         assert s["dead_links"] == [str(gone)]
 
 
+def test_duplicate_links_are_clean_when_each_target_is_linked_once():
+    with _tmp() as tmp_path:
+        d = _mem(tmp_path, "- [A](a.md)\n- [B](b.md)\n", {"a.md": "x", "b.md": "y"})
+        assert _survey(d)["duplicate_links"] == []
+
+
+def test_duplicate_links_are_flagged_when_the_index_links_a_target_twice():
+    with _tmp() as tmp_path:
+        d = _mem(
+            tmp_path,
+            "- [A](a.md)\n- [B](b.md)\nsee also [A again](./a.md)\n",
+            {"a.md": "x", "b.md": "y"},
+        )
+        assert _survey(d)["duplicate_links"] == ["a.md: linked 2 times"]
+
+
 def test_a_link_written_with_a_directory_prefix_still_resolves():
     with _tmp() as tmp_path:
         d = _mem(tmp_path, "- [A](./a.md)\n", {"a.md": "x"})
@@ -466,25 +482,52 @@ def _memfile(tmp_path: Path, name: str, body: str) -> Path:
     return p
 
 
+def _enforcement(files: list[Path], root: Path) -> dict[str, list[str]]:
+    return memory_survey.enforcement(files, memory_survey.Tree(root))
+
+
+def test_a_check_the_default_branch_deleted_is_dangling_although_a_worktree_holds_it():
+    check = "ansible/tests/test_thing.py"
+    with _tmp() as tmp_path:
+        primary = tmp_path / "proj"
+        (primary / check).parent.mkdir(parents=True)
+        (primary / check).write_text("")
+        _git(primary, "init", "-q", "-b", "main")
+        _git(primary, "add", "-A")
+        _git(primary, "commit", "-q", "-m", "seed")
+        lagging = tmp_path / "lagging"
+        _git(primary, "worktree", "add", "-q", "-b", "lagging", str(lagging))
+        _git(primary, "rm", "-q", check)
+        _git(primary, "commit", "-q", "-m", "drop the check")
+        assert (lagging / check).exists()
+
+        d = _mem(tmp_path, "- [A](a.md)\n", {"a.md": f"ENFORCED by {check}.\n"})
+        result = memory_survey.survey(
+            d, d / "__none__", 30, now=NOW, repo_root=lagging
+        )["enforcement"]
+        assert result["enforced"] == []
+        assert result["dangling"] and check in result["dangling"][0]
+
+
 def test_a_memory_citing_a_live_check_is_enforced():
     with _tmp() as tmp_path:
         root = _repo(tmp_path, "ansible/tests/test_thing.py")
         p = _memfile(tmp_path, "a.md", "ENFORCED by ansible/tests/test_thing.py.\n")
-        assert memory_survey.enforcement([p], root)["enforced"] == ["a.md"]
+        assert _enforcement([p], root)["enforced"] == ["a.md"]
 
 
 def test_a_memory_citing_nothing_is_unenforced():
     with _tmp() as tmp_path:
         root = _repo(tmp_path, "ansible/tests/test_thing.py")
         p = _memfile(tmp_path, "b.md", "A fact nobody checks.\n")
-        assert memory_survey.enforcement([p], root)["unenforced"] == ["b.md"]
+        assert _enforcement([p], root)["unenforced"] == ["b.md"]
 
 
 def test_a_memory_citing_a_missing_check_is_dangling():
     with _tmp() as tmp_path:
         root = _repo(tmp_path, "ansible/tests/test_thing.py")
         p = _memfile(tmp_path, "c.md", "ENFORCED by ansible/tests/test_gone.py.\n")
-        result = memory_survey.enforcement([p], root)
+        result = _enforcement([p], root)
         assert result["dangling"] and "test_gone.py" in result["dangling"][0]
         assert result["enforced"] == [] and result["unenforced"] == []
 
@@ -493,7 +536,7 @@ def test_a_hook_path_counts_as_a_check():
     with _tmp() as tmp_path:
         root = _repo(tmp_path, ".claude/hooks/block-footguns.py")
         p = _memfile(tmp_path, "d.md", "Denied by .claude/hooks/block-footguns.py.\n")
-        assert memory_survey.enforcement([p], root)["enforced"] == ["d.md"]
+        assert _enforcement([p], root)["enforced"] == ["d.md"]
 
 
 def test_a_manifest_path_is_not_mistaken_for_a_check():
@@ -505,7 +548,7 @@ def test_a_manifest_path_is_not_mistaken_for_a_check():
             "e.md",
             "See ansible/roles/k8s/traefik/templates/deployment.yaml.j2.\n",
         )
-        assert memory_survey.enforcement([p], root)["unenforced"] == ["e.md"]
+        assert _enforcement([p], root)["unenforced"] == ["e.md"]
 
 
 def test_a_hook_that_lives_only_under_home_claude_is_enforced():
@@ -517,7 +560,7 @@ def test_a_hook_that_lives_only_under_home_claude_is_enforced():
         root = _repo(tmp_path, "ansible/tests/test_thing.py")
         p = _memfile(tmp_path, "f.md", "See ~/.claude/hooks/prune-worktrees.py.\n")
         with _home(home):
-            assert memory_survey.enforcement([p], root)["enforced"] == ["f.md"]
+            assert _enforcement([p], root)["enforced"] == ["f.md"]
 
 
 def test_a_hook_missing_from_both_roots_is_still_dangling():
@@ -528,7 +571,7 @@ def test_a_hook_missing_from_both_roots_is_still_dangling():
         root = _repo(tmp_path, "ansible/tests/test_thing.py")
         p = _memfile(tmp_path, "g.md", "See .claude/hooks/never-existed.py.\n")
         with _home(home):
-            result = memory_survey.enforcement([p], root)
+            result = _enforcement([p], root)
         assert result["dangling"] and "never-existed.py" in result["dangling"][0]
 
 
@@ -541,7 +584,7 @@ def test_a_non_hook_path_gets_no_home_fallback():
         root = _repo(tmp_path, "ansible/tests/test_thing.py")
         p = _memfile(tmp_path, "h.md", "ENFORCED by ansible/tests/test_elsewhere.py.\n")
         with _home(home):
-            result = memory_survey.enforcement([p], root)
+            result = _enforcement([p], root)
         assert result["dangling"] and "test_elsewhere.py" in result["dangling"][0]
 
 
@@ -568,7 +611,7 @@ def test_a_declared_memory_leaves_the_denominator():
         p = _declared(
             tmp_path, "a.md", "enforceable: no — judgment, no mechanism can own it"
         )
-        result = memory_survey.enforcement([p], root)
+        result = _enforcement([p], root)
         assert result["not_enforceable"] == ["a.md — judgment, no mechanism can own it"]
         assert result["enforced"] == [] and result["unenforced"] == []
 
@@ -578,7 +621,7 @@ def test_an_undeclared_memory_stays_in_the_denominator():
     with _tmp() as tmp_path:
         root = _repo(tmp_path, "ansible/tests/test_thing.py")
         p = _memfile(tmp_path, "b.md", "A fact nobody checks.\n")
-        result = memory_survey.enforcement([p], root)
+        result = _enforcement([p], root)
         assert result["unenforced"] == ["b.md"] and result["not_enforceable"] == []
 
 
@@ -587,7 +630,7 @@ def test_a_declaration_with_no_reason_is_not_honoured():
     with _tmp() as tmp_path:
         root = _repo(tmp_path, "ansible/tests/test_thing.py")
         p = _declared(tmp_path, "c.md", "enforceable: no")
-        result = memory_survey.enforcement([p], root)
+        result = _enforcement([p], root)
         assert result["not_enforceable"] == []
         assert result["unenforced"] == ["c.md"]
         assert result["contradictions"] and "no reason" in result["contradictions"][0]
@@ -603,7 +646,7 @@ def test_a_declaration_that_also_cites_a_live_check_is_a_contradiction():
             "enforceable: no — nothing can check this",
             body="ENFORCED by ansible/tests/test_thing.py.\n",
         )
-        result = memory_survey.enforcement([p], root)
+        result = _enforcement([p], root)
         assert result["enforced"] == ["d.md"] and result["not_enforceable"] == []
         assert (
             result["contradictions"] and "test_thing.py" in result["contradictions"][0]
@@ -620,7 +663,7 @@ def test_a_review_ledger_citing_a_live_check_is_not_a_contradiction():
             "enforceable: no — a review ledger for one dated run",
             body="H-1 was confirmed against ansible/tests/test_thing.py.\n",
         )
-        result = memory_survey.enforcement([p], root)
+        result = _enforcement([p], root)
         assert result["contradictions"] == []
         assert result["not_enforceable"] == [
             "review-2026-09-01-state.md — a review ledger for one dated run"
@@ -637,7 +680,7 @@ def test_a_non_ledger_named_like_one_is_still_a_contradiction():
             "enforceable: no — judgment about a review loop",
             body="ENFORCED by ansible/tests/test_thing.py.\n",
         )
-        result = memory_survey.enforcement([p], root)
+        result = _enforcement([p], root)
         assert (
             result["contradictions"] and "test_thing.py" in result["contradictions"][0]
         )
@@ -653,7 +696,7 @@ def test_the_field_is_read_from_frontmatter_only():
             "Write `enforceable: no — <reason>` in the frontmatter "
             "to leave the ratio.\n",
         )
-        result = memory_survey.enforcement([p], root)
+        result = _enforcement([p], root)
         assert result["unenforced"] == ["e.md"] and result["not_enforceable"] == []
 
 
@@ -662,7 +705,7 @@ def test_false_is_accepted_as_well_as_no():
     with _tmp() as tmp_path:
         root = _repo(tmp_path, "ansible/tests/test_thing.py")
         p = _declared(tmp_path, "f.md", "enforceable: false — a ledger, not a rule")
-        assert memory_survey.enforcement([p], root)["not_enforceable"] == [
+        assert _enforcement([p], root)["not_enforceable"] == [
             "f.md — a ledger, not a rule"
         ]
 
@@ -672,7 +715,7 @@ def test_enforceable_yes_is_not_a_declaration():
     with _tmp() as tmp_path:
         root = _repo(tmp_path, "ansible/tests/test_thing.py")
         p = _declared(tmp_path, "g.md", "enforceable: yes")
-        result = memory_survey.enforcement([p], root)
+        result = _enforcement([p], root)
         assert result["unenforced"] == ["g.md"] and result["not_enforceable"] == []
         assert result["contradictions"] == []
 

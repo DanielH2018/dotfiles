@@ -3,7 +3,7 @@
 
 Run: python3 test_memory_upkeep.py
 
-The hook has three sections, and this file pins them in the order the hook runs them.
+The hook has four sections, and this file pins them in the order the hook runs them.
 
 Stale paths and stale checks report memories naming repo paths that are gone. What
 needs pinning is the false-positive rate, not the detection: this prints at every
@@ -17,8 +17,12 @@ counting rule and the silence: it must count only real entries (a heading or a p
 bullet is not an entry) and must say nothing below the cap, outside a repo, or when the
 index is missing.
 
-The last block pins what merging them added: each opt-out silences only its own
+The next block pins what merging them added: each opt-out silences only its own
 sections, and one section staying quiet never stops the other from running.
+
+The last block pins the index findings: a memory no index line links, a link to a file
+that is gone, a target linked twice, and an `enforced_by:` key that disagrees with the
+index. Each has a store that must stay silent and one that must report.
 """
 
 import importlib.util
@@ -44,6 +48,10 @@ spec = importlib.util.spec_from_file_location("memory_upkeep", SCRIPT)
 mod = importlib.util.module_from_spec(spec)
 sys.modules["memory_upkeep"] = mod
 spec.loader.exec_module(mod)
+
+# The hook put lib/ on sys.path to import its resolver; the checks on checkout listing
+# address that module directly.
+import memory_resolver as resolver  # noqa: E402
 
 # See test_prune_worktrees.py: GIT_DIR outranks cwd, and git exports it to every hook.
 for _var in [k for k in os.environ if k.startswith("GIT_")]:
@@ -251,7 +259,13 @@ with tempfile.TemporaryDirectory() as tmp:
     memories.mkdir(parents=True)
     (memories / "MEMORY.md").write_text("- [x](x.md) — `docs/index-only.md`\n")
     (memories / "fine.md").write_text("Nothing here but `docs/kept.md`.\n")
-    env = {**os.environ, "CLAUDE_CONFIG_DIR": str(root / "cfg")}
+    # This block pins the path sections. Its stores are not tidy indexes, so the index
+    # findings are opted out here and pinned in the last block of the file.
+    env = {
+        **os.environ,
+        "CLAUDE_CONFIG_DIR": str(root / "cfg"),
+        "CLAUDE_MEMORY_INDEX_CHECK": "0",
+    }
 
     quiet = subprocess.run(
         [sys.executable, str(SCRIPT)], cwd=repo, capture_output=True, text=True, env=env
@@ -343,15 +357,15 @@ with tempfile.TemporaryDirectory() as tmp:
     )
     check(
         "sibling_checkouts lists the worktree from the main checkout",
-        mod.sibling_checkouts(repo, repo) in ([wt], [wt.resolve()]),
+        resolver.sibling_checkouts(repo, repo) in ([wt], [wt.resolve()]),
     )
     check(
         "sibling_checkouts lists the main checkout first from the worktree",
-        mod.sibling_checkouts(wt, repo)[0] == repo,
+        resolver.sibling_checkouts(wt, repo)[0] == repo,
     )
     check(
         "sibling_checkouts keeps the main checkout when git fails",
-        mod.sibling_checkouts(root / "not-a-repo", repo) == [repo],
+        resolver.sibling_checkouts(root / "not-a-repo", repo) == [repo],
     )
 
     # The default branch drops one file, renames a test, and stops tracking a file that
@@ -507,6 +521,12 @@ with tempfile.TemporaryDirectory() as tmp:
         )
 
     def write_index(entries):
+        # Each link names a file that exists, and no file goes unlinked, so only the
+        # pointer count differs between runs.
+        for stale in memory.glob("m*.md"):
+            stale.unlink()
+        for i in range(entries):
+            (memory / f"m{i}.md").write_text("x\n")
         index.write_text(
             "# Memory\n\n" + "".join(f"- [m{i}](m{i}.md)\n" for i in range(entries))
         )
@@ -581,6 +601,7 @@ with tempfile.TemporaryDirectory() as tmp:
     # nothing to say must not end the run before the other one reads the tree.
     (repo / "docs").mkdir()
     (memory / "drifted.md").write_text("The gate is `docs/gone.md`.\n")
+    index.write_text(index.read_text() + "- [drifted](drifted.md)\n")
     both = run(repo)
     check(
         "one run reports a stale path and an oversized index together",
@@ -610,6 +631,125 @@ with tempfile.TemporaryDirectory() as tmp:
     check(
         "no index is a silent no-op",
         missing.returncode == 0 and missing.stdout == "",
+    )
+
+
+# ── index findings ───────────────────────────────────────────────────────────────────
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp).resolve()
+    repo = root / "repo"
+    (repo / "tests").mkdir(parents=True)
+    (repo / "docs").mkdir()
+    (repo / "tests" / "test_x.py").write_text("def test_live():\n    pass\n")
+    (repo / "docs" / "kept.md").write_text("x\n")
+    (repo / "docs" / "dropped.md").write_text("x\n")
+    for args in (
+        ["init", "-q", "-b", "main", "."],
+        ["add", "-A"],
+        ["commit", "-q", "-m", "seed"],
+        ["rm", "-q", "docs/dropped.md"],
+        ["commit", "-q", "-m", "drop a doc"],
+    ):
+        subprocess.run(
+            [*git, *args], cwd=repo, check=True, capture_output=True, text=True
+        )
+    # Untracked again: the main checkout holds the file the default branch deleted.
+    (repo / "docs" / "dropped.md").write_text("x\n")
+
+    fmemories = (
+        root / "cfg" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(repo)) / "memory"
+    )
+    fmemories.mkdir(parents=True)
+    fenv = {
+        **os.environ,
+        "CLAUDE_CONFIG_DIR": str(root / "cfg"),
+        "CLAUDE_MEMORY_PATH_CHECK": "0",
+    }
+    KEY_OK = "enforced_by: tests/test_x.py::test_live"
+
+    def findings(
+        extra_index="", extra_files=None, key=KEY_OK, a_marker=" [ENFORCED]", env=None
+    ):
+        """What the hook prints for a store that is consistent apart from the changes
+        passed in: a.md carries `key` and a marker, b.md is marked and has no key."""
+        for stale in fmemories.glob("*.md"):
+            stale.unlink()
+        index_text = (
+            f"- [a](a.md){a_marker}\n- [b](b.md) [ENFORCED]\n- [c](c.md)\n"
+            f"- [kept]({repo}/docs/kept.md)\n{extra_index}"
+        )
+        files = {
+            "MEMORY.md": index_text,
+            "a.md": f"---\nname: a\n{key}\n---\nbody\n",
+            "b.md": "body\n",
+            "c.md": "body\n",
+            **(extra_files or {}),
+        }
+        for name, text in files.items():
+            (fmemories / name).write_text(text)
+        return subprocess.run(
+            [sys.executable, str(SCRIPT)],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            env=env or fenv,
+        ).stdout
+
+    check("a consistent index and store are silent", findings() == "")
+
+    out = findings(extra_files={"stray.md": "body\n"})
+    check("a memory no index line links is reported", "stray.md: no index line" in out)
+
+    out = findings("- [m](missing.md)\n")
+    check(
+        "a link to a missing memory is reported",
+        "missing.md: linked from the index, and gone" in out,
+    )
+    out = findings(f"- [d]({repo}/docs/dropped.md)\n")
+    check(
+        "a repo link the default branch deleted is gone, though the checkout holds it",
+        f"{repo}/docs/dropped.md: linked from the index, and gone" in out,
+    )
+
+    out = findings("- [again](c.md)\n")
+    check("a target linked twice is reported", "c.md: linked 2 times" in out)
+    # One repo doc owns the claims of several retired memories, a line each.
+    kept = f"{repo}/docs/kept.md"
+    check(
+        "a repo doc linked from two lines is not reported as repeated",
+        findings(f"- [one]({kept})\n- [two]({kept})\n") == "",
+    )
+
+    out = findings(a_marker="")
+    check(
+        "an enforced_by key with no index marker is reported",
+        "a.md: has enforced_by and no [ENFORCED] marker" in out,
+    )
+
+    out = findings(key="enforced_by: tests/test_x.py::test_gone")
+    check(
+        "an enforced_by node id that does not resolve is reported",
+        "a.md: enforced_by names tests/test_x.py::test_gone, which does not resolve"
+        in out,
+    )
+
+    out = findings(
+        extra_files={f"s{i:02}.md": "body\n" for i in range(12)},
+    )
+    check(
+        "the rows are capped with a count of the rest",
+        out.count("no index line") == 10 and "... and 2 more" in out,
+    )
+    check("the header counts every finding", out.startswith("12 MEMORY.md index"))
+
+    check(
+        "the index opt-out silences the findings",
+        findings(
+            extra_files={"stray.md": "body\n"},
+            env={**fenv, "CLAUDE_MEMORY_INDEX_CHECK": "0"},
+        )
+        == "",
     )
 
 finish()

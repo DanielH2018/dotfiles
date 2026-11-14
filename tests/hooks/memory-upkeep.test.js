@@ -155,8 +155,8 @@ test('a path present only in the main checkout is not reported from a worktree',
 // green in CI under its new name, every pointer wrong.
 
 // Like report(), but the memory is linked from a MEMORY.md line carrying a marker, and
-// the repo holds a test module defining `test_live`. Three memory files, so a multi-link
-// index line has something to point at.
+// the repo holds a test module defining `test_live`. The line's links name up to three
+// memory files, so a multi-link index line has something to point at.
 function reportIndexed(indexLine, memoryText) {
   const repo = tmpdir('memstale-repo-');
   execFileSync('git', ['init', '-q', repo], { stdio: 'ignore' });
@@ -166,8 +166,11 @@ function reportIndexed(indexLine, memoryText) {
   const memories = path.join(config, 'projects', slugOf(repo), 'memory');
   fs.mkdirSync(memories, { recursive: true });
   fs.writeFileSync(path.join(memories, 'MEMORY.md'), `# Index\n\n${indexLine}\n`);
+  // Only the files the line links: an unlinked memory is an index finding of its own.
   for (const name of ['a-memory.md', 'b-memory.md', 'c-memory.md']) {
-    fs.writeFileSync(path.join(memories, name), memoryText);
+    if (indexLine.includes(`(${name})`)) {
+      fs.writeFileSync(path.join(memories, name), memoryText);
+    }
   }
   return execFileSync(python, [HOOK, '--repo', repo], {
     encoding: 'utf8',

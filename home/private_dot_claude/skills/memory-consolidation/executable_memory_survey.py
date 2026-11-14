@@ -9,6 +9,7 @@ makes no judgement itself:
 
   * bytes and an estimated token cost for the injected index, and for the whole store
   * pointer lines that name a file which does not exist (a dead link in the index)
+  * targets the index links more than once
   * memory files nothing in the index points at (an orphan nothing will ever surface)
   * per-file last-reference date, from scanning session transcripts for the file's slug
   * near-duplicate candidates, by shingled-token overlap between file bodies
@@ -25,7 +26,15 @@ and a scheduled writer would race them.
 
 Run it from inside the project whose memory you want surveyed. The memory and
 transcript directories are derived from that project's path, and cited check paths
-resolve against its checkout. Each has a flag to override it.
+resolve against its default branch. Each has a flag to override it.
+
+The path and index judgements come from hooks/lib/memory_resolver.py, the module the
+SessionStart hook memory-upkeep.py also uses, so the survey and the hook agree. A cited
+check or an index link into the repo is gone when the default branch deleted it, even
+though a checkout that lags still holds the file. A path the default branch never
+tracked counts as present while any checkout of the repo holds it. `index_state` also
+reports an `enforced_by:` key that disagrees with the index. The hook prints that
+finding, and the survey leaves it out.
 
 Usage:
     python3 ~/.claude/skills/memory-consolidation/memory_survey.py
@@ -49,6 +58,16 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# The resolver lives with the hooks: <config root>/hooks/lib is two directories above
+# this file in the chezmoi source tree and in ~/.claude alike.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "hooks" / "lib"))
+from memory_resolver import (  # noqa: E402
+    INDEX_LINK,
+    Tree,
+    index_state,
+    main_checkout,
+)
+
 
 def _local_datetime(epoch: float) -> _dt.datetime:
     """An aware datetime in this machine's zone: transcripts are local files."""
@@ -68,31 +87,15 @@ def _git(cwd: Path, *args: str) -> str | None:
 
 
 def checkout_root(cwd: Path) -> Path:
-    """The checkout a memory's cited check paths are resolved against.
+    """The checkout `Tree` is built around when it resolves a memory's cited paths.
 
-    This is the checkout `cwd` sits in, worktree included: a check added on a branch
-    exists only in that branch's worktree, so asking the primary checkout would report
-    it missing. Falls back to `cwd` itself outside a git repository.
+    This is the checkout `cwd` sits in, worktree included. `Tree` reads the default
+    branch first and every other checkout of the repo after it, so a check added on this
+    branch counts as present until the default branch tracks it and then deletes it.
+    Falls back to `cwd` itself outside a git repository.
     """
     top = _git(cwd, "rev-parse", "--show-toplevel")
     return Path(top) if top else cwd
-
-
-def primary_checkout(cwd: Path) -> Path:
-    """The main checkout behind `cwd`, which may be a linked worktree.
-
-    Memory is keyed to the main checkout's path, so a session running in
-    .claude/worktrees/<name> would otherwise derive a slug no memory directory answers
-    to. `git rev-parse --git-common-dir` names the shared .git that every worktree of a
-    repo points at, and its parent is the main checkout. Falls back to the checkout
-    `cwd` sits in, or to `cwd` itself outside a git repository.
-    """
-    common = _git(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")
-    if common:
-        parent = Path(common).resolve().parent
-        if parent.is_dir():
-            return parent
-    return checkout_root(cwd)
 
 
 def project_slug(project: Path) -> str:
@@ -115,21 +118,11 @@ def default_dirs(cwd: Path, home: Path | None = None) -> tuple[Path, Path]:
         home: the home directory holding `.claude/projects`; None reads `Path.home()`.
     """
     base = home if home is not None else Path.home()
-    transcripts = base / ".claude" / "projects" / project_slug(primary_checkout(cwd))
+    transcripts = (
+        base / ".claude" / "projects" / project_slug(main_checkout(checkout_root(cwd)))
+    )
     return transcripts / "memory", transcripts
 
-
-# A pointer line in MEMORY.md looks like `- [Title](some-file.md) — hook`. Links may
-# also appear inline in a prose paragraph, which is why this is a search over the whole
-# file rather than a per-line parse anchored to a leading dash.
-#
-# The title alternation admits ONE level of nested square brackets, because real titles
-# carry them: `- [A task tagged [config, deploy] is skipped by --skip-tags](...)`. A
-# plain `[^\]]+` stops at the inner `]` and the link stops being a link at all, which
-# mis-reports the file as an orphan AND, worse, hides it from the dead-link check, the
-# one condition that fails this run. A title the regex cannot parse is a pointer the
-# gate cannot police.
-_LINK = re.compile(r"\[(?:[^\[\]]|\[[^\[\]]*\])+\]\(([^)]+\.md)\)")
 
 # Rough characters-per-token for English prose. Only ever used to turn bytes into an
 # order-of-magnitude token figure; it is not a tokenizer and does not pretend to be.
@@ -153,30 +146,6 @@ def _read(path: Path) -> str:
 
 def _est_tokens(n_bytes: int) -> int:
     return n_bytes // _CHARS_PER_TOKEN
-
-
-def index_links(index_path: Path) -> list[str]:
-    """Return every `.md` target the index links to, in document order, once each.
-
-    A relative target names a sibling memory file and is returned as its bare filename,
-    so `./foo.md` and `foo.md` compare equal. An absolute target is a repo doc that owns
-    a retired memory's claim, and is returned whole: reducing it to a basename made
-    every such link read as a missing memory file (server#3106).
-    """
-    if not index_path.exists():
-        return []
-    seen: dict[str, None] = {}
-    for target in _LINK.findall(_read(index_path)):
-        path = Path(target)
-        seen.setdefault(target if path.is_absolute() else path.name, None)
-    return list(seen)
-
-
-def _link_resolves(link: str, on_disk: set[str]) -> bool:
-    """Whether an `index_links` entry names something that exists."""
-    if Path(link).is_absolute():
-        return Path(link).is_file()
-    return link in on_disk
 
 
 def _body_words(path: Path) -> list[str]:
@@ -368,8 +337,11 @@ _CHECK_PATH = re.compile(
 )
 
 
-def _resolves(cited: str, repo_root: Path) -> bool:
-    """Whether a cited check path exists, under the repo OR the user's `~/.claude` tree.
+def _resolves(cited: str, tree: Tree) -> bool:
+    """Whether a cited check path exists, in the repo OR the user's `~/.claude` tree.
+
+    `tree` judges the repo by its default branch, so a check the default branch deleted
+    is gone although a checkout that lags still holds it.
 
     `.claude/hooks/` is the one prefix that lives in both places: a repo can have its
     own hooks, and chezmoi deploys others to `~/.claude/hooks/`. Resolving against the
@@ -377,7 +349,7 @@ def _resolves(cited: str, repo_root: Path) -> bool:
     verdict. Claiming a memory has lost its enforcer when it has not is worse than not
     counting it at all.
     """
-    if (repo_root / cited).exists():
+    if tree.holds(cited):
         return True
     return cited.startswith(".claude/") and (Path.home() / cited).exists()
 
@@ -415,7 +387,7 @@ def declared_unenforceable(text: str) -> tuple[bool, str]:
     return True, (match.group("reason") or "").strip()
 
 
-def enforcement(files: list[Path], repo_root: Path) -> dict[str, list[str]]:
+def enforcement(files: list[Path], tree: Tree) -> dict[str, list[str]]:
     """Which memory files name a check that exists, which name none, which never can.
 
     The escalation ladder is run-local note -> memory -> CLAUDE.md rule -> executable
@@ -441,7 +413,7 @@ def enforcement(files: list[Path], repo_root: Path) -> dict[str, list[str]]:
     for path in files:
         text = _read(path)
         cited = sorted(set(_CHECK_PATH.findall(text)))
-        resolved = [c for c in cited if _resolves(c, repo_root)]
+        resolved = [c for c in cited if _resolves(c, tree)]
         declared, reason = declared_unenforceable(text)
 
         # A ledger cites checks as EVIDENCE for the findings it records, never as its
@@ -506,23 +478,25 @@ def survey(
             as near-duplicate candidates.
         now: the epoch the transcript window and the staleness dates are measured
             from; None reads the clock. A test passes a fixed one.
-        repo_root: the checkout cited check paths resolve against; None derives it
-            from the current directory with `checkout_root()`.
+        repo_root: the checkout whose default branch cited check paths resolve against;
+            None derives it from the current directory with `checkout_root()`.
 
     Returns:
         A dict with `index`/`store` size stats, `dead_links`, `orphans`,
-        `unreferenced`, `duplicate_candidates`, `enforcement`, per-file `entries`, and
-        `transcript_window_days`.
+        `duplicate_links`, `unreferenced`, `duplicate_candidates`, `enforcement`,
+        per-file `entries`, and `transcript_window_days`.
     """
     if repo_root is None:
         repo_root = checkout_root(Path.cwd())
+    tree = Tree(repo_root, main_checkout(repo_root))
     index_path = memory_dir / "MEMORY.md"
     files = sorted(
         p for p in memory_dir.glob("*.md") if p.is_file() and p.name != "MEMORY.md"
     )
 
-    linked = index_links(index_path)
-    on_disk = {p.name for p in files}
+    state = index_state(memory_dir, tree)
+    index_text = _read(index_path) if index_path.exists() else ""
+    unindexed = set(state.unindexed)
 
     index_bytes = index_path.stat().st_size if index_path.exists() else 0
     store_bytes = sum(p.stat().st_size for p in files)
@@ -545,7 +519,7 @@ def survey(
                 "modified": _local_datetime(p.stat().st_mtime).strftime("%Y-%m-%d"),
                 "last_referenced": seen,
                 "days_since_referenced": age_days,
-                "indexed": p.name in linked,
+                "indexed": p.name not in unindexed,
             }
         )
     entries.sort(key=lambda e: e["bytes"], reverse=True)
@@ -555,20 +529,21 @@ def survey(
         "index": {
             "bytes": index_bytes,
             "est_tokens": _est_tokens(index_bytes),
-            "pointer_links": len(linked),
+            "pointer_links": len(set(INDEX_LINK.findall(index_text))),
         },
         "store": {
             "files": len(files),
             "bytes": store_bytes,
             "est_tokens": _est_tokens(store_bytes),
         },
-        "dead_links": sorted(n for n in linked if not _link_resolves(n, on_disk)),
-        "orphans": sorted(n for n in on_disk if n not in linked),
+        "dead_links": sorted(state.gone),
+        "orphans": sorted(state.unindexed),
+        "duplicate_links": sorted(state.duplicated),
         "unreferenced": sorted(
             e["file"] for e in entries if e["last_referenced"] is None
         ),
         "duplicate_candidates": duplicate_candidates(files, duplicate_threshold),
-        "enforcement": enforcement(files, repo_root),
+        "enforcement": enforcement(files, tree),
         "entries": entries,
         "transcript_window_days": transcript_days,
     }
@@ -593,6 +568,13 @@ def _render(s: dict) -> str:
             f"\nDEAD INDEX LINKS ({len(s['dead_links'])}) — indexed, not on disk:"
         )
         out.extend(f"  {n}" for n in s["dead_links"])
+
+    if s["duplicate_links"]:
+        out.append(
+            f"\nDUPLICATE INDEX LINKS ({len(s['duplicate_links'])}) — "
+            "the index links one target more than once:"
+        )
+        out.extend(f"  {n}" for n in s["duplicate_links"])
 
     if s["orphans"]:
         out.append(f"\norphans ({len(s['orphans'])}) — on disk, nothing links to them:")

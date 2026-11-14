@@ -55,10 +55,15 @@ python3 ~/.claude/skills/memory-consolidation/memory_survey.py --transcript-days
 python3 ~/.claude/skills/memory-consolidation/memory_survey.py --duplicate-threshold 0.05   # if the default reports none
 ```
 
-The survey reports the injected cost of the index, dead index links, orphans, per-entry
-last-reference dates, and near-duplicate candidates. It makes no judgement; that is this pass.
-To survey another project's store, pass `--memory-dir` and `--transcript-dir`. To resolve cited
-checks against a different checkout, pass `--repo-root`.
+The survey reports the injected cost of the index, dead index links, duplicate index links,
+orphans, per-entry last-reference dates, and near-duplicate candidates. It makes no judgement;
+that is this pass. To survey another project's store, pass `--memory-dir` and
+`--transcript-dir`. To resolve cited checks against a different checkout, pass `--repo-root`.
+
+The survey judges a cited check or a repo link by the repo's default branch. A path the
+default branch deleted reads as dangling or dead although a checkout that lags still holds the
+file. The SessionStart hook `memory-upkeep.py` uses the same resolver, so both name the same
+paths.
 
 Read its own docstring on what each number is worth. Every one is a proxy: `/context` reports the
 real token share and the survey does not, and a transcript scan finds a slug that was *mentioned*,
@@ -74,6 +79,9 @@ For every entry the survey flags, open it. The survey ranks; you decide. Specifi
 
 - **Dead links**: the index promises a file that is not there. Either restore the file from
   `archive/` or git history, or drop the pointer. This is the one condition that fails the survey.
+- **Duplicate links**: the index links one memory file more than once. Keep the better-written
+  line and drop the other. A repo doc linked from several lines is not listed: one doc can own
+  the claims of several retired memories.
 - **Orphans**: a file nothing links to. It is invisible to every session, so it is either worth
   an index line or worth archiving. Leaving it is the one option that is always wrong.
 - **Near-duplicates**: read both bodies. Merge into whichever is better written, keep the

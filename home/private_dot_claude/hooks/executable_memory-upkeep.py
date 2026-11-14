@@ -22,9 +22,12 @@ memory already describes, so drift runs one way: memories are added readily and 
 only when someone happens to notice. Four of this machine's memories name files that
 have since been deleted or moved, and each was found by hand.
 
-This hook has three report sections, all derived from one memory directory. Each is
+This hook has four report sections, all derived from one memory directory. Each is
 silent when it has nothing to say, because a line that prints at every session start
 whatever the state is a line that trains its reader to skip it.
+
+The path and index logic lives in lib/memory_resolver.py, which the memory-consolidation
+skill's survey imports too, so the two cannot disagree about whether a path exists.
 
 1. Stale paths. The cheap half of closing that gap, and the half that needs no session
 context: a path a memory names either exists or it does not. It reports; it never
@@ -56,14 +59,22 @@ and prints when the count is over DEFAULT_MAX_ENTRIES (85). It never edits the i
 which entries to promote into a CLAUDE.md rule, which belong behind an archive pointer,
 and which are simply still live is a judgment call a hook has no context for.
 
+4. Index findings. The index and the store drift apart in four ways, and
+`memory_resolver.index_state` names each: a memory file no index line links, an index
+link to a file that is gone, a file linked twice, and a memory whose `enforced_by:`
+frontmatter key disagrees with the index (the index lacks an `[ENFORCED]` marker, or the
+key's node id does not resolve). A marked entry with no `enforced_by:` key is not a
+finding: section 2 still resolves its check from the memory's prose. The section prints
+after the other three.
+
 Fails closed to silence. Every path returns 0, including the error paths: a broken
 session-start hook is worse than a missing nudge.
 
 Usage:
     memory-upkeep.py [--repo DIR] [--max N]
 
-Opt out of sections 1 and 2 with CLAUDE_MEMORY_PATH_CHECK=0, and of section 3 with
-CLAUDE_MEMORY_INDEX_CHECK=0. Each variable silences only its own sections.
+Opt out of sections 1 and 2 with CLAUDE_MEMORY_PATH_CHECK=0, and of sections 3 and 4
+with CLAUDE_MEMORY_INDEX_CHECK=0. Each variable silences only its own sections.
 """
 
 from __future__ import annotations
@@ -73,8 +84,17 @@ import os
 import re
 import subprocess
 import sys
-from collections.abc import Sequence
 from pathlib import Path
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "lib"))
+from memory_resolver import (  # noqa: E402
+    NODE_ID,
+    Tree,
+    defines,
+    index_entries,
+    index_state,
+    main_checkout,
+)
 
 # Backtick-quoted spans are where this config's memories put paths, and quoting is what
 # separates a path from prose that happens to contain a slash.
@@ -120,197 +140,6 @@ def repo_root(start: Path) -> Path | None:
     )
     top = result.stdout.strip()
     return Path(top) if result.returncode == 0 and top else None
-
-
-def main_checkout(repo: Path) -> Path:
-    """The main checkout behind `repo`, which may be a linked worktree.
-
-    Memory is keyed to the main checkout's path, so a session running in
-    .claude/worktrees/<name> derives a slug no memory directory answers to and every
-    section of this hook goes silent — in exactly the parallel worktree sessions where
-    most work happens.
-
-    `git rev-parse --git-common-dir` names the shared .git that every worktree of a repo
-    points at; its parent is the main checkout. In the main checkout itself the answer
-    is already that repo, so this costs one git call and changes nothing.
-
-    It names the checkout for the memory slug, and `Tree` runs git there. `Tree`
-    decides whether a path exists.
-
-    Falls back to `repo` whenever the answer is unusable — git failing, an empty answer,
-    a bare repo whose .git parent is not a checkout. A wrong slug is silence, which is
-    the same failure as not looking at all, and never an error at session start.
-    """
-    result = subprocess.run(
-        ["git", "rev-parse", "--git-common-dir"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    common = result.stdout.strip()
-    if result.returncode != 0 or not common:
-        return repo
-    git_dir = Path(common)
-    if not git_dir.is_absolute():
-        # Git answers ".git" in the main checkout and may answer relatively elsewhere;
-        # both are relative to the directory the command ran in.
-        git_dir = repo / git_dir
-    try:
-        parent = git_dir.resolve().parent
-    except OSError:
-        return repo
-    return parent if parent.is_dir() else repo
-
-
-def sibling_checkouts(repo: Path, primary: Path) -> list[Path]:
-    """Every other checkout of this repository: the main checkout and each linked
-    worktree, minus `repo` itself.
-
-    `Tree` reads them for a path the default branch does not track. The main checkout
-    comes first. `primary` is included even when `git worktree list` fails, so a failed
-    listing loses only the linked worktrees.
-    """
-    others: list[Path] = []
-    if primary != repo:
-        others.append(primary)
-    try:
-        result = subprocess.run(
-            ["git", "worktree", "list", "--porcelain"],
-            cwd=repo,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError:
-        return others
-    if result.returncode != 0:
-        return others
-    for line in result.stdout.splitlines():
-        if not line.startswith("worktree "):
-            continue
-        path = Path(line[len("worktree ") :])
-        if path not in (repo, primary) and path not in others and path.is_dir():
-            others.append(path)
-    return others
-
-
-def _git(cwd: Path, *args: str) -> str | None:
-    """A git command's stdout, or None when git fails or is missing."""
-    try:
-        result = subprocess.run(
-            ["git", *args], cwd=cwd, capture_output=True, text=True, check=False
-        )
-    except OSError:
-        return None
-    return result.stdout if result.returncode == 0 else None
-
-
-def _with_parents(paths: Sequence[str]) -> set[str]:
-    """`paths` and every directory above each one."""
-    out: set[str] = set()
-    for path in paths:
-        while path and path not in out:
-            out.add(path)
-            path = path.rpartition("/")[0]
-    return out
-
-
-class Tree:
-    """What the repository holds, judged by its default branch and not by one checkout.
-
-    A path is present when one of two things is true:
-
-    1. The default branch tracks it.
-    2. Some checkout holds it and the default branch never tracked it. That is a file on
-       a branch that has not landed (dotfiles #557: a memory written ahead of its
-       session's merge was flagged for a day), or an untracked path such as a gitignored
-       directory. Measured on 2026-08-29: two of three flagged memories named
-       `docs/superpowers/`, which is gitignored and lives only in the main checkout.
-
-    A path the default branch once tracked and no longer does is gone, whichever
-    checkouts still hold it. Before this rule any checkout holding the path counted. The
-    homelab repo had 140 worktrees on 2026-11-13, and the hook reported none of the 10
-    cited paths that master had deleted (dotfiles #1262).
-
-    Whether git ignores the path does not enter into it. A deleted tree leaves ignored
-    debris behind, such as `__pycache__`, and a rule that kept an ignored path present
-    kept three deleted directories present on the one host whose main checkout held
-    that debris.
-
-    The default branch is `origin/HEAD`, or the main checkout's `HEAD` in a repo with no
-    remote. A file's text comes from that branch too, so a test renamed on the default
-    branch is missing even while a stale worktree still defines it. The cost is that a
-    symbol added to a tracked file on an unlanded branch is missing until it lands.
-
-    Outside a git repo, or before the first commit, nothing is tracked and rule 2 holds
-    for every path a checkout has.
-    """
-
-    def __init__(self, repo: Path, primary: Path | None = None) -> None:
-        self._repo = repo
-        self._primary = primary or repo
-        self._checkouts = [repo, *sibling_checkouts(repo, self._primary)]
-        self._ref = None
-        for ref in ("refs/remotes/origin/HEAD", "HEAD"):
-            if _git(self._primary, "rev-parse", "--verify", "-q", ref + "^{commit}"):
-                self._ref = ref
-                break
-        listed = self._ref and _git(
-            self._primary, "ls-tree", "-r", "--name-only", self._ref
-        )
-        self._files = set((listed or "").splitlines())
-        self._tracked = _with_parents(sorted(self._files))
-        self._removed: set[str] | None = None
-
-    def _once_tracked(self, path: str) -> bool:
-        """Whether the default branch's history deleted or renamed away `path`.
-
-        One walk of the whole history, made the first time it is needed: about half a
-        second on 7,500 commits.
-        """
-        if self._removed is None:
-            log = self._ref and _git(
-                self._primary,
-                "log",
-                "--format=",
-                "--name-only",
-                "--diff-filter=D",
-                "--no-renames",
-                self._ref,
-            )
-            self._removed = _with_parents((log or "").split("\n"))
-        return path in self._removed
-
-    def has_top(self, name: str) -> bool:
-        """Whether the repo has or had a top-level directory `name`."""
-        return (
-            name in self._tracked
-            or (self._repo / name).is_dir()
-            or self._once_tracked(name)
-        )
-
-    def holds(self, path: str) -> bool:
-        """Whether `path`, a file or a directory, is present by the two rules."""
-        path = path.rstrip("/")
-        if path in self._tracked:
-            return True
-        if not any((c / path).exists() for c in self._checkouts):
-            return False
-        return not self._once_tracked(path)
-
-    def read(self, path: str) -> str | None:
-        """The text of the file at `path`, or None when no such file is present."""
-        if path in self._files:
-            return _git(self._primary, "show", f"{self._ref}:{path}")
-        if not self.holds(path):
-            return None
-        for checkout in self._checkouts:
-            try:
-                return (checkout / path).read_text()
-            except OSError:
-                continue
-        return None
 
 
 def memory_dir(config_dir: Path, repo: Path) -> Path | None:
@@ -485,21 +314,6 @@ def stale_paths(text: str, tree: Tree) -> list[str]:
 # describing what the check does NOT cover, so its stale check is reported as a stale
 # reference and never as a retire suggestion.
 
-# A markdown link to a memory file: `[label](file.md)`. The label may hold one level of
-# brackets — "[A task tagged [config, deploy] is skipped …](…)" is a live entry, and a
-# label pattern that stops at the first `]` never sees its marker.
-INDEX_LINK = re.compile(r"\[(?:[^\[\]]|\[[^\]]*\])+\]\(([^)\s]+\.md)\)")
-
-# The markers, as the index writes them: `[ENFORCED]`, `[ENFORCED, SCOPED]`, `(SCOPED)`.
-# Read as independent substrings of the bracket or paren text, since the combined form
-# is real.
-INDEX_MARKER = re.compile(r"\[(ENFORCED[^\]]*)\]|\((SCOPED)\)")
-
-# A pytest node id: a path, then one or more `::name` segments. PATHISH rejects the
-# `::`, which is why node ids were invisible to the path scan. A parametrize suffix
-# (`test_x[param]`) is dropped from the last segment.
-NODE_ID = re.compile(r"^([\w.@+/-]+)((?:::[\w]+)+)(?:\[[^\]]*\])?$")
-
 # A bare `::name`, relative to the last file the same sentence named — the index writes
 # "paired in `a/test_b.py::test_c` (with `::test_d`)".
 BARE_NODE = re.compile(r"^((?:::[\w]+)+)(?:\[[^\]]*\])?$")
@@ -512,29 +326,6 @@ SYMBOL_IN_FILE = re.compile(r"`(\w+)` in `([\w.@+/-]+)`")
 # "ENFORCED by `…`", "SCOPED: the check covers `…`", "enforceable: yes — `…`" — and
 # every check reference the corpus carries sits in one of those sentences.
 CHECK_SENTENCE = re.compile(r"\benforc\w*|\bscoped\b", re.IGNORECASE)
-
-
-def index_entries(index_text: str) -> list[tuple[str, bool]]:
-    """(memory file name, scoped) for every index entry carrying a marker.
-
-    Markers bind to the nearest PRECEDING link, not to the line: a bullet carries
-    several links with a marker after each, and a line-level read either downgrades
-    the first to the second's marker or hands an unmarked third one it never had.
-    """
-    entries = []
-    for line in index_text.splitlines():
-        links = list(INDEX_LINK.finditer(line))
-        for i, link in enumerate(links):
-            tail_end = links[i + 1].start() if i + 1 < len(links) else len(line)
-            tail = line[link.end() : tail_end]
-            enforced = scoped = False
-            for m in INDEX_MARKER.finditer(tail):
-                text = (m.group(1) or m.group(2)).upper()
-                enforced |= "ENFORCED" in text
-                scoped |= "SCOPED" in text
-            if enforced or scoped:
-                entries.append((link.group(1), scoped))
-    return entries
 
 
 def named_checks(text: str) -> list[tuple[str, str | None]]:
@@ -587,12 +378,6 @@ def named_checks(text: str) -> list[tuple[str, str | None]]:
                         add(token, None)
                     last_file = token.rstrip("/")
     return checks
-
-
-def defines(text: str, symbol: str) -> bool:
-    name = re.escape(symbol)
-    pattern = rf"^\s*(?:async\s+def|def|class)\s+{name}\b|^\s*{name}\s*="
-    return re.search(pattern, text, re.MULTILINE) is not None
 
 
 def stale_checks(text: str, tree: Tree) -> tuple[list[str], list[str]]:
@@ -721,6 +506,23 @@ def report_index_size(memories: Path, cap: int) -> None:
     )
 
 
+def report_index_findings(memories: Path, tree: Tree) -> None:
+    state = index_state(memories, tree)
+    rows = [
+        *(f"{name}: no index line" for name in state.unindexed),
+        *(f"{target}: linked from the index, and gone" for target in state.gone),
+        *state.duplicated,
+        *state.marker_mismatch,
+    ]
+    if not rows:
+        return
+    print(f"{len(rows)} MEMORY.md index finding(s) — the index and the store disagree:")
+    for row in rows[:MAX_REPORTED]:
+        print(f"  {row}")
+    if len(rows) > MAX_REPORTED:
+        print(f"  ... and {len(rows) - MAX_REPORTED} more")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Report stale memory paths and checks, and an oversized index."
@@ -750,12 +552,13 @@ def main() -> int:
     if memories is None:
         return 0
 
+    tree = Tree(repo, primary)
     if check_paths:
-        tree = Tree(repo, primary)
         report_stale_paths(memories, tree)
         report_stale_checks(memories, tree)
     if check_index:
         report_index_size(memories, args.max)
+        report_index_findings(memories, tree)
     return 0
 
 
