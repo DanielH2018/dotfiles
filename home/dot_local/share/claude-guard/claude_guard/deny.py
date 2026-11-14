@@ -3156,12 +3156,8 @@ _LITERAL_JOIN = re.compile(r"""["'`]\s*[+.]\s*["'`]""")
 # ends a word so that the `qw(push --force)` of perl and the `%w[push --force]` of ruby
 # count, and so that the `push` of `list.push(x)` does not.
 _TEXT_WORD_END = re.compile(r"""["'`\s()\[\]{},;]+""")
-# A perl `qw` or ruby `%w` word list whose delimiter `_TEXT_WORD_END` does not split at:
-# `qw/a b/`, `%w|a b|`, `qw<a b>`. A list with no closing delimiter runs to the end.
-_WORD_LIST = re.compile(
-    r"(?:\bqw\s*|%[wWiI])(?:<(?P<angled>.*?)(?:>|$)|(?P<d>[^\w\s])(?P<body>.*?)(?:(?P=d)|$))",
-    re.DOTALL,
-)
+# The opener of a perl `qw` or ruby `%w` word list and its delimiter: `qw/`, `%w|`, `qw<`.
+_WORD_LIST_OPEN = re.compile(r"(?:\bqw\s*|%[wWiI])([^\w\s])")
 
 
 def _words_may_force_push(words: Iterable[str]) -> bool:
@@ -3189,14 +3185,18 @@ def _program_may_force_push(cli: _StdinCli, program: str, operands: list[str]) -
     text, `git`, a push subcommand or an alias for one, and a force spelling.
 
     The guard parses none of these languages, so the words are those of the whole text
-    (`_TEXT_WORD_END`), with two joined literals read as one and a `qw` or `%w` list
-    read without its delimiters (`_WORD_LIST`). A program that only prints the three
-    words is refused, and so is one that starts a plain push and passes `-f` to another
-    command."""
-    text = _WORD_LIST.sub(
-        lambda m: f" {m['angled'] or m['body'] or ''} ", _LITERAL_JOIN.sub("", program)
-    )
-    return _words_may_force_push(_TEXT_WORD_END.split(text))
+    (`_TEXT_WORD_END`), with two joined literals read as one. Each delimiter a `qw` or
+    `%w` list opens with (`_WORD_LIST_OPEN`) adds the words of a second split that ends
+    a word at that delimiter too. A split only adds words, so text that merely looks
+    like an opener, such as the `%i-` of a format string, hides none. A program that
+    only prints the three words is refused, and so is one that starts a plain push and
+    passes `-f` to another command."""
+    text = _LITERAL_JOIN.sub("", program)
+    words = _TEXT_WORD_END.split(text)
+    for opener in {m[1] for m in _WORD_LIST_OPEN.finditer(text)}:
+        ends = re.escape("<>" if opener == "<" else opener)
+        words += re.split(rf"(?:{_TEXT_WORD_END.pattern}|[{ends}])+", text)
+    return _words_may_force_push(words)
 
 
 def force_push_flag(sc: Scan, target: str) -> Verdict | None:

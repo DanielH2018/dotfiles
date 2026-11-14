@@ -190,8 +190,10 @@ A node, perl, ruby or other `_STDIN_CLI` program gets the same reading from its 
 splits the whole program at quotes, whitespace, brackets, commas and `;`. A quote does not
 have to pair, so an apostrophe in a comment hides no literal. A bracket ends a word, so
 perl's `qw(push --force)` and ruby's `%w[push --force]` count, and the `push` of
-`list.push(x)` does not. A `qw` or `%w` list with another delimiter, such as
-`qw/push --force/` or `%w|push --force|`, is read without its delimiters. Two literals joined by `+` or `.` read as one word.
+`list.push(x)` does not. A `qw` or `%w` list may open with another delimiter, as in
+`qw/push --force/` or `%w|push --force|`. For each such delimiter in the program, the
+census adds the words of a second split that ends a word at that delimiter too. The
+second split only adds words, so a format string such as `"%i-%i"` hides nothing. Two literals joined by `+` or `.` read as one word.
 `force_push_flag` denies the program on the same three words. No check proves that such a
 program starts no process, so a program that only prints the three words is denied too.
 The words after the program on the command line are not read, for Python or any other
