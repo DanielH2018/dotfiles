@@ -267,7 +267,8 @@ def printed(text: str) -> str | None:
 
     None means the text cannot be read from the words: another command, a word outside
     `_words`' grammar, a glob, or a backslash that `echo` or `printf` may turn into another
-    character. `echo` joins its operands with a space after any `-n`, `-e` and `-E` flags.
+    character. `echo` joins its operands with a space after any `-n`, `-e` and `-E` flags,
+    and ends the line unless a flag holds `n`.
     `printf` is read in two shapes: a format of `%s` or `%s\n` with its arguments, and a
     format with no `%` and no escape but `\n`, alone.
     """
@@ -276,9 +277,11 @@ def printed(text: str) -> str | None:
         return None
     name, *args = (word for word, _ in words)
     if name == "echo":
+        end = "\n"
         while args and _ECHO_FLAGS.fullmatch(args[0]):
-            del args[0]
-        return None if any("\\" in a for a in args) else " ".join(args)
+            if "n" in args.pop(0):
+                end = ""
+        return None if any("\\" in a for a in args) else " ".join(args) + end
     if name != "printf" or not args:
         return None
     layout, *values = args

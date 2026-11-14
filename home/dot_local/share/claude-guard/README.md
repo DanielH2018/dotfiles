@@ -371,16 +371,21 @@ substitution as a redirect's target and no `<` file redirect, whose file an earl
 may have written.
 
 A program that an earlier segment prints is read out of that segment in two places
-(dotfiles #1303). The first is a segment piped straight into an interpreter that is the
-first word of its own segment and redirects nothing onto stdin. The second is the body of
-a `<(…)` operand. The rule reads the operands of an `echo`, the operands of a `printf`
+(dotfiles #1303). The first is a segment piped straight into an interpreter that
+redirects nothing onto stdin. The interpreter is the first word of its segment, or follows
+only leaders that hand stdin on untouched: `timeout DURATION`, `nice` with an optional
+`-n N`, `env` with assignments, and `uv run` with value-free options (dotfiles #1331). The
+second is the body of a `<(…)` operand. The rule reads the operands of an `echo`, the operands of a `printf`
 whose format is `%s`, `%s\n` or plain text ending lines with `\n`, and the one heredoc a
 bare `cat` forwards. A printer reads no stdin, so its text is the whole program and no
 segment before it is a candidate: `grep -c foo ~/.bashrc; echo 'print(1)' | python3`
 passes. Every other producer is still refused when an earlier segment names a protected
 file, because the rule reads that producer's shell text as the program. So is a printer
-behind a leader such as `xargs` or `timeout`, a printer inside a group, and an `echo`
-whose operand holds a backslash. A `<(…)` operand narrows the candidates only when every
+behind any other leader, such as `xargs`, which turns the piped text into arguments, or a
+listed leader given another option. So is an `echo` whose operand holds a backslash. A
+brace group piped onward by a bare `}` is read as what its members print, in order, when
+every member is a printer that ends in `;` or a newline. A subshell, a nested group, a
+group with a redirect and a group with any other member are refused as before. A `<(…)` operand narrows the candidates only when every
 substitution of the command is a printer, because a substitution such as `<(cat)` reads
 the stdin it inherits. A printer is read only at the top level of the command, and only
 when every segment before it is a reader or a printer that `inert_shell.py` proves. Any

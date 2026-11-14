@@ -61,8 +61,8 @@ import shlex
 import shutil
 import tokenize
 from collections import Counter
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from typing import NamedTuple
 
 from claude_guard import secret_table
@@ -2346,10 +2346,11 @@ def inplace_edit(sc: Scan, target: str) -> Verdict | None:
 # - The program is a `<(…)` operand and every substitution of the command only prints. A
 #   substitution inherits the segment's stdin, so one that may read it, as `<(cat)` does,
 #   keeps every earlier segment a candidate.
-# - The interpreter is the first word of its segment, the segment leaves stdin alone, and
-#   the segment piped into it only prints (`_printed_program`). A printer reads no stdin,
-#   so the text it prints is the whole program. A leader in front of the interpreter keeps
-#   every earlier segment a candidate, because `xargs` turns the piped text into arguments.
+# - The interpreter reads the pipe (`_reads_the_pipe`), the segment leaves stdin alone, and
+#   what is piped into it only prints (`_piped_text`): one printer, or a brace group of
+#   them. A printer reads no stdin, so the text it prints is the whole program. A leader in
+#   front of the interpreter keeps every earlier segment a candidate unless it is one that
+#   hands stdin on untouched, because `xargs` turns the piped text into arguments.
 #
 # A substitution body and a piped segment that only print are read as the text they print.
 # Every other producer stays shell text, because the guard cannot read what an arbitrary
@@ -2527,8 +2528,87 @@ def _printed_program(seg: Segment) -> str | None:
     return seg.heredocs[0] if forwards else None
 
 
+_GROUP_OPENER = re.compile(r"\s*\{\s")
+_GROUP_MEMBER_ENDS = frozenset({";", "newline"})
+
+
+def _piped_text(before: Sequence[Segment], unchanged: list[bool]) -> str | None:
+    """The text piped into the segment after `before`, when the words alone give it.
+
+    Args:
+        before: Every segment ahead of the one that reads the pipe.
+        unchanged: For each of `before`, whether it leaves every printer's name meaning
+            the printer (`segment_reads_or_prints`).
+
+    Returns:
+        What the last segment prints (`_printed_program`), or what the members of a brace
+        group print, joined in order, when the last segment is the group's bare `}`. None
+        when that segment is not piped onward, when a segment ahead of the printer or the
+        group could rebind a printer's name, and for a group with a member that is not a
+        printer, that holds another group, or that ends in anything but `;` or a newline.
+    """
+    if not before or before[-1].sep != "|":
+        return None
+    last = before[-1]
+    if last.heredocs or _words(last.text) != ["}"]:
+        return _printed_program(last) if all(unchanged[:-1]) else None
+    members: list[str] = []
+    for at in range(len(before) - 2, -1, -1):
+        seg = before[at]
+        opener = _GROUP_OPENER.match(seg.text)
+        member = replace(seg, text=seg.text[opener.end() :]) if opener else seg
+        text = _printed_program(member) if seg.sep in _GROUP_MEMBER_ENDS else None
+        if text is None:
+            return None
+        members.append(text)
+        if opener:
+            return "".join(reversed(members)) if all(unchanged[:at]) else None
+    return None
+
+
+_TIMEOUT_DURATION = re.compile(r"[0-9]+(\.[0-9]+)?[smhd]?")
+_NICE_ADJUSTMENT = re.compile(r"-?[0-9]+")
+
+
+def _reads_the_pipe(args: list[str]) -> bool:
+    """Whether the command `args` is an interpreter whose stdin is the segment's stdin.
+
+    The interpreter is the first word, or follows only leaders that run the words after
+    them and hand their stdin on untouched: `timeout DURATION`, `nice` with an optional
+    `-n N`, `env` with assignments, and `uv run` with value-free options
+    (`_past_uv_run`), which also runs Python on a `-` command word. Each leader is read in
+    that one shape, with no other option. A leader outside the list keeps the answer
+    False: `xargs` turns the piped text into the interpreter's arguments.
+    """
+    while args:
+        if _INTERPRETER_NAME.fullmatch(posixpath.basename(args[0])):
+            return True
+        match args:
+            case ["timeout", duration, *rest] if _TIMEOUT_DURATION.fullmatch(duration):
+                pass
+            case ["nice", "-n", adjustment, *rest] if _NICE_ADJUSTMENT.fullmatch(adjustment):
+                pass
+            case ["nice", *rest]:
+                pass
+            case ["env", *rest]:
+                while rest and _ASSIGNMENT.match(rest[0]):
+                    del rest[0]
+            case ["uv", "run", *_]:
+                rest = _past_uv_run(args)
+                if rest[:1] == ["-"]:
+                    return True
+            case _:
+                return False
+        args = rest
+    return False
+
+
 def _piped_programs(
-    args: list[str], stdin: str, previous: Segment | None, earlier: list[str]
+    args: list[str],
+    stdin: str,
+    before: Sequence[Segment],
+    unchanged: list[bool],
+    earlier: list[str],
 ) -> list[str]:
     """The texts from earlier segments that may be the program an interpreter reads from
     stdin.
@@ -2536,20 +2616,21 @@ def _piped_programs(
     Args:
         args: The words of the interpreter's segment, redirects removed.
         stdin: Where the segment's stdin comes from (`_without_redirects`).
-        previous: The segment before the interpreter's, when nothing before that segment
-            could rebind a printer's name. None otherwise.
+        before: The segments ahead of the interpreter's whose printers can be read. Empty
+            below the top level of the command.
+        unchanged: For each of `before`, whether it leaves every printer's name meaning
+            the printer.
         earlier: The text of every earlier segment and heredoc body.
 
     Returns:
-        Nothing when the segment fills its own stdin. The text `previous` prints when it
-        only prints (`_printed_program`) and is piped into an interpreter that is the
-        first word of a segment whose stdin is inherited. Otherwise `earlier`.
+        Nothing when the segment fills its own stdin. The text piped in when the words
+        give it (`_piped_text`) and the interpreter reads that pipe (`_reads_the_pipe`) in
+        a segment whose stdin is inherited. Otherwise `earlier`.
     """
     if stdin == "own":
         return []
-    direct = bool(args) and _INTERPRETER_NAME.fullmatch(posixpath.basename(args[0])) is not None
-    if stdin == "inherited" and direct and previous is not None and previous.sep == "|":
-        program = _printed_program(previous)
+    if stdin == "inherited" and _reads_the_pipe(args):
+        program = _piped_text(before, unchanged)
         if program is not None:
             return [program]
     return earlier
@@ -2774,8 +2855,7 @@ def _runs_python_program(
         prints = [printed(t) if depth == 0 and all(unchanged) else None for t in bodies]
         redirected += seg.heredocs
         redirected += [t if out is None else out for t, out in zip(bodies, prints, strict=True)]
-        previous = before[-1] if before and all(unchanged[:-1]) else None
-        piped = _piped_programs(args, stdin, previous, earlier)
+        piped = _piped_programs(args, stdin, before, unchanged, earlier)
         substituted = [] if None not in prints else earlier
         programs: set[str] = set()
         for after in _python_arguments(args):

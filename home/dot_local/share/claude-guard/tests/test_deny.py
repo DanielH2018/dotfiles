@@ -1684,6 +1684,14 @@ PYTHON_WRITE_DENY = [
     # a printer piped to an interpreter that may read something else
     f"echo \"-copen('{BASHRC}','w')\" | xargs -d '\\n' python3",
     f"exec 3<<< \"open('{BASHRC}','w')\"; echo 'print(1)' | python3 <&3",
+    # #1331: a writer behind a leader that hands stdin on, and one a brace group prints
+    f"echo \"open('{BASHRC}','w')\" | timeout 5 python3",
+    f"{{ echo -n \"open('{BASHRC}'\"; echo \",'w')\"; }} | python3",
+    # a leader that turns the piped text into arguments, or is not in its one read shape
+    f"echo \"-copen('{BASHRC}','w')\" | timeout 5 xargs -d '\\n' python3",
+    f"echo \"-copen('{BASHRC}','w')\" | env -S 'xargs python3' python3",
+    # a group with a member whose output the words do not give
+    f"grep -c foo {BASHRC}; {{ echo 'import sys'; cat w.py; }} | python3",
     # a substitution that reads the stdin it inherits
     f"echo \"open('{BASHRC}','w')\" | python3 <(cat)",
     f"echo \"open('{BASHRC}','w')\" > p; python3 <(cat) < p",
@@ -1723,6 +1731,12 @@ PYTHON_WRITE_ALLOW = [
     f"cat <<'EOF' | python3\nprint(open('{BASHRC}').read())\nEOF",
     "grep -c foo ~/.bashrc; python3 <(echo 'print(1)')",
     "grep -c foo ~/.bashrc; echo 'print(1)' | python3",
+    # #1331: the interpreter behind a leader that hands stdin on untouched
+    f"echo \"print(open('{BASHRC}').read())\" | uv run -",
+    f"echo \"print(open('{BASHRC}').read())\" | timeout 5 python3",
+    f"echo \"print(open('{BASHRC}').read())\" | nice -n 5 env LC_ALL=C python3",
+    # a brace group of printers prints what its members print, in order
+    f"{{ echo 'import sys'; echo \"print(open('{BASHRC}').read())\"; }} | python3",
 ]
 
 

@@ -85,7 +85,8 @@ def test_anything_outside_the_list_is_not_proven(command):
 
 
 PRINTED = [
-    ("echo 'print(1)'", "print(1)"),
+    ("echo 'print(1)'", "print(1)\n"),
+    ("echo -en 'print(1)'", "print(1)"),
     ('echo -n "a = 1" b', "a = 1 b"),
     ("printf '%s\\n' 'a = 1' 'print(a)'", "a = 1\nprint(a)\n"),
     ("printf '%s' 'a\\n'", "a\\n"),
