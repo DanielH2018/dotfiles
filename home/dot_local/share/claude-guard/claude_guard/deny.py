@@ -2270,8 +2270,10 @@ def inplace_edit(sc: Scan, target: str) -> Verdict | None:
 #
 # A substitution body and a piped segment that only print are read as the text they print.
 # Every other producer stays shell text, because the guard cannot read what an arbitrary
-# command prints. No segment is read as a printer once an earlier segment may have
-# redefined `echo`, `printf` or `cat` (`_PRINTER_REDEFINED`).
+# command prints. A printer's name means the printer only while nothing before it could
+# rebind the name, with a function, an alias, `PATH`, `hash`, `enable`, `eval` or a sourced
+# file. So a printer is read only at the top level of the command, and only when every
+# segment before it is a reader or a printer that `inert_shell` proves.
 #
 # `uv run -` and `uv run --script -` run the Python program on stdin with no `python` word
 # (dotfiles #1286), so a `uv` runner whose command word is a descriptor counts as an
@@ -2357,12 +2359,6 @@ def _printed_program(seg: Segment) -> str | None:
     return seg.heredocs[0] if forwards else None
 
 
-# A function definition for a printer's name, or any alias, in shell text.
-_PRINTER_REDEFINED = re.compile(
-    r"\b(echo|printf|cat)\s*\(\s*\)|\bfunction\s+(echo|printf|cat)\b|\balias\b"
-)
-
-
 def _piped_programs(
     args: list[str], stdin: str, previous: Segment | None, earlier: list[str]
 ) -> list[str]:
@@ -2372,8 +2368,8 @@ def _piped_programs(
     Args:
         args: The words of the interpreter's segment, redirects removed.
         stdin: Where the segment's stdin comes from (`_without_redirects`).
-        previous: The segment before the interpreter's, if it can be trusted to be the
-            command its first word names. None otherwise.
+        previous: The segment before the interpreter's, when nothing before that segment
+            could rebind a printer's name. None otherwise.
         earlier: The text of every earlier segment and heredoc body.
 
     Returns:
@@ -2521,21 +2517,22 @@ def _runs_python_program(
     if not p.ok or depth > 4:
         return bdb_re(normalize(text), unreadable)
     earlier: list[str] = []
-    previous = None
-    for seg in p.segments:
+    for at, seg in enumerate(p.segments):
         words = _words(seg.text)
         if words is None:
             if bdb_re(normalize("\n".join((seg.text, *seg.heredocs))), unreadable):
                 return True
-            previous = seg
             continue
         args, redirected, stdin = _without_redirects(words)
-        trusted = _PRINTER_REDEFINED.search("\n".join(earlier)) is None
+        # A printer's name means the printer only while nothing before it could rebind it.
+        before = p.segments[:at] if depth == 0 else ()
+        unchanged = [segment_reads_or_prints(s) for s in before]
         bodies = p.substitutions if "<(" in words else ()
-        prints = [printed(t) if trusted else None for t in bodies]
+        prints = [printed(t) if depth == 0 and all(unchanged) else None for t in bodies]
         redirected += seg.heredocs
         redirected += [t if out is None else out for t, out in zip(bodies, prints, strict=True)]
-        piped = _piped_programs(args, stdin, previous if trusted else None, earlier)
+        previous = before[-1] if before and all(unchanged[:-1]) else None
+        piped = _piped_programs(args, stdin, previous, earlier)
         substituted = [] if None not in prints else earlier
         programs: set[str] = set()
         for after in _python_arguments(args):
@@ -2550,7 +2547,6 @@ def _runs_python_program(
         ):
             return True
         earlier += [seg.text, *seg.heredocs]
-        previous = seg
     return any(_runs_python_program(t, matches, paths, depth + 1) for t in p.substitutions)
 
 

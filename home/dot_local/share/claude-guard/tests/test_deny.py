@@ -1646,9 +1646,13 @@ PYTHON_WRITE_DENY = [
     # a substitution that reads the stdin it inherits
     f"echo \"open('{BASHRC}','w')\" | python3 <(cat)",
     f"echo \"open('{BASHRC}','w')\" > p; python3 <(cat) < p",
-    # a printer's name that an earlier segment redefined
+    # a printer's name that an earlier segment may have rebound
     f"echo() {{ printf '%s' \"open('{BASHRC}','w')\"; }}; echo 'print(1)' | python3",
     f"grep -c foo {BASHRC}; function cat {{ tac w.py; }}; python3 <(echo 'print(1)')",
+    f'grep -c foo {BASHRC}; eval "ech""o() {{ cat w.py; }}"; echo \'print(1)\' | python3',
+    f"grep -c foo {BASHRC}; PATH=d:$PATH; cat <<'EOF' | python3\nprint(1)\nEOF",
+    f"grep -c foo {BASHRC}; . ./lib.sh; python3 <(echo 'print(1)')",
+    f"PATH=d:$PATH; bash -c \"grep -c foo {BASHRC}; echo 'print(1)' | python3\"",
     # text the parser refuses, and a program the shell rewrites first
     f"python3 -c \"open('{BASHRC}','w')",
     "python3 -c \"print(open('$HOME/.bashrc').read())\"",
