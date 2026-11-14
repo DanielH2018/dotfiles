@@ -490,34 +490,9 @@
       "Edit(~/.claude/**)",
       "Edit(~/.local/bin/*)",
       "Edit(~/.gitignore)",
-      {{/* read-only homelab observability. Named individually rather than mcp__homelab__* so a tool
-           added to the server later does not inherit auto-approval. read_file and list_files are the
-           two with real reach: they read arbitrary paths on the homelab host and are not constrained
-           by the local Read deny rules above, so a secret there is readable without a prompt. */}}
-      "mcp__homelab__host_overview",
-      "mcp__homelab__service_health",
-      "mcp__homelab__container_status",
-      "mcp__homelab__list_containers",
-      "mcp__homelab__container_logs",
-      "mcp__homelab__top_containers",
-      "mcp__homelab__query_logs",
-      "mcp__homelab__query_metric",
-      "mcp__homelab__scrape_targets",
-      "mcp__homelab__disk_health",
-      "mcp__homelab__cert_expiry",
-      "mcp__homelab__ha_state",
-      "mcp__homelab__claude_code_usage",
-      "mcp__homelab__claude_code_events",
-      "mcp__homelab__list_files",
-      "mcp__homelab__read_file",
-      "mcp__homelab__list_pods",
-      "mcp__homelab__workload_status",
-      "mcp__homelab__list_nodes",
-      "mcp__homelab__pod_logs",
-      {{/* GitGuardian's read tools. Named individually for the same reason as mcp__homelab__ above:
-           the server declares no read-only annotations, so a write tool added upstream must not
-           inherit auto-approval. scan_secrets and every tool that changes dashboard state are in
-           the ask list instead. */}}
+      {{/* GitGuardian's read tools. Named individually: the server declares no read-only annotations,
+           so a write tool added upstream must not inherit auto-approval. scan_secrets and every tool
+           that changes dashboard state are in the ask list instead. */}}
       "mcp__gitguardian__list_remediation_targets",
       "mcp__gitguardian__list_incidents",
       "mcp__gitguardian__count_incidents",
