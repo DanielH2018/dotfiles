@@ -1496,6 +1496,8 @@ PYTHON_WRITE_DENY = [
     "python3 -c \"import os; os.replace('/tmp/x', '.git/hooks/pre-push')\"",
     "python3 -c \"from pathlib import Path; Path('/home/u/.claude/settings.json').open('w')\"",
     "python3 -c \"import os; os.open('/home/u/.profile', os.O_WRONLY)\"",
+    "python3 -c \"import fileinput; [print(l, end='') for l in "
+    "fileinput.input('/home/u/.bashrc', inplace=True)]\"",
     "x=$(python3 -c \"open('/home/u/.bashrc','w').write('x')\")",
     "python3 -c \"open('/home/u/.bashrc' 'w'\"",
 ]
@@ -1504,6 +1506,7 @@ PYTHON_WRITE_ALLOW = [
     "python3 -c \"import json; print(json.load(open('/home/u/.claude/settings.json')))\"",
     "python3 -c \"print(open('/home/u/.bashrc').read().replace('a', 'b'))\"",
     "python3 -c \"d = {}; e = d.copy(); xs = ['.bashrc']; xs.remove('.bashrc')\"",
+    "python3 -c \"import fileinput; print(list(fileinput.input('/home/u/.bashrc')))\"",
     "python3 -c \"open('/tmp/out','w').write('x')\"",
 ]
 

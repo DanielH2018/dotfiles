@@ -2262,6 +2262,15 @@ def _opens_for_write(call: ast.Call) -> bool:
     )
 
 
+def _edits_in_place(call: ast.Call) -> bool:
+    """Whether `call`, a `fileinput.input` or `FileInput`, rewrites its files: an `inplace`
+    keyword or second argument that is anything but a false literal. The builtin `input`
+    takes neither."""
+    values = [k.value for k in call.keywords if k.arg in ("inplace", None)]
+    values += call.args[1:2]
+    return any(not (isinstance(v, ast.Constant) and not v.value) for v in values)
+
+
 def _python_writes(program: str) -> bool:
     """Whether the Python `program` holds a call that writes a file (`_PY_WRITERS`), or does
     not parse, so its calls cannot be read."""
@@ -2277,6 +2286,7 @@ def _python_writes(program: str) -> bool:
         on_os = _receiver(func) == "os"
         if (
             (name == "open" and _opens_for_write(node))
+            or (name in ("input", "FileInput") and _edits_in_place(node))
             or name in _PY_WRITERS
             or (name in _PY_TWO_ARG_WRITERS and len(node.args) >= 2)
             or (name in ("rename", "replace") and (on_os or len(node.args) == 1))

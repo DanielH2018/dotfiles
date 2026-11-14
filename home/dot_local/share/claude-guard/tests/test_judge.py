@@ -1290,8 +1290,7 @@ def test_ansible_check_survives_the_stdio_blocking_prefix_and_trailing_tail_pipe
     # trailing strips (the tail-bounding suffix) expect
     # to find them. Both are the plan's named live production shape.
     assert allowed(
-        "uv run ansible-playbook ansible/deploy.yml --tags karakeep --check"
-        " 2>&1 | tail -3",
+        "uv run ansible-playbook ansible/deploy.yml --tags karakeep --check 2>&1 | tail -3",
         main,
     )
     assert allowed("ansible-playbook site.yml --check 2>&1 | tail -3", main)
