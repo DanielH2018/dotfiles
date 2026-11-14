@@ -902,8 +902,9 @@ _DOC_LEADERS = frozenset(
     {"man", "which", "whereis", "type", "command", "echo", "printf", "apropos"}
 )
 _FILTERS = frozenset({"grep", "egrep", "fgrep", "rg", "ag", "ack", "jq", "yq", "gojq", "jaq"})
-# Readers that print or hash their operands and can write no file. `xxd -r`, the copiers, sed
-# and the editors can, so they are left out and a write to a `.pub` file stays a match.
+# Readers that print or hash their operands and can write no file. `xxd -r`, BSD `base64 -o`,
+# the copiers, sed and the editors can, so they are left out and a write to a `.pub` file
+# stays a match.
 _PRINTERS = frozenset(
     {
         "cat",
@@ -917,8 +918,6 @@ _PRINTERS = frozenset(
         "hexdump",
         "hd",
         "od",
-        "base32",
-        "base64",
         "shasum",
         "md5sum",
         "sha1sum",

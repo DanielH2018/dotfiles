@@ -936,6 +936,8 @@ WRITES_A_PUBLIC_KEY = [
     "sed -i s/a/b/ ~/.ssh/id_rsa.pub",
     "dd if=/tmp/x of=~/.ssh/id_rsa.pub",
     "xxd -r /tmp/x ~/.ssh/id_rsa.pub",
+    "base64 -d -i /tmp/x -o ~/.ssh/id_rsa.pub",
+    "base32 -d -i /tmp/x -o ~/.ssh/id_rsa.pub",
     "cat ~/.ssh/a.pub\ncp x ~/.ssh/b.pub",
 ]
 # The path is computed, or the word is not only a public key's path, or the reader is not
