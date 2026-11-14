@@ -255,6 +255,19 @@ operands, and a pipe into kill or a shell running a named script is judged at th
 Jinja `secret.yaml.j2` template is not a secrets file. That took the replay from 243 denies
 and 15 asks to 208 and 4, with nothing newly refused (2026-10-24).
 
+The push rules (`force_push`, `push_main`, `force_push_flag`, `push_config`,
+`push_no_verify`, `config_write`) match `git push` and `git config` as text anywhere in a
+segment, so that `bash -c '…'` and an ssh payload stay covered. `deny` skips them for a
+command that `inert_shell.only_reads_or_prints` proves runs nothing it names, so
+`grep -n 'git push --force' README.md` passes (dotfiles #1249). That proof is an allowlist.
+Every segment must be grep, rg with options from a fixed list, echo, printf with a format
+first, or one of head, tail, wc, cat, cut, tr and nl. The command name must be the bare
+word. The proof refuses an expansion, a substitution, a heredoc, a group, backgrounding,
+and every redirect except `/dev/null` and `&1`/`&2` written as one unquoted word. One
+segment outside the list keeps the push rules on for the whole command. rg reads
+`RIPGREP_CONFIG_PATH` from the environment, which the command cannot set under this proof
+and which the proof does not read.
+
 One rule goes the other way and refuses by default. `python_write` refuses a `python -c`
 program, or a program Python reads from a heredoc, that names a secrets, shell-startup or
 git config/hook file in its text or in an argument after it (dotfiles #1251). The program

@@ -74,6 +74,7 @@ from claude_guard.gitargv import (
 )
 from claude_guard.gitread import config_read
 from claude_guard.inert_python import inert, read_only
+from claude_guard.inert_shell import only_reads_or_prints
 from claude_guard.rules import load_rules
 from claude_guard.segment import Segment, mask_substitutions, parse, substitution_spans
 
@@ -3833,6 +3834,13 @@ RULES: tuple[Rule, ...] = (
     sudo_boundary,
 )
 
+# These rules match `git push` and `git config` as text anywhere in a segment, so that
+# `bash -c '…'` and an ssh payload stay covered. A command that only reads and prints runs
+# no git, whatever its quoted words say.
+_PUSH_FAMILY: frozenset[Rule] = frozenset(
+    {force_push, push_main, force_push_flag, push_config, push_no_verify, config_write}
+)
+
 
 def deny(command: str, cwd: str = "", env: Mapping[str, str] | None = None) -> Verdict:
     """The bash's decision for one command. `cwd` is accepted for the hook signature the
@@ -3846,7 +3854,10 @@ def deny(command: str, cwd: str = "", env: Mapping[str, str] | None = None) -> V
     home = (env or {}).get("HOME", "")
     sc = _without_stored_heredocs(build_scan(command))
     target = rm_target(home)
+    skipped = _PUSH_FAMILY if only_reads_or_prints(command) else ()
     for rule in RULES:
+        if rule in skipped:
+            continue
         verdict = rule(sc, target)
         if (
             verdict is not None

@@ -277,6 +277,51 @@ def test_push_to_a_feature_branch_is_allowed():
     assert "deny" not in kinds(PUSH_ALLOW)
 
 
+# Push and config text that a reader or a printer only quotes (dotfiles #1249).
+QUOTED_PUSH_ALLOW = [
+    "grep -n 'git push --force' README.md",
+    "echo 'run git push --force origin main by hand'",
+    "printf '%s\\n' 'git -c remote.origin.mirror=true push'",
+    "grep -n 'git push --no-verify' README.md",
+    "grep -n 'git config core.hooksPath /tmp/h' README.md",
+]
+# The same text where something may run it. Each row is denied without the quoted-text skip.
+QUOTED_PUSH_DENY = [
+    "bash -c 'git push --force'",
+    "ssh daniel-server 'git push --force'",
+    "eval 'git push --force'",
+    "echo 'git push --force' | python3 -",
+    "echo 'git push --force' | at now",
+    "echo 'git push --force' > x.sh",
+    "echo 'git push --force' >'x.sh'",
+    "echo 'git push --force' >/dev/null'x'",
+    "echo 'git push --force' | tee x.sh",
+    "grep -n 'git push --force' README.md; make",
+    "env grep -n 'git push --force' README.md",
+    "./grep -n 'git push --force' README.md",
+    "PATH=/tmp/e grep -n 'git push --force' README.md",
+    "printf -v PATH '%s' /tmp/e; grep -n 'git push --force' README.md",
+    "rg --pre 'git push --force' x docs",
+    "rg -z 'git push --force' docs",
+    "git grep -n 'git push --force'",
+    "grep -n \"$(echo 'git push --force')\" README.md",
+    "grep -n 'git push --force' README.md &",
+    "(grep -n 'git push --force' README.md)",
+    "python3 -c \"import os; os.system('git push --force origin feat')\"",
+    "trap 'git push --force' EXIT",
+    "tmux send-keys 'git push --force' Enter",
+]
+
+
+def test_push_text_a_reader_or_printer_only_quotes_is_no_decision():
+    assert kinds(QUOTED_PUSH_ALLOW) == ["none"] * len(QUOTED_PUSH_ALLOW)
+
+
+@pytest.mark.parametrize("command", QUOTED_PUSH_DENY)
+def test_quoted_push_text_that_may_run_is_still_denied(command):
+    assert d.deny(command, "", ENV).rule in d._PUSH_RULES
+
+
 def test_push_and_destination_must_share_a_segment():
     # :683-688, :721-724: the push and the word `main` from different commands is not a push
     # to main. With the parse refused, the pair rule reads the whole string (:313-317).
