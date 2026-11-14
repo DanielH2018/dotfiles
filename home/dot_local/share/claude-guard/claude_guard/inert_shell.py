@@ -20,7 +20,7 @@ is refused with the rest. False means "not proven", never "runs something".
 
 import re
 
-from claude_guard.segment import parse
+from claude_guard.segment import Segment, parse
 
 _ANY_ARGS = frozenset(
     {"grep", "egrep", "fgrep", "echo", "head", "tail", "wc", "cat", "cut", "tr", "nl"}
@@ -249,6 +249,11 @@ def _segment_reads_or_prints(text: str) -> bool:
     return False
 
 
+def segment_reads_or_prints(seg: Segment) -> bool:
+    """Whether the parsed segment `seg` is a reader or a printer the module docstring lists."""
+    return seg.sep in _SEPARATORS and not seg.heredocs and _segment_reads_or_prints(seg.text)
+
+
 def only_reads_or_prints(command: str) -> bool:
     """Whether every segment of `command` is a reader or a printer the module docstring lists.
 
@@ -257,7 +262,4 @@ def only_reads_or_prints(command: str) -> bool:
     p = parse(command)
     if not p.ok or p.substitutions:
         return False
-    return all(
-        seg.sep in _SEPARATORS and not seg.heredocs and _segment_reads_or_prints(seg.text)
-        for seg in p.segments
-    )
+    return all(segment_reads_or_prints(seg) for seg in p.segments)

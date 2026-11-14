@@ -196,6 +196,11 @@ RM_DENY = [
     "cat > x.sh <<'EOF'\nrm -rf ~\nEOF\nbash x.sh",
     "bash -c 'rm -rf ~'",
     "python3 - <<'EOF'\nimport os\nos.system('rm -rf ~')\nEOF",
+    # a quoted rm handed to a scheduler the executor list never named
+    "echo 'rm -rf /' | at now",
+    "echo '* * * * * rm -rf /' | crontab -",
+    "printf '* * * * * rm -rf ~\\n' > c; crontab c",
+    "python3 -c \"print('rm -rf ~')\" | at now",
 ]
 RM_ALLOW = [
     "rm -rf ./build",

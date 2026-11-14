@@ -240,8 +240,9 @@ outside a read-only set. Its module docstring says why the rest is a denylist.
 
 Three rules read text that no command runs, and they skip it only where that is provable.
 `rm_root` matches each segment, substitution and heredoc body on its own. It leaves out a
-stored heredoc, and a grep, echo or printf whose `rm` is only quoted, unless another segment
-runs code. `pipe_to_shell` matches a stage after a pipe at its start, unless the stage runs
+stored heredoc. It also leaves out a grep, echo or printf whose `rm` is only quoted, and an
+inert Python program, but only when every segment is one of those programs or a reader or
+printer that `inert_shell.py` proves, so a pipe into `at` or `crontab` keeps the text. `pipe_to_shell` matches a stage after a pipe at its start, unless the stage runs
 code. The sudo boundary skips the word search in a closed-shape Python program that
 `inert_python.py` proves starts no process. That module is an allowlist of imports, attributes
 and builtins, and it refuses a program naming a shell-startup, settings, hook or PATH file.

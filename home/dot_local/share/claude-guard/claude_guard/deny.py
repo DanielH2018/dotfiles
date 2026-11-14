@@ -74,7 +74,7 @@ from claude_guard.gitargv import (
 )
 from claude_guard.gitread import config_read
 from claude_guard.inert_python import inert, read_only
-from claude_guard.inert_shell import only_reads_or_prints
+from claude_guard.inert_shell import only_reads_or_prints, segment_reads_or_prints
 from claude_guard.rules import load_rules
 from claude_guard.segment import Segment, mask_substitutions, parse, substitution_spans
 
@@ -322,24 +322,31 @@ def _rm_members(sc: Scan) -> list[str]:
     `sed 's/^/--role /'`. Three things are left out. A heredoc body that is only stored
     (`_without_stored_heredocs`). The program of a closed-shape Python segment that starts no
     process (`_inert_program`). And a grep, echo or printf segment whose `rm` sits only
-    inside quotes. The last two are dropped only when no segment of the command runs code,
-    since `echo 'rm -rf ~' > x.sh; bash x.sh` runs what the first segment only names. A
-    command the parser refuses is matched whole, as before."""
+    inside quotes. The last two are dropped only when every segment is one of those inert
+    programs or a reader or printer `segment_reads_or_prints` proves, since
+    `echo 'rm -rf ~' | at now` runs what the first segment only names. A command the parser
+    refuses is matched whole, as before."""
     sc = _without_stored_heredocs(sc)
     p = parse(sc.command)
     if not p.ok:
         return [sc.scan]
-    runs_code = any(_runs_code(s.text) for s in p.segments)
-    members: list[str] = []
+    sources: list[tuple[str | None, bool]] = []
     for seg in p.segments:
         words = _words(seg.text) or []
-        argv = _argv(words)
         source = _python_source(words, seg.heredocs) if words else None
         expands = _heredoc_program_expands(source, seg.heredocs, seg.heredoc_quoted)
-        inert_source = _inert_program(source, expands)
+        sources.append((source, _inert_program(source, expands)))
+    contained = not p.substitutions and all(
+        inert_source or segment_reads_or_prints(seg)
+        for seg, (_, inert_source) in zip(p.segments, sources, strict=True)
+    )
+    members: list[str] = []
+    for seg, (source, inert_source) in zip(p.segments, sources, strict=True):
+        inert_source = inert_source and contained
+        argv = _argv(_words(seg.text) or [])
         bare = _unquoted(seg.text)
         quoted_only = (
-            not runs_code
+            contained
             and bool(argv)
             and posixpath.basename(argv[0]) in _INERT_QUOTE_HEADS
             and bare is not None
