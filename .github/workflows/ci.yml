@@ -114,18 +114,7 @@ jobs:
           # install still answers the shims' two-part request: uv creates the `cpython-3.15-*`
           # alias alongside `cpython-3.15.2-*`, and `find 3.15` matches it.
           uv python install "${TOOLCHAIN_PYTHON}"
-          # The pinned, checksum-verified chezmoi release rather than the vendor's installer
-          # script: that script installs whatever is current on the day the run happens, and
-          # chezmoi renders every template this suite then asserts against.
-          base="https://github.com/twpayne/chezmoi/releases/download/v${TOOLCHAIN_CHEZMOI}"
-          file="chezmoi_${TOOLCHAIN_CHEZMOI}_linux_amd64.tar.gz"
-          curl -fsSL -o "$RUNNER_TEMP/$file" "$base/$file"
-          curl -fsSL -o "$RUNNER_TEMP/checksums.txt" \
-            "$base/chezmoi_${TOOLCHAIN_CHEZMOI}_checksums.txt"
-          (cd "$RUNNER_TEMP" && grep " ${file}$" checksums.txt | sha256sum -c -)
-          tar -xzf "$RUNNER_TEMP/$file" -C "$RUNNER_TEMP" chezmoi
-          mkdir -p "$HOME/.local/bin"
-          install -m 0755 "$RUNNER_TEMP/chezmoi" "$HOME/.local/bin/chezmoi"
+          bin/ci-install-chezmoi
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           shellcheck --version | head -2
 
@@ -143,7 +132,8 @@ jobs:
       # that actually are them, which is where this gate also runs.
       #
       # Written directly rather than through `chezmoi init`, which wants a source argument
-      # and a TTY for the prompts. `execute-template` reads [data] and nothing else here.
+      # and a TTY for the prompts. `execute-template` reads [data] and nothing else here. The
+      # `bootstrap` job below is the one that runs `chezmoi init` and its prompts.
       - name: Pin the chezmoi profile
         run: |
           set -euo pipefail
@@ -228,3 +218,114 @@ jobs:
             *) base=$(git merge-base origin/main "$head") ;;
           esac
           bin/check-push-signatures --range "$base" "$head"
+
+  # The gate runs on Linux, and a template branch for darwin or windows that fails to render
+  # would otherwise surface on the next `chezmoi apply` on that machine. This job renders the
+  # whole source tree on the other two systems, under each answer to the `work` prompt, since
+  # the work laptop is a Mac. It does not run the suite there; the gate stays on Linux.
+  #
+  # Named release images rather than the rolling `-latest` aliases, for the same reason the gate
+  # names ubuntu-24.04: an alias moves with no commit here.
+  #
+  # `chezmoi init` writes the config from home/.chezmoi.toml.tmpl, which is itself one of the
+  # templates with a Windows branch (the Git Bash interpreter path). A hand-written config
+  # would skip it, and would carry no [interpreters.sh] for the modify_ script to run under.
+  # chezmoi keys --promptBool by the PROMPT TEXT, not the data key, so the data check after
+  # init fails the job if a reworded prompt fell back to its default.
+  #
+  # `apply --dry-run` renders every target, the run_ scripts included, and writes and executes
+  # nothing except the modify_ scripts, which chezmoi runs to compute their targets. The
+  # destination, cache and state are scratch paths, so the runner's own HOME stays untouched.
+  # Externals are excluded because they are downloads, not templates; chezmoi still renders
+  # .chezmoiexternal when it reads the source state.
+  render:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2025]
+        work: [false, true]
+    name: render (${{ matrix.os }}, work=${{ matrix.work }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Install chezmoi
+        run: |
+          bin/ci-install-chezmoi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Render every template
+        env:
+          WORK: ${{ matrix.work }}
+        run: |
+          set -euo pipefail
+          scratch="$RUNNER_TEMP/render"
+          mkdir -p "$scratch/home"
+          cm() {
+            chezmoi --config "$scratch/chezmoi.toml" --source "$GITHUB_WORKSPACE" \
+              --cache "$scratch/cache" --persistent-state "$scratch/state.boltdb" "$@"
+          }
+          cm init --no-tty --promptDefaults --promptBool "Is this a work machine=$WORK"
+          data="$(cm execute-template '{{ .chezmoi.os }} work={{ .work }} profile={{ .profile }}')"
+          echo "$data"
+          case "$data" in
+            *"work=$WORK profile=workstation") ;;
+            *) echo "::error::init wrote the wrong answers: $data"; exit 1 ;;
+          esac
+          cm --destination "$scratch/home" apply --dry-run --exclude=externals --no-tty
+
+  # Bootstraps a machine from nothing, the path docs/RESTORE.md exists for. The gate writes
+  # its chezmoi config by hand, so neither the prompts in home/.chezmoi.toml.tmpl nor the
+  # run_once_ install scripts ever run there.
+  #
+  # A clean Ubuntu container and a non-root user with passwordless sudo, which is what a fresh
+  # server gives the operator: the install scripts call `sudo apt-get` and `sudo chsh`, and a
+  # bare root container has no sudo. `server` is the profile daniel-box runs on Ubuntu.
+  #
+  # `init --apply` clones a copy of the PR head, not GitHub's main, so the run judges this
+  # change. It runs under `script` because set-default-shell defers with a non-zero exit when
+  # stdin is not a terminal. That is the right answer for a headless re-apply and the wrong one
+  # for a first apply. `work` and `agent` take their defaults (false). The data check after the
+  # apply fails the job if a reworded prompt let `profile` fall back to its default.
+  bootstrap:
+    name: bootstrap (ubuntu:24.04, profile=server)
+    runs-on: ubuntu-24.04
+    container: ubuntu:24.04
+    timeout-minutes: 30
+    steps:
+      - name: Install what a fresh Ubuntu host has
+        run: |
+          set -eu
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ca-certificates curl git sudo
+          useradd --create-home --shell /bin/bash dev
+          echo 'dev ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/dev
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: chezmoi init --apply
+        run: |
+          set -eu
+          cp -a "$GITHUB_WORKSPACE" /home/dev/checkout
+          chown -R dev:dev /home/dev/checkout
+          cat > /home/dev/bootstrap.sh <<'SH'
+          set -eu
+          cd "$HOME"
+          checkout/bin/ci-install-chezmoi "$HOME/.local/bin"
+          "$HOME/.local/bin/chezmoi" init --apply --no-tty --promptDefaults \
+            --promptString 'Machine profile (workstation/server/minimal)=server' \
+            "$HOME/checkout"
+          data="$("$HOME/.local/bin/chezmoi" execute-template 'work={{ .work }} profile={{ .profile }} agent={{ .agent }}')"
+          echo "$data"
+          [ "$data" = 'work=false profile=server agent=false' ] || { echo "init wrote the wrong answers: $data" >&2; exit 1; }
+          SH
+          chown dev:dev /home/dev/bootstrap.sh
+          su - dev -c 'script -qec "bash \"\$HOME/bootstrap.sh\"" /dev/null'

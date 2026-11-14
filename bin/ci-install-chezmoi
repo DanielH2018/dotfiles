@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+#
+# ci-install-chezmoi — install the chezmoi release tools.toml pins, checksum-verified, on a
+# CI runner of any OS.
+#
+# Usage: ci-install-chezmoi [bindir]      (default: $HOME/.local/bin)
+#
+# The pinned release rather than the vendor's get.chezmoi.io script: that script installs
+# whatever chezmoi is current on the day the run happens, and chezmoi renders every template
+# the CI jobs then judge. Every CI job that needs chezmoi calls this, so the gate, the render
+# legs on macOS and Windows, and the bootstrap job cannot drift onto different builds.
+#
+# Picks the release asset from `uname`: linux and darwin ship a .tar.gz, Windows (Git Bash,
+# where uname -s reads MINGW64_NT-…) ships a .zip. Kept bash-3.2 clean for the macOS runner.
+
+set -euo pipefail
+
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+bindir="${1:-$HOME/.local/bin}"
+
+version="$(awk '
+  /^\[toolchain\]$/ { in_table = 1; next }
+  /^\[/             { in_table = 0 }
+  in_table && $1 == "chezmoi" { gsub(/"/, "", $3); print $3 }
+' "$repo/home/.chezmoidata/tools.toml")"
+[ -n "$version" ] || { echo "ci-install-chezmoi: no chezmoi pin in tools.toml [toolchain]" >&2; exit 1; }
+
+case "$(uname -s)" in
+  Linux)                os=linux;   ext=tar.gz; exe=chezmoi ;;
+  Darwin)               os=darwin;  ext=tar.gz; exe=chezmoi ;;
+  MINGW*|MSYS*|CYGWIN*) os=windows; ext=zip;    exe=chezmoi.exe ;;
+  *) echo "ci-install-chezmoi: unsupported OS $(uname -s)" >&2; exit 1 ;;
+esac
+case "$(uname -m)" in
+  x86_64|amd64)  arch=amd64 ;;
+  aarch64|arm64) arch=arm64 ;;
+  *) echo "ci-install-chezmoi: unsupported arch $(uname -m)" >&2; exit 1 ;;
+esac
+
+base="https://github.com/twpayne/chezmoi/releases/download/v${version}"
+file="chezmoi_${version}_${os}_${arch}.${ext}"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+curl -fsSL --retry 3 -o "$tmp/$file" "$base/$file"
+curl -fsSL --retry 3 -o "$tmp/checksums.txt" "$base/chezmoi_${version}_checksums.txt"
+
+want="$(awk -v f="$file" '$2 == f { print $1 }' "$tmp/checksums.txt")"
+[ -n "$want" ] || { echo "ci-install-chezmoi: $file is not in the release's checksums.txt" >&2; exit 1; }
+if command -v sha256sum >/dev/null 2>&1; then
+  got="$(sha256sum "$tmp/$file" | awk '{ print $1 }')"
+else
+  got="$(shasum -a 256 "$tmp/$file" | awk '{ print $1 }')"
+fi
+if [ "$got" != "$want" ]; then
+  echo "ci-install-chezmoi: checksum mismatch for $file (want $want, got $got)" >&2
+  exit 1
+fi
+
+if [ "$ext" = zip ]; then
+  unzip -q -o "$tmp/$file" "$exe" -d "$tmp"
+else
+  tar -xzf "$tmp/$file" -C "$tmp" "$exe"
+fi
+mkdir -p "$bindir"
+cp "$tmp/$exe" "$bindir/$exe"
+chmod 0755 "$bindir/$exe"
+"$bindir/$exe" --version

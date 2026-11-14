@@ -6,8 +6,12 @@ Managed with [chezmoi](https://chezmoi.io). Source lives under `home/` (see `.ch
 
     sh -c "$(curl -fsLS get.chezmoi.io)" -- init --apply DanielH2018/dotfiles
 
-You'll be prompted whether this is a **work** machine (gates work-only config). See
-`docs/RESTORE.md` for the bare-metal bootstrap.
+The command installs chezmoi if the machine has none, so it works on a bare machine. It asks
+three questions: whether this is a **work** machine (gates work-only config), the machine
+**profile** (workstation, server or minimal), and whether this is a Claude **agent** user.
+CI's `bootstrap` job runs the same `init --apply` in a clean Ubuntu container.
+`docs/RESTORE.md` chains this step with the work repo and lists what needs manual attention
+afterward.
 
 ### Linux notes
 
