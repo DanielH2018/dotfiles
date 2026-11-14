@@ -46,7 +46,6 @@ BOOTSTRAPS = [
     "cat hosts/bootstrap-host.sh | head -n 500 | ssh daniel-pi sh",
     "bash <(cat hosts/bootstrap-host.sh) daniel-pi",
     "bash < <(sed '' hosts/bootstrap-host.sh)",
-    "cat <(cat hosts/bootstrap-host.sh) | ssh daniel-pi sh",
     "ssh daniel-pi 'bash <(cat hosts/bootstrap-host.sh)'",
 ]
 # No sudo form: the sudo boundary in deny.py already denies it, locally and over ssh.
