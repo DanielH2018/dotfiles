@@ -209,9 +209,10 @@ with a scratch PreToolUse hook added through `--settings`:
   A failed read, Forbidden included, is retried and never taken as a match. NotFound ends
   the wait with exit 1, as `kubectl wait --for=jsonpath` does: the value cannot arrive on an
   object that does not exist, and cc-wait refuses a source with no failure state. A re-run
-  after exit 75 keeps no memory, so a "seen, then deleted" rule is not possible. Waiting for
-  every item of a list to read a value, such as each Longhorn engine following its manager,
-  is out of scope: a target names one object.
+  after exit 75 keeps no memory, so a "seen, then deleted" rule is not possible. A target
+  names one object, so waiting for every item of a list to read a value is out of scope. A
+  list wait usually has a one-object form: the Longhorn upgrade waits for engines to follow
+  the manager through the previous EngineImage's `.status.refCount` reading `0`.
 - **A `systemd` wait on a finished oneshot reports that run at once,** with the time it
   ended. A baseline taken when the wait starts would be lost when the wait is re-run, so the
   caller reads the timestamp instead.
