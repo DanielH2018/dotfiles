@@ -518,11 +518,11 @@ def test_a_memory_citing_a_live_check_is_enforced():
 
 def test_a_test_under_a_role_or_host_lib_counts_as_a_check():
     with _tmp() as tmp_path:
-        root = _repo(
-            tmp_path, "k8s/roles/traefik/tests/test_ingress.py", "hosts/lib/tests/test_verdict.py"
-        )
-        role = _memfile(tmp_path, "r.md", "ENFORCED by k8s/roles/traefik/tests/test_ingress.py.\n")
-        lib = _memfile(tmp_path, "l.md", "ENFORCED by `hosts/lib/tests/test_verdict.py`.\n")
+        role_test = "k8s/roles/traefik/tests/test_ingress.py"
+        lib_test = "hosts/lib/tests/test_verdict.py"
+        root = _repo(tmp_path, role_test, lib_test)
+        role = _memfile(tmp_path, "r.md", f"ENFORCED by {role_test}.\n")
+        lib = _memfile(tmp_path, "l.md", f"ENFORCED by `{lib_test}`.\n")
         assert _enforcement([role, lib], root)["enforced"] == ["r.md", "l.md"]
 
 
