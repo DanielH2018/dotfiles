@@ -169,7 +169,7 @@ and GitHub closed #2509 two seconds after the merge. List a follow-up you did no
 with no keyword before its number: `Filed for later: #N`.
 
 In the server repo, `land.sh --arm-merge` refuses a body that carries such a stray closing
-reference (`stray_closing_refs` in `scripts/deploy_tools/land_lib/merge.py`).
+reference (`stray_closing_refs` in `scripts/deploy_tools/land_lib/closing_refs.py`).
 
 ## What belongs in one PR
 
