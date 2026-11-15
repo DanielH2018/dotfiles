@@ -65,10 +65,15 @@ probe() {
     echo "error=chezmoi is not installed"
     return 0
   fi
-  if ! out=$(chezmoi status --source "$src" ${targets[@]+"${targets[@]}"} 2>&1); then
-    echo "error=chezmoi status failed: $(printf '%s' "$out" | head -n 1)"
+  errf=$(mktemp) || { echo "error=mktemp failed"; return 0; }
+  if ! out=$(chezmoi status --source "$src" ${targets[@]+"${targets[@]}"} 2>"$errf"); then
+    echo "error=chezmoi status failed: $(sed -n '/./{p;q;}' "$errf")"
+    rm -f "$errf"
     return 0
   fi
+  # A warning on stderr is not drift, so it travels under its own key.
+  sed '/^$/d; s/^/warning=/' "$errf"
+  rm -f "$errf"
   echo "status-begin"
   printf '%s\n' "$out" | sed '/^$/d'
 }
@@ -160,6 +165,7 @@ for host in $HOSTS; do
     rc=1
     continue
   fi
+  printf '%s\n' "$out" | sed -n '/^status-begin$/q; s/^warning=/  warning  /p'
   status=$(printf '%s\n' "$out" | sed '1,/^status-begin$/d')
   if [ -z "$status" ]; then
     printf '  status   clean\n'

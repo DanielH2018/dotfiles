@@ -131,6 +131,21 @@ test('lists the chezmoi status lines of a named path that drifted', { skip }, ()
     'the check applied the source');
 });
 
+test('prints a chezmoi warning apart from the status and does not count it as drift', { skip }, () => {
+  const f = makeFixture();
+  const bin = path.join(f.hosts.beta, '.local', 'bin');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, 'chezmoi'), `#!/usr/bin/env bash
+echo "chezmoi: warning: config file template has changed" >&2
+PATH=\${PATH#${bin}:} exec chezmoi "$@"
+`, { mode: 0o755 });
+  const r = deployed(f, ['-', path.join(f.hosts.alpha, '.file')]);
+  assert.strictEqual(r.code, 0, r.stdout);
+  const b = blocks(r.stdout);
+  assert.match(b.beta, /warning +chezmoi: warning: config file template has changed/);
+  assert.match(b.beta, /status +clean/);
+});
+
 test('reports an unreachable host and still checks the rest', { skip }, () => {
   const f = makeFixture();
   const r = deployed(f, [], 'down alpha');
