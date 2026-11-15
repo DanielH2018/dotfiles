@@ -376,6 +376,24 @@ def test_a_state_read_with_no_reader_row_is_left_alone(server_checkout, command)
     assert nudge(command, cwd=str(server_checkout)) is None
 
 
+@pytest.mark.parametrize(
+    ("first_line", "expected"),
+    [
+        ("land --detach: running in background (pid 2777776).", "landing-verdicts"),
+        ("land: 3 landings are already live for orchestrator 'default'.", "landing-verdicts"),
+        ("============================= test session starts", None),
+    ],
+)
+def test_a_tail_of_a_task_output_file_is_judged_by_its_first_line(
+    server_checkout, tmp_path, first_line, expected
+):
+    output = tmp_path / "tasks" / "b3kj4avn7.output"
+    output.parent.mkdir()
+    output.write_text(first_line + "\n14:20:52 running: arm\n")
+    found = nudge(f"tail -n 50 {output}", cwd=str(server_checkout))
+    assert (found and found[0]) == expected
+
+
 def test_a_server_reader_row_stays_silent_outside_a_server_checkout(server_checkout, tmp_path):
     for command in ("kubectl get kustomization -A", "git log origin/master..fix-1"):
         assert nudge(command, cwd=str(tmp_path)) is None

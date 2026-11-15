@@ -73,7 +73,9 @@ pair is one more row:
     HEAD, asking whether B has landed. `prune_worktrees.py --check B` answers that and
     sees a squash merge, which an ancestry check misses.
   landing-inflight: `ps` or `pgrep` in a command that names `land.sh` -> `probe.py landing`.
-  landing-verdicts: `tail` of a file whose name holds `land` -> `probe.py landing-verdicts`.
+  landing-verdicts: `tail` of a file whose name holds `land`, or of an absolute path whose
+    first line is `land`'s own, as a backgrounded run's output file is ->
+    `probe.py landing-verdicts`.
   flux-state: `kubectl get kustomization`, bare or inside an `ssh` remote command ->
     `probe.py flux`.
   pi-containers: `ssh daniel-pi docker ps|inspect` -> `probe.py pi`.
@@ -130,6 +132,9 @@ _BOUNDED_NEGATED_ERE = re.compile(_NEGATED_CLASS + r"\{\d*,?\d*\}")
 _BOUNDED_NEGATED_BRE = re.compile(_NEGATED_CLASS + r"\\\{\d*,?\d*\\\}")
 # `origin/master..B` for a branch B other than HEAD: "has B landed?".
 _LANDED_RANGE = re.compile(r"^origin/(?:master|main)\.\.(?!HEAD$)[^.\s]\S*$")
+# The first line `land` prints, which opens a backgrounded run's task-id-named output file:
+# `land --detach: running in background`, `land: 3 landings are already live`.
+_LAND_FIRST_LINE = re.compile(rb"land(?: --[a-z-]+)*: ")
 # Read renders these as images or pages, not as text the size of the file.
 _NON_TEXT_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"})
 
@@ -412,11 +417,26 @@ def _looks_for_landing(stages, i) -> bool:
     return any("land.sh" in w for words, _ in stages for w in words)
 
 
+def _is_landing_output(name: str) -> bool:
+    """Whether `name` is a landing log by its name, or a file whose first line is `land`'s."""
+    path = Path(name).expanduser()
+    if "land" in path.name:
+        return True
+    if not path.is_absolute():
+        return False
+    try:
+        with path.open("rb") as f:
+            head = f.read(256)
+    except OSError:
+        return False
+    return bool(_LAND_FIRST_LINE.match(head))
+
+
 def _tails_landing_log(stages, i) -> bool:
     words = _words(stages, i)
     if words[:1] != ["tail"]:
         return False
-    return any(not w.startswith("-") and "land" in Path(w).name for w in words[1:])
+    return any(not w.startswith("-") and _is_landing_output(w) for w in words[1:])
 
 
 def _gets_kustomizations(stages, i) -> bool:
