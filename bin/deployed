@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+#
+# deployed — whether a dotfiles commit is deployed on each host. Reads only.
+#
+#   deployed                    check origin/main's tip on every host
+#   deployed <sha> [path...]    check <sha>, and the chezmoi status of each path
+#   deployed - [path...]        origin/main's tip, with paths
+#
+# For each host it prints the chezmoi checkout's HEAD against origin/main, whether the
+# commit is an ancestor of HEAD, and the `chezmoi status` lines for the named paths
+# (every managed path when none is named). A path is given as it sits on this machine,
+# such as ~/.claude/settings.json, and is checked at the same $HOME-relative place on
+# every host.
+#
+# A landing moves origin/main. bin/land-sync moves the primary checkout on the host it
+# runs on, and nothing moves the other host's checkout. So "is it deployed" is three
+# questions per host: does the checkout hold the commit, and does $HOME match the
+# checkout. This asks all of them in one pass.
+#
+# It never fetches, pulls or applies. origin/main's tip comes from one `git ls-remote`
+# on this machine, so no host's refs move. A host whose checkout lacks that tip's
+# object reports it as not fetched rather than guessing a distance.
+#
+# Exit status: 0 when every host holds the commit and every status line is empty,
+# 1 when any host lacks it, reports drift, or cannot be reached, 2 on a usage error.
+#
+# Environment:
+#   DEPLOYED_HOSTS  the hosts to check (default "daniel-box daniel-server"). The one
+#                   matching `hostname -s` runs locally, every other goes over ssh.
+#   DEPLOYED_SSH    the ssh command, word-split (default "ssh -o BatchMode=yes
+#                   -o ConnectTimeout=10").
+#
+# Kept bash-3.2 clean, like land.
+set -u
+
+# The probe runs on each host, fed this same file on stdin. It reads the checkout at
+# $HOME/.local/share/chezmoi, prints key=value lines, then the status lines.
+probe() {
+  PATH="$HOME/.local/bin:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+  sha=$1 tip=$2
+  shift 2
+  src="$HOME/.local/share/chezmoi"
+  if ! git -C "$src" rev-parse --verify -q HEAD >/dev/null 2>&1; then
+    echo "error=no git checkout at $src"
+    return 0
+  fi
+  echo "head=$(git -C "$src" rev-parse --short HEAD)"
+  echo "branch=$(git -C "$src" rev-parse --abbrev-ref HEAD)"
+  if git -C "$src" cat-file -e "$tip^{commit}" 2>/dev/null; then
+    echo "behind=$(git -C "$src" rev-list --count "HEAD..$tip")"
+    echo "ahead=$(git -C "$src" rev-list --count "$tip..HEAD")"
+  else
+    echo "behind=unfetched"
+  fi
+  if ! git -C "$src" cat-file -e "$sha^{commit}" 2>/dev/null; then
+    echo "contains=unfetched"
+  elif git -C "$src" merge-base --is-ancestor "$sha" HEAD; then
+    echo "contains=yes"
+  else
+    echo "contains=no"
+  fi
+  targets=()
+  for p in "$@"; do targets+=("$HOME/$p"); done
+  if ! command -v chezmoi >/dev/null 2>&1; then
+    echo "error=chezmoi is not installed"
+    return 0
+  fi
+  if ! out=$(chezmoi status --source "$src" ${targets[@]+"${targets[@]}"} 2>&1); then
+    echo "error=chezmoi status failed: $(printf '%s' "$out" | head -n 1)"
+    return 0
+  fi
+  echo "status-begin"
+  printf '%s\n' "$out" | sed '/^$/d'
+}
+
+if [ "${1:-}" = --probe ]; then
+  shift
+  probe "$@"
+  exit 0
+fi
+
+die() { printf 'deployed: %s\n' "$1" >&2; exit "${2:-1}"; }
+
+case "${1:-}" in
+  -h|--help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -?*) die "unknown option $1" 2 ;;
+esac
+
+REPO=$(cd "${BASH_SOURCE[0]%/*}/.." && pwd -P) || die "cannot find this script's checkout"
+
+TIP=$(git -C "$REPO" ls-remote origin refs/heads/main 2>/dev/null | cut -f1)
+[ -n "$TIP" ] || die "cannot read origin/main's tip with git ls-remote"
+
+SHA_ARG=${1:--}
+[ $# -gt 0 ] && shift
+if [ "$SHA_ARG" = - ]; then
+  SHA=$TIP
+else
+  # A sha this checkout cannot resolve is passed on as typed, so a host that has it
+  # still answers.
+  SHA=$(git -C "$REPO" rev-parse --verify -q "$SHA_ARG^{commit}") || SHA=$SHA_ARG
+fi
+
+# Paths go to every host relative to $HOME, because $HOME differs between hosts.
+RELS=()
+for p in "$@"; do
+  case "$p" in
+    "$HOME"/*) RELS+=("${p#"$HOME"/}") ;;
+    /*) die "$p is outside \$HOME, so it has no counterpart on the other hosts" 2 ;;
+    *) RELS+=("$p") ;;
+  esac
+done
+
+HOSTS=${DEPLOYED_HOSTS:-daniel-box daniel-server}
+SSH=${DEPLOYED_SSH:-ssh -o BatchMode=yes -o ConnectTimeout=10}
+SELF=$(hostname -s 2>/dev/null || hostname)
+
+short() { printf '%s' "$1" | cut -c1-8; }
+# The first value the probe printed for key $1, read from $out.
+val() { printf '%s\n' "$out" | sed -n "s/^$1=//p" | head -n 1; }
+
+printf 'commit %s, origin/main at %s\n' "$(short "$SHA")" "$(short "$TIP")"
+
+rc=0
+for host in $HOSTS; do
+  printf '\n%s\n' "$host"
+  args=(--probe "$SHA" "$TIP" ${RELS[@]+"${RELS[@]}"})
+  if [ "$host" = "$SELF" ]; then
+    out=$(bash -s -- "${args[@]}" <"$0" 2>&1)
+  else
+    remote=$(printf '%q ' bash -s -- "${args[@]}")
+    # shellcheck disable=SC2086  # DEPLOYED_SSH is a command line, split on purpose
+    out=$($SSH "$host" "$remote" <"$0" 2>&1)
+  fi
+  code=$?
+  if [ "$code" -ne 0 ] || ! printf '%s\n' "$out" | grep -q '^\(head\|error\)='; then
+    printf '  unreachable (exit %s): %s\n' "$code" "$(printf '%s' "$out" | tail -n 1)"
+    rc=1
+    continue
+  fi
+  err=$(val error)
+  head=$(val head)
+  if [ -n "$head" ]; then
+    behind=$(val behind) ahead=$(val ahead)
+    case "$behind" in
+      unfetched) where="origin/main's tip is not fetched here" ;;
+      0) if [ "$ahead" = 0 ]; then where="at origin/main"; else where="$ahead ahead of origin/main"; fi ;;
+      *) where="$behind behind origin/main"
+         [ "$ahead" = 0 ] || where="$where, $ahead ahead" ;;
+    esac
+    printf '  HEAD     %s on %s, %s\n' "$head" "$(val branch)" "$where"
+    case "$(val contains)" in
+      yes) printf '  commit   %s is in HEAD\n' "$(short "$SHA")" ;;
+      no) printf '  commit   %s is NOT in HEAD\n' "$(short "$SHA")"; rc=1 ;;
+      *) printf '  commit   %s is not in this checkout at all\n' "$(short "$SHA")"; rc=1 ;;
+    esac
+  fi
+  if [ -n "$err" ]; then
+    printf '  error    %s\n' "$err"
+    rc=1
+    continue
+  fi
+  status=$(printf '%s\n' "$out" | sed '1,/^status-begin$/d')
+  if [ -z "$status" ]; then
+    printf '  status   clean\n'
+  else
+    printf '  status   chezmoi apply would change:\n'
+    printf '%s\n' "$status" | sed 's/^/    /'
+    rc=1
+  fi
+done
+exit "$rc"

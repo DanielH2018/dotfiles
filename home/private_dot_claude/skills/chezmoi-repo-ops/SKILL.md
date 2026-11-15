@@ -49,8 +49,9 @@ from another machine gets past it.
 primary. That is a branch created in the primary checkout rather than a worktree — `git
 checkout main` there, then `bin/land-sync`.
 
-Done when the primary checkout is on `main`, `git show main:<path>` holds the landed content,
-and the file in `$HOME` matches it.
+Done when `bin/deployed <sha> <paths>` reports the commit in HEAD and a clean status on every
+host. It reads each host's checkout against origin/main, and runs `chezmoi status` for the
+paths, over ssh for the hosts other than the one it runs on. It never fetches or applies.
 
 ### Deploying on daniel-server
 
@@ -64,8 +65,7 @@ deploy a landed change on daniel-server, pull first:
 ssh daniel-server 'cd ~/.local/share/chezmoi && git pull --ff-only -q && chezmoi apply <paths>'
 ```
 
-Confirm the deploy by grepping the deployed file on daniel-server for a symbol the change
-added, not by the apply's exit status.
+Confirm the deploy with `bin/deployed <sha> <paths>`, not by the apply's exit status.
 
 ### A file deleted from the source stays deployed
 
