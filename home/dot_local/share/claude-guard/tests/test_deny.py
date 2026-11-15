@@ -3686,6 +3686,12 @@ def test_the_ghread_refusal_carries_the_sandbox_and_out_advice(wrappers_env):
     assert "sandbox off" in reason and "--out <path>" in reason and "printenv TMPDIR" in reason
 
 
+def test_only_a_raw_log_read_names_ghread_run_failures(wrappers_env):
+    reason = d.deny("gh run view 4567 --log-failed", "", wrappers_env).reason
+    assert "`ghread run failures" in reason
+    assert "run failures" not in d.deny("gh run view 4567", "", wrappers_env).reason
+
+
 # --- a bare `gh api` GET routes to `ghread api` (GitHub quota ledger, slice 1) --------------
 #
 # gh sends GET until a field or body flag is given, then POST unless `-X GET` names the

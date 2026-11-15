@@ -300,3 +300,153 @@ test('the caller cannot choose the quota module through PYTHONPATH or the cwd', 
   assert.deepStrictEqual(JSON.parse(r.stdout), ['pr', 'view', '--', '1']);
   assert.ok(!fs.existsSync(marker), 'a planted gh_quota.py was loaded');
 });
+
+// `run failures` makes several dependent gh calls, so it runs against a second fake gh that
+// answers from a routes file and logs every argv it was given. A route is keyed on the api
+// path, or for `run view --log` on its `--job=` flag.
+const ROUTED_BIN = path.join(DIR, 'routed-bin');
+fs.mkdirSync(ROUTED_BIN);
+fs.writeFileSync(path.join(ROUTED_BIN, 'gh'), `#!${process.execPath}
+const fs = require('node:fs');
+const argv = process.argv.slice(2);
+fs.appendFileSync(process.env.FAKE_GH_CALLS, JSON.stringify(argv) + '\\n');
+const key = argv[0] === 'run' ? argv.find((a) => a.startsWith('--job=')) : argv.at(-1);
+const route = JSON.parse(fs.readFileSync(process.env.FAKE_GH_ROUTES, 'utf8'))[key];
+if (route === undefined) { process.stderr.write('no route'); process.exit(4); }
+process.stdout.write(typeof route === 'string' ? route : JSON.stringify(route));
+`);
+fs.chmodSync(path.join(ROUTED_BIN, 'gh'), 0o755);
+
+function failures(t, args, routes) {
+  const dir = scratch(DIR, 'failures-', t);
+  const calls = path.join(dir, 'calls');
+  fs.writeFileSync(calls, '');
+  fs.writeFileSync(path.join(dir, 'routes.json'), JSON.stringify(routes));
+  const r = run('python3', ['-c', SEAM, GHREAD, ROUTED_BIN, NO_QUOTA, 'run', 'failures', ...args], {
+    env: {
+      ...process.env,
+      TMPDIR: DIR,
+      FAKE_GH_CALLS: calls,
+      FAKE_GH_ROUTES: path.join(dir, 'routes.json'),
+    },
+  });
+  const argvs = fs.readFileSync(calls, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  return { ...r, argvs };
+}
+
+const R = 'repos/o/r';
+const SHA = 'abc1234def5678abc1234def5678abc1234def56';
+// A log as `gh run view --log` prints it: job, step and timestamp ahead of every line.
+function logOf(lines) {
+  return lines.map((l, i) => `gate\ttest\t${i ? '' : '\ufeff'}2026-11-15T10:00:0${i}.1234567Z ${l}`)
+    .join('\n');
+}
+
+function failedRun(id, job, log, annotations = []) {
+  return {
+    [`${R}/actions/runs/${id}`]: { name: 'CI', conclusion: 'failure', html_url: `https://gh/run/${id}` },
+    [`${R}/actions/runs/${id}/jobs`]: {
+      jobs: [
+        { id: job, name: 'gate', conclusion: 'failure', html_url: `https://gh/job/${job}`,
+          check_run_url: `https://api.github.com/${R}/check-runs/${job + 1}`,
+          steps: [{ name: 'checkout', conclusion: 'success' }, { name: 'test', conclusion: 'failure' }] },
+        { id: job + 100, name: 'lint', conclusion: 'success' },
+      ],
+    },
+    [`--job=${job}`]: log,
+    [`${R}/check-runs/${job + 1}/annotations`]: annotations,
+  };
+}
+
+test('run failures prints each failed job with its pytest ids, assertion lines and annotations', { skip }, (t) => {
+  const log = logOf([
+    '============ test session starts ============',
+    'tests/test_a.py::test_ok PASSED',
+    'E       assert 1 == 2',
+    'E        +  where 1 = f()',
+    '\x1b[31mFAILED\x1b[0m tests/test_a.py::test_sum - assert 1 == 2',
+    '======= 1 failed, 4 passed in 0.12s =======',
+    '##[error]Process completed with exit code 1.',
+  ]);
+  const r = failures(t, ['42', '-R', 'o/r'], failedRun(42, 7, log, [
+    { path: 'tests/test_a.py', start_line: 12, annotation_level: 'failure', message: 'assert\n  1 == 2' },
+  ]));
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.strictEqual(r.stdout, [
+    'run 42 CI (failure) https://gh/run/42',
+    '  job gate (failure) https://gh/job/7',
+    '    failed steps: test',
+    '    failing tests:',
+    '      tests/test_a.py::test_sum',
+    '    errors:',
+    '      E       assert 1 == 2',
+    '      E        +  where 1 = f()',
+    '      ======= 1 failed, 4 passed in 0.12s =======',
+    '      ##[error]Process completed with exit code 1.',
+    '    annotations:',
+    '      failure tests/test_a.py:12 assert 1 == 2',
+    '',
+  ].join('\n'));
+  // Every call is an api GET or a run view, with its one positional after --.
+  for (const argv of r.argvs) {
+    assert.ok(argv[0] === 'api' || argv.slice(0, 2).join(' ') === 'run view', JSON.stringify(argv));
+    assert.strictEqual(argv.at(-2), '--', JSON.stringify(argv));
+    assert.ok(argv.every((a) => !a.startsWith('--method=') || a === '--method=GET'), JSON.stringify(argv));
+    assert.ok(!argv.some((a) => a.startsWith('--input')), JSON.stringify(argv));
+  }
+  assert.ok(r.argvs.some((a) => a.join(' ') === 'run view --repo=o/r --job=7 --log -- 42'));
+  assert.ok(r.argvs.some((a) => a.join(' ') ===
+    `api --method=GET --raw-field=filter=latest --raw-field=per_page=100 -- ${R}/actions/runs/42/jobs`));
+});
+
+test('run failures --pr reads the failed runs on the PR head and node:test failures', { skip }, (t) => {
+  const log = logOf([
+    'not ok 3 - refuses a symlink',
+    '  ---',
+    '  error: |-',
+    '    paths drifted from the allowlist:',
+    '      added: x',
+    '  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:',
+    '# pass 11',
+    '# fail 1',
+  ]);
+  const r = failures(t, ['--pr', '5', '-R', 'o/r'], {
+    [`${R}/pulls/5`]: { head: { sha: SHA } },
+    [`${R}/actions/runs`]: { workflow_runs: [
+      { id: 90, conclusion: 'success' }, { id: 91, conclusion: 'failure' }] },
+    ...failedRun(91, 8, log),
+  });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /^run 91 CI/);
+  assert.doesNotMatch(r.stdout, /run 90/);
+  assert.match(r.stdout, /failing tests:\n {6}refuses a symlink\n/);
+  assert.match(r.stdout, /errors:\n {10}paths drifted from the allowlist:\n/);
+  assert.doesNotMatch(r.stdout, /added: x/);
+  assert.match(r.stdout, /AssertionError \[ERR_ASSERTION\]: Expected values/);
+  assert.match(r.stdout, /# fail 1/);
+  assert.ok(r.argvs.some((a) => a.join(' ') ===
+    `api --method=GET --raw-field=head_sha=${SHA} --raw-field=per_page=100 -- ${R}/actions/runs`));
+});
+
+test('run failures resolves a short sha and says when nothing failed', { skip }, (t) => {
+  const r = failures(t, ['abc1234'], {
+    'repos/{owner}/{repo}/commits/abc1234': { sha: SHA },
+    'repos/{owner}/{repo}/actions/runs': { workflow_runs: [{ id: 90, conclusion: 'success' }] },
+  });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.strictEqual(r.stdout, 'no failed runs\n');
+});
+
+test('run failures passes on the status of a gh call that fails', { skip }, (t) => {
+  const r = failures(t, ['42', '-R', 'o/r'], {});
+  assert.strictEqual(r.code, 4);
+  assert.match(r.stderr, /actions\/runs\/42: no route/);
+});
+
+test('run failures refuses a malformed or ambiguous target without starting gh', { skip }, (t) => {
+  for (const args of [[], ['42', '--pr', '5'], ['main'], ['--web'], ['--pr', '5x'], ['ABC1234']]) {
+    const r = failures(t, args, {});
+    assert.strictEqual(r.code, 2, `${args.join(' ')}: ${r.stderr}`);
+    assert.deepStrictEqual(r.argvs, [], `${args.join(' ')} reached gh`);
+  }
+});

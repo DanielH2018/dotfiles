@@ -32,6 +32,10 @@ constants and validated values:
     every DYLD_/LD_ variable, with HOME pinned to the account's home. So a
     prefix such as `PATH=./bin ghread ...` or `GH_HOST=x ghread ...` cannot
     choose the binary or aim the token at another host.
+  - `run failures` is the one subcommand that makes several gh calls. Each is an
+    `api` GET or a `run view --log`, built the same way from constants and
+    validated numbers or a hex sha, and ghread reads the responses itself to
+    choose the next call.
   - On a host with the homelab package, each call is counted in the GitHub quota
     ledger before gh runs. The ledger module loads from one fixed path, never
     through sys.path, and its GH_QUOTA_DIR override is dropped with the variables
@@ -43,6 +47,9 @@ constants and validated values:
   ghread pr comments 123 -R owner/repo --kind issue
   ghread run logs 4567 --failed --out /tmp/run.log
   ghread run logs 4567 --attempt 1 --failed
+  ghread run failures --pr 123 -R owner/repo
+  ghread run failures 4567
+  ghread run failures 3f2a9c1
   ghread api repos/owner/repo/pulls --paginate --jq '.[].number'
   ghread api -X GET search/issues -f q='repo:owner/repo is:open' -f per_page=10
   ghread graphql -f query='{ repository(owner:"o", name:"r") { stargazerCount } }'
@@ -51,12 +58,15 @@ constants and validated values:
   ghread stack view --short
 
 gh's exit status is ghread's exit status. A refusal ghread raises itself exits 2.
+`run failures` exits 0 once it has read every failed run, and otherwise with the
+status of the first gh call that failed.
 """
 
 from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import os
 import pwd
 import re
@@ -91,6 +101,7 @@ _SELECTOR = re.compile(
 _NUMBER = re.compile(r"^[0-9]+$")
 # gh reads `--attempt=0` as "the latest attempt", the opposite of naming one.
 _ATTEMPT = re.compile(r"^[1-9][0-9]*$")
+_SHA = re.compile(r"^[0-9a-f]{7,40}$")
 _REPO = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-]+$")
 _FIELDS = re.compile(r"^[A-Za-z]+(?:,[A-Za-z]+)*$")
 # An api path: relative or rooted, gh's {owner}/{repo}/{branch} placeholders,
@@ -423,6 +434,193 @@ def build_stack(ns) -> list[str]:
     )
 
 
+# `gh run view --log` prefixes every line with the job, the step and the time GitHub
+# received it, and a step's first line with a byte-order mark.
+_LOG_PREFIX = re.compile(r"^(?:[^\t]*\t){2}\ufeff?(?:\d{4}-\d\d-\d\dT[\d:.]+Z )?")
+# Colour codes and every other control character, so the digest is plain text.
+_ESCAPES = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|[\x00-\x08\x0b-\x1f\x7f]")
+# The id of a failing test, one pattern per runner: pytest, TAP (node:test, bats),
+# node:test's spec reporter, and go test.
+_FAILED_TEST = (
+    re.compile(r"^(?:FAILED|ERROR) (\S+)"),
+    re.compile(r"^\s*not ok \d+ - (.+?)(?: # .*)?$"),
+    re.compile(r"^\s*✖ (.+?)(?: \([\d.]+m?s\))?$"),
+    re.compile(r"^\s*--- FAIL: (\S+)"),
+)
+# Lines that say what went wrong or how many tests failed. `##[error]` is GitHub's
+# own marker, so a failed lint or install step shows up without a test runner.
+_ERROR_LINE = re.compile(
+    r"^E   "
+    r"|^##\[error\]"
+    r"|\b\w*(?:Error|Exception)(?::| \[)"
+    r"|^=+ .*\b(?:failed|errors?)\b.* =+$"
+    r"|^# (?:fail|pass) \d+$"
+    r"|^\s+error: (?!\|)"
+)
+# node:test's TAP block for a failure holds a multi-line message as `error: |-`;
+# its first line is the one that says what went wrong.
+_TAP_ERROR_BLOCK = re.compile(r"^\s+error: \|-?$")
+FAILED_CONCLUSIONS = ("failure", "timed_out", "startup_failure")
+MAX_TESTS = 30
+MAX_ERRORS = 40
+MAX_ANNOTATIONS = 20
+MAX_LINE = 300
+
+
+class GhFailed(Exception):
+    """A gh call that exited non-zero; `code` is its exit status."""
+
+    def __init__(self, code: int, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+def digest_log(log: str) -> tuple[list[str], list[str]]:
+    """The failing test ids and the error lines in one job's raw log, deduplicated."""
+    tests: dict[str, None] = {}
+    errors: dict[str, None] = {}
+    in_block = False
+    for raw in log.splitlines():
+        line = _ESCAPES.sub("", _LOG_PREFIX.sub("", raw)).rstrip()
+        if in_block and line.strip():
+            errors.setdefault(line[:MAX_LINE], None)
+            in_block = False
+            continue
+        in_block = bool(_TAP_ERROR_BLOCK.match(line))
+        for pattern in _FAILED_TEST:
+            m = pattern.match(line)
+            if m:
+                tests.setdefault(m.group(1), None)
+                break
+        if _ERROR_LINE.search(line):
+            errors.setdefault(line[:MAX_LINE], None)
+    return list(tests)[:MAX_TESTS], list(errors)[-MAX_ERRORS:]
+
+
+def gh_output(gh: str, env: dict, args: list[str]) -> str:
+    """stdout of `gh <args>`, recorded in the quota ledger first.
+
+    Raises:
+      GhFailed: gh exited non-zero.
+    """
+    record_quota(args, env, gh)
+    out = subprocess.run(
+        [gh, *args],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    if out.returncode:
+        cmd = f"gh {args[0]} {args[-1]}"
+        raise GhFailed(out.returncode, f"{cmd}: {out.stderr.strip()[-500:]}")
+    return out.stdout
+
+
+def _api(call, path: str, fields: tuple = ()):
+    """The parsed JSON of a `gh api` GET of `path`, `fields` as query parameters."""
+    args = ["api"]
+    if fields:
+        args += ["--method=GET"] + [f"--raw-field={k}={v}" for k, v in fields]
+    return json.loads(call(args + ["--", path]))
+
+
+def _failed_runs(call, repo: str, ns) -> list[int]:
+    if ns.target and _NUMBER.match(ns.target):
+        return [int(ns.target)]
+    if ns.pr:
+        pr = _check(_NUMBER, ns.pr, "--pr")
+        sha = _api(call, f"repos/{repo}/pulls/{pr}")["head"]["sha"]
+    else:
+        short = _check(_SHA, ns.target, "run id or sha")
+        sha = _api(call, f"repos/{repo}/commits/{short}")["sha"]
+    _check(_SHA, sha, "head sha")
+    runs = _api(
+        call, f"repos/{repo}/actions/runs", (("head_sha", sha), ("per_page", "100"))
+    )["workflow_runs"]
+    return [r["id"] for r in runs if r.get("conclusion") in FAILED_CONCLUSIONS]
+
+
+def _annotations(call, repo: str, job: dict) -> list[str]:
+    m = re.search(r"/check-runs/([0-9]+)$", job.get("check_run_url") or "")
+    if not m:
+        return []
+    out = []
+    for a in _api(call, f"repos/{repo}/check-runs/{m.group(1)}/annotations"):
+        where = a.get("path") or ""
+        if a.get("start_line"):
+            where += f":{a['start_line']}"
+        message = " ".join((a.get("message") or "").split())[:MAX_LINE]
+        level = a.get("annotation_level")
+        out.append(" ".join(x for x in (level, where, message) if x))
+    return out[:MAX_ANNOTATIONS]
+
+
+def run_failures(ns, call) -> str:
+    """The `run failures` digest: each failed job's tests, errors and annotations.
+
+    Args:
+      ns: the parsed `run failures` arguments.
+      call: `gh_output` with gh and its environment bound.
+
+    Raises:
+      GhreadError: the target is missing, doubled or malformed.
+      GhFailed: a gh call failed.
+    """
+    if bool(ns.pr) == bool(ns.target):
+        raise GhreadError("run failures needs exactly one of: a run id, a sha, --pr N")
+    if ns.target and not (_NUMBER.match(ns.target) or _SHA.match(ns.target)):
+        raise GhreadError(f"refusing run id or sha {ns.target!r}")
+    repo = _check(_REPO, ns.repo, "--repo") if ns.repo else "{owner}/{repo}"
+    run_ids = _failed_runs(call, repo, ns)
+    if not run_ids:
+        return "no failed runs\n"
+    lines = []
+    for run_id in run_ids:
+        run = _api(call, f"repos/{repo}/actions/runs/{run_id}")
+        jobs = _api(
+            call,
+            f"repos/{repo}/actions/runs/{run_id}/jobs",
+            (("filter", "latest"), ("per_page", "100")),
+        )["jobs"]
+        failed = [j for j in jobs if j.get("conclusion") in FAILED_CONCLUSIONS]
+        lines.append(
+            f"run {run_id} {run.get('name', '')} ({run.get('conclusion')})"
+            f" {run.get('html_url', '')}".rstrip()
+        )
+        if not failed:
+            lines.append("  no failed jobs")
+        for job in failed:
+            lines.append(
+                f"  job {job['name']} ({job['conclusion']})"
+                f" {job.get('html_url', '')}".rstrip()
+            )
+            steps = [
+                s["name"]
+                for s in job.get("steps") or []
+                if s.get("conclusion") in FAILED_CONCLUSIONS
+            ]
+            if steps:
+                lines.append(f"    failed steps: {', '.join(steps)}")
+            # `api .../jobs/ID/logs` refuses a log with escape codes in it; `run view`
+            # prints it.
+            log = call(
+                ["run", "view", *_repo_flag(ns), f"--job={job['id']}", "--log"]
+                + ["--", str(run_id)]
+            )
+            tests, errors = digest_log(log)
+            for title, rows in (
+                ("failing tests", tests),
+                ("errors", errors),
+                ("annotations", _annotations(call, repo, job)),
+            ):
+                if rows:
+                    lines.append(f"    {title}:")
+                    lines += [f"      {r}" for r in rows]
+    return "\n".join(lines) + "\n"
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=PROG,
@@ -500,6 +698,13 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--job")
     p.add_argument("-a", "--attempt", help="an attempt number (default: the latest)")
     p.add_argument("--failed", action="store_true", help="only the failed steps")
+    p = run.add_parser(
+        "failures",
+        parents=[common, repo],
+        help="each failed job's test ids, error lines and annotations",
+    )
+    p.add_argument("target", nargs="?", metavar="RUN_ID|SHA")
+    p.add_argument("--pr", metavar="N", help="the failed runs on this PR's head commit")
 
     p = top.add_parser("api", parents=[common], help="GET one REST path")
     p.add_argument("path")
@@ -632,6 +837,8 @@ def parse(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     ns = parse(sys.argv[1:] if argv is None else argv)
+    if ns.cmd == "run" and ns.verb == "failures":
+        return main_failures(ns)
     try:
         gh_args = BUILDERS[ns.cmd](ns)
         gh = find_gh()
@@ -652,6 +859,26 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if out_fd is not None:
             os.close(out_fd)
+
+
+def main_failures(ns) -> int:
+    out_fd = None
+    try:
+        gh, env = find_gh(), gh_env()
+        if ns.out:
+            out_fd = open_out(ns.out)
+        digest = run_failures(ns, lambda args: gh_output(gh, env, args))
+    except (GhreadError, GhFailed) as exc:
+        if out_fd is not None:
+            os.close(out_fd)
+        print(f"{PROG}: {exc}", file=sys.stderr)
+        return exc.code if isinstance(exc, GhFailed) else 2
+    if out_fd is None:
+        sys.stdout.write(digest)
+    else:
+        with os.fdopen(out_fd, "w") as f:
+            f.write(digest)
+    return 0
 
 
 if __name__ == "__main__":

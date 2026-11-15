@@ -4720,6 +4720,10 @@ GHREAD_MSG = (
     "redirect, with a literal path: an isolated session refuses one built on `$TMPDIR`, so "
     "run `printenv TMPDIR` once and write the directory it prints."
 )
+GHREAD_FAILURES_HINT = (
+    " To see why a run failed, `ghread run failures <run-id | sha | --pr N>` prints each "
+    "failed job's test ids, error lines and annotations, so there is no log to grep."
+)
 DOCKQ_MSG = (
     "Blocked: run `dockq {verb} …` instead of `docker {verb}`. dockq reads Docker state "
     "without a prompt and never changes it; `dockq {verb} --help` lists its flags. "
@@ -4781,6 +4785,8 @@ def _route(argv: list[str], has: Callable[[str], bool]) -> Verdict | None:
         route = "run logs" if verb == "run view" and _reads_log(args) else verb
         if has("ghread"):
             msg = GHREAD_MSG.format(verb=verb, route=route)
+            if route == "run logs":
+                msg += GHREAD_FAILURES_HINT
             return Verdict("deny", "ghread-route", msg)
     if tool == "gh" and args[:1] == ["search"] and has("ghread"):
         msg = GHREAD_MSG.format(verb="search", route="search")
