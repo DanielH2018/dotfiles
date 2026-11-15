@@ -422,7 +422,8 @@ def _is_landing_output(name: str) -> bool:
     path = Path(name).expanduser()
     if "land" in path.name:
         return True
-    if not path.is_absolute():
+    # A FIFO or device blocks open(), which would stall the hook past its timeout.
+    if not path.is_absolute() or not path.is_file():
         return False
     try:
         with path.open("rb") as f:
@@ -544,7 +545,7 @@ _READERS = (
 
 
 def _reader_check(match, gate, text):
-    return lambda stages, i, cwd: text if match(stages, i) and gate(stages, i, cwd) else None
+    return lambda stages, i, cwd: text if gate(stages, i, cwd) and match(stages, i) else None
 
 
 # Every check takes (stages, i, cwd); only whole-file-cat and the reader rows read cwd.

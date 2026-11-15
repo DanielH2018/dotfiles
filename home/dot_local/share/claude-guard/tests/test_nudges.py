@@ -11,6 +11,7 @@ per session.
 import json
 import os
 import sys
+import threading
 
 import pytest
 
@@ -392,6 +393,20 @@ def test_a_tail_of_a_task_output_file_is_judged_by_its_first_line(
     output.write_text(first_line + "\n14:20:52 running: arm\n")
     found = nudge(f"tail -n 50 {output}", cwd=str(server_checkout))
     assert (found and found[0]) == expected
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs named pipes")
+def test_a_tail_of_a_fifo_returns_without_opening_it(server_checkout, tmp_path):
+    fifo = tmp_path / "pipe"
+    os.mkfifo(fifo)
+    result = []
+    worker = threading.Thread(
+        target=lambda: result.append(nudge(f"tail -f {fifo}", cwd=str(server_checkout))),
+        daemon=True,
+    )
+    worker.start()
+    worker.join(timeout=2)
+    assert result == [None]
 
 
 def test_a_server_reader_row_stays_silent_outside_a_server_checkout(server_checkout, tmp_path):
