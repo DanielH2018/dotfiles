@@ -1,7 +1,7 @@
 """The context-discipline nudges (dotfiles #586), the show-substitution nudge, the
-gitops-state nudge (dotfiles #1041), the whole-file-cat nudge (dotfiles #1076), the
-whole-file-read nudge on the Read tool (dotfiles #1085), the gh-rerun-failed and runlog
-nudges (dotfiles #1223), and the ugrep-bounded-class nudge (dotfiles #1236).
+whole-file-cat nudge (dotfiles #1076), the whole-file-read nudge on the Read tool (dotfiles
+#1085), the gh-rerun-failed and runlog nudges (dotfiles #1223), the ugrep-bounded-class
+nudge (dotfiles #1236), and the nudges toward an existing state reader (dotfiles #1391).
 
 Each rule has a command it must nudge and a bounded variant it must leave alone. The
 hook-level tests pin that a nudge rides beside a verdict, never on a deny, and only once
@@ -11,6 +11,7 @@ per session.
 import json
 import os
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -47,9 +48,6 @@ def rule(command: str) -> str | None:
             "show-substitution",
         ),
         ('git show "origin/main:$(git ls-files x | head -1)"', "show-substitution"),
-        ("cat /var/lib/gitops-deploy/owed.jsonl", "gitops-state"),
-        ("sudo tail -n 5 /var/lib/gitops-deploy/owed.jsonl", "gitops-state"),
-        ("ssh daniel-server 'cat /var/lib/gitops-deploy/hold_sha'", "gitops-state"),
     ],
 )
 def test_an_unbounded_command_is_nudged(command, expected):
@@ -72,8 +70,6 @@ def test_an_unbounded_command_is_nudged(command, expected):
         "python3 script.py data.json",
         "git show origin/main:README.md",
         "f=README.md; git show origin/main:$f",
-        "ls -l /var/lib/gitops-deploy/",
-        "cat /var/lib/other/hold_sha",
     ],
 )
 def test_a_bounded_command_is_left_alone(command):
@@ -317,6 +313,98 @@ def test_the_rerun_nudge_names_the_raw_form_for_a_repo_the_account_does_not_own(
 ):
     text = nudge("gh run rerun 4567 --failed")[1]
     assert "`gh-rerun-failed <run-id>" in text and "`gh run rerun --failed`" in text
+
+
+@pytest.fixture
+def server_checkout(tmp_path, monkeypatch):
+    """A server checkout holding both readers, with gh-quota and unitq on PATH."""
+    root = tmp_path / "server"
+    for script in ("scripts/diagnostics/probe.py", "scripts/dev/prune_worktrees.py"):
+        (root / script).parent.mkdir(parents=True, exist_ok=True)
+        (root / script).write_text("")
+    (root / "ansible").mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for tool in ("gh-quota", "unitq"):
+        (bin_dir / tool).write_text("#!/bin/sh\n")
+        (bin_dir / tool).chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+    return root
+
+
+@pytest.mark.parametrize(
+    ("command", "expected", "reader"),
+    [
+        (
+            "ghread pr list --head fix-1 --state merged",
+            "landed-check",
+            "prune_worktrees.py --check",
+        ),
+        ("git log --oneline origin/master..fix-1", "landed-check", "prune_worktrees.py --check"),
+        ("pgrep -af 'land.sh --pr 8857'", "landing-inflight", "probe.py landing`"),
+        ("ps aux | grep land.sh", "landing-inflight", "probe.py landing`"),
+        ("tail -n 40 /tmp/land-8857.out", "landing-verdicts", "probe.py landing-verdicts"),
+        ("kubectl get kustomization -A", "flux-state", "probe.py flux"),
+        ("ssh daniel-server 'kubectl get ks -n flux-system'", "flux-state", "probe.py flux"),
+        ("ssh daniel-pi docker ps", "pi-containers", "probe.py pi"),
+        ("ssh daniel-pi 'docker inspect -f {{.State.Status}} x'", "pi-containers", "probe.py pi"),
+        ("ghread api rate_limit", "gh-quota", "gh-quota status"),
+        ("systemctl show -p ActiveState k3s.service", "unit-state", "unitq show"),
+        ("sudo systemctl show nginx --property=User", "unit-state", "unitq show"),
+    ],
+)
+def test_a_raw_state_read_is_pointed_at_its_reader(server_checkout, command, expected, reader):
+    found = nudge(command, cwd=str(server_checkout / "ansible"))
+    assert found and found[0] == expected
+    assert reader in found[1]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git log origin/master..HEAD",
+        "ghread pr list --state open",
+        "ps aux | grep nginx",
+        "tail -n 5 /var/log/syslog",
+        "kubectl get pods -A",
+        "ssh daniel-server docker ps",
+        "ghread api repos/o/r/pulls",
+        "systemctl status k3s",
+        "ssh daniel-server systemctl show -p User k3s",
+    ],
+)
+def test_a_state_read_with_no_reader_row_is_left_alone(server_checkout, command):
+    assert nudge(command, cwd=str(server_checkout)) is None
+
+
+def test_a_server_reader_row_stays_silent_outside_a_server_checkout(server_checkout, tmp_path):
+    for command in ("kubectl get kustomization -A", "git log origin/master..fix-1"):
+        assert nudge(command, cwd=str(tmp_path)) is None
+        assert nudge(command) is None
+
+
+def test_a_cd_into_a_server_checkout_arms_its_rows(server_checkout, tmp_path):
+    found = nudge(f"cd {server_checkout} && kubectl get kustomization -A", cwd=str(tmp_path))
+    assert found and found[0] == "flux-state"
+
+
+def test_a_host_tool_row_needs_its_tool_on_path(server_checkout, monkeypatch, tmp_path):
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert nudge("ghread api rate_limit", cwd=str(server_checkout)) is None
+    assert nudge("systemctl show -p User k3s", cwd=str(server_checkout)) is None
+
+
+def test_the_hook_points_a_raw_read_at_its_reader_in_the_session_cwd(server_checkout):
+    from claude_guard.hook import pre_tool_use
+
+    command = "kubectl get kustomization -A"
+    stdin = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(server_checkout)}
+    out = json.loads(pre_tool_use(json.dumps(stdin), {}))["hookSpecificOutput"]
+    assert out["additionalContext"].startswith(tag("flux-state"))
+
+
+def test_no_rule_names_the_deleted_gitops_state_reader():
+    assert "gitops-state" not in Path(nudges.__file__).read_text()
 
 
 def _executable(path):

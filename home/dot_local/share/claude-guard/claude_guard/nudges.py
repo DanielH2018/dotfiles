@@ -24,17 +24,9 @@ A fifth rule is about a prompt, not context:
      judge admits. The rule fires on text alone, so `f=README.md` beside an unrelated
      `$( )` also trips it, which costs one line of advice once.
 
-A sixth points at a better reader, the way python-json does:
+A sixth reads the filesystem, which no other rule does:
 
-  6. gitops-state: `cat`/`tail`/`head` of a file under `/var/lib/gitops-deploy/`, bare,
-     under `sudo`, or inside an `ssh` remote command. The server repo's `probe.py
-     gitops-state` prints every deployer marker and owed-ledger line with its clear
-     command, and sessions drifted back to raw reads of `owed.jsonl` and `hold_sha`
-     (dotfiles #1041).
-
-A seventh reads the filesystem, which no other rule does:
-
-  7. whole-file-cat: `cat` (any flags, `-n` included) of files totalling more than
+  6. whole-file-cat: `cat` (any flags, `-n` included) of files totalling more than
      20 KB, with no bounding stage after it. A bounding stage is `head`, `tail`, `wc`,
      `grep`/`rg`/`ugrep` or `sed -n`. 20 KB is the `big_calls` cut-off `otelq savings
      bytes` uses, and `cat` produced 46 of the week's 218 calls over it (dotfiles
@@ -46,23 +38,23 @@ The Read tool's whole-file reads are the other half of that census, 70 of the 21
 (dotfiles #1085). A Bash hook never sees them, so `read_nudge()` judges a Read's
 tool_input for the `read-nudge` hook entry instead:
 
-  8. whole-file-read: a Read of a regular file over 20 KB with neither `offset` nor
+  7. whole-file-read: a Read of a regular file over 20 KB with neither `offset` nor
      `limit`. An image or a PDF is skipped: the harness does not put its bytes into the
      context as text.
 
 Two point at a wrapper where a deny would refuse legitimate calls (dotfiles #1223). Each
 fires only where its wrapper is on PATH, since a host may have gh without either:
 
-  9. gh-rerun-failed: `gh run rerun … --failed`. The wrapper refuses a repo the
+  8. gh-rerun-failed: `gh run rerun … --failed`. The wrapper refuses a repo the
      logged-in account does not own, and the command text does not name the owner, so a
      work-org rerun is left to run raw.
- 10. runlog: a stage that sends stdout to a file and stderr after it (`> f 2>&1`, `&> f`),
+  9. runlog: a stage that sends stdout to a file and stderr after it (`> f 2>&1`, `&> f`),
      the hand-written capture `runlog` replaces. `/dev/null` is not a capture. `runlog`
      swaps the Bash tool's non-blocking stdio for blocking files, which some CLIs refuse.
 
 One warns about a host tool, the way footguns.py's ugrep-flag rule does:
 
- 11. ugrep-bounded-class: an extended-regex grep whose pattern bounds a negated class,
+ 10. ugrep-bounded-class: an extended-regex grep whose pattern bounds a negated class,
      such as `[^"]{0,200}`, where grep is ugrep. ugrep expands the class into every UTF-8
      byte sequence before it applies the bound. Two such classes with literals between
      them exceed its complexity limit: grep prints an error to stderr, exits 2 and
@@ -71,6 +63,27 @@ One warns about a host tool, the way footguns.py's ugrep-flag rule does:
      the same pattern. The Bash tool's `grep` is Claude Code's shell-snapshot function,
      which runs the ugrep built into the claude binary even where PATH grep is GNU, so
      the rule asks whether that binary exists, not only what PATH grep is.
+
+Seven point a raw state question at the reader that already answers it (dotfiles
+#1391). Transcript mining over the 14 days to 2026-11-15 found sessions running the raw
+command instead. `_READERS` holds them as one table, a row per pair, so the next
+pair is one more row:
+
+  landed-check: `ghread pr list --head B`, or `git log origin/master..B` for any B but
+    HEAD, asking whether B has landed. `prune_worktrees.py --check B` answers that and
+    sees a squash merge, which an ancestry check misses.
+  landing-inflight: `ps` or `pgrep` in a command that names `land.sh` -> `probe.py landing`.
+  landing-verdicts: `tail` of a file whose name holds `land` -> `probe.py landing-verdicts`.
+  flux-state: `kubectl get kustomization`, bare or inside an `ssh` remote command ->
+    `probe.py flux`.
+  pi-containers: `ssh daniel-pi docker ps|inspect` -> `probe.py pi`.
+  gh-quota: `ghread api rate_limit` -> `gh-quota status`.
+  unit-state: a local `systemctl show -p` -> `unitq show`.
+
+A row whose reader is a server-repo script fires only when the stage's directory sits
+inside a checkout that holds the script, the way rules 8 and 9 fire only where their
+wrapper is on PATH. The other two rows need their tool on PATH. The text matchers misfire
+sometimes, such as on a `tail` of `island.txt`, which costs one line once per session.
 
 `nudge()` returns (rule, text) or None. The hook adds the text as additionalContext
 beside whatever the deny rules decided, and only once per session per rule: `claim()`
@@ -86,6 +99,7 @@ import re
 import shlex
 import shutil
 import time
+from itertools import pairwise
 from pathlib import Path
 
 from claude_guard.footguns import _grep_is_ugrep, _short_flags
@@ -96,8 +110,6 @@ _PYTHON = re.compile(r"^python(?:3(?:\.\d+)?)?$")
 # A `<rev>:<path>` word whose path part expands something: `origin/main:$f`.
 _REV_PATH_EXPANSION = re.compile(r"^[^-$:][^:]*:.*\$")
 _CONTROL_WORDS = frozenset({"do", "then", "else", "{", "!"})
-_GITOPS_DIR = "/var/lib/gitops-deploy/"
-_RAW_READERS = frozenset({"cat", "tail", "head"})
 # Matches otelq's BIG_RESULT_BYTES, the cut-off of its `big_calls` census.
 _BIG_CAT_BYTES = 20_000
 _BOUNDING_READERS = frozenset({"head", "tail", "wc", "grep", "rg", "ugrep"})
@@ -116,6 +128,8 @@ _STDOUT_TO = re.compile(r"^(?:1?>>?|&>>?)(.*)$")
 _NEGATED_CLASS = r"\[\^\]?(?:\[:[a-z]+:\]|[^\]])*\]"
 _BOUNDED_NEGATED_ERE = re.compile(_NEGATED_CLASS + r"\{\d*,?\d*\}")
 _BOUNDED_NEGATED_BRE = re.compile(_NEGATED_CLASS + r"\\\{\d*,?\d*\\\}")
+# `origin/master..B` for a branch B other than HEAD: "has B landed?".
+_LANDED_RANGE = re.compile(r"^origin/(?:master|main)\.\.(?!HEAD$)[^.\s]\S*$")
 # Read renders these as images or pages, not as text the size of the file.
 _NON_TEXT_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"})
 
@@ -223,25 +237,6 @@ def _show_substitution(stages, i) -> str | None:
         "<dir> | sed 's|.*|<rev>:& &|' | git cat-file --batch='== %(rest)'` prints each "
         "file under an `== <path>` line. A path holding a space breaks that label; use "
         "plain `--batch` then."
-    )
-
-
-def _gitops_state(stages, i) -> str | None:
-    words = []
-    # An ssh remote command arrives as one quoted word: split it to see its reader.
-    for w in stages[i][0]:
-        try:
-            words.extend(shlex.split(w) if " " in w else [w])
-        except ValueError:
-            words.append(w)
-    if not any(_GITOPS_DIR in w for w in words):
-        return None
-    if not any(w.rsplit("/", 1)[-1] in _RAW_READERS for w in words):
-        return None
-    return (
-        "This reads the GitOps deployer's state raw. In the server repo, "
-        "`uv run python scripts/diagnostics/probe.py gitops-state` prints every marker "
-        "and owed-ledger line with the command that clears it (`--json` for the raw form)."
     )
 
 
@@ -389,16 +384,166 @@ def _ugrep_bounded_class(stages, i) -> str | None:
     )
 
 
+def _words(stages, i) -> list[str]:
+    """Stage `i`'s words with a leading control word or `sudo` dropped, and each quoted word
+    that holds a space split, so an `ssh` remote command shows its own words."""
+    stage = stages[i][0]
+    while stage and (stage[0] in _CONTROL_WORDS or stage[0] == "sudo"):
+        stage = stage[1:]
+    words = []
+    for w in stage:
+        try:
+            words.extend(shlex.split(w) if " " in w else [w])
+        except ValueError:
+            words.append(w)
+    return words
+
+
+def _asks_if_landed(stages, i) -> bool:
+    words = _words(stages, i)
+    if words[:3] == ["ghread", "pr", "list"]:
+        return any(w == "--head" or w.startswith("--head=") for w in words)
+    return words[:1] == ["git"] and "log" in words and any(_LANDED_RANGE.match(w) for w in words)
+
+
+def _looks_for_landing(stages, i) -> bool:
+    if _words(stages, i)[:1] not in (["ps"], ["pgrep"]):
+        return False
+    return any("land.sh" in w for words, _ in stages for w in words)
+
+
+def _tails_landing_log(stages, i) -> bool:
+    words = _words(stages, i)
+    if words[:1] != ["tail"]:
+        return False
+    return any(not w.startswith("-") and "land" in Path(w).name for w in words[1:])
+
+
+def _gets_kustomizations(stages, i) -> bool:
+    words = _words(stages, i)
+    if "kubectl" not in words:
+        return False
+    rest = words[words.index("kubectl") + 1 :]
+    if "get" not in rest:
+        return False
+    kinds = (k for w in rest[rest.index("get") + 1 :] for k in w.split(","))
+    return any(k == "ks" or k.startswith("kustomization") for k in kinds)
+
+
+def _reads_pi_containers(stages, i) -> bool:
+    words = _words(stages, i)
+    if words[:1] != ["ssh"] or not any(w.split("@")[-1] == "daniel-pi" for w in words):
+        return False
+    return any(w == "docker" and nxt in ("ps", "inspect") for w, nxt in pairwise(words))
+
+
+def _reads_rate_limit(stages, i) -> bool:
+    words = _words(stages, i)
+    return words[:2] == ["ghread", "api"] and any(w.strip("/") == "rate_limit" for w in words[2:])
+
+
+def _shows_unit_property(stages, i) -> bool:
+    words = _words(stages, i)
+    if words[:1] != ["systemctl"] or "show" not in words:
+        return False
+    return any(w in ("-p", "--property") or w.startswith(("-p", "--property=")) for w in words)
+
+
+def _in_server_checkout(script: str):
+    """A gate that holds when the stage runs inside a checkout holding `script`."""
+
+    def gate(stages, i, cwd: str) -> bool:
+        base = _cwd_at(stages, i, cwd)
+        if not base:
+            return False
+        here = Path(base)
+        return any((d / script).is_file() for d in (here, *here.parents))
+
+    return gate
+
+
+def _on_path(tool: str):
+    return lambda stages, i, cwd: bool(shutil.which(tool))
+
+
+_PROBE = "scripts/diagnostics/probe.py"
+_PRUNE = "scripts/dev/prune_worktrees.py"
+
+# (rule, matcher, gate, text): the raw command, where its reader exists, and the pointer.
+_READERS = (
+    (
+        "landed-check",
+        _asks_if_landed,
+        _in_server_checkout(_PRUNE),
+        "To ask whether branch B has landed, run `uv run python scripts/dev/prune_worktrees.py "
+        "--check B`. It sees a squash merge, which `git log origin/master..B` and a PR list "
+        "miss.",
+    ),
+    (
+        "landing-inflight",
+        _looks_for_landing,
+        _in_server_checkout(_PROBE),
+        "`uv run python scripts/diagnostics/probe.py landing` lists the landing runs in "
+        "flight, read from deploy-ui's `/api/inflight`, without a process scan.",
+    ),
+    (
+        "landing-verdicts",
+        _tails_landing_log,
+        _in_server_checkout(_PROBE),
+        "`uv run python scripts/diagnostics/probe.py landing-verdicts` prints each landing's "
+        "verdict, so a `land.sh` output file need not be tailed.",
+    ),
+    (
+        "flux-state",
+        _gets_kustomizations,
+        _in_server_checkout(_PROBE),
+        "`uv run python scripts/diagnostics/probe.py flux` reports the Flux kustomizations' state.",
+    ),
+    (
+        "pi-containers",
+        _reads_pi_containers,
+        _in_server_checkout(_PROBE),
+        "`uv run python scripts/diagnostics/probe.py pi` reports daniel-pi's containers "
+        "without an ssh round trip per question.",
+    ),
+    (
+        "gh-quota",
+        _reads_rate_limit,
+        _on_path("gh-quota"),
+        "`gh-quota status` prints GitHub API spend per session in the open quota windows, "
+        "beside GitHub's own count, and spends no API call to do it.",
+    ),
+    (
+        "unit-state",
+        _shows_unit_property,
+        _on_path("unitq"),
+        "`unitq show [--user] <unit> <Property>...` prints the named properties as "
+        "`PROP=value`, with any secret in them removed.",
+    ),
+)
+
+
+def _reader_check(match, gate, text):
+    return lambda stages, i, cwd: text if match(stages, i) and gate(stages, i, cwd) else None
+
+
+# Every check takes (stages, i, cwd); only whole-file-cat and the reader rows read cwd.
 _RULES = (
-    ("unbounded-log", _unbounded_log),
-    ("recursive-ls", _recursive_ls),
-    ("transcript-grep", _transcript_grep),
-    ("python-json", _python_json),
-    ("show-substitution", _show_substitution),
-    ("gitops-state", _gitops_state),
-    ("gh-rerun-failed", _gh_rerun_failed),
-    ("runlog", _runlog),
-    ("ugrep-bounded-class", _ugrep_bounded_class),
+    *(
+        (rule, lambda stages, i, cwd, check=check: check(stages, i))
+        for rule, check in (
+            ("unbounded-log", _unbounded_log),
+            ("recursive-ls", _recursive_ls),
+            ("transcript-grep", _transcript_grep),
+            ("python-json", _python_json),
+            ("show-substitution", _show_substitution),
+            ("gh-rerun-failed", _gh_rerun_failed),
+            ("runlog", _runlog),
+            ("ugrep-bounded-class", _ugrep_bounded_class),
+        )
+    ),
+    ("whole-file-cat", _whole_file_cat),
+    *((rule, _reader_check(match, gate, text)) for rule, match, gate, text in _READERS),
 )
 
 
@@ -408,12 +553,12 @@ def tag(rule: str) -> str:
 
 def nudge(command: str, cwd: str = "") -> tuple[str, str] | None:
     """(rule, tagged text) for the first rule `command` trips, or None. `cwd` is the
-    session's working directory; without it a relative path never trips whole-file-cat."""
+    session's working directory; without it a relative path never trips whole-file-cat and
+    no rule whose reader lives in a server checkout fires."""
     stages = _stages(command) or []
-    rules = (*_RULES, ("whole-file-cat", lambda s, i: _whole_file_cat(s, i, cwd)))
     for i in range(len(stages)):
-        for rule, check in rules:
-            found = check(stages, i)
+        for rule, check in _RULES:
+            found = check(stages, i, cwd)
             if found:
                 return rule, f"{tag(rule)} {found}"
     return None
