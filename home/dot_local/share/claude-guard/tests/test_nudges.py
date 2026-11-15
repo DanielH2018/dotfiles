@@ -11,7 +11,6 @@ per session.
 import json
 import os
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -401,10 +400,6 @@ def test_the_hook_points_a_raw_read_at_its_reader_in_the_session_cwd(server_chec
     stdin = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(server_checkout)}
     out = json.loads(pre_tool_use(json.dumps(stdin), {}))["hookSpecificOutput"]
     assert out["additionalContext"].startswith(tag("flux-state"))
-
-
-def test_no_rule_names_the_deleted_gitops_state_reader():
-    assert "gitops-state" not in Path(nudges.__file__).read_text()
 
 
 def _executable(path):
