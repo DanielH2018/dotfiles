@@ -444,9 +444,18 @@ test('run failures passes on the status of a gh call that fails', { skip }, (t) 
 });
 
 test('run failures refuses a malformed or ambiguous target without starting gh', { skip }, (t) => {
-  for (const args of [[], ['42', '--pr', '5'], ['main'], ['--web'], ['--pr', '5x'], ['ABC1234']]) {
+  const refused = [
+    [[], /needs exactly one/],
+    [['42', '--pr', '5'], /needs exactly one/],
+    [['main'], /refusing run id or sha 'main'/],
+    [['ABC1234'], /refusing run id or sha/],
+    [['--pr', '5x'], /refusing --pr/],
+    [['--web'], /unrecognized arguments: --web/],
+  ];
+  for (const [args, message] of refused) {
     const r = failures(t, args, {});
     assert.strictEqual(r.code, 2, `${args.join(' ')}: ${r.stderr}`);
+    assert.match(r.stderr, message, args.join(' '));
     assert.deepStrictEqual(r.argvs, [], `${args.join(' ')} reached gh`);
   }
 });
