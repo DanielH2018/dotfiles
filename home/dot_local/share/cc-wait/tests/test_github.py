@@ -1,5 +1,6 @@
 """`gh-pr` and `gh-ci` against a fake `ghread`: canned API data in, a state out."""
 
+import io
 import json
 import os
 import subprocess
@@ -8,8 +9,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from cc_wait import github
-from cc_wait.source import ReadError, SourceError, validate
+from cc_wait import github, loop
+from cc_wait.source import ReadError, Reading, SourceError, validate
 
 SHA = "1f0e7c4a9b2d5e6f8a0c1b3d4e5f6071a2b3c4d5"
 NOW = 1_800_000_000.0
@@ -209,6 +210,58 @@ def test_pr_mode_reads_the_head_commit_each_time():
     assert wait.read().state == "failed"
     responses["pr view"] = {"headRefOid": pushed}
     assert wait.read().state == "passed"
+
+
+DIGEST = "CI / pytest (job 9)\n  FAILED tests/test_x.py::test_y\n"
+
+
+def with_digest(responses, calls, digest=(0, DIGEST, "")):
+    """`gh` plus a plain-text answer to `ghread run failures`, which prints no JSON."""
+    json_run = gh(responses, calls)
+
+    def run(cmd, **kwargs):
+        if cmd[1:3] == ["run", "failures"]:
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, *digest)
+        return json_run(cmd, **kwargs)
+
+    return run
+
+
+def test_a_red_wait_prints_each_failed_job_s_tests_after_the_verdict():
+    calls = []
+    responses = {RUNS: runs(("pytest", "completed", "failure"))}
+    wait = github.CiWait("o/r", SHA, None, with_digest(responses, calls), now=lambda: NOW)
+    out = io.StringIO()
+    code = loop.run(wait, 60, "cc-wait gh-ci", out=out, wait_change=lambda *_: None)
+    assert code == 1
+    assert out.getvalue().splitlines() == [
+        f"WAIT: failed {SHA[:8]}: 1 failed: pytest",
+        "CI / pytest (job 9)",
+        "  FAILED tests/test_x.py::test_y",
+    ]
+    assert calls[-1] == ["ghread", "run", "failures", SHA, "-R", "o/r"]
+
+
+def test_a_pr_wait_digests_the_pull_request_s_head():
+    calls = []
+    wait = github.CiWait("o/r", None, "7", with_digest({}, calls))
+    assert wait.digest(Reading("failed", "x")) == DIGEST
+    assert calls == [["ghread", "run", "failures", "--pr", "7", "-R", "o/r"]]
+
+
+@pytest.mark.parametrize("state", ["passed", "running", "cancelled"])
+def test_only_a_failed_wait_spends_the_digest_s_gh_calls(state):
+    calls = []
+    assert github.CiWait("o/r", SHA, None, with_digest({}, calls)).digest(Reading(state)) == ""
+    assert calls == []
+
+
+def test_a_digest_ghread_could_not_produce_names_the_command_to_run():
+    wait = github.CiWait("o/r", SHA, None, with_digest({}, [], (4, "", "HTTP 502")))
+    assert wait.digest(Reading("failed")) == (
+        f"no failure digest: ghread exited 4: HTTP 502; run: ghread run failures {SHA} -R o/r"
+    )
 
 
 def test_gh_failing_is_a_read_error_the_loop_retries():

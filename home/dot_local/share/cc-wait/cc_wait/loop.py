@@ -7,6 +7,7 @@ Output, one line each, flushed so a Monitor sees it at once:
 
     16:20:01 <state>: <detail>          every change of state or detail
     WAIT: <state> <detail>              the terminal state; exits with that state's code
+    <digest>                            what the source's `digest` says about that state, if any
     WAIT: timeout ... re-run: <command> the budget elapsed; exits 75
     WAIT: error <why>                   cc-wait could not wait; exits 2
 """
@@ -89,6 +90,10 @@ def run(
             code = desc.terminal.get(reading.state)
             if code is not None:
                 _say(out, f"WAIT: {reading.state} {reading.detail}".rstrip())
+                digest = getattr(bound, "digest", None)
+                text = digest(reading).rstrip() if digest else ""
+                if text:
+                    _say(out, text)
                 return code
             if reading != last:
                 detail = f": {reading.detail}" if reading.detail else ""

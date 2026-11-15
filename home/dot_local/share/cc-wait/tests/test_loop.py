@@ -48,6 +48,17 @@ def test_a_terminal_state_ends_the_wait_with_its_own_code():
     assert lines == ["T running: a", "WAIT: failed boom"]
 
 
+class Digested(Script):
+    def digest(self, reading):
+        return f"why {reading.state}\n"
+
+
+def test_a_source_s_digest_follows_the_verdict_line():
+    code, lines = drive(Digested([Reading("failed", "boom")]))
+    assert code == 1
+    assert lines == ["WAIT: failed boom", "why failed"]
+
+
 def test_the_budget_elapsing_exits_75_with_the_resume_command():
     code, lines = drive(Script([Reading("running")]), budget_s=25)
     assert code == 75

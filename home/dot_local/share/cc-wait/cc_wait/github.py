@@ -32,6 +32,10 @@ replacement, each from its own check suite. So `gh-ci` judges only the newest ru
 name, and the newest workflow run of each workflow. A newest run that ended `cancelled` or
 `stale` gave no verdict on the commit: it holds the wait rather than ending it, until a re-run
 replaces it or the budget elapses (issue #1098).
+
+A `gh-ci` wait that ends failed prints `ghread run failures` after the verdict: each failed job's
+test ids, error lines and annotations. That digest makes one gh call per failed job, so only the
+failed path pays for it.
 """
 
 import contextlib
@@ -50,6 +54,8 @@ from cc_wait.source import ArgParser, Description, ParsedSource, ReadError, Read
 
 INTERVAL_S = 30.0
 GH_TIMEOUT_S = 30
+# `run failures` reads every failed run's jobs, logs and annotations in one ghread process.
+DIGEST_TIMEOUT_S = 120
 # How long after a check suite appears before its app has registered its check runs.
 SETTLE_S = 30.0
 
@@ -237,6 +243,26 @@ class CiWait:
                 "cancelled", f"{sha[:8]}: {len(no_verdict)} runs gave no verdict: {names}"
             )
         return Reading("passed", f"{sha[:8]}: {len(runs)} check runs passed")
+
+    def digest(self, reading: Reading) -> str:
+        """`ghread run failures` for the commit when `reading` failed it, else ""."""
+        if reading.state != "failed":
+            return ""
+        target = [self.ref] if self.ref else ["--pr", str(self.pr)]
+        cmd = ["ghread", "run", "failures", *target, "-R", self.repo]
+        try:
+            out = self.run(
+                cmd, capture_output=True, text=True, timeout=DIGEST_TIMEOUT_S, check=False
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return f"no failure digest: {exc}; run: {' '.join(cmd)}"
+        # A failed call for one job still prints the rest of the digest, and exits non-zero.
+        if out.stdout.strip():
+            return out.stdout
+        return (
+            f"no failure digest: ghread exited {out.returncode}: {out.stderr.strip()[-300:]}; "
+            f"run: {' '.join(cmd)}"
+        )
 
     def _unsettled_suites(self, sha: str) -> str:
         """Why the check suites on `sha` may still add check runs, or "" when they cannot."""

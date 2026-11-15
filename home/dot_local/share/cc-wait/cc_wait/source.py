@@ -74,6 +74,10 @@ class Bound(Protocol):
     A bound source whose typed arguments would not resume it, such as `time --after`, which
     would restart the duration, may define `resume_args()`. That method returns the arguments
     the printed resume command uses in their place.
+
+    A bound source may also define `digest(reading) -> str`. The loop calls it once with the
+    terminal reading and prints any text it returns after the verdict line, so a failure can say
+    what failed. It must not raise, and it returns "" when it has nothing to add.
     """
 
     def describe(self) -> Description: ...
