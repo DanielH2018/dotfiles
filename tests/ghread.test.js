@@ -428,6 +428,28 @@ test('run failures --pr reads the failed runs on the PR head and node:test failu
     `api --method=GET --raw-field=head_sha=${SHA} --raw-field=per_page=100 -- ${R}/actions/runs`));
 });
 
+test('run failures reads a run still in progress once one of its jobs has failed', { skip }, (t) => {
+  const running = (id) => ({
+    [`${R}/actions/runs/${id}`]: { name: 'CI', conclusion: null, html_url: `https://gh/run/${id}` },
+    [`${R}/actions/runs/${id}/jobs`]: { jobs: [{ id: id + 1, name: 'pytest', conclusion: null }] },
+  });
+  const failing = failedRun(91, 8, logOf(['FAILED tests/test_a.py::test_sum - assert 1 == 2']));
+  failing[`${R}/actions/runs/91`].conclusion = null;
+  const routes = {
+    [`${R}/pulls/5`]: { head: { sha: SHA } },
+    [`${R}/actions/runs`]: { workflow_runs: [{ id: 91, conclusion: null }, { id: 92, conclusion: null }] },
+    ...failing,
+    ...running(92),
+  };
+  const r = failures(t, ['--pr', '5', '-R', 'o/r'], routes);
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /^run 91 CI \(in progress\) .*\n {2}job gate \(failure\)/);
+  assert.match(r.stdout, /failing tests:\n {6}tests\/test_a.py::test_sum\n/);
+  assert.doesNotMatch(r.stdout, /run 92/);
+  routes[`${R}/actions/runs`] = { workflow_runs: [{ id: 92, conclusion: null }] };
+  assert.strictEqual(failures(t, ['--pr', '5', '-R', 'o/r'], routes).stdout, 'no failed runs\n');
+});
+
 test('run failures resolves a short sha and says when nothing failed', { skip }, (t) => {
   const r = failures(t, ['abc1234'], {
     'repos/{owner}/{repo}/commits/abc1234': { sha: SHA },
