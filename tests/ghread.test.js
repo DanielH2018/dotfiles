@@ -437,10 +437,27 @@ test('run failures resolves a short sha and says when nothing failed', { skip },
   assert.strictEqual(r.stdout, 'no failed runs\n');
 });
 
-test('run failures passes on the status of a gh call that fails', { skip }, (t) => {
-  const r = failures(t, ['42', '-R', 'o/r'], {});
+test('run failures keeps the digest when one log or annotations read fails', { skip }, (t) => {
+  const routes = {
+    [`${R}/pulls/5`]: { head: { sha: SHA } },
+    [`${R}/actions/runs`]: { workflow_runs: [{ id: 91, conclusion: 'failure' }, { id: 92, conclusion: 'failure' }] },
+    ...failedRun(91, 8, logOf(['FAILED tests/test_a.py::test_sum'])),
+    ...failedRun(92, 9, ''),
+  };
+  delete routes[`${R}/check-runs/9/annotations`];
+  delete routes['--job=8'];
+  const r = failures(t, ['--pr', '5', '-R', 'o/r'], { ...routes, '--job=9': logOf(['not ok 1 - later run']) });
+  assert.strictEqual(r.code, 4, r.stderr);
+  assert.match(r.stdout, /^run 91 CI[^]*\n {4}unread: gh run 91: no route\n/);
+  assert.match(r.stdout, /run 92 CI[^]*failing tests:\n {6}later run\n/);
+  assert.match(r.stdout, /\n {4}unread: gh api repos\/o\/r\/check-runs\/9\/annotations: no route\n/);
+});
+
+test('run failures prints nothing when resolving the target fails', { skip }, (t) => {
+  const r = failures(t, ['--pr', '5', '-R', 'o/r'], {});
   assert.strictEqual(r.code, 4);
-  assert.match(r.stderr, /actions\/runs\/42: no route/);
+  assert.strictEqual(r.stdout, '');
+  assert.match(r.stderr, /pulls\/5: no route/);
 });
 
 test('run failures refuses a malformed or ambiguous target without starting gh', { skip }, (t) => {

@@ -58,8 +58,9 @@ constants and validated values:
   ghread stack view --short
 
 gh's exit status is ghread's exit status. A refusal ghread raises itself exits 2.
-`run failures` exits 0 once it has read every failed run, and otherwise with the
-status of the first gh call that failed.
+`run failures` still prints the digest when a call for one run or job fails: the
+digest names the call it could not read, and ghread exits with that call's status.
+A call that fails before any failed run is found prints nothing.
 """
 
 from __future__ import annotations
@@ -557,16 +558,22 @@ def _annotations(call, repo: str, job: dict) -> list[str]:
     return out[:MAX_ANNOTATIONS]
 
 
-def run_failures(ns, call) -> str:
+def run_failures(ns, call) -> tuple[str, int]:
     """The `run failures` digest: each failed job's tests, errors and annotations.
+
+    A gh call for one run, job log or set of annotations that fails becomes an
+    `unread:` line in the digest, so the rest of the digest still prints.
 
     Args:
       ns: the parsed `run failures` arguments.
       call: `gh_output` with gh and its environment bound.
 
+    Returns:
+      The digest, and the exit status of the first gh call that failed, or 0.
+
     Raises:
       GhreadError: the target is missing, doubled or malformed.
-      GhFailed: a gh call failed.
+      GhFailed: a call that resolves the target to its failed runs failed.
     """
     if bool(ns.pr) == bool(ns.target):
         raise GhreadError("run failures needs exactly one of: a run id, a sha, --pr N")
@@ -575,15 +582,26 @@ def run_failures(ns, call) -> str:
     repo = _check(_REPO, ns.repo, "--repo") if ns.repo else "{owner}/{repo}"
     run_ids = _failed_runs(call, repo, ns)
     if not run_ids:
-        return "no failed runs\n"
+        return "no failed runs\n", 0
     lines = []
+    codes = []
+
+    def unread(exc: GhFailed, indent: str) -> None:
+        codes.append(exc.code)
+        lines.append(f"{indent}unread: {exc}")
+
     for run_id in run_ids:
-        run = _api(call, f"repos/{repo}/actions/runs/{run_id}")
-        jobs = _api(
-            call,
-            f"repos/{repo}/actions/runs/{run_id}/jobs",
-            (("filter", "latest"), ("per_page", "100")),
-        )["jobs"]
+        try:
+            run = _api(call, f"repos/{repo}/actions/runs/{run_id}")
+            jobs = _api(
+                call,
+                f"repos/{repo}/actions/runs/{run_id}/jobs",
+                (("filter", "latest"), ("per_page", "100")),
+            )["jobs"]
+        except GhFailed as exc:
+            lines.append(f"run {run_id}")
+            unread(exc, "  ")
+            continue
         failed = [j for j in jobs if j.get("conclusion") in FAILED_CONCLUSIONS]
         lines.append(
             f"run {run_id} {run.get('name', '')} ({run.get('conclusion')})"
@@ -605,20 +623,29 @@ def run_failures(ns, call) -> str:
                 lines.append(f"    failed steps: {', '.join(steps)}")
             # `api .../jobs/ID/logs` refuses a log with escape codes in it; `run view`
             # prints it.
-            log = call(
-                ["run", "view", *_repo_flag(ns), f"--job={job['id']}", "--log"]
-                + ["--", str(run_id)]
-            )
+            try:
+                log = call(
+                    ["run", "view", *_repo_flag(ns), f"--job={job['id']}", "--log"]
+                    + ["--", str(run_id)]
+                )
+            except GhFailed as exc:
+                unread(exc, "    ")
+                log = ""
             tests, errors = digest_log(log)
+            try:
+                annotations = _annotations(call, repo, job)
+            except GhFailed as exc:
+                unread(exc, "    ")
+                annotations = []
             for title, rows in (
                 ("failing tests", tests),
                 ("errors", errors),
-                ("annotations", _annotations(call, repo, job)),
+                ("annotations", annotations),
             ):
                 if rows:
                     lines.append(f"    {title}:")
                     lines += [f"      {r}" for r in rows]
-    return "\n".join(lines) + "\n"
+    return "\n".join(lines) + "\n", codes[0] if codes else 0
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -867,7 +894,7 @@ def main_failures(ns) -> int:
         gh, env = find_gh(), gh_env()
         if ns.out:
             out_fd = open_out(ns.out)
-        digest = run_failures(ns, lambda args: gh_output(gh, env, args))
+        digest, code = run_failures(ns, lambda args: gh_output(gh, env, args))
     except (GhreadError, GhFailed) as exc:
         if out_fd is not None:
             os.close(out_fd)
@@ -878,7 +905,7 @@ def main_failures(ns) -> int:
     else:
         with os.fdopen(out_fd, "w") as f:
             f.write(digest)
-    return 0
+    return code
 
 
 if __name__ == "__main__":
