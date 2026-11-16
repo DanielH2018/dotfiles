@@ -79,6 +79,28 @@ test('rejects an empty profile value', { skip }, () => {
   assert.match(result.stderr.toString(), /invalid profile ""/);
 });
 
+// pr-dash's settings are added to chezmoi.toml by hand, so a re-run of `chezmoi init` must
+// write them back from the existing config rather than drop them.
+test('keeps hand-added prDash* data keys from the existing config', { skip }, () => {
+  const dir = scratch(os.tmpdir(), 'chezmoi-toml-keep-');
+  const config = path.join(dir, 'chezmoi.toml');
+  fs.writeFileSync(config, [
+    '[data]', '    work = true', '    profile = "workstation"', '    agent = false',
+    '    prDashWorkOrgs = "org-a"',
+    '    prDashExtensionOrigins = "chrome-extension://abc"',
+    '    prDashVulnRepos = "org-a/one,org-a/two"', '',
+  ].join('\n'));
+  const out = execFileSync('chezmoi', ['execute-template', '--init', '--config', config],
+    { input: fs.readFileSync(TMPL, 'utf8'), encoding: 'utf8', stdio: 'pipe' });
+  assert.match(out, /^\s*prDashWorkOrgs = "org-a"$/m);
+  assert.match(out, /^\s*prDashExtensionOrigins = "chrome-extension:\/\/abc"$/m);
+  assert.match(out, /^\s*prDashVulnRepos = "org-a\/one,org-a\/two"$/m);
+});
+
+test('writes no prDash* keys when the existing config has none', { skip }, () => {
+  assert.doesNotMatch(render('workstation'), /prDash/);
+});
+
 // Without an explicit [interpreters.ps1], chezmoi runs os-windows .chezmoiscripts as
 // `powershell -NoLogo <script>`, which Windows' default Restricted execution policy
 // refuses ("running scripts is disabled on this system") - so every Windows bootstrap
