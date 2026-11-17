@@ -21,7 +21,7 @@ x-logging: &logging
 
 services:
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.157.0
+    image: otel/opentelemetry-collector-contrib:0.165.0
     command: ["--config=/etc/otelcol/config.yaml"]
     volumes:
       - ./otel-collector-config.yaml:/etc/otelcol/config.yaml:ro,z
@@ -33,7 +33,7 @@ services:
     logging: *logging
 
   prometheus:
-    image: prom/prometheus:v3.0.1
+    image: prom/prometheus:v3.16.0
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.retention.time=90d
@@ -47,7 +47,7 @@ services:
     logging: *logging
 
   loki:
-    image: grafana/loki:3.7.9
+    image: grafana/loki:3.7.10
     command: ["-config.file=/etc/loki/config.yaml"]
     volumes:
       - ./loki-config.yaml:/etc/loki/config.yaml:ro,z
