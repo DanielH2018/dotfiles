@@ -220,7 +220,7 @@ nerd-fonts = { repo = "ryanoasis/nerd-fonts", tag = "v3.5.1" }
 # renovate: datasource=pypi depName=prek
 prek = "0.5.10"
 # renovate: datasource=pypi depName=ruff
-ruff = "0.16.1"
+ruff = "0.17.5"
 # renovate: datasource=github-releases depName=astral-sh/uv
 uv = "0.13.7"
 # renovate: datasource=github-releases depName=twpayne/chezmoi
