@@ -257,29 +257,6 @@ h2 {
 
 .section-toggle:hover { background: var(--blue); border-color: var(--blue); color: var(--crust); }
 
-/* The stack toggle's disclosure button: unstyled so the chevron sits flush in the tree. */
-.disclosure {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 0;
-  background: none;
-  border: none;
-  border-radius: 0;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.chevron {
-  width: 1em;
-  flex: none;
-  color: var(--overlay0);
-  font-size: 11px;
-}
-
 /* Sized and weighted past the rows under it — a group header set at body weight left the
    sections reading as one undifferentiated list. */
 .section-name {
@@ -391,7 +368,7 @@ a.section-name:hover { color: var(--blue); text-decoration: underline; }
 .stack-row {
   position: relative;
   display: grid;
-  grid-template-columns: 22px 1fr;
+  grid-template-columns: 40px 1fr;
   align-items: center;
   border-bottom: 1px solid var(--surface0);
 }
@@ -419,12 +396,30 @@ a.section-name:hover { color: var(--blue); text-decoration: underline; }
   border-bottom: none;
 }
 
+/*
+ * The section toggle's filled treatment at row scale. A bare overlay0 chevron on the row
+ * ground was too faint to find. Centred on the depth rule's x, so the rule runs down from it.
+ */
 .stack-toggle {
   grid-column: 1;
   justify-self: start;
-  width: auto;
-  padding: 0 0 0 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 17px;
+  padding: 0;
+  background: var(--surface1);
+  border: 1px solid var(--surface2);
+  border-radius: 5px;
+  color: var(--blue);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
 }
+
+.stack-toggle:hover { background: var(--blue); border-color: var(--blue); color: var(--crust); }
 
 .badge {
   flex: none;
@@ -461,7 +456,8 @@ a.section-name:hover { color: var(--blue); text-decoration: underline; }
   .actions { margin-left: 0; width: 100%; }
   .row { padding-left: 14px; padding-right: 14px; }
   .section-header { padding-left: 14px; padding-right: 14px; }
-  .stack-toggle { padding-left: 14px; }
+  .stack-row { grid-template-columns: 34px 1fr; }
+  .stack-toggle { margin-left: 11px; }
   .stack-row.nested::before { left: 21px; }
   #banner { padding-left: 14px; padding-right: 14px; }
 }

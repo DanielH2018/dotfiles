@@ -320,16 +320,16 @@ function addStackBadges(row, node) {
 }
 
 /**
- * The `▾`/`▸` glyph a stack toggle shows. `aria-hidden`: the glyph is decorative, since the
- * toggle carries an explicit `aria-label` instead of relying on this text for its name.
+ * The glyph a stack toggle shows, the same `▼`/`▲` pair as the section toggle so the two
+ * read as one control. `aria-hidden`: the glyph is decorative, since the toggle carries an
+ * explicit `aria-label` instead of relying on this text for its name.
  * @param {boolean} isCollapsed
  * @returns {HTMLElement}
  */
 function chevron(isCollapsed) {
   const el = document.createElement('span');
-  el.className = 'chevron';
   el.setAttribute('aria-hidden', 'true');
-  el.textContent = isCollapsed ? '▸' : '▾';
+  el.textContent = isCollapsed ? '▼' : '▲';
   return el;
 }
 
@@ -378,7 +378,7 @@ function renderStack(node, into, allowed) {
     if (isRoot && hasVisibleChild(node, allowed)) {
       const toggle = document.createElement('button');
       toggle.type = 'button';
-      toggle.className = 'disclosure stack-toggle';
+      toggle.className = 'stack-toggle';
       toggle.dataset.key = node.pr.id;
       const isCollapsed = isStackCollapsed(node.pr.id);
       toggle.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
