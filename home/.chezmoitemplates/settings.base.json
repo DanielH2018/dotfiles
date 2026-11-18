@@ -847,6 +847,16 @@
         ]
       },
       {
+        "matcher": "PushNotification",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/echo-push-notification.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "Skill|Agent|Task",
         "hooks": [
           {
