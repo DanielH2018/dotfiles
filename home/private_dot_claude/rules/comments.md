@@ -20,6 +20,15 @@ paths:
   - "**/*.mjs"
   - "**/*.cjs"
   - "**/*.md"
+  - "**/*.yml"
+  - "**/*.yaml"
+  - "**/*.toml"
+  - "**/*.j2"
+  - "**/*.jinja"
+  - "**/*.conf"
+  - "**/*.service"
+  - "**/*.timer"
+  - "**/Dockerfile*"
 ---
 Comments and doc comments, the part every language shares. Adapted from Google's style
 guides (<https://google.github.io/styleguide/>). The per-language rule file carries the
@@ -50,7 +59,9 @@ have in common, so it is not repeated there.
   belongs in the commit message or the PR body: what the code replaces, what it used to do,
   how it matches an old implementation, which ticket asked for it, the SHA of a dependency
   it imitates. Do not write "previously", "now", "the old callers", "added for" or
-  "reproduces what X did", and do not name a file that is not in this repo.
+  "reproduces what X did", and do not name a file that is not in this repo. A ticket number
+  is provenance too: `(#1234)` after a sentence, "since #1234" or "Verify-by of #1234" goes
+  in the commit message. A `TODO:` keeps its link.
 - **One line is the budget.** Go past one line only to state a constraint that needs the
   space. The prose rules in CLAUDE.md govern documents, not code comments, so a short
   fragment is better than two full sentences.
@@ -77,3 +88,18 @@ have in common, so it is not repeated there.
   on code you did not change alone, unless your change made one false.
 - **Wrap at the file's existing width.** Google fixes no comment line length; 80 or 100 are
   both common, and consistency within a file matters more than the number.
+
+## Config files and templates
+
+YAML, TOML, systemd units and Jinja templates follow every rule above. Three points are
+specific to them:
+
+- **A comment above a config key is that key's doc comment.** It says what the value means,
+  its unit and its legal range, and why it is not the obvious value when that is a trap. The
+  story of how the value was chosen goes in the commit message.
+- **In a template, a `#` line renders into the output; a `{# … #}` comment does not.** A
+  note for the template's maintainer is a Jinja comment. A `#` inside a rendered payload,
+  such as a ConfigMap, changes the payload's checksum and restarts the workload when it ships.
+- **Some comments are data.** A tool reads a Renovate pin after a `uses:` SHA
+  (`# v4.2.1`), a linter directive, a `DECIDED:` marker that docs cite by its text, and a
+  script header that `--help` prints. Edit them only as that tool's format allows.
