@@ -159,7 +159,7 @@ should_dim_inactive_panes = true
 open_windows_at_custom_size = true
 new_windows_num_columns = 120
 new_windows_num_rows = 24
-zoom_level = 90
+zoom_level = 80
 
 [appearance.themes]
 theme = { custom = { name = "Catppuccin Mocha", path = "catppuccin_mocha.yaml" } }
@@ -254,8 +254,13 @@ added_subshell_commands = ["toolbox enter", "podman exec"]
 # this form itself, and it survives Warp's own surgical rewrites unchanged.
 startup_shell_override = 'C:\Program Files\Git\usr\bin\bash.exe'
 
+# New sessions open PowerShell 7. Warp wrote this `executable` form itself when PowerShell 7
+# was picked in Settings, and it was recaptured from the deployed file on 2026-11-19. That
+# contradicts the note above that the deserializer ignores `executable`. Warp's behaviour
+# cannot settle which is right, because PowerShell 7 is also what Warp opens when the key is
+# ignored. Either way the result is the one chosen in the UI.
 [session.new_session_shell_override]
-msys_2 = 'C:\Program Files\Git\usr\bin\bash.exe'
+executable = 'C:\Program Files\PowerShell\7\pwsh.exe'
 {{- end }}
 
 # Where a session starts, set per source rather than globally. `advanced_mode` is the switch
