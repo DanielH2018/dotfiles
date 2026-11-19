@@ -32,8 +32,8 @@ const hostLink = (absPath, rel) =>
 const STATE_DIR = scratch(os.tmpdir(), 'la-state-');
 // Runs the hook with a Write payload for `filePath`; returns the emitted
 // additionalContext string ('' when the hook no-ops / exits without output).
-function run(filePath, env = {}, cwd = undefined) {
-  const input = JSON.stringify({ tool_input: { file_path: filePath } });
+function run(filePath, env = {}, cwd = undefined, sessionId = undefined) {
+  const input = JSON.stringify({ session_id: sessionId, tool_input: { file_path: filePath } });
   const e = { ...process.env };
   // Start from a clean slate for every var the hook keys off of. CLAUDE_ARTIFACTS_BASE_URL
   // matters most: it is SET in the environment on daniel-box and daniel-server, so leaving it
@@ -208,3 +208,15 @@ test('records the session repository once per artifact, worktrees under the prim
     'a session outside any repository records nothing');
 });
 
+
+test('the same artifact edited twice in one session injects its link once', () => {
+  const file = '/Users/d/.claude/artifacts/once.html';
+  const first = run(file, {}, undefined, 'sess-once');
+  const second = run(file, {}, undefined, 'sess-once');
+  assert.ok(first.includes('once.html'), `first edit injects the link; got: ${first}`);
+  assert.strictEqual(second, '', 'second edit of the same path stays silent');
+  assert.ok(run(file, {}, undefined, 'sess-other').includes('once.html'),
+    'a different session still gets the link');
+  assert.ok(run('/Users/d/.claude/artifacts/twice.html', {}, undefined, 'sess-once').includes('twice.html'),
+    'a different path in the same session still gets its link');
+});
