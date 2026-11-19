@@ -113,7 +113,7 @@ def config_read(args: Sequence[str]) -> bool:
 
 # `git branch NAME` and `git tag NAME` create a ref, and a name after any other listing
 # option creates one too. A name is a pattern only once an option below puts the command in
-# list mode (measured on git 2.43). Options are matched exactly, so an abbreviation refuses.
+# list mode. Options are matched exactly, so an abbreviation refuses.
 _LIST_MODE = frozenset(
     {"-l", "--list", "--contains", "--no-contains", "--merged", "--no-merged", "--points-at"}
 )

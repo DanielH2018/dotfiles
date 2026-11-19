@@ -483,7 +483,7 @@ def _ssh(argv: list[str], scope: _Scope) -> str | None:
     return f"ssh {host}" if _classify(remote, _Scope(scope.home, None, remote=True)) else None
 
 
-# Local only: the ssh side has no ruling for these. `fd -l` runs a fixed `ls -l`, which reads.
+# Not `GUARDS` entries, so `checks/remote.py` does not admit them. `fd -l` runs a fixed `ls -l`.
 _LOCAL_FLAG_GUARDS = {
     "fd": flag_guard(("--exec", "--exec-batch"), "xX"),
     "base64": flag_guard(("--output",), "o"),
@@ -554,8 +554,8 @@ _HANDLERS: dict[str, Callable[[list[str], _Scope], str | None]] = {
     **dict.fromkeys(_VERSION_PROBES, _version_probe),
 }
 
-# The gitread forms the local allow admits. `git config` is not one: it prints credentials
-# a config can hold, such as `http.extraHeader` or a token in a URL.
+# The gitread forms this module admits. `git config` is not one: it reads the global and
+# system scopes, which hold `credential.*`, `sendemail.smtpPass` and `http.<url>.extraHeader`.
 _GIT_LOCAL_READS = frozenset({"branch", "tag", "remote", "stash"})
 
 

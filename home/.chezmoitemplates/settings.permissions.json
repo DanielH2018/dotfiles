@@ -202,9 +202,10 @@
            claude_guard.gitread, which refuse `--output=<file>` and `-c core.pager=<cmd>`.
            A prefix rule here grants both, so adding one back widens what is approved. */}}
       {{/* DECIDED: the two `git config` read rules stay. claude_guard.gitread proves these
-           reads for the judge, but claude_guard.readonly does not admit them: a config can
-           hold a credential (`http.extraHeader`, a token in a remote URL), and the module
-           refuses every verb that prints secret values. */}}
+           reads for the judge, but claude_guard.readonly does not admit them: they read the
+           global and system scopes, which hold `credential.*`, `sendemail.smtpPass` and
+           `http.<url>.extraHeader`, and the module refuses every verb that prints secret
+           values. */}}
       "Bash(git config --get:*)",
       "Bash(git config --list)",
       "Bash(git fetch:*)",
