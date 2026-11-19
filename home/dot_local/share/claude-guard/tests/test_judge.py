@@ -466,6 +466,7 @@ def real(tmp_path, template_permissions):
     # Named members, so a template that parses to nothing fails here by name.
     assert parse_rule("awk:*") in rules.allow and parse_rule("git push:*") in rules.allow
     assert parse_rule("find * -delete") in rules.deny
+    assert parse_rule("git push * -f") in rules.deny
     return rules
 
 
@@ -539,8 +540,26 @@ def test_the_real_template_admits_the_pipe_the_show_substitution_nudge_recommend
     assert allowed(pipe.replace("<rev>", "origin/main").replace("<dir>", "w"), real)
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git push --force origin feat",
+        "git push -f origin feat",
+        "git push origin feat --force",
+        "git push origin feat -f",
+        "git push origin -f feat",
+        "git push --force-with-lease origin main",
+        "git push --force-with-lease origin master",
+        "git push origin main --force-with-lease",
+    ],
+)
+def test_the_real_template_refuses_each_force_push_form(real, command):
+    assert not allowed(command, real)
+
+
 def test_the_real_template_allows_a_lease_push_to_a_feature_branch(real):
     assert allowed("git push --force-with-lease origin feat", real)
+    # `git push * --force` is anchored at both ends, as Claude Code reads it (#714).
     assert allowed("git push origin feat --force-with-lease", real)
     assert allowed("git push origin feat", real)
 

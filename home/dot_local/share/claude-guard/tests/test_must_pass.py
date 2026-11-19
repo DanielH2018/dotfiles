@@ -112,7 +112,8 @@ MUST_REFUSE = [
     ("interpreter-write", f"echo \"require('fs').writeFileSync('{BASHRC}', 'x')\" | node"),
 ]
 
-# Each settings deny rule a claude-guard check replaced, with a command the rule matched.
+# Each settings deny rule a claude-guard check stands behind, with a command the rule
+# matches. The git rows stay in the settings; the rest were removed.
 REPLACED_DENY_RULES = [
     ("git push --force", "git push --force"),
     ("git push --force *", "git push --force origin feat"),

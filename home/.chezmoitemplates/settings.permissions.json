@@ -724,15 +724,11 @@
            the prompt for it (dotfiles #965). claude_guard's machine-config-write (deny.py)
            denies every --global or --system form that is not a read. */}}
       "Bash(git config user.*)",
-      {{/* No rule here for a command a claude_guard check denies from PreToolUse. A rule would
-           be a second, narrower list of the same spellings, and Claude Code applies it
-           before any hook, so it also hides the check's message, which names the form to
-           run instead. The checks, with the rules each replaced:
+      {{/* No rule here for a command a claude_guard check denies from PreToolUse, with one
+           exception below. A rule would be a second, narrower list of the same spellings,
+           and Claude Code applies it before any hook, so it also hides the check's message,
+           which names the form to run instead. The checks, with the rules each replaced:
 
-           - force_push_flag, force_push and push_main (deny.py): `git push --force` and
-             `-f` in any position, and `--force-with-lease` onto main or master.
-           - git_conventions and push_no_verify: `git commit --no-verify` and `-n`, and
-             `git push --no-verify`.
            - wrapper_route: `find -exec`, `-execdir`, `-ok` and `-okdir`.
            - checks/awk.py: an awk program that calls `system()`.
            - terraform (deny.py): the terraform, tofu and terragrunt verbs that change
@@ -743,9 +739,46 @@
            judge approves none of them where the PreToolUse hook could not run. What
            stays below is the floor claude-settings-merge asserts, and the commands no
            check denies: `chown`, `chmod 777`, `git config user.*`, and a `find` that
-           deletes or writes. */}}
-      {{/* DECIDED: every rule from here down that carries an INTERIOR `*` -- the
-           pipe-to-shell rules, the find forms below, and the `gh api -X`/`npx -p` families
+           deletes or writes.
+
+           DECIDED: the force-push and --no-verify rules stay, although force_push_flag,
+           force_push, push_main, push_no_verify and git_conventions deny the same
+           commands. `Bash(git push:*)` and `Bash(git commit:*)` are allow rules, so when
+           Claude Code kills the PreToolUse hook at its timeout in default mode, its own
+           matcher approves a forced push unless a deny rule here refuses it. A forced push
+           and a hook-skipping commit are the irreversible commands #967 keeps a settings
+           deny for. The cost is the over-match the 2026-11-19 replay found: 5 of 16,985
+           headless commands, such as `git push … ; rm -f …`, are hard-denied (dotfiles
+           #1407, operator ruling 2026-11-19).
+
+           Force-push: `--force` and `-f` are denied in any position, on any branch.
+           `--force-with-lease` is allowed on a feature branch and denied for main/master.
+           The flag rules spell out the bare command and ` *` rather than `:*`, so that no
+           rule here can be read as a prefix of `--force-with-lease`. Claude Code anchors a
+           wildcard at both ends, and claude_guard's judge reads these rules with Claude
+           Code's grammar (rules.py, dotfiles #714), so neither reads `git push * --force`
+           as matching `git push origin feat --force-with-lease`. */}}
+      "Bash(git push --force)",
+      "Bash(git push --force *)",
+      "Bash(git push -f)",
+      "Bash(git push -f *)",
+      "Bash(git push * --force)",
+      "Bash(git push * --force *)",
+      "Bash(git push * -f)",
+      "Bash(git push * -f *)",
+      "Bash(git push origin main --force*)",
+      "Bash(git push origin master --force*)",
+      "Bash(git push origin main -f*)",
+      "Bash(git push origin master -f*)",
+      "Bash(git push --force-with-lease * main)",
+      "Bash(git push --force-with-lease * master)",
+      "Bash(git push --force-with-lease * main *)",
+      "Bash(git push --force-with-lease * master *)",
+      "Bash(git commit *--no-verify*)",
+      "Bash(git commit -n:*)",
+      "Bash(git push *--no-verify*)",
+      {{/* DECIDED: every rule that carries an INTERIOR `*` -- the --no-verify rules above,
+           the pipe-to-shell rules, the find forms below, and the `gh api -X`/`npx -p` families
            in the ask tier -- is read by TWO engines.
 
            Claude Code's own matcher reads them, and it is the one that hard-denies: the

@@ -97,11 +97,12 @@ this way.
 tool, `explain` and `replay --judge`, so the two diagnostics print the verdict a session
 gets. Before it reads a rule, it refuses a command that `deny()` or the git conventions
 deny. The PreToolUse hook denies such a command before any prompt, so this gate decides
-only when that hook could not run. The settings carry no deny rule for a command a check
-denies (a forced push, `--no-verify`, `find -exec`, an awk `system()`, the terraform
-verbs that change state), so without the gate the `git push:*` allow rule would approve a
-forced push there. `tests/test_must_pass.py` holds one command for each settings rule a
-check replaced.
+only when that hook could not run. The settings carry no deny rule for `find -exec`, an
+awk `system()` or the terraform verbs that change state, because a check denies each.
+They keep the force-push and `--no-verify` rules, because Claude Code's own matcher reads
+them when the hook is killed at its timeout and `git push:*` is an allow rule.
+`tests/test_must_pass.py` holds one command for each settings deny rule a check stands
+behind.
 
     claude-guard explain 'git status && timeout 5 ls'      # segments, then the decision and rule
 
