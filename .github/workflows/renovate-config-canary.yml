@@ -34,18 +34,18 @@ permissions:
 jobs:
   validate:
     name: validate renovate.json against latest Renovate
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       # Renovate's own engine requirement (node ^24.11 as of Renovate 44), not this repo's
       # toolchain: tools.toml pins node 22 for the suite, which Renovate refuses to run on.
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24.22.3"
+          node-version: "26.13.1"
 
       # npm's `latest` tag names a new Renovate a few minutes before its tarball reaches every
       # CDN edge, and the fetch 404s in that window. The homelab repo measured it (issue #1269
