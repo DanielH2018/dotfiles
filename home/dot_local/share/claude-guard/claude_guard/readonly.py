@@ -66,6 +66,45 @@ def _is_redirect(tok: str) -> bool:
     return bool(tok) and ("<" in tok or ">" in tok) and all(c in "<>&" for c in tok)
 
 
+_FD_MARK = "\x00"
+_FD_PREFIX = re.compile(r"\d+(?=[<>])")
+
+
+def _mark_fd_numbers(text: str) -> str:
+    """Replace each fd number glued to a redirect operator (`2>`, not `2 >`) with `_FD_MARK`.
+
+    Only an unquoted, unescaped digit run that starts a word counts, as in bash. shlex yields
+    the same tokens for `2>` and `2 >`, so the glue is read from the raw text.
+    """
+    out: list[str] = []
+    quote = ""
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if quote:
+            if c == "\\" and quote == '"' and i + 1 < n:
+                out.append(text[i : i + 2])
+                i += 2
+                continue
+            if c == quote:
+                quote = ""
+        elif c == "\\" and i + 1 < n:
+            out.append(text[i : i + 2])
+            i += 2
+            continue
+        elif c in "'\"":
+            quote = c
+        elif c.isdigit() and (i == 0 or text[i - 1].isspace()):
+            m = _FD_PREFIX.match(text, i)
+            if m:
+                out.append(_FD_MARK)
+                i = m.end()
+                continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def _strip_redirects(stage: list[str]) -> list[str] | None:
     """The stage's argv with write-free redirects dropped, or None if a redirect writes.
 
@@ -77,7 +116,7 @@ def _strip_redirects(stage: list[str]) -> list[str] | None:
     while i < n:
         t = stage[i]
         if _is_redirect(t):
-            if argv and argv[-1].isdigit():  # an attached fd number (the 2 in `2>`)
+            if argv and argv[-1] == _FD_MARK:
                 argv.pop()
             if i + 1 >= n:
                 return None
@@ -95,6 +134,8 @@ def _strip_redirects(stage: list[str]) -> list[str] | None:
             continue
         argv.append(t)
         i += 1
+    if _FD_MARK in argv:
+        return None
     return argv
 
 
@@ -472,7 +513,7 @@ def _classify(command: str, scope: _Scope) -> str | None:
     stripped = command.rstrip()
     if not stripped or stripped.endswith("\\"):
         return None
-    if any(s in command for s in _SUBST):
+    if any(s in command for s in _SUBST) or _FD_MARK in command:
         return None
     parsed = parse(command)
     if not parsed.ok or parsed.substitutions:
@@ -482,7 +523,7 @@ def _classify(command: str, scope: _Scope) -> str | None:
         if seg.sep == "&" or seg.heredocs:
             return None
         try:
-            lex = shlex.shlex(seg.text, posix=True, punctuation_chars=True)
+            lex = shlex.shlex(_mark_fd_numbers(seg.text), posix=True, punctuation_chars=True)
             lex.whitespace_split = True
             stage = list(lex)
         except ValueError:

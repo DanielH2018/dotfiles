@@ -49,6 +49,7 @@ APPROVE = [
     "cat a\ncat b",
     "echo '=== a ==='\ncat a\necho '=== b ==='\ncat b",
     "cat .yamllint 2>/dev/null",
+    "uniq a 2>/dev/null",
     "ls >/dev/null",
     "docker ps 2>&1",
     "grep -r foo . 2>/dev/null | head",
@@ -157,6 +158,7 @@ REJECT = [
     ">/dev/null",
     "sed '/foo/w out' file",
     "cat a > b 2>/dev/null",
+    "uniq a 2 > /dev/null",
     "sed -i 's/a/b/' file",
     "sed -ni 's/a/b/p' file",
     # BSD sed on macOS edits in place with `-I` too (#1019)
