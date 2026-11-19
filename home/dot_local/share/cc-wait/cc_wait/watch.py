@@ -50,10 +50,9 @@ def wait_for_change(
         cmd = ["inotifywait", "-qq", "-t", str(max(1, math.ceil(timeout_s))), "-e", INOTIFY_EVENTS]
         if _ran(run, [*cmd, *targets], timeout_s):
             return
-    elif targets and which("fswatch"):
-        # fswatch has no timeout of its own; -1 exits after the first batch of events.
-        if _ran(run, ["fswatch", "-1", *targets], timeout_s):
-            return
+    # fswatch has no timeout of its own; -1 exits after the first batch of events.
+    elif targets and which("fswatch") and _ran(run, ["fswatch", "-1", *targets], timeout_s):
+        return
     sleep(max(0.0, timeout_s - (clock() - started)))
 
 
