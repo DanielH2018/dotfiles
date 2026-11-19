@@ -29,9 +29,16 @@
            (`git worktree add/remove`, `git branch -D`) is handled by NOT ask-listing it. */}}
       "EnterWorktree",
       "ExitWorktree",
-      "Bash(ls:*)",
-      "Bash(pwd)",
-      "Bash(cd:*)",
+      {{/* No Bash rule here for a command claude_guard.readonly proves a read: `ls`, `cat`,
+           `grep`, `find`, `sort`, `systemctl status` and the rest of its verb tables. That
+           module allows such a command from PreToolUse in every mode, and
+           claude_guard.rules grants it to the judge as an allow rule would. A rule here
+           would be a second list of the same verbs, and for a guarded verb a wider one:
+           `Bash(find:*)` also granted `find -fls <file>`, which writes. `awk` and `sed`
+           keep their rules because the guards refuse forms that only read, such as an awk
+           comparison with `>`, and `sed -i` is an edit sessions make.
+           claude-guard's tests/test_readonly.py fails on a rule here that the module
+           proves. */}}
       "Bash(test:*)",
       "Bash([:*)",
       "Bash(command -v:*)",
@@ -42,23 +49,7 @@
            auto-approves `/usr/bin/env bash -c '<anything>'`; a bare `Bash(env)` was the same
            hole one level up (`env FOO=bar bash -c …`) and is deliberately absent below. */}}
       "Bash(/usr/bin/env bash --version)",
-      "Bash(cat:*)",
-      "Bash(head:*)",
-      "Bash(tail:*)",
-      "Bash(wc:*)",
-      "Bash(file:*)",
-      "Bash(stat:*)",
-      "Bash(tree:*)",
-      "Bash(find:*)",
-      "Bash(grep:*)",
-      "Bash(rg:*)",
       "Bash(fd:*)",
-      "Bash(which:*)",
-      "Bash(type:*)",
-      "Bash(echo:*)",
-      "Bash(date:*)",
-      "Bash(whoami)",
-      "Bash(uname:*)",
       "Bash(open:*)",
       "Bash(pbcopy)",
       "Bash(pbpaste)",
@@ -66,20 +57,6 @@
       "Bash(xxd:*)",
       "Bash(shasum:*)",
       "Bash(md5:*)",
-      "Bash(md5sum:*)",
-      "Bash(sha1sum:*)",
-      "Bash(sha256sum:*)",
-      "Bash(sha512sum:*)",
-      "Bash(b2sum:*)",
-      "Bash(cksum:*)",
-      "Bash(df:*)",
-      {{/* lsof lists open files and sockets and has no option that writes or runs a
-           command (it is in claude_guard.tables.READONLY_BASE for the same reason).
-           `true` is here for `while true; do ...` loops, which the judge reads keyword by
-           keyword. */}}
-      "Bash(lsof:*)",
-      "Bash(true)",
-      "Bash(du:*)",
       {{/* `Bash(timeout:*)` was here to stop timeout-wrapped commands prompting (73892e2).
            It cannot stay: timeout's next token IS an arbitrary command, so the prefix rule
            auto-approved `timeout 5 bash -c '<anything>'` — the same hole as the `env`
@@ -94,12 +71,8 @@
       "Bash(more:*)",
       "Bash(diff:*)",
       "Bash(cmp:*)",
-      "Bash(sort:*)",
-      "Bash(uniq:*)",
-      "Bash(cut:*)",
       "Bash(awk:*)",
       "Bash(sed:*)",
-      "Bash(jq:*)",
       {{/* jsonq exists so JSON parsing is available without a permission prompt, and the blanket allow is the whole point of it. The grant was withdrawn 2026-07-29 (A7-01) because the tool validated an AST allowlist and then called eval on the original source — the checked language and the executed language were never the same thing, so exposed stdlib modules reached sys and builtins through ordinary non-underscore attribute chains. It is restored here because the thing it guarded no longer exists.
            What makes this defensible is an absence, not a check: no file in the tool contains eval, exec or compile. ast.parse builds a tree, which executes nothing; the tree is then walked by the interpreter in share/jsonq/interp.py, whose dispatch tables ARE the grammar, so a node type with no handler cannot run because nothing exists that would run it. ast.Attribute has no handler, so x.y is refused in every position — which closes the class rather than narrowing it, because with no attribute access the reachable object graph is exactly JSON values, a fixed function table, and query-defined lambdas, leaving no route from a value to any other object. --script runs on the same interpreter, not on eval.
            Do NOT take a green test suite as the warrant. The PREVIOUS suite was a deliberate 20-case escape suite, it was green, and the tool was fully escapable the entire time it was — a passing deny-list suite is evidence about the cases someone thought of and nothing else. The warrant is the structure block in tests/jsonq.test.js, which asserts the property itself: no eval/exec/compile anywhere in the source, no ast.Attribute entry in any dispatch table, and the escape-prone builtins (type, getattr, vars, globals, dir, open, format, super) absent from --functions. If a change ever reintroduces eval or gives ast.Attribute a handler, this rule comes back out in the same commit.
@@ -214,12 +187,7 @@
            The everyday pipeline is not lost: `… | xargs wc -l` resolves through
            claude_guard.judge's `unwrap_wrapper`, which judges `wc -l` in xargs's place.
            Bare `xargs …` with nothing after it to unwrap still prompts. */}}
-      "Bash(tr:*)",
       "Bash(tee:*)",
-      "Bash(basename:*)",
-      "Bash(dirname:*)",
-      "Bash(realpath:*)",
-      "Bash(readlink:*)",
       "Bash(mkdir:*)",
       "Bash(touch:*)",
       "Bash(cp:*)",
@@ -436,9 +404,6 @@
       "Bash(claude agents --json --all)",
       "Bash(gh auth status:*)",
       "Bash(bash -n:*)",
-      "Bash(systemctl status:*)",
-      "Bash(systemctl --user status:*)",
-      "Bash(systemctl --user list-units:*)",
       "Bash(fzf --version)",
       {{/* PR plumbing runs unattended. CLAUDE.md instructs Claude to open a PR at the end of a
            worktree job and land it, so leaving `gh pr create` in the ask list contradicted the instruction it had
@@ -759,35 +724,29 @@
            the prompt for it (dotfiles #965). claude_guard's machine-config-write (deny.py)
            denies every --global or --system form that is not a read. */}}
       "Bash(git config user.*)",
-      {{/* Force-push. `--force` and `-f` are denied in any position, on any branch.
-           `--force-with-lease` is allowed on a feature branch and denied for main/master.
-           The flag rules spell out the bare command and ` *` rather than `:*`, so that no
-           rule here can be read as a prefix of `--force-with-lease`.
+      {{/* No rule here for a command a claude_guard check denies from PreToolUse. A rule would
+           be a second, narrower list of the same spellings, and Claude Code applies it
+           before any hook, so it also hides the check's message, which names the form to
+           run instead. The checks, with the rules each replaced:
 
-           Claude Code anchors a wildcard at both ends, and claude_guard's judge reads these
-           rules with Claude Code's grammar (rules.py, dotfiles #714), so neither reads
-           `git push * --force` as matching `git push origin feat --force-with-lease`.
-           claude_guard's push_main (deny.py) hard-denies every push whose
-           destination is main/master, which covers lease spellings the rules below omit. */}}
-      "Bash(git push --force)",
-      "Bash(git push --force *)",
-      "Bash(git push -f)",
-      "Bash(git push -f *)",
-      "Bash(git push * --force)",
-      "Bash(git push * --force *)",
-      "Bash(git push * -f)",
-      "Bash(git push * -f *)",
-      "Bash(git push origin main --force*)",
-      "Bash(git push origin master --force*)",
-      "Bash(git push origin main -f*)",
-      "Bash(git push origin master -f*)",
-      "Bash(git push --force-with-lease * main)",
-      "Bash(git push --force-with-lease * master)",
-      "Bash(git push --force-with-lease * main *)",
-      "Bash(git push --force-with-lease * master *)",
-      {{/* DECIDED: every rule from here down that carries an INTERIOR `*` -- the --no-verify
-           pair, the pipe-to-shell rules, the find/awk execution forms below, and the
-           `gh api -X`/`npx -p` families in the ask tier -- is read by TWO engines.
+           - force_push_flag, force_push and push_main (deny.py): `git push --force` and
+             `-f` in any position, and `--force-with-lease` onto main or master.
+           - git_conventions and push_no_verify: `git commit --no-verify` and `-n`, and
+             `git push --no-verify`.
+           - wrapper_route: `find -exec`, `-execdir`, `-ok` and `-okdir`.
+           - checks/awk.py: an awk program that calls `system()`.
+           - terraform (deny.py): the terraform, tofu and terragrunt verbs that change
+             state.
+
+           claude-guard's tests/test_must_pass.py holds one command per replaced rule and
+           fails when its check stops denying it. hook.decide runs the same checks, so the
+           judge approves none of them where the PreToolUse hook could not run. What
+           stays below is the floor claude-settings-merge asserts, and the commands no
+           check denies: `chown`, `chmod 777`, `git config user.*`, and a `find` that
+           deletes or writes. */}}
+      {{/* DECIDED: every rule from here down that carries an INTERIOR `*` -- the
+           pipe-to-shell rules, the find forms below, and the `gh api -X`/`npx -p` families
+           in the ask tier -- is read by TWO engines.
 
            Claude Code's own matcher reads them, and it is the one that hard-denies: the
            2026-09-26 measurements in dotfiles #680 were its denies of `find` and `awk`
@@ -795,8 +754,7 @@
            only. There a match withholds the judge's auto-approval and hands the command to
            the prompt; it never hard-denies. Rules.whole_glob_defer tests every wildcard
            rule against the WHOLE command before it is split into segments, as Claude Code
-           does for deny and ask. Without these rules, the judge's allow list auto-approves
-           `find . -exec id \;`. The judge reads each rule with Claude Code's grammar
+           does for deny and ask. The judge reads each rule with Claude Code's grammar
            (rules.py, dotfiles #714), anchored at both ends. It also counts a match on the
            command's leading whole words, since it does not strip a trailing redirection the
            way Claude Code does, so `find * -delete` still catches `find . -delete 2>&1`.
@@ -807,18 +765,15 @@
            test_deny_and_ask_rules_with_an_interior_wildcard_are_globs fires them, and
            test_deny_globs_leave_the_everyday_form_of_each_spawner_allowed proves they do not
            over-match. Both run against a hand-copied fixture. The test_the_real_template_*
-           tests in the same file load THIS file instead: each execution form and each
-           force-push form is refused, and each ordinary argument that merely contains a
-           flag's text (`-name '*-delete*'`, `./k8s-ok/`, `/filesystem/`) is allowed.
+           tests in the same file load THIS file instead: each execution form is refused,
+           and each ordinary argument that merely contains a flag's text
+           (`-name '*-delete*'`, `./k8s-ok/`, `/filesystem/`) is allowed.
 
            docs/claude-shell-permissions.md in the server repo concludes a flag-level guard
            "cannot be written at all" in the native matcher, and a reviewer has read that as
            grounds to delete these rules as decorative. They are not: the #680 denies show
-           the native matcher acting on them, and the judge relies on them to withhold
-           auto-approval. Deleting them removes real coverage from both engines. */}}
-      "Bash(git commit *--no-verify*)",
-      "Bash(git commit -n:*)",
-      "Bash(git push *--no-verify*)",
+           the native matcher acting on them. Deleting one that no claude_guard check
+           stands behind removes real coverage. */}}
       {{/* Each shell name is matched bare, and before a space, a newline, `;`, `&`, `|` or `)`.
            A suffix glob such as `* | sh*` also hard-denied a pipe into `sha256sum` or
            `shellcheck -` (dotfiles #971; operator ruling 2026-10-25). claude_guard's
@@ -845,39 +800,18 @@
       "Bash(* | zsh|*)",
       "Bash(* | zsh)*)",
       "Bash(* | zsh\n*)",
-      {{/* claude_guard.rules reads an allow rule as an exact command or as a prefix
-           matched on "prefix + space", never as a wider glob. find/awk/xargs are everyday tools and
-           stay allow-listed, but each takes a command as an argument, so the allow rule alone
-           auto-approved `find . -exec id \;`, `awk 'BEGIN{system("id")}'` and `xargs sh -c 'id'`
-           with no prompt — the payload is an argument, so no other deny rule ever saw it.
-           Deny beats allow in judge_segment, so these cover the execution forms while the
-           ordinary search/print/batch forms keep working.
+      {{/* A `find` that deletes its matches or writes a file. No claude_guard check denies
+           these, so the rules stay. claude_guard.readonly's find guard refuses them, so the
+           judge approves none, and the rules make Claude Code deny them outright.
 
-           xargs is no longer covered here: its allow entry is gone (see above), so there is
-           no grant left for a deny glob to claw back. find and awk keep theirs because they
-           stay allow-listed — their execution forms are a named flag, which a glob CAN pin
-           down, where xargs' command word floats after any number of options.
-
-           -ok and -delete are anchored on the space before the flag, because the unanchored
-           `*-delete*` and `*-ok*` also matched `-name '*-delete*'` and `./k8s-ok/`. A flag
-           placed directly after `find` has no path before it, so it gets its own rule. awk's
-           rule needs the `(` of a call, so that `/filesystem/` does not match. The rule also
-           closes that paren, because the rule parser drops a rule with an unbalanced paren.
-           awk accepts a space before a built-in's paren, so that spelling has its own rule.
-           awk's other ways to run a command (`"cmd" | getline`, `print | "cmd"`, `|&`)
-           have no glob that leaves `awk '/a|b/'` alone, so claude_guard.checks.awk judges
-           them on both hook paths instead (dotfiles #702). */}}
-      "Bash(find *-exec*)",
-      "Bash(find -ok *)",
-      "Bash(find * -ok *)",
-      "Bash(find * -okdir *)",
+           -delete is anchored on the space before the flag, because the unanchored
+           `*-delete*` also matched `-name '*-delete*'`. A flag placed directly after `find`
+           has no path before it, so it gets its own rule. */}}
       "Bash(find -delete)",
       "Bash(find -delete *)",
       "Bash(find * -delete)",
       "Bash(find * -delete *)",
       "Bash(find *-fprintf*)",
-      "Bash(awk *system(*)*)",
-      "Bash(awk *system (*)*)",
       "Edit(.git/**)",
       {{/* dotfiles #711: git's global config and the XDG directory its include lives in. A
            write there makes a later plain `git push` force or skip the pre-push gate.
@@ -885,36 +819,7 @@
            these nor the primary checkout's .git/ from a linked worktree; protect-secrets.sh
            denies all of them to Edit/Write with a reason, and these stand behind it. */}}
       "Edit(~/.gitconfig)",
-      "Edit(~/.config/git/**)",
-      "Bash(terraform apply:*)",
-      "Bash(terraform destroy:*)",
-      "Bash(terraform import:*)",
-      "Bash(terraform taint:*)",
-      "Bash(terraform untaint:*)",
-      "Bash(terraform force-unlock:*)",
-      "Bash(terraform state rm:*)",
-      "Bash(terraform state mv:*)",
-      "Bash(terraform state push:*)",
-      "Bash(terraform state replace-provider:*)",
-      "Bash(terraform workspace delete:*)",
-      "Bash(tofu apply:*)",
-      "Bash(tofu destroy:*)",
-      "Bash(tofu import:*)",
-      "Bash(tofu taint:*)",
-      "Bash(tofu untaint:*)",
-      "Bash(tofu force-unlock:*)",
-      "Bash(tofu state rm:*)",
-      "Bash(tofu state mv:*)",
-      "Bash(tofu state push:*)",
-      "Bash(tofu state replace-provider:*)",
-      "Bash(tofu workspace delete:*)",
-      "Bash(terragrunt apply:*)",
-      "Bash(terragrunt destroy:*)",
-      "Bash(terragrunt import:*)",
-      "Bash(terragrunt apply-all:*)",
-      "Bash(terragrunt destroy-all:*)",
-      "Bash(terragrunt run-all apply:*)",
-      "Bash(terragrunt run-all destroy:*)"
+      "Edit(~/.config/git/**)"
     ],
     "ask": [
       {{/* -t is the short form of --show-token; either one prints the GitHub token into the transcript. `*-t*` matches both, because `--show-token` contains `-t`. */}}

@@ -13,7 +13,8 @@ import pytest
 
 from claude_guard import hook, readonly
 from claude_guard.hook import pre_tool_use
-from claude_guard.readonly import classify
+from claude_guard.readonly import classify, command_reads_only
+from claude_guard.rules import bash_rule_content, parse_rule
 
 FIXTURE = Path(__file__).resolve().parents[5] / "tests" / "fixtures" / "command-vectors.json"
 
@@ -392,3 +393,12 @@ def test_a_classifier_failure_is_no_decision(home, monkeypatch):
     monkeypatch.setattr(readonly, "classify", boom)
     monkeypatch.setattr(hook, "readonly", readonly.readonly)
     assert pre_tool_use(_stdin("ls", home / "server"), {"HOME": str(home)}) is None
+
+
+def test_the_settings_template_holds_no_bash_allow_rule_this_module_proves(template_permissions):
+    proven = []
+    for entry in template_permissions["allow"]:
+        content = bash_rule_content(entry)
+        if isinstance(content, str) and command_reads_only(parse_rule(content).text):
+            proven.append(entry)
+    assert proven == []

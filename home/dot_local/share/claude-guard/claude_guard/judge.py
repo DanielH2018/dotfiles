@@ -124,8 +124,10 @@ _HARMLESS_REDIRECT_WORD = re.compile(
 )
 
 
-def _allow_listed(rules: Rules, s: str) -> bool:
-    return rules.allows(s) or rules.allows(_HARMLESS_REDIRECT_WORD.sub("", s).strip())
+def _allow_listed(rules: Rules, s: str, *, unseen_arguments: bool = False) -> bool:
+    return rules.allows(s, unseen_arguments=unseen_arguments) or rules.allows(
+        _HARMLESS_REDIRECT_WORD.sub("", s).strip(), unseen_arguments=unseen_arguments
+    )
 
 
 # server #1898. The stderr redirects the remote-segment arm in judge_segment strips before
@@ -1258,7 +1260,9 @@ def judge_segment(
     # :380-387. The unwrapped command earns the same deny/ask scrutiny.
     if rules.denies(target) or rules.asks(target):
         return False, "wrapper-target-deny-or-ask"
-    if not _allow_listed(rules, target):
+    wrappers = part.split()[: len(part.split()) - len(target.split())]
+    via_xargs = any(_basename(w) == "xargs" for w in wrappers)
+    if not _allow_listed(rules, target, unseen_arguments=via_xargs):
         return False, "wrapper-target-unlisted"
     return True, f"wrapper:{target}"
 

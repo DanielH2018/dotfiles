@@ -465,7 +465,7 @@
   "autoMode": {
     {{/* Suspends EVERY Bash allow rule while auto mode is active, so the classifier sees every
          shell command. Deliberate, and the reason is written up in ~/server/CLAUDE.md: a
-         Bash() rule matches on the command prefix and nothing finer, so `Bash(find:*)` also
+         Bash() rule matches on the command prefix and nothing finer, so a `Bash(find:*)` rule
          approves `find . -delete`, `Bash(sed:*)` approves `sed -i` against any path, and
          `Bash(kubectl apply *)` approves `apply --prune`. A flag-level guard cannot be written
          at all. The classifier CAN read the whole line, which is the discrimination the rule
@@ -484,7 +484,10 @@
          session outside auto mode: `claude -p` and SDK runs started in default mode, and a
          session that falls back from auto to default (`permission_mode_changed`,
          trigger `auto_gate_denied`). Those are mostly headless, so an allow rule is their
-         only way to accept a command without a prompt nobody answers. */}}
+         only way to accept a command without a prompt nobody answers. The tier holds no
+         rule for a command claude_guard.readonly proves a read: that module allows it from
+         PreToolUse in every mode, and grants it to the judge, which answers a headless
+         prompt through `claude-guard prompt-server`. */}}
     "classifyAllShell": true,
 
     {{/* "$defaults" MUST stay first in every one of these arrays. Omitting it REPLACES the

@@ -15,11 +15,9 @@ import pytest
 from claude_guard import prompt_tool
 from claude_guard.deny import deny
 from claude_guard.hook import pre_tool_use
+from claude_guard.rules import parse_rule
 
 PROMPTED = {
-    # a grep that names dangerous words (dotfiles #967, Evidence)
-    "J='grep -rnE \"break-glass|rollback|kill switch\" docs/ and ls $(git rev-parse HEAD)'"
-    "; printf '%s\\n' \"$J\"": "`J` is not on claude_guard.assignments' standalone allowlist",
     # forms the Linux sandbox must still pass (dotfiles #1247)
     "sudo -n /usr/local/sbin/homelab-takeover-check": (
         "the template denies sudo on every host but daniel-box; `takeover-check` is the"
@@ -37,6 +35,8 @@ PROMPTED = {
 
 HEADLESS = [
     # greps and prose that name dangerous words
+    "J='grep -rnE \"break-glass|rollback|kill switch\" docs/ and ls $(git rev-parse HEAD)'"
+    "; printf '%s\\n' \"$J\"",
     "git commit -m 'Record the rollback|kill switch grep, run at $(git rev-parse HEAD)'",
     "git commit -m 'Document that the operator runs sudo reboot after a kernel update'",
     "cat > /tmp/notes.md <<'EOF'\nRun `sudo rm -rf /var/lib/rancher` only during break-glass.\nEOF",
@@ -112,6 +112,64 @@ MUST_REFUSE = [
     ("interpreter-write", f"echo \"require('fs').writeFileSync('{BASHRC}', 'x')\" | node"),
 ]
 
+# Each settings deny rule a claude-guard check replaced, with a command the rule matched.
+REPLACED_DENY_RULES = [
+    ("git push --force", "git push --force"),
+    ("git push --force *", "git push --force origin feat"),
+    ("git push -f", "git push -f"),
+    ("git push -f *", "git push -f origin feat"),
+    ("git push * --force", "git push origin feat --force"),
+    ("git push * --force *", "git push origin --force feat"),
+    ("git push * -f", "git push origin feat -f"),
+    ("git push * -f *", "git push origin -f feat"),
+    ("git push origin main --force*", "git push origin main --force-with-lease"),
+    ("git push origin master --force*", "git push origin master --force"),
+    ("git push origin main -f*", "git push origin main -f"),
+    ("git push origin master -f*", "git push origin master -fu"),
+    ("git push --force-with-lease * main", "git push --force-with-lease origin main"),
+    ("git push --force-with-lease * master", "git push --force-with-lease origin master"),
+    ("git push --force-with-lease * main *", "git push --force-with-lease origin main -u"),
+    ("git push --force-with-lease * master *", "git push --force-with-lease origin master -u"),
+    ("git commit *--no-verify*", "git commit -m x --no-verify"),
+    ("git commit -n:*", "git commit -n -m x"),
+    ("git push *--no-verify*", "git push origin feat --no-verify"),
+    ("find *-exec*", "find . -name x -exec rm {} +"),
+    ("find -ok *", "find -ok rm {} ;"),
+    ("find * -ok *", "find . -ok rm {} ;"),
+    ("find * -okdir *", "find . -okdir rm {} ;"),
+    ("awk *system(*)*", "awk 'BEGIN{system(\"id\")}'"),
+    ("awk *system (*)*", "awk 'BEGIN{system (\"id\")}'"),
+    *[
+        (f"{tool} {verb}:*", f"{tool} {verb} x")
+        for tool in ("terraform", "tofu")
+        for verb in (
+            "apply",
+            "destroy",
+            "import",
+            "taint",
+            "untaint",
+            "force-unlock",
+            "state rm",
+            "state mv",
+            "state push",
+            "state replace-provider",
+            "workspace delete",
+        )
+    ],
+    *[
+        (f"terragrunt {verb}:*", f"terragrunt {verb} x")
+        for verb in (
+            "apply",
+            "destroy",
+            "import",
+            "apply-all",
+            "destroy-all",
+            "run-all apply",
+            "run-all destroy",
+        )
+    ],
+]
+
 
 @pytest.fixture
 def env(tmp_path, template_permissions):
@@ -164,3 +222,19 @@ def test_a_prompted_row_passes_the_hook_and_is_left_to_its_prompt(command, cwd, 
 def test_each_interpreter_form_still_meets_the_deny_checks(rule, command, cwd, env):
     assert deny(command, cwd, env).rule == rule
     assert hook_verdict(command, cwd, env) == "deny"
+
+
+@pytest.mark.parametrize(("rule", "command"), REPLACED_DENY_RULES)
+def test_a_check_denies_what_each_replaced_settings_deny_rule_matched(rule, command, cwd, env):
+    assert parse_rule(rule).cc_matches(command, "deny")
+    assert hook_verdict(command, cwd, env) == "deny"
+
+
+# The rows an allow rule would approve: `git push:*`, `git commit:*` and `awk:*`.
+ALLOW_RULED = [row for row in REPLACED_DENY_RULES if row[1].startswith(("git ", "awk "))]
+
+
+@pytest.mark.parametrize(("rule", "command"), ALLOW_RULED)
+def test_the_prompt_tool_refuses_those_commands_when_the_hook_did_not_run(rule, command, env):
+    request = {"tool_name": "Bash", "input": {"command": command}, "tool_use_id": "toolu_corpus"}
+    assert prompt_tool.decide(request, env)["behavior"] == "deny"

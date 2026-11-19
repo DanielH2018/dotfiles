@@ -93,6 +93,16 @@ def read_agent_id(stdin_text: str) -> str:
 
 
 def decide(command: str, cwd: str, env: Mapping[str, str], agent_id: str = "") -> Decision:
+    """The judge's decision for `command`, never an allow where the deny rules or the git
+    conventions deny it.
+
+    The PreToolUse hook denies such a command before any prompt, so this gate decides only
+    when that hook could not run. The settings carry no deny rule for a command those
+    checks deny, so without the gate an allow rule such as `git push:*` would approve a
+    forced push here."""
+    refused = combine_conventions(deny(command, "", env), conventions(command, cwd))
+    if refused.kind == "deny":
+        return Decision(False, f"deny-rule:{refused.rule}", ())
     rules = load_rules(env=env)
     roots = scratch_roots(env.get("HOME", ""), env.get("TMPDIR"))
     return judge(

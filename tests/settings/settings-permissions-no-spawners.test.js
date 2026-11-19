@@ -1,13 +1,11 @@
-// Content guard on settings.permissions.json's REAL allow/deny arrays: no allow rule may
-// normalize to a prefix that takes an arbitrary command as its argument (a "spawner"), and
-// every allow-listed spawner that is guarded instead of removed carries the deny globs that
-// guard it.
+// Content guard on settings.permissions.json's REAL allow array: no allow rule may
+// normalize to a prefix that takes an arbitrary command as its argument (a "spawner").
 //
 // Moved here from tests/hooks/allow-compound-bash.test.js (claude-guard slice 3 cutover):
-// these two tests check the permission MODEL, not allow-compound-bash.sh's own behavior —
+// the first test checks the permission MODEL, not allow-compound-bash.sh's own behavior —
 // the hook being retired and ported to claude_guard's judge() is no reason to lose a guard
-// against a settings.permissions.json allow rule reintroducing a shell-out. The third test
-// that lived beside these ('every wrapper the hook unwraps...') was genuinely about the
+// against a settings.permissions.json allow rule reintroducing a shell-out. The test
+// that lived beside it ('every wrapper the hook unwraps...') was genuinely about the
 // hook's own unwrap list and was deleted with it -- but the cross-check it kept (the
 // unwrapper's wrapper list and SPAWNERS in step) has no replacement, so G6
 // (task-8-fix-1-brief.md) restores it below against claude_guard's WRAPPERS, the hook's
@@ -18,9 +16,9 @@ const fs = require('node:fs');
 const { srcPath } = require('../lib/paths');
 
 // settings.permissions.json, not settings.base.json: the permission model was split out of
-// the base template, which now only splices it in by includeTemplate. The two tests below
-// assert they located the allow and deny arrays before parsing anything, so pointing this
-// at the wrong template fails them rather than silently checking zero rules — but keep it
+// the base template, which now only splices it in by includeTemplate. The first test below
+// asserts it located the allow and deny arrays before parsing anything, so pointing this
+// at the wrong template fails it rather than silently checking zero rules — but keep it
 // pointed at whichever template actually holds the arrays.
 const REAL_SETTINGS = srcPath('.chezmoitemplates', 'settings.permissions.json');
 // Commands that take another command as an argument. None may be an allow prefix.
@@ -30,21 +28,6 @@ const SPAWNERS = ['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'env', 'python', '
   'entr', 'timeout', 'nice', 'stdbuf', 'watch', 'make', 'xargs'];
 // `fnm env` ends in the word `env` but prints shell init text; it never runs an argument.
 const NOT_A_SPAWNER = ['fnm env', 'gh run watch'];
-// Allow-listed spawners that are guarded by deny globs instead of being removed. xargs is
-// deliberately absent: its command word floats after any number of options, so no glob can
-// pin it down, and it was removed from allow instead. find and awk stay because their
-// execution forms are named flags. Each entry is the exact deny rule text. -ok and -delete
-// are anchored on the space before the flag so an argument such as `-name '*-delete*'` does
-// not match, which is why they carry a separate rule for a flag placed directly after `find`.
-// awk's rules close the paren they open: a rule spelled `Bash(awk *system(*)` has an
-// unbalanced paren, which the rule parser drops outright — leaving `Bash(awk:*)`
-// allow-listed with nothing guarding it.
-const GUARDED = {
-  find: ['find *-exec*', 'find -ok *', 'find * -ok *', 'find * -okdir *',
-    'find -delete', 'find -delete *', 'find * -delete', 'find * -delete *', 'find *-fprintf*'],
-  awk: ['awk *system(*)*', 'awk *system (*)*'],
-};
-
 function bashPrefixes(block) {
   // Each rule's command text: drop the Bash(...) wrapper, then a trailing :*, ` *` or *.
   // Coarser than claude_guard.rules (which reads Claude Code's grammar), and that is enough
@@ -61,7 +44,7 @@ test('no allow rule normalizes to a prefix that takes a command as its argument'
   const prefixes = bashPrefixes(src.slice(allowStart, denyStart));
   assert.ok(prefixes.length > 100, `parsed the allow array (got ${prefixes.length} rules)`);
   const offenders = prefixes.filter((p) => {
-    if (NOT_A_SPAWNER.includes(p) || Object.keys(GUARDED).includes(p)) return false;
+    if (NOT_A_SPAWNER.includes(p)) return false;
     const last = p.trim().split(/\s+/).pop().split('/').pop();
     return SPAWNERS.includes(last);
   });
@@ -85,21 +68,5 @@ test('every wrapper judge.py unwraps is one SPAWNERS lists', () => {
   assert.ok(wrappers.length >= 5, `parsed WRAPPERS (got ${wrappers.length} entries)`);
   for (const w of wrappers) {
     assert.ok(SPAWNERS.includes(w), `judge.py unwraps "${w}" but SPAWNERS does not list it`);
-  }
-});
-
-test('each allow-listed spawner that is kept carries its deny globs', () => {
-  const src = fs.readFileSync(REAL_SETTINGS, 'utf8');
-  const denyStart = src.indexOf('"deny": [');
-  const askStart = src.indexOf('"ask": [');
-  assert.ok(denyStart > -1 && askStart > denyStart, 'located the deny array');
-  const denyBlock = src.slice(denyStart, askStart);
-  const allowPrefixes = bashPrefixes(src.slice(src.indexOf('"allow": ['), denyStart));
-  for (const [cmd, forms] of Object.entries(GUARDED)) {
-    if (!allowPrefixes.includes(cmd)) continue;   // removed from allow entirely: nothing to guard
-    for (const rule of forms) {
-      assert.ok(denyBlock.includes(`"Bash(${rule})"`),
-        `${cmd} is allow-listed, so deny must carry Bash(${rule})`);
-    }
   }
 });

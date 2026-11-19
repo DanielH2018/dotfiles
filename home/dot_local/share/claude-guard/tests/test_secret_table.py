@@ -4,18 +4,30 @@ Both files live outside this package, in the chezmoi source tree, so these tests
 deployed copy of the package, where neither file sits beside it.
 """
 
+import json
 import shutil
+from pathlib import Path
 
 import pytest
 
 from claude_guard import secret_table as st
 
 needs_source = pytest.mark.skipif(not st.HOOK.exists(), reason="not in the chezmoi source tree")
+# The Read() denies the settings carried on 2026-11-19. A path leaves this file only by a
+# decision to stop denying it.
+READ_DENIES = Path(__file__).resolve().parents[5] / "tests" / "fixtures" / "secret-read-denies.json"
 
 
 @needs_source
 def test_the_hook_and_settings_blocks_match_the_table():
     assert st.main(["--check"]) == 0
+
+
+@needs_source
+def test_the_generated_settings_still_deny_every_recorded_read_path(template_permissions):
+    recorded = json.loads(READ_DENIES.read_text())
+    assert len(recorded) == 79
+    assert [rule for rule in recorded if rule not in template_permissions["deny"]] == []
 
 
 @needs_source

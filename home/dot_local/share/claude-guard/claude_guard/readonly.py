@@ -40,16 +40,13 @@ from dataclasses import dataclass
 from claude_guard.checks.remote_guards import GUARDS
 from claude_guard.deny import Verdict
 from claude_guard.segment import parse
-from claude_guard.tables import READONLY_BASE, SECRET_PATH_RE, TRUSTED_SSH_HOSTS
+from claude_guard.tables import SECRET_PATH_RE, TIER1, TRUSTED_SSH_HOSTS
 from claude_guard.winpath import is_drive_abs, opaque_component
 
 # Repos under $HOME whose own git config is ours. Their worktrees sit inside them
 # (`.claude/worktrees/`), so a prefix match covers those too. `$HOME` itself is trusted only
 # as an exact match: as a prefix it would admit every clone under it.
 TRUSTED_REPOS: tuple[str, ...] = ("server", ".local/share/chezmoi")
-
-# `cd` and `false` are meaningless over ssh, so the package's remote table leaves them out.
-TIER1: frozenset[str] = READONLY_BASE | frozenset({"cd", "false"})
 
 # A program named by path runs whatever sits at that path, so `/tmp/x/cat` is not `cat`.
 _SYSTEM_BIN_DIRS = frozenset({"/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin"})
@@ -524,6 +521,27 @@ def stages_read_only(command: str, home: str) -> bool:
     if not home:
         return False
     return _classify(command, _Scope(os.path.realpath(home), None, remote=True)) is not None
+
+
+def command_reads_only(segment: str, *, unseen_arguments: bool = False) -> bool:
+    """True when the one command `segment` runs is a read by this module's verb tables,
+    wherever it runs.
+
+    With `unseen_arguments`, the command gets words `segment` does not show, as `xargs`
+    adds them from stdin. No guard can read those, so only a `TIER1` verb passes.
+
+    This is the allow rules' question about a segment, so it reads as a prefix rule does: a
+    redirect is not judged, and the caller decides what the segment may write through one.
+    A redirect's words stay in the argv as operands. Dropping one could hide a flag from a
+    guard, as in `find -name '>' -delete`, where the quoted `>` is an operand to the shell.
+    The directory checks are off, as in `stages_read_only`."""
+    try:
+        argv = shlex.split(segment)
+    except ValueError:
+        return False
+    if unseen_arguments and (not argv or argv[0].rpartition("/")[2] not in TIER1):
+        return False
+    return _argv_readonly(argv, _Scope("", None, remote=True)) is not None
 
 
 def readonly(command: str, cwd: str, env: Mapping[str, str]) -> Verdict | None:

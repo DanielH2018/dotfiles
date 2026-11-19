@@ -85,6 +85,23 @@ around it; `checks/remote_guards.py` holds the per-verb guards (`git`, `sed`, `a
 scope asymmetry the bash documents: allow from `~/.claude/settings.json` alone, deny and ask
 from that file plus the project's `.claude/settings.json` and `settings.local.json`.
 
+`Rules.allows` also grants a segment whose command `readonly.command_reads_only` proves a
+read by the verb tables. The settings therefore carry no allow rule for `ls`, `grep`,
+`find`, `sort` or any other command those tables prove, and
+`tests/test_readonly.py` fails when one is added. A guarded verb is granted only the forms
+its guard proves, so `find -fls out` and `sort -o out` reach the prompt. `xargs` adds
+arguments from stdin that no guard reads, so behind it only a `TIER1` verb is granted
+this way.
+
+`hook.decide` is the judge's entry point for the PermissionRequest hook and the prompt
+tool. Before it reads a rule, it refuses a command that `deny()` or the git conventions
+deny. The PreToolUse hook denies such a command before any prompt, so this gate decides
+only when that hook could not run. The settings carry no deny rule for a command a check
+denies (a forced push, `--no-verify`, `find -exec`, an awk `system()`, the terraform
+verbs that change state), so without the gate the `git push:*` allow rule would approve a
+forced push there. `tests/test_must_pass.py` holds one command for each settings rule a
+check replaced.
+
     claude-guard explain 'git status && timeout 5 ls'      # segments, then the decision and rule
 
 ## The hook, live

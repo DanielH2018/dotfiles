@@ -187,6 +187,10 @@ _REMOTE_ONLY: frozenset[str] = frozenset(
 
 REMOTE_READONLY_VERBS: frozenset[str] = READONLY_BASE | _REMOTE_ONLY
 
+# The local side's verbs that read under any argument. `cd` and `false` are meaningless over
+# ssh, so the remote table leaves them out.
+TIER1: frozenset[str] = READONLY_BASE | frozenset({"cd", "false"})
+
 # allow-readonly-remote.sh:133 (SECRET_RE), matched at :134 with `grep -qiE` — hence
 # re.IGNORECASE here. /proc/<pid>/environ dumps a process's exported env unrestricted;
 # the rest are credential files a read-only verb (cat, grep, ...) could exfiltrate.

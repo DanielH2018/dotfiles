@@ -249,9 +249,10 @@ def test_the_git_merge_exception_does_not_widen(main):
 
 def test_a_substitution_whose_inner_command_is_unlisted_defers(main):
     assert (
-        judge("echo $(whoami) && ls", main, ROOTS, CWD).rule == "substitution:0:segment:0:unlisted"
+        judge("echo $(frobnicate) && ls", main, ROOTS, CWD).rule
+        == "substitution:0:segment:0:unlisted"
     )
-    assert not allowed("echo `whoami` && ls", main)
+    assert not allowed("echo `frobnicate` && ls", main)
     assert not allowed("cat <(curl example.com) && ls", main)
 
 
@@ -282,7 +283,7 @@ def test_a_substitution_is_allowed_when_it_and_its_inert_consumer_both_are(subst
     assert allowed('for f in $(ls); do echo "$(cat $f)"; done', subst)
     assert allowed("h=$(git rev-parse HEAD)", subst)
     assert allowed('printf "%s\\n" "$(git rev-parse HEAD)"', subst)
-    assert not allowed('echo "$(ls; whoami)"', subst)
+    assert not allowed('echo "$(ls; frobnicate)"', subst)
 
 
 def test_a_substitution_cannot_supply_arguments_to_a_command_that_reads_them(subst):
@@ -384,7 +385,7 @@ def test_a_bare_ampersand_is_a_separator_and_defers(main):
 
 
 def test_an_allow_prefix_matches_only_at_a_command_boundary(main):
-    assert not allowed("lsof -i && ls", main)
+    assert not allowed("lsx -i && ls", main)
     assert not allowed("git statusfoo && ls", main)
     assert not allowed("echoes hi && ls", main)
 
@@ -463,9 +464,8 @@ def real(tmp_path, template_permissions):
     drifted from the file."""
     rules = rules_for(tmp_path, template_permissions)
     # Named members, so a template that parses to nothing fails here by name.
-    assert parse_rule("find:*") in rules.allow and parse_rule("git push:*") in rules.allow
+    assert parse_rule("awk:*") in rules.allow and parse_rule("git push:*") in rules.allow
     assert parse_rule("find * -delete") in rules.deny
-    assert parse_rule("git push * -f") in rules.deny
     return rules
 
 
@@ -539,26 +539,8 @@ def test_the_real_template_admits_the_pipe_the_show_substitution_nudge_recommend
     assert allowed(pipe.replace("<rev>", "origin/main").replace("<dir>", "w"), real)
 
 
-@pytest.mark.parametrize(
-    "command",
-    [
-        "git push --force origin feat",
-        "git push -f origin feat",
-        "git push origin feat --force",
-        "git push origin feat -f",
-        "git push origin -f feat",
-        "git push --force-with-lease origin main",
-        "git push --force-with-lease origin master",
-        "git push origin main --force-with-lease",
-    ],
-)
-def test_the_real_template_refuses_each_force_push_form(real, command):
-    assert not allowed(command, real)
-
-
 def test_the_real_template_allows_a_lease_push_to_a_feature_branch(real):
     assert allowed("git push --force-with-lease origin feat", real)
-    # `git push * --force` is anchored at both ends, as Claude Code reads it (#714).
     assert allowed("git push origin feat --force-with-lease", real)
     assert allowed("git push origin feat", real)
 
@@ -619,6 +601,35 @@ def test_the_real_template_leaves_an_rm_below_root_or_home_to_the_rm_rules(real)
     assert allowed("rm -rf /home/testuser/.claude/jobs/x/tmp/nope", real)
     assert not allowed("rm -rf /", real)
     assert not allowed("rm -rf ~", real)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "printf '%s\\n' x | sort -u | uniq -c",
+        "find . -name '*.py' -newer README.md | head -5",
+        "rg -n TODO src > /tmp/todo.txt",
+        "systemctl --user status claude-rc.service",
+        "timeout 5 find . -type f",
+        "git ls-files | xargs wc -l",
+    ],
+)
+def test_a_read_the_verb_tables_prove_needs_no_allow_rule(command):
+    assert allowed(command, Rules((), (), ()))
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "find . -name x -fls /home/testuser/out",
+        "find . -name '>' -delete",
+        "sort -o /home/testuser/out in.txt",
+        # xargs adds arguments from stdin, which no guard reads
+        "cat revs.txt | xargs git log",
+    ],
+)
+def test_a_guarded_verb_is_granted_only_the_forms_its_guard_proves(command):
+    assert not allowed(command, Rules((), (), ()))
 
 
 def test_a_wrapper_is_judged_on_the_command_it_will_actually_run(esc):

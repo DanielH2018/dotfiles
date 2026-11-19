@@ -41,6 +41,10 @@ PermissionRequest judge, which only ever turns a prompt into an approval:
   widen what the judge approves beyond what the guard approved before, and widening is the
   owner's call; they are left unmatched.
 
+`Rules.allows` grants one more class than the allow rules: a command that
+`readonly.command_reads_only` proves a read. The settings hold no rule for such a command,
+because a rule would list the same verbs a second time.
+
 Settings paths are overridable so tests can point at a temp HOME the way the node suites
 do: CLAUDE_GUARD_SETTINGS_HOME beats HOME; CLAUDE_PROJECT_DIR names the project, as the
 bash reads it (:22-26).
@@ -265,8 +269,21 @@ class Rules:
     deny: tuple[Rule, ...]
     ask: tuple[Rule, ...]
 
-    def allows(self, segment: str) -> bool:
-        return granted(segment, self.allow)
+    def allows(self, segment: str, *, unseen_arguments: bool = False) -> bool:
+        """True when a user allow rule grants `segment`, or `readonly.command_reads_only`
+        proves its command a read. The settings carry no allow rule for a command that
+        module proves, so this is where such a command is granted.
+
+        Args:
+            unseen_arguments: the command gets more arguments than `segment` shows, as
+                under `xargs`.
+        """
+        # Imported here: readonly imports deny, which imports this module.
+        from claude_guard.readonly import command_reads_only
+
+        return granted(segment, self.allow) or command_reads_only(
+            segment, unseen_arguments=unseen_arguments
+        )
 
     def denies(self, segment: str) -> bool:
         return covered(segment, self.deny)
