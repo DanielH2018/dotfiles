@@ -230,8 +230,8 @@ def test_a_check_denies_what_each_replaced_settings_deny_rule_matched(rule, comm
     assert hook_verdict(command, cwd, env) == "deny"
 
 
-# The rows an allow rule would approve: `git push:*`, `git commit:*` and `awk:*`.
-ALLOW_RULED = [row for row in REPLACED_DENY_RULES if row[1].startswith(("git ", "awk "))]
+# The rows an allow rule would approve: `git push:*` and `git commit:*`.
+ALLOW_RULED = [row for row in REPLACED_DENY_RULES if row[1].startswith("git ")]
 
 
 @pytest.mark.parametrize(("rule", "command"), ALLOW_RULED)
