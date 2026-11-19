@@ -17,6 +17,7 @@ import pytest
 
 from claude_guard import nudges
 from claude_guard.deny import NONE, Verdict
+from claude_guard.event import parse as parse_event
 from claude_guard.hook import pre_tool_use_json
 from claude_guard.nudges import claim, nudge, tag
 
@@ -119,11 +120,13 @@ def test_the_hook_nudges_once_per_session(tmp_path):
 
     transcript = tmp_path / "t.jsonl"
     transcript.write_text("{}\n")
-    stdin = json.dumps({"tool_input": {"command": "git log"}, "transcript_path": str(transcript)})
-    first = nudge_for("git log", stdin)
+    event = parse_event(
+        json.dumps({"tool_input": {"command": "git log"}, "transcript_path": str(transcript)})
+    )
+    first = nudge_for(event)
     assert first and first.startswith(tag("unbounded-log"))
     # A parallel call's hook runs before the harness writes `first` to the transcript.
-    assert nudge_for("git log", stdin) is None
+    assert nudge_for(event) is None
 
 
 def test_a_denied_call_leaves_the_nudge_for_the_next_one(tmp_path):
@@ -144,18 +147,18 @@ def test_a_subagent_gets_its_own_once_rule(tmp_path):
     from claude_guard.hook import context_transcript, nudge_for
 
     parent = tmp_path / "sess.jsonl"
-    assert nudge_for("git log", json.dumps({"transcript_path": str(parent)}))
-    payload = {"transcript_path": str(parent), "agent_id": "a1"}
+    git_log = {"tool_input": {"command": "git log"}}
+    assert nudge_for(parse_event(json.dumps({**git_log, "transcript_path": str(parent)})))
+    event = parse_event(json.dumps({**git_log, "transcript_path": str(parent), "agent_id": "a1"}))
     own = tmp_path / "sess" / "subagents" / "agent-a1.jsonl"
-    got = context_transcript(payload)
+    got = context_transcript(event)
     if sys.platform == "win32":
         # The harness splices a "/" into the path, which Windows spells with a backslash.
         got = os.path.normpath(got)
     assert got == str(own)
     # The parent had the nudge, the subagent has not: the subagent still gets it, once.
-    stdin = json.dumps({"tool_input": {"command": "git log"}, **payload})
-    assert nudge_for("git log", stdin)
-    assert nudge_for("git log", stdin) is None
+    assert nudge_for(event)
+    assert nudge_for(event) is None
 
 
 @pytest.fixture
@@ -209,7 +212,7 @@ def test_the_hook_resolves_cat_against_the_session_cwd(big_and_small):
     from claude_guard.hook import nudge_for
 
     stdin = json.dumps({"tool_input": {"command": "cat big.j2"}, "cwd": str(big_and_small)})
-    found = nudge_for("cat big.j2", stdin)
+    found = nudge_for(parse_event(stdin))
     assert found and found.startswith(tag("whole-file-cat"))
 
 

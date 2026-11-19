@@ -996,18 +996,17 @@ def problem(
     return None
 
 
-def verdict(payload: dict, command: str, env: Mapping[str, str]) -> tuple[str, str] | None:
+def verdict(agent: str | None, command: str, env: Mapping[str, str]) -> tuple[str, str] | None:
     """The `("deny", reason)` for a read-only agent's write, or None.
 
     Args:
-        payload: the hook JSON; its `agent_type` names the subagent and is absent for the
-          main session.
+        agent: the payload's `agent_type`, which names the subagent; None for the main
+          session.
         command: the Bash command text.
         env: the hook's environment; `HOME` locates `~/.claude/agents/` and the scratch roots.
     """
-    agent = payload.get("agent_type")
     home = env.get("HOME", "")
-    if not isinstance(agent, str) or not agent or not home:
+    if agent is None or not home:
         return None
     if agent not in read_only_agents(Path(home) / ".claude" / "agents"):
         return None

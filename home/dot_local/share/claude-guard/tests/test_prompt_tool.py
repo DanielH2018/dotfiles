@@ -11,6 +11,7 @@ import pytest
 from test_git_reset import _make_repo
 
 from claude_guard import prompt_tool
+from claude_guard.event import parse as parse_event
 from claude_guard.hook import pre_tool_use
 
 
@@ -96,10 +97,10 @@ def test_with_no_record_the_judge_gets_an_empty_cwd_and_refuses(tmp_path, monkey
 
 def test_records_older_than_an_hour_are_pruned_on_write(tmp_path):
     env = env_for(home_with(tmp_path, ASK_RM))
-    prompt_tool.record_context(hook_payload("ls", "/tmp", "toolu_old"), env, now=0)
+    prompt_tool.record_context(parse_event(hook_payload("ls", "/tmp", "toolu_old")), env, now=0)
     old = prompt_tool.context_dir(env) / "toolu_old.json"
     os.utime(old, (0, 0))
-    prompt_tool.record_context(hook_payload("ls", "/tmp", "toolu_new"), env)
+    prompt_tool.record_context(parse_event(hook_payload("ls", "/tmp", "toolu_new")), env)
     assert not old.exists()
     assert (prompt_tool.context_dir(env) / "toolu_new.json").exists()
     assert oct(prompt_tool.context_dir(env).stat().st_mode & 0o777) == "0o700"
@@ -107,20 +108,22 @@ def test_records_older_than_an_hour_are_pruned_on_write(tmp_path):
 
 def test_a_tool_use_id_that_is_not_a_plain_name_is_never_a_path(tmp_path):
     env = env_for(home_with(tmp_path, ASK_RM))
-    prompt_tool.record_context(hook_payload("ls", "/tmp", "../../escape"), env)
+    prompt_tool.record_context(parse_event(hook_payload("ls", "/tmp", "../../escape")), env)
     assert not (Path(env["HOME"]) / ".cache" / "escape.json").exists()
-    assert prompt_tool.take_context("../../escape", env) == ("", {}, "")
+    assert prompt_tool.take_context("../../escape", env) == (None, {}, None)
 
 
 def test_a_subagents_id_is_recorded_and_handed_back_with_its_cwd(tmp_path):
     env = env_for(home_with(tmp_path, ASK_RM))
     payload = json.loads(hook_payload("git rebase origin/main", "/tmp", "toolu_agent"))
-    prompt_tool.record_context(json.dumps({**payload, "agent_id": "a41336082886a72e3"}), env)
-    prompt_tool.record_context(hook_payload("ls", "/tmp", "toolu_main"), env)
+    prompt_tool.record_context(
+        parse_event(json.dumps({**payload, "agent_id": "a41336082886a72e3"})), env
+    )
+    prompt_tool.record_context(parse_event(hook_payload("ls", "/tmp", "toolu_main")), env)
     cwd, _, agent_id = prompt_tool.take_context("toolu_agent", env)
     assert (cwd, agent_id) == ("/tmp", "a41336082886a72e3")
     cwd, _, agent_id = prompt_tool.take_context("toolu_main", env)
-    assert (cwd, agent_id) == ("/tmp", "")
+    assert (cwd, agent_id) == ("/tmp", None)
 
 
 @pytest.mark.skipif(
@@ -139,8 +142,8 @@ def test_the_recorded_agent_id_decides_whether_a_subagent_owns_its_worktree(tmp_
     subprocess.run(["git", "worktree", "lock", "--reason", reason, tree], cwd=work, check=True)
     command = "git checkout -B fix origin/master"
     payload = json.loads(hook_payload(command, tree, "toolu_agent"))
-    prompt_tool.record_context(json.dumps({**payload, "agent_id": agent}), env)
-    prompt_tool.record_context(hook_payload(command, tree, "toolu_main"), env)
+    prompt_tool.record_context(parse_event(json.dumps({**payload, "agent_id": agent})), env)
+    prompt_tool.record_context(parse_event(hook_payload(command, tree, "toolu_main")), env)
     assert prompt_tool.decide(request(command, "toolu_agent"), env)["behavior"] == "allow"
     assert prompt_tool.decide(request(command, "toolu_main"), env)["behavior"] == "deny"
 

@@ -59,7 +59,7 @@ if (have('python3')) {
   hardenedLib = hardenedCopy(scratch(os.tmpdir(), 'tq-hook-lib-'), TQ_LIB_SRC);
 }
 
-function runHook(command, { tool = 'Bash', env = {}, raw = null, cwd } = {}) {
+function runHook(command, { tool = 'Bash', env = {}, raw = null, cwd, hookCwd } = {}) {
   const input = raw !== null ? raw : JSON.stringify({ tool_name: tool, tool_input: { command }, cwd });
   // TQ_OFF must not reach the hook from the ambient environment. `.githooks/pre-push`
   // documents `TQ_OFF=1 git push` as the supported way to get raw runner output, and because
@@ -74,6 +74,7 @@ function runHook(command, { tool = 'Bash', env = {}, raw = null, cwd } = {}) {
   delete base.TQ_OFF;
   const r = spawnSync('bash', [HOOK], {
     input,
+    cwd: hookCwd,
     encoding: 'utf8',
     env: { ...base, ...env },
   });
@@ -284,6 +285,12 @@ test('a runner only a uv project provides is routed through tq uv run', { skip }
     rewritten('pytest -q', { cwd: path.join(project, 'sub'), env: { PATH: withoutPytest() } }),
     'tq uv run pytest -q',
   );
+});
+
+test('a payload with no cwd is not read as the hook process directory', { skip }, () => {
+  const project = scratch(os.tmpdir(), 'tq-hook-uvproj-');
+  fs.writeFileSync(path.join(project, 'uv.lock'), '');
+  assert.strictEqual(rewritten('pytest -q', { hookCwd: project, env: { PATH: withoutPytest() } }), null);
 });
 
 test('a runner PATH cannot find outside a uv project is left alone', { skip }, () => {

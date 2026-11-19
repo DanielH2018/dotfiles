@@ -604,14 +604,14 @@ def route(command: str) -> str | None:
     return None
 
 
-def verdict(payload: dict, command: str) -> tuple[str, str] | None:
+def verdict(permission_mode: str | None, command: str) -> tuple[str, str] | None:
     """The `("ask", reason)` for a hand homelab write in a prompting mode, or None.
 
     Args:
-        payload: the hook JSON; its `permission_mode` names the session's mode.
+        permission_mode: the payload's `permission_mode`, or None when it names none.
         command: the Bash command text.
     """
-    if payload.get("permission_mode") not in PROMPTING_MODES:
+    if permission_mode not in PROMPTING_MODES:
         return None
     reason = route(command)
     return ("ask", reason) if reason else None

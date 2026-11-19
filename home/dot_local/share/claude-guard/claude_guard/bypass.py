@@ -28,6 +28,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from claude_guard.deny import Verdict
+from claude_guard.event import BashInput
 from claude_guard.judge import Decision, _bare_command
 from claude_guard.readonly import stages_read_only
 from claude_guard.segment import parse
@@ -110,7 +111,7 @@ def _needs_network_or_runs_outside(stages: list[list[str]], excluded: set[str]) 
 
 
 def needless_bypass(
-    command: str, cwd: str, env: Mapping[str, str], decide: Callable[..., Decision]
+    command: str, cwd: str | None, env: Mapping[str, str], decide: Callable[..., Decision]
 ) -> bool:
     """True when `command` would run inside the sandbox unchanged (module docstring).
 
@@ -136,20 +137,13 @@ def needless_bypass(
 
 
 def verdict(
-    payload: Mapping, cwd: str, env: Mapping[str, str], decide: Callable[..., Decision]
+    bash: BashInput, cwd: str | None, env: Mapping[str, str], decide: Callable[..., Decision]
 ) -> Verdict | None:
     """A deny for a needless `dangerouslyDisableSandbox`, or None. Never raises."""
     try:
-        tool_input = payload.get("tool_input")
-        if (
-            not isinstance(tool_input, dict)
-            or tool_input.get("dangerouslyDisableSandbox") is not True
-        ):
+        if not bash.disable_sandbox:
             return None
-        command = tool_input.get("command")
-        if not isinstance(command, str):
-            return None
-        if needless_bypass(command, cwd, env, decide):
+        if needless_bypass(bash.command, cwd, env, decide):
             return Verdict("deny", "needless-bypass", REASON)
     except Exception:
         return None

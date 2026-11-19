@@ -23,7 +23,6 @@ from claude_guard.hook import (
     permission_request,
     pre_tool_use,
     pre_tool_use_json,
-    read_cwd,
 )
 
 PKG_DIR = Path(__file__).resolve().parents[1]
@@ -74,30 +73,13 @@ def test_malformed_or_command_less_stdin_is_no_decision(tmp_path):
 
 
 # --- cwd threading (fix round 1, F5) ----------------------------------------------------------
-#
-# `grep -rn "read_cwd" tests/` returned nothing before this: the entire production cwd
-# threading (hook.py's read_cwd, and permission_request passing it into decide()) could be
-# deleted unnoticed. Mutating hook.py's read_cwd to always return "" must turn this red.
-
-
-def test_read_cwd_extracts_the_top_level_cwd():
-    assert read_cwd(json.dumps({"cwd": "/home/testuser/proj", "tool_input": {}})) == (
-        "/home/testuser/proj"
-    )
-
-
-def test_read_cwd_is_empty_on_a_missing_key_a_non_dict_payload_or_unparseable_json():
-    assert read_cwd(json.dumps({"tool_input": {"command": "ls"}})) == ""
-    assert read_cwd(json.dumps([1, 2, 3])) == ""
-    assert read_cwd("{ not json") == ""
 
 
 def test_permission_request_threads_the_sessions_cwd_into_the_decision(tmp_path):
     # A real, clean repo makes `git reset --hard origin/master` allow ONLY when the hook
     # actually read `.cwd` off the stdin payload and passed it through decide()/judge() to
-    # clean_reset_safe -- a `cwd = ""` mutation at hook.py's read_cwd call site would make
-    # this refuse instead (F1 now refuses "" outright, rather than silently probing the
-    # hook process's own cwd the way it used to).
+    # clean_reset_safe -- dropping `event.cwd` at permission_request's decide() call would
+    # make this refuse instead, since clean_reset_safe refuses a missing cwd outright.
     home = home_with(tmp_path)
     work = _make_repo(tmp_path)
     stdin = json.dumps({"tool_input": {"command": "git reset --hard origin/master"}, "cwd": work})
@@ -107,7 +89,7 @@ def test_permission_request_threads_the_sessions_cwd_into_the_decision(tmp_path)
 @pytest.mark.skipif(not os.path.exists("/proc/self/stat"), reason="lock ownership reads /proc")
 def test_permission_request_threads_the_subagents_id_into_the_decision(tmp_path):
     # A subagent's isolation worktree is owned only through the payload's agent_id, so a
-    # mutation that drops it at hook.py's read_agent_id call site must turn this red.
+    # mutation that drops `event.agent_id` at permission_request's call must turn this red.
     home = home_with(tmp_path)
     work = _make_repo(tmp_path)
     tree = os.path.join(work, ".claude", "worktrees", "agent-a41336082886a72e3")

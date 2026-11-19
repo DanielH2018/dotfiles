@@ -74,7 +74,7 @@ def one_simple_command(command: str) -> bool:
     return p.ok and len(p.segments) == 1 and not p.substitutions and not p.segments[0].heredocs
 
 
-def in_isolated_worktree(cwd: str) -> bool:
+def in_isolated_worktree(cwd: str | None) -> bool:
     """Whether `cwd` is inside a Claude Code worktree under `.claude/worktrees/`.
 
     Claude Code refuses a worktree-isolated session's git command when a launcher stands in
@@ -82,12 +82,15 @@ def in_isolated_worktree(cwd: str) -> bool:
     that shape, so there the rewrite would turn a working read into a refused one
     (DanielH2018/server#2454).
     """
-    return f"{os.sep}.claude{os.sep}worktrees{os.sep}" in os.path.join(cwd, "")
+    return cwd is not None and f"{os.sep}.claude{os.sep}worktrees{os.sep}" in os.path.join(cwd, "")
 
 
-def in_uv_project(cwd: str) -> bool:
-    """Whether `cwd` or a directory above it holds a `uv.lock`."""
-    directory = os.path.abspath(cwd or ".")
+def in_uv_project(cwd: str | None) -> bool:
+    """Whether `cwd` or a directory above it holds a `uv.lock`; False with no cwd, since the
+    hook process's own directory says nothing about the session's."""
+    if cwd is None:
+        return False
+    directory = os.path.abspath(cwd)
     while True:
         if os.path.isfile(os.path.join(directory, "uv.lock")):
             return True
@@ -97,7 +100,7 @@ def in_uv_project(cwd: str) -> bool:
         directory = parent
 
 
-def rewrite(command: str, cwd: str, env: Mapping[str, str]) -> str | None:
+def rewrite(command: str, cwd: str | None, env: Mapping[str, str]) -> str | None:
     """The command to run instead, or None to leave this one alone.
 
     TQ_BIN names the tq CLI the rewritten command will run (default ~/.local/bin/tq) and

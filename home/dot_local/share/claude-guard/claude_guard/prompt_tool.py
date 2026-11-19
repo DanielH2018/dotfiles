@@ -18,9 +18,9 @@ The request carries `tool_name`, `input` and `tool_use_id`, but no working direc
 the judge needs one to vet a worktree-relative `rm` or a `git reset`. So the PreToolUse arm,
 which sees the payload's `cwd`, records it per `tool_use_id` (`record_context`), with the
 environment values the judge reads. `decide` reads and deletes that record. With no record it
-judges with cwd "" and the server's own environment, and every cwd-dependent check refuses
-on an empty cwd (`hook.read_cwd`), so a missing record narrows what is allowed and never
-widens it.
+judges with no cwd and the server's own environment, and every cwd-dependent check refuses
+without one (`hook.decide`), so a missing record narrows what is allowed and never widens
+it.
 """
 
 import json
@@ -31,6 +31,8 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import IO
+
+from claude_guard.event import PreToolUseEvent
 
 SERVER_NAME = "claude-guard"
 TOOL_NAME = "decide"
@@ -60,20 +62,18 @@ def context_dir(env: Mapping[str, str]) -> Path:
     )
 
 
-def record_context(stdin_text: str, env: Mapping[str, str], now: float | None = None) -> None:
+def record_context(
+    event: PreToolUseEvent, env: Mapping[str, str], now: float | None = None
+) -> None:
     """Record this Bash call's cwd and judge environment under its `tool_use_id`.
 
     Called from the PreToolUse arm on every Bash call. Never raises: a failure here only
     means a later prompt is judged without a cwd, which refuses more."""
     try:
-        data = json.loads(stdin_text)
-        if not isinstance(data, dict) or data.get("tool_name") != "Bash":
+        tool_use_id, cwd = event.tool_use_id, event.cwd
+        if not event.is_bash or tool_use_id is None or not _TOOL_USE_ID.match(tool_use_id):
             return
-        tool_use_id = data.get("tool_use_id")
-        cwd = data.get("cwd")
-        if not isinstance(tool_use_id, str) or not _TOOL_USE_ID.match(tool_use_id):
-            return
-        if not isinstance(cwd, str):
+        if cwd is None:
             return
         d = context_dir(env)
         d.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -86,9 +86,8 @@ def record_context(stdin_text: str, env: Mapping[str, str], now: float | None = 
             except OSError:
                 pass
         body = {"cwd": cwd, "env": {k: env[k] for k in CONTEXT_ENV if env.get(k)}}
-        agent_id = data.get("agent_id")
-        if isinstance(agent_id, str) and agent_id:
-            body["agent_id"] = agent_id
+        if event.agent_id is not None:
+            body["agent_id"] = event.agent_id
         tmp = d / f".{tool_use_id}.tmp"
         tmp.write_text(json.dumps(body))
         tmp.replace(d / f"{tool_use_id}.json")
@@ -96,26 +95,28 @@ def record_context(stdin_text: str, env: Mapping[str, str], now: float | None = 
         return
 
 
-def take_context(tool_use_id: object, env: Mapping[str, str]) -> tuple[str, dict[str, str], str]:
+def take_context(
+    tool_use_id: object, env: Mapping[str, str]
+) -> tuple[str | None, dict[str, str], str | None]:
     """The recorded (cwd, env values, agent_id) for `tool_use_id`, deleting the record, or
-    ("", {}, ""). agent_id is "" for the main session's calls."""
+    (None, {}, None). agent_id is None for the main session's calls."""
     if not isinstance(tool_use_id, str) or not _TOOL_USE_ID.match(tool_use_id):
-        return "", {}, ""
+        return None, {}, None
     path = context_dir(env) / f"{tool_use_id}.json"
     try:
         body = json.loads(path.read_text())
         path.unlink()
     except OSError, ValueError:
-        return "", {}, ""
+        return None, {}, None
     cwd = body.get("cwd") if isinstance(body, dict) else None
     saved = body.get("env") if isinstance(body, dict) else None
-    if not isinstance(cwd, str) or not isinstance(saved, dict):
-        return "", {}, ""
+    if not isinstance(cwd, str) or not cwd or not isinstance(saved, dict):
+        return None, {}, None
     agent_id = body.get("agent_id")
     return (
         cwd,
         {k: v for k, v in saved.items() if k in CONTEXT_ENV and isinstance(v, str)},
-        agent_id if isinstance(agent_id, str) else "",
+        agent_id if isinstance(agent_id, str) and agent_id else None,
     )
 
 

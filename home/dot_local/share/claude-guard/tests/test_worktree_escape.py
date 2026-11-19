@@ -129,8 +129,7 @@ def test_the_check_is_inert_outside_an_isolated_session(checkouts):
 
 
 def test_the_check_is_inert_on_a_payload_with_no_cwd(checkouts):
-    """`read_cwd` returns "" for a payload without `cwd`, which must read as "not isolated",
-    never as the hook process's own directory."""
+    """An empty cwd must read as "not isolated", never as the hook process's own directory."""
     _, primary = checkouts
     assert worktree_escape.verdict(f"cd {primary} && {HEREDOC}", "") is None
 

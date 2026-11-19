@@ -4,9 +4,12 @@ Each session shape is a fake `ps` table, a pid mapped to (parent pid, command li
 wakeable decision is tested without the machine running the suite deciding it.
 """
 
+import json
+
 import pytest
 
 from claude_guard import waits
+from claude_guard.event import PreToolUseEvent, parse
 
 BRIDGE = (
     "/home/u/.local/share/claude/versions/2.1.289 --print --sdk-url https://x/sessions/s "
@@ -27,8 +30,9 @@ def ps_for(claude_args: str | None):
     return table.get
 
 
-def call(command: str, **tool_input) -> dict:
-    return {"tool_name": "Bash", "tool_input": {"command": command, **tool_input}}
+def call(command: str, top: dict | None = None, **tool_input) -> PreToolUseEvent | None:
+    payload = {"tool_name": "Bash", "tool_input": {"command": command, **tool_input}}
+    return parse(json.dumps({**payload, **(top or {})}))
 
 
 @pytest.mark.parametrize("claude_args", [INTERACTIVE, BRIDGE, DESKTOP])
@@ -49,7 +53,7 @@ def test_a_wait_that_nothing_can_wake_stays_in_the_foreground_under_the_limit(cl
 
 
 def test_a_subagent_s_wait_stays_in_the_foreground_even_in_a_wakeable_session():
-    payload = {**call("cc-wait land 3511"), "agent_id": "a1", "agent_type": "general-purpose"}
+    payload = call("cc-wait land 3511", top={"agent_id": "a1", "agent_type": "general-purpose"})
     updated = waits.rewrite(payload, 300, ps_for(BRIDGE))
     assert "run_in_background" not in updated
     assert updated["timeout"] == waits.FOREGROUND_TIMEOUT_MS

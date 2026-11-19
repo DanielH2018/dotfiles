@@ -41,10 +41,11 @@ already tracks, so it passes.
 import re
 import shlex
 import subprocess
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from pathlib import PurePath
 
 from claude_guard.deny import Verdict
+from claude_guard.event import PreToolUseEvent
 from claude_guard.segment import parse
 
 FOREGROUND_TIMEOUT_MS = 600_000
@@ -169,9 +170,9 @@ def _flag_value(argv: list[str], flag: str) -> str | None:
     return None
 
 
-def wakeable(payload: Mapping, start_pid: int, ps: Ps = _ps) -> bool:
+def wakeable(event: PreToolUseEvent, start_pid: int, ps: Ps = _ps) -> bool:
     """Whether a task notification can reach the session that made this call."""
-    if payload.get("agent_id"):
+    if event.agent_id is not None:
         return False
     argv = claude_argv(start_pid, ps)
     if argv is None:
@@ -181,39 +182,32 @@ def wakeable(payload: Mapping, start_pid: int, ps: Ps = _ps) -> bool:
     return _flag_value(argv, "--input-format") == "stream-json"
 
 
-def rewrite(payload: Mapping, start_pid: int, ps: Ps = _ps) -> dict | None:
+def rewrite(event: PreToolUseEvent, start_pid: int, ps: Ps = _ps) -> dict | None:
     """The `updatedInput` for a Bash call that runs `cc-wait`, or None to leave the call alone.
 
     A call the caller already backgrounded gets the same budget and timeout as one this
     backgrounds: left at the 570s default, it woke the session every 570s (dotfiles #781). A
     foreground call whose own timeout already covers cc-wait's budget is left alone.
     """
-    if payload.get("tool_name") != "Bash":
+    bash = event.bash
+    if not event.is_bash or bash is None:
         return None
-    tool_input = payload.get("tool_input")
-    if not isinstance(tool_input, dict):
-        return None
-    command = tool_input.get("command")
-    if not isinstance(command, str):
-        return None
+    tool_input = event.tool_input
+    command = bash.command
     stages = _stages(command)
     if not any(_is_wait(words) for words in stages):
         return None
-    if tool_input.get("run_in_background") or wakeable(payload, start_pid, ps):
-        timeout = tool_input.get("timeout")
+    if bash.run_in_background or wakeable(event, start_pid, ps):
         updated = {
             **tool_input,
             "run_in_background": True,
-            "timeout": max(timeout if isinstance(timeout, int) else 0, BACKGROUND_TIMEOUT_MS),
+            "timeout": max(bash.timeout or 0, BACKGROUND_TIMEOUT_MS),
         }
         # cc-wait reads --budget wherever it appears, so appending it reaches the last stage.
         if _is_wait(stages[-1]) and "--budget" not in stages[-1]:
             updated["command"] = f"{command.rstrip()} --budget {BACKGROUND_BUDGET_S}"
         return updated if updated != tool_input else None
-    if (
-        isinstance(tool_input.get("timeout"), int)
-        and tool_input["timeout"] >= FOREGROUND_TIMEOUT_MS
-    ):
+    if bash.timeout is not None and bash.timeout >= FOREGROUND_TIMEOUT_MS:
         return None
     return {**tool_input, "timeout": FOREGROUND_TIMEOUT_MS}
 
