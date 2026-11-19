@@ -65,7 +65,9 @@ def evaluate(reply: str, records=(), env=None) -> str | None:
             "last_assistant_message": reply,
             "cwd": tmp,
         }
-        return mod.evaluate(payload, dict(env or ENV))
+        return mod.evaluate(
+            mod.hook_input.parse_event(json.dumps(payload)), dict(env or ENV)
+        )
 
 
 def tagged(reason: str | None, name: str) -> bool:

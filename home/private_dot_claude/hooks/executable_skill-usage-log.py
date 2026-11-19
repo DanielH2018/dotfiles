@@ -127,9 +127,9 @@ def main() -> int:
     event = hook_input.read_event()
     if event is None:
         return 0
-    tool_input = hook_input.tool_input(event)
+    tool_input = event.tool_input
 
-    tool = text(first(event.get("tool_name")))
+    tool = event.tool_name
     if tool == "Skill":
         kind = "skill"
         name = text(first(tool_input.get("skill"), tool_input.get("command")))
@@ -141,15 +141,15 @@ def main() -> int:
     if not name:
         return 0
 
-    session_id = text(first(event.get("session_id"), "unknown"))
-    cwd = text(first(event.get("cwd")))
+    session_id = event.session_id or "unknown"
+    cwd = event.cwd
     # Best-effort: no PostToolUse payload sampled while writing this carried
     # tool_response.is_error (the field is documented for the SDK's own query result
     # and for a Skill/Agent's own success check, not confirmed on the hook payload). If
     # the harness never sets it here, `ok` is just `true` forever -- decoration, not a
     # signal -- rather than wrong, so it is left in rather than guessed at further.
-    response = event.get("tool_response")
-    is_error = response.get("is_error") if isinstance(response, dict) else None
+    response = event.tool_response
+    is_error = response.get("is_error") if response is not None else None
     ok = text(first(is_error, False)) != "true"
 
     record = {
@@ -157,7 +157,7 @@ def main() -> int:
         "kind": kind,
         "name": name,
         "session_id": session_id,
-        "cwd_repo": cwd_repo(cwd) if cwd else "",
+        "cwd_repo": cwd_repo(str(cwd)) if cwd else "",
         "ok": ok,
     }
     log_dir = Path.home() / ".claude" / "logs"

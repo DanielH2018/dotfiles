@@ -180,11 +180,10 @@ def _user_text(record: dict) -> str | None:
 class Turn:
     """The final reply and a lazily read transcript, shared by every check."""
 
-    def __init__(self, payload: dict, env: dict):
-        self.payload = payload
+    def __init__(self, event: hook_input.HookEvent, env: dict):
+        self.event = event
         self.env = env
-        path = payload.get("transcript_path")
-        self.transcript = Path(path).expanduser() if isinstance(path, str) else None
+        self.transcript = event.transcript_path
         self._turn_feedback = None
         self._turn_tools = None
         self._reply = None
@@ -243,7 +242,7 @@ class Turn:
     def reply(self) -> str:
         """The final assistant message: the payload's field, else the transcript's."""
         if self._reply is None:
-            given = self.payload.get("last_assistant_message")
+            given = self.event.raw.get("last_assistant_message")
             if isinstance(given, str) and given.strip():
                 self._reply = given
             else:
@@ -408,8 +407,8 @@ def _vault_dir(env: dict) -> str:
 
 
 def git_state(turn: Turn) -> str | None:
-    cwd = turn.payload.get("cwd")
-    if not isinstance(cwd, str) or not os.path.isdir(cwd):
+    cwd = str(turn.event.cwd) if turn.event.cwd else ""
+    if not os.path.isdir(cwd):
         cwd = os.getcwd()
     if _git(cwd, "rev-parse", "--is-inside-work-tree") != "true":
         return None
@@ -797,9 +796,9 @@ CHECKS = [
 ]
 
 
-def evaluate(payload: dict, env: dict) -> str | None:
+def evaluate(event: hook_input.HookEvent, env: dict) -> str | None:
     """The block reason for this Stop, or None to let it stand."""
-    turn = Turn(payload, env)
+    turn = Turn(event, env)
     reasons = []
     for name, scope, check in CHECKS:
         tag = TAG.format(name)
@@ -824,10 +823,10 @@ def evaluate(payload: dict, env: dict) -> str | None:
 def main() -> int:
     if os.environ.get("CLAUDE_STOP_CHECKS") == "0":
         return 0
-    payload = hook_input.read_event()
-    if payload is None:
+    event = hook_input.read_event()
+    if event is None:
         return 0
-    reason = evaluate(payload, dict(os.environ))
+    reason = evaluate(event, dict(os.environ))
     if reason:
         json.dump({"decision": "block", "reason": reason}, sys.stdout)
         sys.stdout.write("\n")

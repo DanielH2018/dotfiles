@@ -669,18 +669,18 @@ def session_dirs(stdin_wait: float = 0.5) -> list[Path]:
         inherited pipe that never closes must not hang the sweep.
     """
     dirs = [Path.cwd()]
-    payload = None
+    event = None
     try:
         if not sys.stdin.isatty():
             text = _read_stdin(stdin_wait)
             if text is not None:
-                payload = hook_input.parse_event(text)
+                event = hook_input.parse_event(text)
     except (OSError, ValueError):
-        payload = None
-    input_cwd = payload.get("cwd") if payload is not None else None
-    if isinstance(input_cwd, str) and input_cwd:
-        dirs.append(Path(input_cwd))
-        if Path(input_cwd).resolve() != dirs[0].resolve():
+        event = None
+    input_cwd = event.cwd if event is not None else None
+    if input_cwd is not None:
+        dirs.append(input_cwd)
+        if input_cwd.resolve() != dirs[0].resolve():
             # The measurement the docstring rests on, kept so a change in where the
             # app runs hooks shows up in the log rather than as a lost worktree.
             log(f"event=prune_session_dir hook_cwd={dirs[0]} input_cwd={input_cwd}")

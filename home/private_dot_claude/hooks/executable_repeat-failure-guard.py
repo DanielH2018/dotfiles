@@ -111,20 +111,23 @@ def message(tool_name: str, count: int) -> str:
 
 
 def main() -> int:
-    payload = hook_input.read_event()
-    if payload is None or payload.get("is_interrupt"):
+    event = hook_input.read_event()
+    if event is None or event.raw.get("is_interrupt"):
         return 0
-    tool_name = str(payload.get("tool_name") or "")
-    session = str(payload.get("session_id") or "")
+    tool_name, session = event.tool_name, event.session_id
     # A session id names the state file, so anything but a plain token is refused
     # rather than allowed to aim the write elsewhere.
-    if not tool_name or not re.fullmatch(r"[A-Za-z0-9_-]+", session):
+    if (
+        tool_name is None
+        or session is None
+        or not re.fullmatch(r"[A-Za-z0-9_-]+", session)
+    ):
         return 0
-    key = call_key(tool_name, payload.get("tool_input"))
+    key = call_key(tool_name, event.tool_input)
     directory = state_dir()
     path = directory / f"{session}.json"
     try:
-        count = record(path, str(payload.get("prompt_id") or ""), key)
+        count = record(path, str(event.raw.get("prompt_id") or ""), key)
         prune(directory, path)
     except OSError:
         return 0
