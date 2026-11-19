@@ -180,6 +180,23 @@ def test_explain_names_the_refusing_segment(tmp_path):
     assert r.stdout.splitlines()[-1] == "decision: defer rule=segment:1:unlisted"
 
 
+def test_explain_and_replay_report_the_deny_rules_refusal_an_allow_rule_would_approve(tmp_path):
+    home = home_with_allow(tmp_path, "Bash(git push:*)")
+    command = "git push --force origin feat"
+    r = run_home(home, "explain", command)
+    assert r.stdout.splitlines()[-1] == "decision: defer rule=deny-rule:force-push-flag"
+
+    corpus = tmp_path / "c.jsonl"
+    corpus.write_text(
+        json.dumps({"command": command, "cwd": "/tmp"})
+        + "\n"
+        + json.dumps({"command": "git push origin feat", "cwd": "/tmp"})
+        + "\n"
+    )
+    r = run_home(home, "replay", str(corpus), "--judge")
+    assert r.stdout.splitlines() == ["ALLOW: git push origin feat", "ALLOW 1/2"]
+
+
 def test_explain_cwd_flag_threads_into_the_git_reset_check(tmp_path):
     # Fix round 1, F8: `grep -rn -- "--cwd" tests/` returned nothing before this. `--cwd`
     # is the only way a subprocess-driven `explain` call can exercise a cwd-sensitive

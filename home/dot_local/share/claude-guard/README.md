@@ -93,8 +93,9 @@ its guard proves, so `find -fls out` and `sort -o out` reach the prompt. `xargs`
 arguments from stdin that no guard reads, so behind it only a `TIER1` verb is granted
 this way.
 
-`hook.decide` is the judge's entry point for the PermissionRequest hook and the prompt
-tool. Before it reads a rule, it refuses a command that `deny()` or the git conventions
+`hook.decide` is the judge's entry point for the PermissionRequest hook, the prompt
+tool, `explain` and `replay --judge`, so the two diagnostics print the verdict a session
+gets. Before it reads a rule, it refuses a command that `deny()` or the git conventions
 deny. The PreToolUse hook denies such a command before any prompt, so this gate decides
 only when that hook could not run. The settings carry no deny rule for a command a check
 denies (a forced push, `--no-verify`, `find -exec`, an awk `system()`, the terraform

@@ -35,15 +35,13 @@ from claude_guard.hook import (
     ASK_JSON,
     combine_conventions,
     conventions,
+    decide,
     permission_request,
     post_tool_use,
     pre_tool_use,
     read_nudge_json,
 )
-from claude_guard.judge import judge
-from claude_guard.rules import load_rules
 from claude_guard.segment import Parsed, parse
-from claude_guard.tables import scratch_roots
 
 
 def to_json_shape(p: Parsed) -> dict:
@@ -67,11 +65,8 @@ def cmd_segment(args: argparse.Namespace) -> int:
 def cmd_explain(args: argparse.Namespace) -> int:
     p = parse(args.command)
     print(f"status: {p.status}")
-    rules = load_rules()
-    roots = scratch_roots(os.environ.get("HOME", ""), os.environ.get("TMPDIR"))
     cwd = args.cwd if args.cwd is not None else os.getcwd()
-    project_dir = os.environ.get("CLAUDE_PROJECT_DIR", "")
-    d = judge(args.command, rules, roots, cwd, project_dir, os.environ.get("CLAUDE_JOB_DIR", ""))
+    d = decide(args.command, cwd, os.environ)
     reasons = iter(d.reasons)
     for i, seg in enumerate(p.segments):
         text = seg.text.strip()
@@ -112,8 +107,6 @@ def _replay_judge(records: list[dict]) -> int:
     compared against was already deleted from disk in slice 3, so `--compare-hooks` was
     computing an AGREE tally against hooks that could not run. The ALLOW tally alone is
     still the load-bearing gate; see claude_guard.hook's module docstring."""
-    home = os.environ.get("HOME", "")
-    roots = scratch_roots(home, os.environ.get("TMPDIR"))
     allowed = 0
     for i, rec in enumerate(records):
         # Fix round 1, F1: the corpus's own record shape is {command, cwd} (module
@@ -134,7 +127,8 @@ def _replay_judge(records: list[dict]) -> int:
             print(f"MALFORMED RECORD {i}: missing key {exc.args[0]!r}", file=sys.stderr)
             print(f"ALLOW {allowed}/{len(records)}")
             return 1
-        d = judge(command, load_rules(home=home, project_dir=cwd), roots, cwd, cwd)
+        # The record's cwd stands in for the session's project, and no job directory is known.
+        d = decide(command, cwd, {**os.environ, "CLAUDE_PROJECT_DIR": cwd, "CLAUDE_JOB_DIR": ""})
         if d.allow:
             allowed += 1
             print(f"ALLOW: {_head(command)}")
