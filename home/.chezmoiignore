@@ -316,6 +316,9 @@ claude-otel/ensure-up.sh
 # those are wrong on one specific machine's absence of hardware, this is wrong on a class of
 # machine. A second personal box should get these without being added to a list.
 #
+# The homelab launch configuration is gated for the same reason. Only the Windows branch lists
+# it, because the layout it records belongs to this PC and no other OS tree carries one.
+#
 # The list is spelled twice because Warp's data directory differs by OS, and only the spelling
 # this machine actually deploys gates anything. A gate written in the other spelling matches no
 # target, which chezmoi reports as no error at all — so a work laptop would get the personal
@@ -325,6 +328,7 @@ claude-otel/ensure-up.sh
 AppData/Roaming/warp/Warp/data/tab_configs/daniel-box.toml
 AppData/Roaming/warp/Warp/data/tab_configs/daniel-server.toml
 AppData/Roaming/warp/Warp/data/tab_configs/local-server.toml
+AppData/Roaming/warp/Warp/data/launch_configurations/homelab.yaml
 {{- else }}
 .local/share/warp-terminal/tab_configs/daniel-box.toml
 .local/share/warp-terminal/tab_configs/daniel-server.toml

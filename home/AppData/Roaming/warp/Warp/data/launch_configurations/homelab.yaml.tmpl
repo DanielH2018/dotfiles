@@ -1,0 +1,68 @@
+# Warp Launch Configuration: the tab groups this PC opens, with their names, colors and
+# collapsed state. Open it from the Command Palette ("Launch Configuration") or by
+# right-clicking the `+` button.
+#
+# Why a launch configuration and not a tab config: a tab config describes one tab, and Warp
+# gives it no field for a group. `tab_groups` exists only in this legacy format, which Warp
+# still reads (docs.warp.dev/terminal/sessions/launch-configurations).
+#
+# Session restoration (`restore_session = true` in settings.toml) already reopens these
+# groups at every launch. Warp overwrites that state each time it quits, though, so a
+# closed group stays closed. This file is the copy that survives that.
+#
+# The layout mirrors the `tab_groups` and `tabs` rows in warp.sqlite on 2026-11-19.
+#
+# Warp hides a launch configuration whose `cwd` is `~` or empty, so every `cwd` is templated
+# to an absolute path. Each `group` is the zero-based index of its entry in `tab_groups`.
+#
+# The ssh commands are bare `ssh <alias>` for the reason daniel-box.toml documents: a remote
+# command costs the Warp bootstrap on the far side.
+#
+# Warp rewrites this file when you save a launch configuration under the same name from the
+# UI. To keep a change made that way, copy the deployed file back here and restore the
+# `{{ "{{" }} .chezmoi.homeDir }}` templating.
+---
+name: homelab
+windows:
+  - tabs:
+      - title: daniel-box
+        layout:
+          cwd: {{ .chezmoi.homeDir }}
+          commands:
+            - exec: ssh daniel-box
+        group: 0
+      - title: daniel-box
+        layout:
+          cwd: {{ .chezmoi.homeDir }}
+          commands:
+            - exec: ssh daniel-box
+        group: 0
+      - title: daniel-server
+        layout:
+          cwd: {{ .chezmoi.homeDir }}
+          commands:
+            - exec: ssh daniel-server
+        group: 1
+      - title: daniel-pi
+        layout:
+          cwd: {{ .chezmoi.homeDir }}
+          commands:
+            - exec: ssh daniel-pi
+        group: 2
+      - title: Windows
+        layout:
+          cwd: {{ .chezmoi.homeDir }}
+        group: 3
+    tab_groups:
+      - name: daniel-box
+        color: red
+        collapsed: false
+      - name: daniel-server
+        color: green
+        collapsed: true
+      - name: daniel-pi
+        color: yellow
+        collapsed: true
+      - name: Windows
+        color: blue
+        collapsed: true
