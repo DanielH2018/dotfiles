@@ -2,9 +2,8 @@
 
 `parse()` reads the hook's stdin JSON into a `PreToolUseEvent`, and every check takes that
 event or one of its fields. A field that is absent, empty or of the wrong type becomes None
-here, so no check re-tests the payload's shape. That matters most for `cwd`: an empty
-string handed on as a directory makes `git -C ""` probe the hook process's own directory,
-and None cannot be passed as one by accident.
+here, so no check re-tests the payload's shape. `cwd` is None when the payload names no
+usable directory; each caller decides what that means, rather than reading "" as one.
 
 Typical usage example:
 
@@ -77,7 +76,11 @@ def _text(data: Mapping, key: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _bash(tool_input: Mapping) -> BashInput | None:
+def bash_input(tool_input: object) -> BashInput | None:
+    """The command input in a tool input, or None when it is not an object with a string
+    `command`."""
+    if not isinstance(tool_input, Mapping):
+        return None
     command = tool_input.get("command")
     if not isinstance(command, str):
         return None
@@ -106,7 +109,7 @@ def parse(stdin_text: str) -> PreToolUseEvent | None:
     return PreToolUseEvent(
         tool_name=_text(data, "tool_name"),
         tool_input=tool_input,
-        bash=_bash(tool_input),
+        bash=bash_input(tool_input),
         cwd=_text(data, "cwd"),
         agent_id=_text(data, "agent_id"),
         agent_type=_text(data, "agent_type"),

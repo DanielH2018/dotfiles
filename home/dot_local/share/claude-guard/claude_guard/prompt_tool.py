@@ -32,7 +32,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import IO
 
-from claude_guard.event import PreToolUseEvent
+from claude_guard.event import PreToolUseEvent, bash_input
 
 SERVER_NAME = "claude-guard"
 TOOL_NAME = "decide"
@@ -132,16 +132,13 @@ def decide(arguments: object, env: Mapping[str, str]) -> dict:
     try:
         if not isinstance(arguments, dict) or arguments.get("tool_name") != "Bash":
             return deny
-        tool_input = arguments.get("input")
-        if not isinstance(tool_input, dict):
-            return deny
-        command = tool_input.get("command")
-        if not isinstance(command, str) or not command.strip():
+        bash = bash_input(arguments.get("input"))
+        if bash is None or not bash.command.strip():
             return deny
         cwd, saved, agent_id = take_context(arguments.get("tool_use_id"), env)
-        decision = hook.decide(command, cwd, {**env, **saved}, agent_id)
+        decision = hook.decide(bash.command, cwd, {**env, **saved}, agent_id)
         if decision.allow:
-            return {"behavior": "allow", "updatedInput": tool_input}
+            return {"behavior": "allow", "updatedInput": arguments["input"]}
         return deny
     except Exception:
         return deny
