@@ -503,20 +503,20 @@ _XXD_VALUED = frozenset(
 
 
 def _xxd(argv: list[str], scope: _Scope) -> str | None:
-    """`xxd [opts] [infile]`: a second file operand is an output file, in every mode."""
-    files, i, n = 0, 1, len(argv)
+    """`xxd [opts] [infile]`: a second file operand is an output file, in every mode.
+
+    xxd reads options only up to its first operand, so every word after that one is a file,
+    a word starting with `-` included."""
+    i, n = 1, len(argv)
     while i < n:
         a = argv[i]
         if a == "--":
-            files += n - i - 1
+            i += 1
             break
-        if a in _XXD_VALUED:
-            i += 2
-            continue
         if a == "-" or not a.startswith("-"):
-            files += 1
-        i += 1
-    return "xxd" if files <= 1 else None
+            break
+        i += 2 if a in _XXD_VALUED else 1
+    return "xxd" if n - i <= 1 else None
 
 
 def _command(argv: list[str], scope: _Scope) -> str | None:

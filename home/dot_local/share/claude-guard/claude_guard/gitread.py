@@ -193,17 +193,18 @@ _tag_list = _Lister(
 
 
 def _remote(args: Sequence[str]) -> bool:
-    # Bare or `-v` lists. `show` without `-n` asks each remote for its refs, as ls-remote
-    # does, so a `<transport>::<address>` name refuses as it does there.
+    # Bare or `-v` lists. `show NAME` without `-n` opens a transport to the remote, as
+    # ls-remote does.
     i = 0
     while i < len(args) and args[i] in ("-v", "--verbose"):
         i += 1
     if i == len(args):
         return True
-    reads = {"get-url": {"--push", "--all"}, "show": {"-n"}}.get(args[i])
-    if reads is None:
-        return False
-    return all(a in reads or (not a.startswith("-") and "::" not in a) for a in args[i + 1 :])
+    sub, rest = args[i], args[i + 1 :]
+    names = [a for a in rest if not a.startswith("-")]
+    if sub == "show":
+        return set(rest) - set(names) <= {"-n"} and ("-n" in rest or not names)
+    return sub == "get-url" and set(rest) - set(names) <= {"--push", "--all"}
 
 
 def _stash(args: Sequence[str]) -> bool:
