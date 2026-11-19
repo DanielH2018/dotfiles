@@ -333,6 +333,22 @@ def test_verbs_that_print_environment_values_are_refused(home):
         assert ro(command, home) is None, command
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "diff -u a b",
+        "diff -rq dir1 dir2",
+        "cmp -l a b",
+        "test -f x",
+        "[ -d x ]",
+        "shasum -a 256 -c sums",
+        "md5 -q f",
+    ],
+)
+def test_comparison_and_checksum_verbs_read_under_any_argument(command, home):
+    assert ro(command, home)
+
+
 # --- decision 3: the gaps both copies shared ---------------------------------------------------
 
 

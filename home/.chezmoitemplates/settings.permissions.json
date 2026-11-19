@@ -39,8 +39,6 @@
            comparison with `>`, and `sed -i` is an edit sessions make.
            claude-guard's tests/test_readonly.py fails on a rule here that the module
            proves. */}}
-      "Bash(test:*)",
-      "Bash([:*)",
       "Bash(command -v:*)",
       "Bash(command -V:*)",
       "Bash(bash --version)",
@@ -55,8 +53,6 @@
       "Bash(pbpaste)",
       "Bash(base64:*)",
       "Bash(xxd:*)",
-      "Bash(shasum:*)",
-      "Bash(md5:*)",
       {{/* `Bash(timeout:*)` was here to stop timeout-wrapped commands prompting (73892e2).
            It cannot stay: timeout's next token IS an arbitrary command, so the prefix rule
            auto-approved `timeout 5 bash -c '<anything>'` — the same hole as the `env`
@@ -69,8 +65,6 @@
       "Bash(man:*)",
       "Bash(less:*)",
       "Bash(more:*)",
-      "Bash(diff:*)",
-      "Bash(cmp:*)",
       "Bash(awk:*)",
       "Bash(sed:*)",
       {{/* jsonq exists so JSON parsing is available without a permission prompt, and the blanket allow is the whole point of it. The grant was withdrawn 2026-07-29 (A7-01) because the tool validated an AST allowlist and then called eval on the original source — the checked language and the executed language were never the same thing, so exposed stdlib modules reached sys and builtins through ordinary non-underscore attribute chains. It is restored here because the thing it guarded no longer exists.
@@ -704,6 +698,10 @@
       "Bash(sudo:*)",
       {{ end -}}
       "Bash(su:*)",
+      {{/* DECIDED: `chown` and `chmod 777` stay, and no claude_guard check denies them.
+           Claude Code's own matcher reads these rules when it kills the PreToolUse hook at its
+           timeout, the reason the force-push and --no-verify rules stay below (dotfiles #1416,
+           operator ruling 2026-11-19). */}}
       "Bash(chown:*)",
       "Bash(chmod 777:*)",
       "Bash(mkfs:*)",
@@ -723,6 +721,10 @@
            also refused `git config --global --get …`, and a background session cannot answer
            the prompt for it (dotfiles #965). claude_guard's machine-config-write (deny.py)
            denies every --global or --system form that is not a read. */}}
+      {{/* DECIDED: `git config user.*` stays, and no claude_guard check denies it.
+           Claude Code's own matcher reads these rules when it kills the PreToolUse hook at its
+           timeout, the reason the force-push and --no-verify rules stay below (dotfiles #1416,
+           operator ruling 2026-11-19). */}}
       "Bash(git config user.*)",
       {{/* No rule here for a command a claude_guard check denies from PreToolUse, with one
            exception below. A rule would be a second, narrower list of the same spellings,
@@ -833,9 +835,14 @@
       "Bash(* | zsh|*)",
       "Bash(* | zsh)*)",
       "Bash(* | zsh\n*)",
-      {{/* A `find` that deletes its matches or writes a file. No claude_guard check denies
-           these, so the rules stay. claude_guard.readonly's find guard refuses them, so the
-           judge approves none, and the rules make Claude Code deny them outright.
+      {{/* A `find` that deletes its matches or writes a file. claude_guard.readonly's find
+           guard refuses them, so the judge approves none, and the rules make Claude Code
+           deny them outright.
+
+           DECIDED: these stay, and no claude_guard check denies them. Claude Code's own
+           matcher reads these rules when it kills the PreToolUse hook at its timeout, the
+           reason the force-push and --no-verify rules above stay (dotfiles #1416, operator
+           ruling 2026-11-19).
 
            -delete is anchored on the space before the flag, because the unanchored
            `*-delete*` also matched `-name '*-delete*'`. A flag placed directly after `find`

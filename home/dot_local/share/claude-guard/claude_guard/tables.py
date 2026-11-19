@@ -188,8 +188,13 @@ _REMOTE_ONLY: frozenset[str] = frozenset(
 REMOTE_READONLY_VERBS: frozenset[str] = READONLY_BASE | _REMOTE_ONLY
 
 # The local side's verbs that read under any argument. `cd` and `false` are meaningless over
-# ssh, so the remote table leaves them out.
-TIER1: frozenset[str] = READONLY_BASE | frozenset({"cd", "false"})
+# ssh, so the remote table leaves them out. The comparison and checksum verbs after them have
+# no option that writes a file or runs a command in their GNU or BSD builds (`diff -l` pipes
+# through the fixed `pr`); they are local-only because no operator ruling widened the remote
+# table.
+TIER1: frozenset[str] = READONLY_BASE | frozenset(
+    {"cd", "false", "diff", "cmp", "test", "[", "shasum", "md5"}
+)
 
 # allow-readonly-remote.sh:133 (SECRET_RE), matched at :134 with `grep -qiE` — hence
 # re.IGNORECASE here. /proc/<pid>/environ dumps a process's exported env unrestricted;
