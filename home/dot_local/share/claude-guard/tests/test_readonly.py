@@ -7,11 +7,13 @@ runs with a temp HOME holding a `server/` repo, so no verdict depends on this ho
 """
 
 import json
+import shlex
 from pathlib import Path
 
 import pytest
 
 from claude_guard import hook, readonly
+from claude_guard.gitread import git_read
 from claude_guard.hook import pre_tool_use
 from claude_guard.readonly import classify, command_reads_only
 from claude_guard.rules import bash_rule_content, parse_rule
@@ -347,6 +349,109 @@ def test_verbs_that_print_environment_values_are_refused(home):
 )
 def test_comparison_and_checksum_verbs_read_under_any_argument(command, home):
     assert ro(command, home)
+
+
+# Each reader that writes or runs a command under a few arguments, and each REJECT row is one
+# of those arguments.
+GUARDED_APPROVE = [
+    "fd -e py src",
+    "fd -H -t f name",
+    "fd -l pattern",
+    "base64 -d blob.txt",
+    "base64 -w0 file",
+    "xxd file",
+    "xxd -l 64 -c 16 file",
+    "xxd -r dump.hex",
+    "command -v rg",
+    "command -V ls",
+    "bash --version",
+    "/bin/bash --version",
+    "node --version",
+    "python3 --version",
+    "java -version",
+    "fzf --version",
+    "git branch",
+    "git branch -vv",
+    "git branch -a --list 'feat/*'",
+    "git branch --show-current",
+    "git branch --merged main",
+    "git branch --contains HEAD",
+    "git branch --sort=-committerdate --format='%(refname:short)'",
+    "git tag",
+    "git tag -l 'v*'",
+    "git tag -n3 v1",
+    "git tag --points-at HEAD",
+    "git remote",
+    "git remote -v",
+    "git remote get-url --push origin",
+    "git remote show -n origin",
+    "git stash list",
+    "git stash show -p stash@{0}",
+]
+
+GUARDED_REJECT = [
+    "fd -x rm",
+    "fd -X rm",
+    "fd -Hx rm",
+    "fd --exec rm {}",
+    "fd --exec-batch rm",
+    "fd --exe rm",
+    "base64 -o out file",
+    "base64 -Do out file",
+    "base64 --output=out file",
+    "base64 --out out file",
+    "xxd in out",
+    "xxd -r dump.hex out",
+    "xxd -l 64 in out",
+    "xxd - out",
+    "xxd -- in out",
+    "command rm x",
+    "command -p rm x",
+    "node --version --require ./x.js",
+    "python3 script.py --version",
+    "git branch new-feature",
+    "git branch -v new-feature",
+    "git branch --sort=refname new-feature",
+    "git branch -D old",
+    "git branch -m old new",
+    "git branch -f main HEAD~1",
+    "git branch --set-upstream-to=origin/x",
+    "git tag v1",
+    "git tag -i v1",
+    "git tag -d v1",
+    "git tag -a v1 -m x",
+    "git tag -v v1",
+    "git remote add x https://example.com/x.git",
+    "git remote -v add x https://example.com/x.git",
+    "git remote set-url origin https://example.com/x.git",
+    "git remote remove origin",
+    "git remote prune origin",
+    "git remote show 'ext::sh -c id'",
+    "git stash",
+    "git stash pop",
+    "git stash drop",
+    "git stash list --output=/tmp/x",
+    "git stash show --outp=/tmp/x",
+    "git -c core.pager=sh branch",
+]
+
+
+@pytest.mark.parametrize("command", GUARDED_APPROVE)
+def test_a_guarded_reader_is_approved_in_its_read_form(command, home):
+    assert ro(command, home), command
+
+
+@pytest.mark.parametrize("command", GUARDED_REJECT)
+def test_a_guarded_reader_is_refused_in_a_writing_form(command, home):
+    assert ro(command, home) is None, command
+
+
+@pytest.mark.parametrize(
+    "command", ["git config --get user.name", "git ls-remote origin", "git merge-base a b"]
+)
+def test_a_gitread_form_outside_the_listing_ones_stays_with_the_judge(command, home):
+    assert git_read(shlex.split(command))
+    assert ro(command, home) is None
 
 
 # --- decision 3: the gaps both copies shared ---------------------------------------------------

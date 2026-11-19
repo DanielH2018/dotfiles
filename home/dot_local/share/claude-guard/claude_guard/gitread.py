@@ -12,7 +12,9 @@ program with others, so each carries the arguments it admits. Global options are
 program are admitted: `-c`, `--config-env` and `--exec-path` refuse.
 """
 
-from collections.abc import Callable, Sequence
+import re
+from collections.abc import Callable, Collection, Sequence
+from dataclasses import dataclass
 
 from claude_guard.gitargv import invocation
 
@@ -109,6 +111,107 @@ def config_read(args: Sequence[str]) -> bool:
     return bool(modes)
 
 
+# `git branch NAME` and `git tag NAME` create a ref, and a name after any other listing
+# option creates one too. A name is a pattern only once an option below puts the command in
+# list mode (measured on git 2.43). Options are matched exactly, so an abbreviation refuses.
+_LIST_MODE = frozenset(
+    {"-l", "--list", "--contains", "--no-contains", "--merged", "--no-merged", "--points-at"}
+)
+_LIST_SHARED = _LIST_MODE | {
+    "-i",
+    "--ignore-case",
+    "--omit-empty",
+    "--color",
+    "--no-color",
+    "--column",
+    "--no-column",
+}
+_LIST_VALUED = (
+    "--sort=",
+    "--format=",
+    "--color=",
+    "--column=",
+    "--contains=",
+    "--no-contains=",
+    "--merged=",
+    "--no-merged=",
+    "--points-at=",
+)
+
+
+@dataclass(frozen=True)
+class _Lister:
+    """The listing form of `git branch` or `git tag`.
+
+    Attributes:
+        flags: options that only list, matched exactly.
+        valued: `--opt=` prefixes of the listing options that take a value.
+        short: a short option or cluster that only lists.
+        list_mode: the options, besides `_LIST_MODE`, that turn a name into a pattern.
+        list_letters: the short letters that do the same.
+    """
+
+    flags: frozenset[str]
+    valued: tuple[str, ...]
+    short: re.Pattern[str]
+    list_mode: frozenset[str]
+    list_letters: str
+
+    def __call__(self, args: Sequence[str]) -> bool:
+        listing = named = False
+        for a in args:
+            if not a.startswith("-") or a == "-":
+                named = True
+            elif a in self.flags or a.startswith(self.valued):
+                listing |= a.split("=", 1)[0] in _LIST_MODE | self.list_mode
+            elif self.short.fullmatch(a):
+                listing |= any(c in self.list_letters for c in a)
+            else:
+                return False
+        return listing or not named
+
+
+# `-a` and `-r` refuse a name outright, and `--show-current` ignores one.
+_branch_list = _Lister(
+    flags=_LIST_SHARED
+    | {"-a", "--all", "-r", "--remotes", "-v", "-vv", "--verbose", "-q", "--quiet"}
+    | {"--show-current", "--no-abbrev"},
+    valued=(*_LIST_VALUED, "--abbrev="),
+    short=re.compile(r"-[arvliq]+"),
+    list_mode=frozenset({"--show-current"}),
+    list_letters="l",
+)
+# `-v`/`--verify` runs `gpg.program`, and every option that annotates, signs, forces or
+# deletes writes, so none of them is listed. `-n<num>` takes its count stuck to it.
+_tag_list = _Lister(
+    flags=_LIST_SHARED,
+    valued=_LIST_VALUED,
+    short=re.compile(r"-[li]*(?:n[0-9]*)?"),
+    list_mode=frozenset(),
+    list_letters="ln",
+)
+
+
+def _remote(args: Sequence[str]) -> bool:
+    # Bare or `-v` lists. `show` without `-n` asks each remote for its refs, as ls-remote
+    # does, so a `<transport>::<address>` name refuses as it does there.
+    i = 0
+    while i < len(args) and args[i] in ("-v", "--verbose"):
+        i += 1
+    if i == len(args):
+        return True
+    reads = {"get-url": {"--push", "--all"}, "show": {"-n"}}.get(args[i])
+    if reads is None:
+        return False
+    return all(a in reads or (not a.startswith("-") and "::" not in a) for a in args[i + 1 :])
+
+
+def _stash(args: Sequence[str]) -> bool:
+    # Bare `git stash` pushes. list takes log options and show diff options, so each can
+    # write through `--output`.
+    return bool(args) and args[0] in ("list", "show") and _no_output(args[1:])
+
+
 # merge-base has no option that writes or runs a program.
 READ_SUBCOMMANDS: dict[str, Callable[[Sequence[str]], bool]] = {
     "range-diff": _no_output,
@@ -116,15 +219,27 @@ READ_SUBCOMMANDS: dict[str, Callable[[Sequence[str]], bool]] = {
     "ls-remote": _ls_remote,
     "merge-base": lambda _args: True,
     "config": config_read,
+    "branch": _branch_list,
+    "tag": _tag_list,
+    "remote": _remote,
+    "stash": _stash,
 }
 
 
-def git_read(argv: Sequence[str]) -> bool:
-    """True when `argv` is a bare `git` running one of `READ_SUBCOMMANDS` in its read form."""
+def git_read(argv: Sequence[str], subcommands: Collection[str] = READ_SUBCOMMANDS) -> bool:
+    """True when `argv` is a bare `git` running one of `subcommands` in its read form.
+
+    Args:
+        argv: the command's words.
+        subcommands: the `READ_SUBCOMMANDS` keys to admit; a name outside that table never
+            passes.
+    """
     if not argv or argv[0] != "git":
         return False
     inv = invocation(list(argv))
-    if inv is None or inv.config or inv.shell or inv.sub not in READ_SUBCOMMANDS:
+    if inv is None or inv.config or inv.shell:
+        return False
+    if inv.sub not in READ_SUBCOMMANDS or inv.sub not in subcommands:
         return False
     opts = list(inv.global_opts)
     i = 0

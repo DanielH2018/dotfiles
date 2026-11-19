@@ -38,21 +38,20 @@
            keep their rules because the guards refuse forms that only read, such as an awk
            comparison with `>`, and `sed -i` is an edit sessions make.
            claude-guard's tests/test_readonly.py fails on a rule here that the module
-           proves. */}}
-      "Bash(command -v:*)",
-      "Bash(command -V:*)",
-      "Bash(bash --version)",
-      "Bash(/bin/bash --version)",
-      {{/* the version probe only. `env` takes a command as its argument, so any wildcard here
-           auto-approves `/usr/bin/env bash -c '<anything>'`; a bare `Bash(env)` was the same
-           hole one level up (`env FOO=bar bash -c …`) and is deliberately absent below. */}}
+           proves. The readers it guards per verb have no rule either: `fd` (refusing
+           `-x`/`-X`), `base64` (`-o`), `xxd` (a second file operand), `command -v`/`-V`, the
+           `--version` probes of bash, node, python, java, javac, kotlin and fzf, and the
+           listing forms of `git branch`, `git tag`, `git remote` and `git stash list`/`show`
+           (claude_guard.gitread). */}}
+      {{/* DECIDED: stays. claude_guard.readonly never proves an `env` command, since env
+           runs its operand. The rule is the version probe only. `env` takes a command as
+           its argument, so any wildcard here auto-approves `/usr/bin/env bash -c
+           '<anything>'`; a bare `Bash(env)` was the same hole one level up (`env FOO=bar
+           bash -c …`) and is deliberately absent below. */}}
       "Bash(/usr/bin/env bash --version)",
-      "Bash(fd:*)",
       "Bash(open:*)",
       "Bash(pbcopy)",
       "Bash(pbpaste)",
-      "Bash(base64:*)",
-      "Bash(xxd:*)",
       {{/* `Bash(timeout:*)` was here to stop timeout-wrapped commands prompting (73892e2).
            It cannot stay: timeout's next token IS an arbitrary command, so the prefix rule
            auto-approved `timeout 5 bash -c '<anything>'` — the same hole as the `env`
@@ -61,6 +60,10 @@
            `unwrap_wrapper`, which unwraps a leading wrapper (timeout/env/nice/stdbuf/
            nohup/setsid/xargs) and matches the command it wraps, so `timeout 200 node
            --test` is allowed because `node --test` is. */}}
+      {{/* DECIDED: `history`, `man`, `less` and `more` keep their rules, with no
+           claude_guard.readonly guard. `history` reads the shell's own state, and the three
+           pagers run a shell from inside (`!cmd`, `|`, `v`), so no check of their arguments
+           proves a read. */}}
       "Bash(history)",
       "Bash(man:*)",
       "Bash(less:*)",
@@ -166,6 +169,9 @@
            What stays allowed, said plainly: a container still has the network; compose ports publish on every interface as the file says (`dockrun run -p` binds 127.0.0.1 only); and a service's env_file, typically the repo's .env, reaches the container, where `compose exec svc env` can print it.
            tests/dockrun.test.js pins the argv, each refused flag in both spellings, each refused compose key, the socket, symlink escapes, the read-only rule and project ownership, against a fake docker. If a passthrough lands, this rule comes out in the same commit. */}}
       "Bash(dockrun:*)",
+      {{/* DECIDED: stays, with no claude_guard.readonly guard. `yq -i` edits in place, and
+           the Go and Python yq share the name but not their flags, so no short list of
+           writing flags covers both. */}}
       "Bash(yq:*)",
       {{/* xargs is NOT allow-listed, for the same reason env isn't: it takes a command as
            an argument, so no prefix of it is safe. It used to be allowed with `xargs *sh*`
@@ -195,23 +201,13 @@
            claude_guard.judge decides them through remote_guards.git_readonly and
            claude_guard.gitread, which refuse `--output=<file>` and `-c core.pager=<cmd>`.
            A prefix rule here grants both, so adding one back widens what is approved. */}}
-      "Bash(git branch)",
-      "Bash(git branch -a)",
-      "Bash(git branch -v:*)",
-      "Bash(git branch -r)",
-      "Bash(git branch --list:*)",
-      "Bash(git branch --show-current)",
-      "Bash(git branch --contains:*)",
-      "Bash(git branch --merged:*)",
-      "Bash(git branch --no-merged:*)",
-      "Bash(git remote:*)",
+      {{/* DECIDED: the two `git config` read rules stay. claude_guard.gitread proves these
+           reads for the judge, but claude_guard.readonly does not admit them: a config can
+           hold a credential (`http.extraHeader`, a token in a remote URL), and the module
+           refuses every verb that prints secret values. */}}
       "Bash(git config --get:*)",
       "Bash(git config --list)",
-      "Bash(git stash list:*)",
       "Bash(git fetch:*)",
-      "Bash(git tag)",
-      "Bash(git tag -l:*)",
-      "Bash(git stash show:*)",
       {{/* The stash protocol the harness prescribes for a shared stash stack: push under a
            unique tag, apply by the entry's SHA. Neither is in the ask tier, but neither was
            allowed either, so a headless session was refused both (#861). A bare `apply`
@@ -238,6 +234,9 @@
            judges switching, checkout of an existing ref and merging option by option
            instead. */}}
       "Bash(git checkout -b:*)",
+      {{/* DECIDED: the gh read rules stay, with no claude_guard.readonly guard. gh's read
+           and write verbs share a prefix and grow with every release, so no allowlist the
+           module holds stays complete. */}}
       "Bash(gh repo view:*)",
       "Bash(gh run watch:*)",
       "Bash(gh pr status:*)",
@@ -290,7 +289,8 @@
            Authority is unchanged: RBAC refuses anything these verbs could reach that the
            prose did not already bless, and `kubectl delete` stays in the deny list below.
            Mutating verbs (apply, patch, edit, scale, drain, taint, exec, cp, port-forward)
-           are absent by intent, not omission. */}}
+           are absent by intent, not omission. DECIDED: no claude_guard.readonly guard
+           owns these, because kubectl's read and write verbs share a prefix. */}}
       "Bash(kubectl get:*)",
       "Bash(kubectl logs:*)",
       "Bash(kubectl describe:*)",
@@ -304,6 +304,8 @@
       "Bash(kubectl config current-context)",
       "Bash(npm run:*)",
       "Bash(npm test:*)",
+      {{/* DECIDED: the npm, pnpm and yarn list verbs stay, with no claude_guard.readonly
+           guard: each CLI's read and write verbs share a prefix that grows by release. */}}
       "Bash(npm list:*)",
       "Bash(npm ls:*)",
       "Bash(npm view:*)",
@@ -316,9 +318,6 @@
       "Bash(yarn run:*)",
       "Bash(yarn test:*)",
       "Bash(yarn list:*)",
-      "Bash(node --version)",
-      "Bash(python --version)",
-      "Bash(python3 --version)",
       "Bash(python -m pytest:*)",
       "Bash(python3 -m pytest:*)",
       {{/* Code the session wrote is one class however the interpreter is spelled (dotfiles
@@ -354,23 +353,25 @@
       "Bash(cargo fmt:*)",
       "Bash(cargo clippy:*)",
       "Bash(cargo tree:*)",
+      {{/* DECIDED: stays. rustup's `rustc` installs the toolchain a rust-toolchain.toml
+           names before it runs, so claude_guard.readonly does not prove the probe. */}}
       "Bash(rustc --version)",
       "Bash(go build:*)",
       "Bash(go test:*)",
       "Bash(go vet:*)",
       "Bash(go fmt:*)",
       "Bash(go mod:*)",
+      {{/* DECIDED: stays. Under GOTOOLCHAIN=auto, `go version` downloads and runs the
+           toolchain go.mod names, so claude_guard.readonly does not prove the probe. */}}
       "Bash(go version)",
       "Bash(./gradlew:*)",
       "Bash(gradle:*)",
       "Bash(./mvnw:*)",
       "Bash(mvn:*)",
-      "Bash(java -version)",
-      "Bash(java --version)",
-      "Bash(kotlin -version)",
-      "Bash(javac --version)",
       "Bash(sdk list:*)",
       "Bash(sdk current:*)",
+      {{/* DECIDED: stays. `sdk` is a shell function SDKMAN defines, not a program
+           claude_guard.readonly can judge. */}}
       "Bash(sdk version)",
       "Bash(fnm list)",
       "Bash(fnm current)",
@@ -398,7 +399,6 @@
       "Bash(claude agents --json --all)",
       "Bash(gh auth status:*)",
       "Bash(bash -n:*)",
-      "Bash(fzf --version)",
       {{/* PR plumbing runs unattended. CLAUDE.md instructs Claude to open a PR at the end of a
            worktree job and land it, so leaving `gh pr create` in the ask list contradicted the instruction it had
            already been given; the prompt audit measured 45 invocations, every one of the shape

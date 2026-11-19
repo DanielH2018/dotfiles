@@ -12,7 +12,9 @@ Safety model (deny by default), as on the server:
     makes every operator its own token, so a redirect or a paren never hides in a word.
     Backgrounding, subshells, heredocs and writes to a real file are refused.
   * Each stage's program is on `TIER1` (read-only under any argument) or passes a per-verb
-    guard (`remote_guards.GUARDS` plus the ssh/docker/systemctl/ip handlers below).
+    guard: `remote_guards.GUARDS`, the listing forms of `gitread.READ_SUBCOMMANDS`, and the
+    handlers below (ssh, docker, systemctl, ip, and the local-only fd, base64, xxd,
+    `command -v` and version-probe guards).
 
 Where this differs from the server copy, deliberately (the #628 plan's three decisions):
   1. The allow applies only when the session cwd is `$HOME` itself or under a trusted repo
@@ -37,8 +39,9 @@ import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
-from claude_guard.checks.remote_guards import GUARDS
+from claude_guard.checks.remote_guards import GUARDS, flag_guard
 from claude_guard.deny import Verdict
+from claude_guard.gitread import git_read
 from claude_guard.segment import parse
 from claude_guard.tables import SECRET_PATH_RE, TIER1, TRUSTED_SSH_HOSTS
 from claude_guard.winpath import is_drive_abs, opaque_component
@@ -480,12 +483,80 @@ def _ssh(argv: list[str], scope: _Scope) -> str | None:
     return f"ssh {host}" if _classify(remote, _Scope(scope.home, None, remote=True)) else None
 
 
+# Local only: the ssh side has no ruling for these. `fd -l` runs a fixed `ls -l`, which reads.
+_LOCAL_FLAG_GUARDS = {
+    "fd": flag_guard(("--exec", "--exec-batch"), "xX"),
+    "base64": flag_guard(("--output",), "o"),
+}
+
+
+def _flag_guarded(argv: list[str], scope: _Scope) -> str | None:
+    name = argv[0].rpartition("/")[2]
+    return name if _LOCAL_FLAG_GUARDS[name](argv) else None
+
+
+# xxd's flags that take the next word as their value when nothing is stuck to them.
+_XXD_VALUED = frozenset(
+    {"-c", "-cols", "-g", "-groupsize", "-l", "-len", "-o", "-offset", "-s", "-seek", "-skip"}
+    | {"-n", "-name", "-R"}
+)
+
+
+def _xxd(argv: list[str], scope: _Scope) -> str | None:
+    """`xxd [opts] [infile]`: a second file operand is an output file, in every mode."""
+    files, i, n = 0, 1, len(argv)
+    while i < n:
+        a = argv[i]
+        if a == "--":
+            files += n - i - 1
+            break
+        if a in _XXD_VALUED:
+            i += 2
+            continue
+        if a == "-" or not a.startswith("-"):
+            files += 1
+        i += 1
+    return "xxd" if files <= 1 else None
+
+
+def _command(argv: list[str], scope: _Scope) -> str | None:
+    # Every form but -v and -V runs its operand.
+    return "command" if len(argv) > 1 and argv[1] in ("-v", "-V") else None
+
+
+# A probe whose verb downloads or execs another toolchain is not here: `go version` under
+# GOTOOLCHAIN, rustup's `rustc` under a rust-toolchain.toml.
+_VERSION_PROBES = {
+    "bash": ("--version",),
+    "node": ("--version",),
+    "python": ("--version",),
+    "python3": ("--version",),
+    "java": ("-version", "--version"),
+    "javac": ("--version",),
+    "kotlin": ("-version",),
+    "fzf": ("--version",),
+}
+
+
+def _version_probe(argv: list[str], scope: _Scope) -> str | None:
+    name = argv[0].rpartition("/")[2]
+    return name if len(argv) == 2 and argv[1] in _VERSION_PROBES[name] else None
+
+
 _HANDLERS: dict[str, Callable[[list[str], _Scope], str | None]] = {
     "ssh": _ssh,
     "docker": _docker,
     "systemctl": _systemctl,
     "ip": _ip,
+    "xxd": _xxd,
+    "command": _command,
+    **dict.fromkeys(_LOCAL_FLAG_GUARDS, _flag_guarded),
+    **dict.fromkeys(_VERSION_PROBES, _version_probe),
 }
+
+# The gitread forms the local allow admits. `git config` is not one: it prints credentials
+# a config can hold, such as `http.extraHeader` or a token in a URL.
+_GIT_LOCAL_READS = frozenset({"branch", "tag", "remote", "stash"})
 
 
 def _argv_readonly(argv: list[str], scope: _Scope) -> str | None:
@@ -502,9 +573,11 @@ def _argv_readonly(argv: list[str], scope: _Scope) -> str | None:
     handler = _HANDLERS.get(name)
     if handler:
         return handler(argv, scope)
-    if name in _LOCAL_GUARDED and GUARDS[name](argv):
-        if name == "git" and not _git_dirs_trusted(argv, scope):
+    if name == "git":
+        if not (GUARDS["git"](argv) or git_read(argv, _GIT_LOCAL_READS)):
             return None
+        return "git" if _git_dirs_trusted(argv, scope) else None
+    if name in _LOCAL_GUARDED and GUARDS[name](argv):
         return name
     return None
 

@@ -14,6 +14,10 @@ from claude_guard.gitread import git_read
         "git ls-remote --exit-code origin 'refs/pull/1/*'",
         "git range-diff a..b c..d",
         "git merge-base --is-ancestor a b",
+        "git branch -vv",
+        "git tag -l 'v*'",
+        "git remote -v",
+        "git stash list",
     ],
 )
 def test_a_read_form_is_admitted(command):
@@ -39,6 +43,11 @@ def test_a_read_form_is_admitted(command):
         "git -c core.pager=/tmp/x range-diff a..b c..d",
         "git --exec-path=/tmp merge-base a b",
         "git status",
+        # A name after a listing option that is not a list mode creates the ref.
+        "git branch -v new",
+        "git tag --sort=refname v2",
+        "git remote add x https://example.com/x.git",
+        "git stash push",
     ],
 )
 def test_a_write_or_exec_form_is_refused(command):

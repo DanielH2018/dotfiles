@@ -504,8 +504,8 @@ _FLAG_MUTATES: dict[str, tuple[tuple[str, ...], str]] = {
 }
 
 
-def _flag_guarded(verb: str) -> Callable[[list[str]], bool]:
-    longs, letters = _FLAG_MUTATES[verb]
+def flag_guard(longs: tuple[str, ...], letters: str) -> Callable[[list[str]], bool]:
+    """The guard refusing `longs` in any abbreviation and a short cluster holding `letters`."""
     cluster = re.compile(rf"-[a-zA-Z]*[{letters}]")
 
     def guard(argv: list[str]) -> bool:
@@ -592,8 +592,8 @@ GUARDS: dict[str, Callable[[list[str]], bool]] = {
     "crontab": crontab_readonly,
     "journalctl": journalctl_readonly,
     "rg": rg_readonly,
-    "ss": _flag_guarded("ss"),
-    "sensors": _flag_guarded("sensors"),
-    "dmesg": _flag_guarded("dmesg"),
+    "ss": flag_guard(*_FLAG_MUTATES["ss"]),
+    "sensors": flag_guard(*_FLAG_MUTATES["sensors"]),
+    "dmesg": flag_guard(*_FLAG_MUTATES["dmesg"]),
     "nvidia-smi": nvidia_smi_readonly,
 }
