@@ -64,11 +64,20 @@ fi
 
 # Inject each artifact's link once per session. A later edit of the same path repeats
 # about 400 bytes the reader already has. A payload without a session id is never deduped.
+# The record keeps its newest ARTIFACT_LINKED_MAX lines, so a session older than that
+# many first edits can be linked once more.
 if [ -n "$session_id" ]; then
   linked_file="$ARTIFACT_STATE_DIR/linked.tsv"
   if mkdir -p "$ARTIFACT_STATE_DIR" 2>/dev/null; then
     if grep -qxF "$session_id"$'\t'"$art_rel" "$linked_file" 2>/dev/null; then
       exit 0
+    fi
+    linked_max="${ARTIFACT_LINKED_MAX:-500}"
+    if [ "$(wc -l < "$linked_file" 2>/dev/null || echo 0)" -ge "$linked_max" ]; then
+      if tmp=$(mktemp "$linked_file.XXXXXX" 2>/dev/null); then
+        tail -n "$((linked_max - 1))" "$linked_file" > "$tmp" 2>/dev/null && mv -f "$tmp" "$linked_file" 2>/dev/null
+        rm -f "$tmp"
+      fi
     fi
     printf '%s\t%s\n' "$session_id" "$art_rel" >> "$linked_file" 2>/dev/null
   fi

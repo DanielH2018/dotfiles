@@ -220,3 +220,13 @@ test('the same artifact edited twice in one session injects its link once', () =
   assert.ok(run('/Users/d/.claude/artifacts/twice.html', {}, undefined, 'sess-once').includes('twice.html'),
     'a different path in the same session still gets its link');
 });
+
+test('the linked-session record stays within its bound and still dedupes', () => {
+  const state = scratch(os.tmpdir(), 'la-bound-');
+  const env = { CLAUDE_ARTIFACT_STATE_DIR: state, ARTIFACT_LINKED_MAX: '20' };
+  const file = '/Users/d/.claude/artifacts/bound.html';
+  for (let i = 0; i < 60; i++) run(file, env, undefined, `sess-${i}`);
+  const lines = fs.readFileSync(path.join(state, 'linked.tsv'), 'utf8').trim().split('\n');
+  assert.ok(lines.length <= 20, `record holds at most 20 lines; got ${lines.length}`);
+  assert.strictEqual(run(file, env, undefined, 'sess-59'), '', 'a repeat edit in a recent session stays silent');
+});
