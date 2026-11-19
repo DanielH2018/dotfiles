@@ -25,7 +25,7 @@ test('one auto-mode entry clears the findings.py write verbs and excludes the bu
     assert.ok(hits[0].includes(`\`${verb}\``), verb);
   }
   const excluded = hits[0].slice(hits[0].indexOf('does NOT cover'));
-  for (const verb of ['reap', 'manual', 'board-dates', 'sync-labels']) {
+  for (const verb of ['reap', 'manual', 'sync-board', 'sync-labels']) {
     assert.ok(excluded.includes(`\`${verb}\``), verb);
   }
 });
