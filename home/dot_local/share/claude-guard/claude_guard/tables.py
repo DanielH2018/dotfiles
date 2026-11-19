@@ -190,8 +190,9 @@ REMOTE_READONLY_VERBS: frozenset[str] = READONLY_BASE | _REMOTE_ONLY
 # The local side's verbs that read under any argument. `cd` and `false` are meaningless over
 # ssh, so the remote table leaves them out. The comparison and checksum verbs after them have
 # no option that writes a file or runs a command in their GNU or BSD builds (`diff -l` pipes
-# through the fixed `pr`); they are local-only because no operator ruling widened the remote
-# table.
+# through the fixed `pr`). They stay out of `READONLY_BASE`, so `checks/remote.py` does not
+# see them, but `readonly._ssh` judges the far command against this table and approves them
+# over ssh, where they read too.
 TIER1: frozenset[str] = READONLY_BASE | frozenset(
     {"cd", "false", "diff", "cmp", "test", "[", "shasum", "md5"}
 )
