@@ -387,6 +387,10 @@ GUARDED_APPROVE = [
     "git remote show -n origin",
     "git stash list",
     "git stash show -p stash@{0}",
+    "git worktree list --porcelain",
+    "git reflog",
+    "git reflog show -n 5 HEAD",
+    "git check-ignore -v foo",
 ]
 
 GUARDED_REJECT = [
@@ -436,6 +440,9 @@ GUARDED_REJECT = [
     "git stash drop",
     "git stash list --output=/tmp/x",
     "git stash show --outp=/tmp/x",
+    "git worktree remove x",
+    "git reflog expire --all",
+    "git reflog delete HEAD@{1}",
     "git -c core.pager=sh branch",
 ]
 

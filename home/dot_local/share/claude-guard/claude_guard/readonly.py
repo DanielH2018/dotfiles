@@ -556,7 +556,9 @@ _HANDLERS: dict[str, Callable[[list[str], _Scope], str | None]] = {
 
 # The gitread forms this module admits. `git config` is not one: it reads the global and
 # system scopes, which hold `credential.*`, `sendemail.smtpPass` and `http.<url>.extraHeader`.
-_GIT_LOCAL_READS = frozenset({"branch", "tag", "remote", "stash"})
+_GIT_LOCAL_READS = frozenset(
+    {"branch", "tag", "remote", "stash", "worktree", "reflog", "check-ignore"}
+)
 
 
 def _argv_readonly(argv: list[str], scope: _Scope) -> str | None:

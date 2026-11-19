@@ -215,16 +215,12 @@
            still meets claude_guard's bare-stash deny. */}}
       "Bash(git stash push -u -m:*)",
       "Bash(git stash apply:*)",
-      "Bash(git worktree list:*)",
-      "Bash(git reflog:*)",
-      {{/* Reads the 2026-10-20 transcript replay found prompting. check-ignore only
-           prints. `merge-tree --write-tree` writes the merged tree's objects
+      {{/* Reads the 2026-10-20 transcript replay found prompting. `merge-tree --write-tree` writes the merged tree's objects
            into the object store and moves no ref, so nothing a reader sees changes; the
            older trivial-merge form is left out because nobody used it. `git grep` is NOT
            here: `-O<cmd>` runs a command, so a prefix rule would approve that too.
            claude_guard.judge allows it through remote_guards.git_readonly instead, which
            refuses `-O`. `git -C <path> <sub>` is judged there as `git <sub>` too. */}}
-      "Bash(git check-ignore:*)",
       "Bash(git merge-tree --write-tree:*)",
       "Bash(git merge --abort)",
       {{/* Branch-level git the reflog recovers. `git checkout` as a bare prefix is

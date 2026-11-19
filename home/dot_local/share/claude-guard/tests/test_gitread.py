@@ -18,6 +18,11 @@ from claude_guard.gitread import git_read
         "git tag -l 'v*'",
         "git remote -v",
         "git stash list",
+        "git worktree list --porcelain -z",
+        "git reflog",
+        "git reflog show HEAD",
+        "git reflog exists refs/heads/main",
+        "git check-ignore -v path",
     ],
 )
 def test_a_read_form_is_admitted(command):
@@ -48,6 +53,11 @@ def test_a_read_form_is_admitted(command):
         "git tag --sort=refname v2",
         "git remote add x https://example.com/x.git",
         "git stash push",
+        "git worktree remove x",
+        "git worktree list --expire=now",
+        "git reflog expire --all",
+        "git reflog delete HEAD@{1}",
+        "git reflog show --output=/tmp/x",
     ],
 )
 def test_a_write_or_exec_form_is_refused(command):

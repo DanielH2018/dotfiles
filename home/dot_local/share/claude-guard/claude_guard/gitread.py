@@ -213,7 +213,24 @@ def _stash(args: Sequence[str]) -> bool:
     return bool(args) and args[0] in ("list", "show") and _no_output(args[1:])
 
 
-# merge-base has no option that writes or runs a program.
+_WORKTREE_LIST_FLAGS = frozenset({"--porcelain", "-v", "--verbose", "-z"})
+
+
+def _worktree(args: Sequence[str]) -> bool:
+    # Only `list` reads. `add`, `remove`, `move`, `prune`, `lock` and `repair` write, and the
+    # flags are matched exactly because `--expire` belongs to `prune`.
+    return bool(args) and args[0] == "list" and set(args[1:]) <= _WORKTREE_LIST_FLAGS
+
+
+def _reflog(args: Sequence[str]) -> bool:
+    # Bare and `show` list entries, `exists` tests one. `expire` and `delete` rewrite the
+    # reflog, and `show` takes log options, so `--output` refuses as it does for `stash`.
+    if args and args[0] not in ("show", "exists"):
+        return False
+    return _no_output(args[1:])
+
+
+# merge-base has no option that writes or runs a program, and neither has check-ignore.
 READ_SUBCOMMANDS: dict[str, Callable[[Sequence[str]], bool]] = {
     "range-diff": _no_output,
     "symbolic-ref": _symbolic_ref,
@@ -224,6 +241,9 @@ READ_SUBCOMMANDS: dict[str, Callable[[Sequence[str]], bool]] = {
     "tag": _tag_list,
     "remote": _remote,
     "stash": _stash,
+    "worktree": _worktree,
+    "reflog": _reflog,
+    "check-ignore": lambda _args: True,
 }
 
 
