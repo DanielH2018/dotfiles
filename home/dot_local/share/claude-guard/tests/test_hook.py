@@ -284,7 +284,11 @@ def test_the_shims_lookup_ignores_a_real_cwd_venv_only_because_of_system(tmp_pat
     assert r.returncode == 0, r.stderr
     found = Path(r.stdout.strip())
     assert tmp_path not in found.parents, f"got the cwd venv instead of managed: {found}"
-    assert "/uv/python/" in str(found), found
+    managed_dir = subprocess.run(
+        ["uv", "python", "dir"], capture_output=True, text=True, env=clean_env, check=True
+    ).stdout.strip()
+    managed = Path(managed_dir).resolve()
+    assert managed in found.parent.resolve().parents, f"{found} is not under {managed}"
     assert found.is_file(), found
 
     # Control: the fixture must actually discriminate -- without --system the same lookup,

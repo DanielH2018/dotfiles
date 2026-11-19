@@ -79,7 +79,11 @@ function assertManaged(r, venvDir) {
   assert.strictEqual(r.status, 0, r.stderr);
   const found = r.stdout.trim();
   assert.ok(!found.startsWith(venvDir), `got the venv instead of managed: ${found}`);
-  assert.match(found, /\/uv\/python\//);
+  const dir = spawnSync('uv', ['python', 'dir'], { encoding: 'utf8', env: envWithoutActiveVenv() });
+  assert.strictEqual(dir.status, 0, dir.stderr);
+  const managed = fs.realpathSync(dir.stdout.trim());
+  assert.ok(fs.realpathSync(path.dirname(found)).startsWith(managed + path.sep),
+    `${found} is not under uv's managed install dir ${managed}`);
   assert.ok(fs.statSync(found).isFile(), found);
 }
 
