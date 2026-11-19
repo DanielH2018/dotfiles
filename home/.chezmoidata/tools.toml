@@ -232,7 +232,7 @@ oxlint = "1.94.0"
 # interpreters. The machines take node from fnm, so no template renders that one. Python is
 # rendered: install-python-tools installs this exact version with uv.
 # renovate: datasource=node-version depName=node
-node = "22.23.5"
+node = "26.13.1"
 # renovate: datasource=python-version depName=python
 python = "3.15.2"
 

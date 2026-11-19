@@ -49,7 +49,7 @@ jobs:
   gate:
     needs: [suite, render, bootstrap, bootstrap-windows, bootstrap-macos]
     if: always()
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Require every job to have passed
         env:
@@ -63,13 +63,13 @@ jobs:
   suite:
     # A named release image, not the rolling alias: this job relies on the image's preinstalled
     # shellcheck, and the alias moves to a new Ubuntu release with no commit here.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       # Each action is pinned to the commit its tag pointed at, with the tag in the comment. A
       # tag is a mutable pointer — `@v4` is wherever the publisher last moved it — so a
       # tag-pinned action can change what this gate runs after the change was reviewed.
       # Renovate's github-actions manager reads the `# vX.Y.Z` comment natively.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The signature step walks a commit range and the gate's own steps read git
           # history; a shallow clone makes both wrong rather than failing loudly.
@@ -95,15 +95,15 @@ jobs:
 
       # Three-part versions. A two-part node or python request leaves the patch level to
       # resolve at run time, so two runs of one commit can use different interpreters.
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.TOOLCHAIN_NODE }}
 
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ env.TOOLCHAIN_PYTHON }}
 
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           # Without this the action installs whatever uv Astral released most recently, so the
           # SHA pin above would still deliver a floating binary.
@@ -269,7 +269,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -313,8 +313,8 @@ jobs:
   # apply fails the job if a reworded prompt let `profile` fall back to its default.
   bootstrap:
     name: bootstrap (ubuntu:24.04, profile=server)
-    runs-on: ubuntu-24.04
-    container: ubuntu:24.04
+    runs-on: ubuntu-26.04
+    container: ubuntu:26.04
     timeout-minutes: 30
     steps:
       - name: Install what a fresh Ubuntu host has
@@ -325,7 +325,7 @@ jobs:
           useradd --create-home --shell /bin/bash dev
           echo 'dev ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/dev
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -363,7 +363,7 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -436,13 +436,13 @@ jobs:
   # writes its own status to a file and the step reads that.
   bootstrap-macos:
     name: bootstrap (macos-15, profile=server)
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 60
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
