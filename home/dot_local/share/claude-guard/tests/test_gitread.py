@@ -22,6 +22,9 @@ from claude_guard.gitread import git_read
         "git reflog",
         "git reflog show HEAD",
         "git reflog exists refs/heads/main",
+        "git reflog -n 5",
+        "git reflog HEAD",
+        "git reflog --date=iso",
         "git check-ignore -v path",
     ],
 )
@@ -57,6 +60,8 @@ def test_a_read_form_is_admitted(command):
         "git worktree list --expire=now",
         "git reflog expire --all",
         "git reflog delete HEAD@{1}",
+        "git reflog drop --all",
+        "git reflog write HEAD a b c",
         "git reflog show --output=/tmp/x",
     ],
 )

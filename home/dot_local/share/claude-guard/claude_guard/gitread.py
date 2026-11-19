@@ -222,12 +222,14 @@ def _worktree(args: Sequence[str]) -> bool:
     return bool(args) and args[0] == "list" and set(args[1:]) <= _WORKTREE_LIST_FLAGS
 
 
+_REFLOG_WRITES = frozenset({"expire", "delete", "drop", "write"})
+
+
 def _reflog(args: Sequence[str]) -> bool:
-    # Bare and `show` list entries, `exists` tests one. `expire` and `delete` rewrite the
-    # reflog, and `show` takes log options, so `--output` refuses as it does for `stash`.
-    if args and args[0] not in ("show", "exists"):
-        return False
-    return _no_output(args[1:])
+    # Any other first word, an option or a ref name makes the command `show`, which lists
+    # entries; `exists` tests one. The four subcommands above rewrite the reflog or add to
+    # it, and `show` takes log options, so `--output` refuses as it does for `stash`.
+    return not (args and args[0] in _REFLOG_WRITES) and _no_output(args)
 
 
 # merge-base has no option that writes or runs a program, and neither has check-ignore.
