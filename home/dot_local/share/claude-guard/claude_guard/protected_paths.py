@@ -487,7 +487,9 @@ def _writes(text: str, protected: _Set, cwd: str | None, depth: int = 0) -> bool
         return protected.text.search(text) is not None
     segment_words = [d._words(seg.text) for seg in p.segments]
     runs_lines = any(
-        posixpath.basename(w) in d._LINE_RUNNERS for words in segment_words for w in words or []
+        posixpath.basename(w) in d._LINE_RUNNERS and w != "." or i == 0 and w == "."
+        for words in segment_words
+        for i, w in enumerate(words or [])
     )
     piped = looping = False
     fed_names: set[str] = set()

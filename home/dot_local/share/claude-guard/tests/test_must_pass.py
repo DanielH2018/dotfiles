@@ -233,6 +233,81 @@ PACKAGE_RUNNERS = [
     "npx --no-install prettier --check .",
 ]
 
+# A command that prints a credential to the transcript, wherever its options sit.
+CREDENTIAL_PRINTERS = [
+    "gh auth token",
+    "gh auth token -h github.com",
+    "gh auth status -h github.com -t",
+    "gh auth status --hostname github.com --show-token",
+    "env gh auth token",
+    "gh auth token | wc -c",
+    "echo $(gh auth token)",
+    "bash -c 'gh auth token'",
+    "glab auth status --show-token",
+    "gcloud auth print-access-token",
+    "gcloud auth application-default print-access-token",
+    "aws configure export-credentials",
+    "aws --profile x ecr get-login-password",
+    "aws sts get-session-token",
+    "az account get-access-token",
+    "kubectl config view --raw",
+    "kubectl create token builder",
+    "kubectl -n homelab get secret airflow -o yaml",
+    "kubectl -n homelab get secret airflow -o jsonpath='{.data}'",
+    "npm token list",
+    "git credential fill",
+    "claude setup-token",
+]
+
+# The nearest command to each that prints no credential, or only captures one.
+CREDENTIAL_FREE = [
+    "gh auth status",
+    "T=$(gh auth token); curl -s -o /dev/null https://api.github.com",
+    "GH_TOKEN=$(gh auth token) ghread pr list",
+    "grep -rn 'gh auth token' docs/",
+    "kubectl config view",
+    "kubectl -n homelab get secret airflow -o name",
+    "kubectl -n homelab get secret airflow -o jsonpath='{.metadata.name}'",
+    "kubectl -n homelab get secret",
+    "aws sts get-caller-identity",
+    "npm config get registry",
+    "git remote -v",
+]
+
+# A `claude` subcommand that rewrites Claude Code's own configuration asks, as an Edit of
+# `~/.claude/settings.json` does.
+CLAUDE_SETTINGS_WRITERS = [
+    "claude plugin install audit@tools",
+    "claude plugin uninstall audit",
+    "claude plugins install audit",
+    "claude plugin update audit@tools --scope user",
+    "claude plugin enable audit",
+    "claude plugin disable audit",
+    "claude plugin marketplace add owner/repo",
+    "claude plugin marketplace update tools",
+    "claude mcp add files -- some-server",
+    "claude mcp add-json files '{}'",
+    "claude mcp remove files",
+    "claude auth logout",
+    "claude update",
+    "claude install stable",
+    "env claude plugin uninstall audit",
+    "~/.local/bin/claude plugin uninstall audit",
+]
+
+CLAUDE_READS = [
+    "claude plugin list",
+    "claude plugin marketplace list",
+    "claude plugin validate .",
+    "claude plugin --help",
+    "claude mcp list",
+    "claude mcp get files",
+    "claude auth status",
+    "claude doctor",
+    "claude --version",
+    "claude agents",
+]
+
 # Each settings deny rule a claude-guard check stands behind, with a command the rule
 # matches. The git rows stay in the settings; the rest were removed.
 REPLACED_DENY_RULES = [
@@ -353,6 +428,24 @@ def test_a_command_that_can_change_the_guard_or_run_an_unread_program_is_denied(
     assert deny(command, cwd, env).rule == rule
     assert hook_verdict(command, cwd, env) == "deny"
     assert headless_verdict(command, cwd, env) != "allow"
+
+
+@pytest.mark.parametrize("command", CREDENTIAL_PRINTERS)
+def test_a_command_that_prints_a_credential_is_denied(command, cwd, env):
+    assert deny(command, cwd, env).rule == "credential-print"
+    assert hook_verdict(command, cwd, env) == "deny"
+
+
+@pytest.mark.parametrize("command", CLAUDE_SETTINGS_WRITERS)
+def test_a_claude_subcommand_that_rewrites_its_configuration_asks(command, cwd, env):
+    assert deny(command, cwd, env).rule == "claude-settings-write"
+    assert hook_verdict(command, cwd, env) == "ask"
+    assert headless_verdict(command, cwd, env) != "allow"
+
+
+@pytest.mark.parametrize("command", CREDENTIAL_FREE + CLAUDE_READS)
+def test_the_nearest_command_that_prints_and_rewrites_nothing_passes_the_hook(command, cwd, env):
+    assert hook_verdict(command, cwd, env) in ("none", "allow")
 
 
 @pytest.mark.parametrize("command", PACKAGE_RUNNERS)

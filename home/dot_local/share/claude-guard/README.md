@@ -341,6 +341,18 @@ each is left to its prompt. `tests/test_must_pass.py` holds the case table: `GUA
 must be denied, `PACKAGE_RUNNERS` must not be approved, and the rows beside them in
 `HEADLESS` are the nearest ordinary commands, which must pass.
 
+`checks/cli_verbs.py` reads two families of subcommand that a prefix rule cannot, because
+the words sit behind options. It denies a command that prints a credential to the
+transcript: `gh auth token`, `gh auth status --show-token` in any position, a cloud CLI's
+token printer, `kubectl config view --raw`, and `kubectl get secret` with an output format
+that shows the data. A substitution that is the whole value of an assignment is captured,
+not printed, so `GH_TOKEN=$(gh auth token) cmd` passes. It asks on a `claude` subcommand
+that rewrites Claude Code's own configuration (`plugin install`, `mcp add`, `update`), as
+an Edit of `~/.claude/settings.json` asks. The `plugin` and `mcp` groups ask by default
+and pass a list of read subcommands. The tables in `tests/test_must_pass.py` are
+`CREDENTIAL_PRINTERS`, `CLAUDE_SETTINGS_WRITERS` and the commands beside them that must
+pass.
+
 `checks/read_only_agents.py` (dotfiles #848) is a deny rule beside the worktree-escape
 check. When the payload's `agent_type` names an agent whose frontmatter under
 `~/.claude/agents/` sets `read_only: true`, it denies a write redirect outside the scratch

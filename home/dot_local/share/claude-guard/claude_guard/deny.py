@@ -67,7 +67,8 @@ from dataclasses import dataclass, replace
 from typing import NamedTuple
 
 from claude_guard import secret_table
-from claude_guard.checks import program_options, sed
+from claude_guard.checks import cli_verbs, program_options, sed
+from claude_guard.checks.cli_verbs import cli_verb
 from claude_guard.checks.program_options import program_option
 from claude_guard.checks.sed import sed_risk
 from claude_guard.gitargv import (
@@ -5015,8 +5016,37 @@ def deny(command: str, cwd: str = "", env: Mapping[str, str] | None = None) -> V
         or loader_env(command, env)
         or guard_file_write(command, cwd, home)
         or unread_program(command)
+        or cli_verb_verdict(command)
         or NONE
     )
+
+
+_CLI_VERB_VERDICTS = {
+    cli_verbs.CREDENTIAL: (
+        "deny",
+        "Blocked: this command prints a credential into the transcript. For a GitHub read "
+        "use `ghread`, which carries the token itself. To hand a token to one command, "
+        "capture it in an assignment such as `NAME=$(…)` and never print the variable. To "
+        "learn a fact about a secret without its value, use `secretq`.",
+    ),
+    cli_verbs.CLAUDE_SETTINGS: (
+        "ask",
+        "Review this command: it rewrites Claude Code's own configuration (plugins, MCP "
+        "servers, login or the installed binary). chezmoi generates "
+        "`~/.claude/settings.json`, so run `chezmoi diff ~/.claude/settings.json` afterwards "
+        "and `chezmoi apply` it if keys were dropped.",
+    ),
+}
+
+
+def cli_verb_verdict(command: str) -> Verdict | None:
+    """A deny for a command that prints a credential, or an ask for a `claude` subcommand
+    that rewrites Claude Code's configuration (`checks/cli_verbs.py`)."""
+    found = cli_verb(command)
+    if found is None:
+        return None
+    kind, reason = _CLI_VERB_VERDICTS[found]
+    return Verdict(kind, found, reason)
 
 
 _SED_REASONS = {
