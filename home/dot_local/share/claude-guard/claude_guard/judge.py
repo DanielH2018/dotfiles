@@ -503,7 +503,7 @@ _WRITE_REDIRECT = re.compile(rf"(?<![&<>])[0-9]*>>?(?![>&|(])[{WS}]*(?P<target>[
 # command is judged, so a link one of these places at the target later in the same chain
 # (or concurrently, in another pipeline stage) would carry the write wherever it points.
 # `git` counts only outside `remote_guards.git_readonly`, the read-only subcommands. A
-# command the allow list already lets run arbitrary code (`uv run`, `npx`) can write
+# command the allow list already lets run arbitrary code (`uv run`) can write
 # anywhere without this race, so it is not listed.
 _JOB_DIR_NAMED_BARE = re.compile(r"(?<!\$)(?<!\$\{)\bCLAUDE_JOB_DIR\b")
 

@@ -67,6 +67,9 @@ from dataclasses import dataclass, replace
 from typing import NamedTuple
 
 from claude_guard import secret_table
+from claude_guard.checks import program_options, sed
+from claude_guard.checks.program_options import program_option
+from claude_guard.checks.sed import sed_risk
 from claude_guard.gitargv import (
     GLOBALS_RE,
     PUSH_SUBCOMMANDS,
@@ -2048,10 +2051,14 @@ GIT_CONFIG_PATHS = (
     rf"|hooks[^/[:space:];&|]*(/|{_GIT_END}))"
     rf"|\.gitconfig{_GIT_END}|/etc/gitconfig{_GIT_END}|\.config/git/|/git/config{_GIT_END})"
 )
+# A home directory as a command spells it. The tools and the guard package are matched
+# under one, because a repository names the same relative paths as text.
+_HOME_AT = r"(~|\$HOME|\$\{HOME\}|/(home|Users)/[^/[:space:]]+|/root)"
 # :1064. SOPS basenames on the WRITE side only (:1057-1063).
 WRITE_TARGETS = (
     rf"({SECRET_PATHS}|{SOPS_BASENAMES}|authorized_keys|{SHELL_STARTUP_FILES}|"
-    rf"\.claude/settings\.json|\.claude/hooks/|{GIT_CONFIG_PATHS})"
+    rf"\.claude/settings(\.local)?\.json|\.claude/hooks/|"
+    rf"{_HOME_AT}/\.local/(bin|share/claude-guard)/|{GIT_CONFIG_PATHS})"
 )
 # :1081. Editors that unambiguously rewrite the file they name; cp/mv deliberately absent.
 # GNU sed reads everything after `-i` in the word as the backup suffix, so `-ie` is `-i`
@@ -4976,8 +4983,9 @@ _TEXT_RULES: frozenset[Rule] = frozenset(
 
 
 def deny(command: str, cwd: str = "", env: Mapping[str, str] | None = None) -> Verdict:
-    """The bash's decision for one command. `cwd` is accepted for the hook signature the
-    spec names and is unused: no rule in the bash reads the working directory. `env`
+    """The bash's decision for one command. `cwd` resolves a relative word for
+    `guard_file_write`, the one rule that reads the working directory; an empty `cwd`
+    leaves such a word unread. `env`
     supplies HOME for the written-out home path (:595-598), CLAUDE_JOB_DIR and TMPDIR for
     the scratch directories a secret-named fixture may be written into, PATH for the
     wrappers `wrapper_route` names, and HOME or CLAUDE_GUARD_SETTINGS_HOME for the allow
@@ -5005,8 +5013,53 @@ def deny(command: str, cwd: str = "", env: Mapping[str, str] | None = None) -> V
             if _GUARD_PROBE.search(command):
                 return Verdict(verdict.kind, verdict.rule, verdict.reason + GUARD_PROBE_HINT)
             return verdict
-    # Last, and outside RULES, because these two alone read `env` beyond HOME.
-    return wrapper_route(command, env) or loader_env(command, env) or NONE
+    # Last, and outside RULES, because these alone read `env` beyond HOME, or the cwd.
+    return (
+        wrapper_route(command, env)
+        or loader_env(command, env)
+        or guard_file_write(command, cwd, home)
+        or unread_program(command)
+        or NONE
+    )
+
+
+_SED_REASONS = {
+    sed.EXEC: (
+        "Blocked: this sed script runs a shell command, through the `e` command or the `e` "
+        "flag of `s`. Run that command on its own line and give sed its output."
+    ),
+    sed.UNREAD: (
+        "Blocked: the guard cannot read this sed script, and a sed script can run a shell "
+        "command. Give the script as literal text on the command line, not through `-f`, "
+        "an abbreviated long option or a variable set outside the command."
+    ),
+}
+
+
+def unread_program(command: str) -> Verdict | None:
+    """A deny for a command an allow rule approves by name that runs a program the guard
+    does not read: a sed script's `e` (`checks/sed.py`), or the value of an option such as
+    `man -P` (`checks/program_options.py`)."""
+    risk = sed_risk(command)
+    if risk == sed.UNREAD and (variants := _literal_variants(command)):
+        # The script is a `$NAME` the command set itself, so read it with the value.
+        risk = next(filter(None, map(sed_risk, variants)), None)
+    if risk:
+        return Verdict("deny", sed.RULE, _SED_REASONS[risk])
+    if reason := program_option(command):
+        return Verdict("deny", program_options.RULE, reason)
+    return None
+
+
+def guard_file_write(command: str, cwd: str, home: str) -> Verdict | None:
+    """A deny for a command that may change a path `claude_guard.protected_paths` lists,
+    read as typed and with each `$NAME` it sets to a literal replaced by the value."""
+    # Imported here because protected_paths reads this module's word helpers.
+    from claude_guard.protected_paths import REASON, RULE, writes_protected_path
+
+    if any(writes_protected_path(c, cwd, home) for c in [command, *_literal_variants(command)]):
+        return Verdict("deny", RULE, REASON)
+    return None
 
 
 # A probe that hands the guard test commands as text is refused for that text. Replay reads

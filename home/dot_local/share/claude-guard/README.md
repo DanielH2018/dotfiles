@@ -315,6 +315,30 @@ command, every stage is a `readonly.py` read, nothing needs the network, and no
 `denyRead` path is named. The denial tells the model to run it again without the flag. Like
 `readonly.py`, it fails open.
 
+`protected_paths.py` denies a command that can change a file the guard rests on: a hook
+under `~/.claude/hooks/`, the package under `~/.local/share/claude-guard/`,
+`~/.claude/settings.json` and `settings.local.json`, and a tool in `~/.local/bin/`. The rule
+refuses by default. A command that names one of those paths as a word passes only when it
+cannot write it: a read `readonly.py` proves, the path as the program being run, a source
+of `cp`, the target of `ln -s`, `chezmoi`, or a program the guard cannot read, such as a
+script file. So no write verb needs a rule of its own. The module docstring lists how a
+word is resolved (home spellings, the working directory, globs, links on disk, variables
+the command sets) and what the rule does not read. `deny()` takes the session's working
+directory for this rule alone. `WRITE_TARGETS` carries the same paths, so the redirect,
+`tee`, in-place edit and interpreter rules cover them too.
+
+`checks/sed.py` and `checks/program_options.py` deny a command an allow rule approves by
+name when it runs a program the guard does not read. `sed.py` parses each sed script and
+denies one that holds the `e` command or the `e` flag of `s`, and one it cannot read
+(`-f`, an abbreviated long option, a script that is only a variable). It parses instead of
+scanning for the letter, because the text after `a`, `i` and `c`, a label and both halves
+of `s` are data. `program_options.py` denies `man -P`, `go test -exec`, `go build
+-toolexec`, `go vet -vettool` and `uv run <URL>`. No package runner (`npx`, `npm exec`,
+`pnpm dlx`, `bunx`, `uvx`, `pipx run`, `go run` of a module path) has an allow rule, so
+each is left to its prompt. `tests/test_must_pass.py` holds the case table: `GUARD_ROUTES`
+must be denied, `PACKAGE_RUNNERS` must not be approved, and the rows beside them in
+`HEADLESS` are the nearest ordinary commands, which must pass.
+
 `checks/read_only_agents.py` (dotfiles #848) is a deny rule beside the worktree-escape
 check. When the payload's `agent_type` names an agent whose frontmatter under
 `~/.claude/agents/` sets `read_only: true`, it denies a write redirect outside the scratch

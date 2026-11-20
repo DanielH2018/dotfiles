@@ -52,11 +52,13 @@
 .local/share/claude-guard/tests/test_must_pass.py
 .local/share/claude-guard/tests/test_package.py
 .local/share/claude-guard/tests/test_prompt_tool.py
+.local/share/claude-guard/tests/test_protected_paths.py
 .local/share/claude-guard/tests/test_read_only_agents.py
 .local/share/claude-guard/tests/test_readonly.py
 .local/share/claude-guard/tests/test_remote.py
 .local/share/claude-guard/tests/test_rules.py
 .local/share/claude-guard/tests/test_scratch.py
+.local/share/claude-guard/tests/test_sed.py
 .local/share/claude-guard/tests/test_segment.py
 .local/share/claude-guard/tests/test_secret_table.py
 .local/share/claude-guard/tests/test_substitution.py

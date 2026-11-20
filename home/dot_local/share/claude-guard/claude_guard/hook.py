@@ -60,7 +60,7 @@ def decide(
     when that hook could not run. The settings carry no deny rule for a command those
     checks deny, so without the gate an allow rule such as `git push:*` would approve a
     forced push here."""
-    refused = combine_conventions(deny(command, "", env), conventions(command, cwd))
+    refused = combine_conventions(deny(command, cwd or "", env), conventions(command, cwd))
     if refused.kind == "deny":
         return Decision(False, f"deny-rule:{refused.rule}", ())
     rules = load_rules(env=env)
@@ -315,7 +315,8 @@ def pre_tool_use(stdin_text: str, env: Mapping[str, str]) -> str | None:
         return None
     command, cwd = event.bash.command, event.cwd
     try:
-        rules = merge(merge(deny(command, "", env), footgun(command)), awk_verdict(command))
+        denied = deny(command, cwd or "", env)
+        rules = merge(merge(denied, footgun(command)), awk_verdict(command))
         rules = merge(rules, escape_verdict(command, cwd))
         rules = merge(rules, read_only_agent_verdict(event, env))
         rules = merge(rules, homelab_deploy_verdict(event))

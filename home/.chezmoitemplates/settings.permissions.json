@@ -308,7 +308,10 @@
       "Bash(npm view:*)",
       "Bash(npm outdated:*)",
       "Bash(npm info:*)",
-      "Bash(npx:*)",
+      {{/* DECIDED: no package runner has an allow rule. `npx`, `npm exec`, `pnpm dlx`, `bunx`,
+           `uvx`, `pipx run` and `go run` of a module path each fetch a package and run it,
+           and npm answers its own install question with yes when stdin is not a terminal.
+           The `npx` ask rules below stop the forms that name a package outright. */}}
       "Bash(pnpm run:*)",
       "Bash(pnpm test:*)",
       "Bash(pnpm list:*)",
@@ -868,7 +871,7 @@
       "Bash(npx --package:*)",
       "Bash(npx --package=*)",
       {{/* -p is the documented short form of --package and fetches an arbitrary package the
-           same way; only the long form was listed, while Bash(npx:*) allows the rest. Same
+           same way. Same
            short-vs-long gap as the `gh auth status -t` / `--show-token` pair above. These
            are prefix rules, so they catch the flag in first position — `npx -y -p pkg` is
            still reached by the -y rule, but a flag order that leads with neither is not
