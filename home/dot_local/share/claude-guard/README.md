@@ -317,7 +317,15 @@ command, every stage is a `readonly.py` read, nothing needs the network, and no
 
 `protected_paths.py` denies a command that can change a file the guard rests on: a hook
 under `~/.claude/hooks/`, the package under `~/.local/share/claude-guard/`,
-`~/.claude/settings.json` and `settings.local.json`, and a tool in `~/.local/bin/`. The rule
+`~/.claude/settings.json` and `settings.local.json`, a tool in `~/.local/bin/`, and an
+agent, skill, rule or output-style file under `~/.claude/`. Its `DIRS` and `FILES` are the
+one list. `guard-pre-tool-use.sh` is registered for Edit, Write and NotebookEdit too, and
+`hook.file_tool_json` denies such a call when `protects_file` finds its path on the list,
+as written or through the links on disk. The ask rules in settings.permissions.json repeat
+the list for a session whose hook cannot run, and `tests/test_protected_paths.py` fails
+when they disagree with it. `chezmoi apply` deploys each managed file from its source, so
+a session changes the source. `replay --deny` judges a `{file_path, cwd}` record as a
+file-tool call. The Bash rule
 refuses by default. A command that names one of those paths as a word passes only when it
 cannot write it: a read `readonly.py` proves, the path as the program being run, a source
 of `cp`, the target of `ln -s`, `chezmoi`, or a program the guard cannot read, such as a
@@ -337,7 +345,8 @@ scanning for the letter, because the text after `a`, `i` and `c`, a label and bo
 of `s` are data. `program_options.py` denies `man -P`, `go test -exec`, `go build
 -toolexec`, `go vet -vettool` and `uv run <URL>`. No package runner (`npx`, `npm exec`,
 `pnpm dlx`, `bunx`, `uvx`, `pipx run`, `go run` of a module path) has an allow rule, so
-each is left to its prompt. `tests/test_must_pass.py` holds the case table: `GUARD_ROUTES`
+each is left to its prompt. `tests/test_must_pass.py` holds the case table: `FILE_ROUTES`
+must be denied for the file tools and `FILE_PASSES` must not be judged, `GUARD_ROUTES`
 must be denied, `PACKAGE_RUNNERS` must not be approved, and the rows beside them in
 `HEADLESS` are the nearest ordinary commands, which must pass.
 
@@ -354,8 +363,8 @@ and pass a list of read subcommands. The tables in `tests/test_must_pass.py` are
 pass.
 
 `checks/read_only_agents.py` (dotfiles #848) is a deny rule beside the worktree-escape
-check. When the payload's `agent_type` names an agent whose frontmatter under
-`~/.claude/agents/` sets `read_only: true`, it denies a write redirect outside the scratch
+check. When the payload's `agent_type` names an agent in the module's `SHIPPED` list, or
+one whose frontmatter under `~/.claude/agents/` sets `read_only: true`, it denies a write redirect outside the scratch
 roots, a command that changes files outside them, a shell or `eval`, and any git or gh verb
 outside a read-only set. Its module docstring says why the rest is a denylist.
 

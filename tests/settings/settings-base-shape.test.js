@@ -292,6 +292,16 @@ test('claude-guard is the sole Bash PreToolUse deny decision, live', { skip }, (
   assert.strictEqual(shim.timeout, 10);
 });
 
+test('claude-guard judges every file tool, and no Edit allow rule names ~/.local/bin', { skip }, () => {
+  const s = JSON.parse(render());
+  const entry = s.hooks.PreToolUse.find((e) => e.matcher === 'Edit|Write|NotebookEdit'
+    && e.hooks.some((h) => h.command === '~/.claude/hooks/guard-pre-tool-use.sh'));
+  assert.ok(entry, 'guard-pre-tool-use.sh is not registered for Edit|Write|NotebookEdit');
+  const allowed = s.permissions.allow.filter((r) => r.startsWith('Edit(~/.local/bin'));
+  assert.deepStrictEqual(allowed, []);
+  assert.ok(s.permissions.ask.includes('Edit(~/.claude/agents/**)'));
+});
+
 function commands(s) {
   return Object.values(s.hooks).flat().flatMap((g) => g.hooks.map((h) => h.command));
 }

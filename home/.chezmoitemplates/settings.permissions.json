@@ -448,7 +448,6 @@
       "WebFetch(domain:json.schemastore.org)",
       "WebFetch(domain:www.schemastore.org)",
       "Edit(~/.claude/**)",
-      "Edit(~/.local/bin/*)",
       "Edit(~/.gitignore)",
       {{/* GitGuardian's read tools. Named individually: the server declares no read-only annotations,
            so a write tool added upstream must not inherit auto-approval. scan_secrets and every tool
@@ -1073,14 +1072,22 @@
       "mcp__gitguardian__create_code_fix_request",
       "mcp__gitguardian__manage_incident_comment",
       "mcp__gitguardian__manage_public_incident_comment",
-      {{/* the hooks are this config's own enforcement layer — never editable without a prompt (Edit rules also cover Write) */}}
+      {{/* The files claude-guard protects: the hooks and the guard package that enforce this
+           config, the tools in ~/.local/bin the settings trust by name, and the files that
+           give a session its instructions and an agent its restrictions.
+           claude_guard/protected_paths.py holds the list, and guard-pre-tool-use.sh denies a
+           file-tool write to a path on it. These rules repeat the list for a session whose
+           hook cannot run; claude-guard's tests/test_protected_paths.py fails when the two
+           disagree. An Edit rule also covers Write and NotebookEdit. Sessions edit the chezmoi
+           source, not the deployed copy, and chezmoi apply does not go through the file
+           tools, so neither prompts. */}}
       "Edit(~/.claude/hooks/**)",
-      {{/* The deployed claude-guard package is the other half of that layer: deny.py holds the
-           Bash deny rules and secret_paths.json the secret table they are built from. Without
-           this, a plain Edit or Write there removed a Bash-side secret deny with no prompt,
-           while the hook beside it asked. Sessions edit the chezmoi source, not this copy, and
-           chezmoi apply does not go through the file tools, so neither prompts. */}}
+      "Edit(~/.local/bin/**)",
       "Edit(~/.local/share/claude-guard/**)",
+      "Edit(~/.claude/agents/**)",
+      "Edit(~/.claude/skills/**)",
+      "Edit(~/.claude/rules/**)",
+      "Edit(~/.claude/output-styles/**)",
       "Edit(~/.claude/settings.json)",
       "Edit(~/.claude/settings.local.json)"
     ],

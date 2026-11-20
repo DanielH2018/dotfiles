@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from claude_guard.protected_paths import writes_protected_path
+from claude_guard.protected_paths import DIRS, FILES, writes_protected_path
 
 
 @pytest.fixture
@@ -27,6 +27,13 @@ def test_a_protected_directory_that_is_a_link_is_protected_where_it_points(home,
     os.rmdir(f"{home}/.local/bin")
     os.symlink(real, f"{home}/.local/bin")
     assert writes_protected_path(f"cp /tmp/x {real}/envq", f"{home}/repo", home)
+
+
+def test_the_settings_ask_on_every_protected_path_and_allow_none(template_permissions):
+    asked = {f"Edit(~/{d}/**)" for d in DIRS} | {f"Edit(~/{f})" for f in FILES}
+    assert asked - set(template_permissions["ask"]) == set()
+    allowed = [r[len("Edit(~/") : -1] for r in template_permissions["allow"] if r[:7] == "Edit(~/"]
+    assert [p for p in allowed if p in FILES or any(p.startswith(d + "/") for d in DIRS)] == []
 
 
 @pytest.mark.parametrize(

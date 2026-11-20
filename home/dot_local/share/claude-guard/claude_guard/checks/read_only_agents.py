@@ -2,7 +2,8 @@
 
 `deep-review`, `root-cause` and `migration-reviewer` describe themselves as read-only and
 still list Bash, which can write a file, commit and push. Each carries `read_only: true` in
-its frontmatter under `~/.claude/agents/`. A subagent's PreToolUse payload names it in
+its frontmatter under `~/.claude/agents/`, and `SHIPPED` names the three, so the rule does
+not rest on a file the agent's own session can reach. A subagent's PreToolUse payload names it in
 `agent_type`, its frontmatter `name:`, and `verdict()` denies four kinds of command from
 one of them:
 
@@ -119,6 +120,10 @@ from claude_guard.segment import parse
 from claude_guard.tables import scratch_roots
 
 RULE = "read-only-agent"
+# The agents this repo ships with `read_only: true`. They are judged whatever the deployed
+# agent file says, so rewriting or removing that file does not lift the restriction. The
+# frontmatter read below still covers an agent another source deploys.
+SHIPPED = frozenset({"deep-review", "root-cause", "migration-reviewer"})
 
 
 def read_only_agents(agents_dir: Path) -> set[str]:
@@ -1008,7 +1013,7 @@ def verdict(agent: str | None, command: str, env: Mapping[str, str]) -> tuple[st
     home = env.get("HOME", "")
     if agent is None or not home:
         return None
-    if agent not in read_only_agents(Path(home) / ".claude" / "agents"):
+    if agent not in SHIPPED and agent not in read_only_agents(Path(home) / ".claude" / "agents"):
         return None
     found = problem(command, scratch_roots(home, env.get("TMPDIR")))
     if not found:

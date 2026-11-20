@@ -5,6 +5,15 @@
 #   timeout: 10
 #   order: 20
 #   description: Deny or rewrite a Bash command through claude-guard's rules
+# gen-hooks: register
+#   event: PreToolUse
+#   matcher: Edit|Write|NotebookEdit
+#   timeout: 10
+#   order: 21
+#   description: Deny a file-tool write to a path claude-guard protects
+# The second registration hands an Edit, Write or NotebookEdit call to the same judge, which
+# reads the call's path against claude_guard.protected_paths, the list the Bash rule reads.
+# The failure contract below holds for it unchanged: a judge that cannot run asks.
 # DECIDED: claude-guard slice 4 cutover (docs/specs/2026-09-06-claude-guard-design.md,
 # Rollout row 4). This is the sole decision for Bash PreToolUse -- deny.py
 # ports, rule for rule, the block-dangerous-bash.sh that was registered beside it

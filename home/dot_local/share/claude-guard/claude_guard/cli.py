@@ -10,7 +10,8 @@
     claude-guard pre-tool-use              # hook entry: hook JSON on stdin, deny/ask JSON
                                             # or nothing on stdout
     claude-guard replay <jsonl> --deny     # deny/ask/allow verdict and reason per record,
-                                            # git conventions included
+                                            # git conventions included; a {file_path, cwd}
+                                            # record is judged as a file-tool call
     claude-guard read-nudge                # PreToolUse/Read hook entry: hook JSON on stdin,
                                             # a whole-file-read nudge or nothing on stdout
     claude-guard post-tool-use             # bash-write-fanout.sh's helper: hook JSON on
@@ -41,6 +42,7 @@ from claude_guard.hook import (
     pre_tool_use,
     read_nudge_json,
 )
+from claude_guard.protected_paths import FILE_REASON, FILE_RULE, protects_file
 from claude_guard.segment import Parsed, parse
 
 
@@ -145,8 +147,14 @@ def _replay_deny(records: list[dict]) -> int:
     so a merge or an amend shows the ask that hook would print. Each verdict line is followed
     by its reason, indented, because the reason is what names the form to run instead."""
     for rec in records:
-        command = rec["command"]
         cwd = rec.get("cwd", "")
+        if "file_path" in rec:
+            path = rec["file_path"]
+            if protects_file(path, cwd, os.environ.get("HOME", "")):
+                print(f"DENY {FILE_RULE}: {rec.get('tool', 'Edit')} {_head(path)}")
+                print(f"    {FILE_REASON}")
+            continue
+        command = rec["command"]
         v = combine_conventions(deny(command, cwd, {**os.environ}), conventions(command, cwd))
         if v.kind != "none":
             print(f"{v.kind.upper()} {v.rule}: {_head(command)}")

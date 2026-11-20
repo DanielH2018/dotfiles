@@ -765,6 +765,16 @@
         ]
       },
       {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/guard-pre-tool-use.sh",
+            "timeout": 10
+          }
+        ]
+      },
+      {
         "matcher": "Read|Edit|Write|NotebookEdit",
         "hooks": [
           {

@@ -1,10 +1,19 @@
-"""Commands that can change the files the guard itself rests on.
+"""Commands and file-tool calls that can change the files the guard itself rests on.
 
 The protected set is the hooks Claude Code runs, the guard's package, the settings both
-read, and the tools on the user's PATH that the settings trust by name:
+read, the tools on the user's PATH that the settings trust by name, and the files that
+give a session its instructions and an agent its restrictions:
 
     ~/.claude/hooks/   ~/.local/share/claude-guard/   ~/.local/bin/
     ~/.claude/settings.json   ~/.claude/settings.local.json
+    ~/.claude/agents/   ~/.claude/skills/   ~/.claude/rules/   ~/.claude/output-styles/
+
+`DIRS` and `FILES` are the one definition. `writes_protected_path` reads a Bash command
+against it, and `protects_file` reads the path an Edit, Write or NotebookEdit call names.
+The ask rules in settings.permissions.json repeat it for a session whose hook cannot run,
+and tests/test_protected_paths.py fails when they and this module disagree. `chezmoi
+apply` deploys every managed file in the set from its source, so no session needs to
+write one in place.
 
 DECIDED: the rule refuses by default instead of listing write verbs. A command that names
 a protected path as a word passes only when it cannot write the path:
@@ -80,14 +89,30 @@ from claude_guard.segment import parse
 RULE = "guard-file-write"
 REASON = (
     "Blocked: this command can change a Claude Code hook, a claude-guard file, the settings "
-    "the guard reads, or a tool in ~/.local/bin, and the guard cannot prove that it only "
-    "reads them. Change the chezmoi source and run `chezmoi apply`, or ask the user to make "
-    "the change. If the path is only text in a file you are changing, make the change with "
-    "the Edit or Write tool instead."
+    "the guard reads, a tool in ~/.local/bin, or an agent, skill, rule or output-style file "
+    "under ~/.claude, and the guard cannot prove that it only reads them. Change the chezmoi "
+    "source and run `chezmoi apply`, or ask the user to make the change. If the path is only "
+    "text in a file you are changing, make the change with the Edit or Write tool instead."
+)
+FILE_RULE = "guard-file-edit"
+FILE_REASON = (
+    "Blocked: this file is a Claude Code hook, a claude-guard file, the settings the guard "
+    "reads, a tool in ~/.local/bin, or an agent, skill, rule or output-style file under "
+    "~/.claude. Sessions do not change the deployed copy. `chezmoi source-path <file>` names "
+    "its source: change that (in your worktree's copy when you are in one) and run `chezmoi "
+    "apply <file>`. For a file chezmoi does not manage, ask the user to make the change."
 )
 
-_DIRS = (".claude/hooks", ".local/bin", ".local/share/claude-guard")
-_FILES = (".claude/settings.json", ".claude/settings.local.json")
+DIRS = (
+    ".claude/hooks",
+    ".local/bin",
+    ".local/share/claude-guard",
+    ".claude/agents",
+    ".claude/skills",
+    ".claude/rules",
+    ".claude/output-styles",
+)
+FILES = (".claude/settings.json", ".claude/settings.local.json")
 
 # macOS and Windows match a path whatever its case.
 _CASELESS = sys.platform in ("darwin", "win32")
@@ -137,20 +162,20 @@ class _Set:
     def __init__(self, home: str):
         self.home = posixpath.normpath(home)
         roots = {self.home, os.path.realpath(self.home)}
-        self.dirs = {tuple(f"{r}/{rel}".split("/")) for r in roots for rel in _DIRS}
-        self.files = {tuple(f"{r}/{rel}".split("/")) for r in roots for rel in _FILES}
-        for rel in _DIRS:
+        self.dirs = {tuple(f"{r}/{rel}".split("/")) for r in roots for rel in DIRS}
+        self.files = {tuple(f"{r}/{rel}".split("/")) for r in roots for rel in FILES}
+        for rel in DIRS:
             self.dirs.add(tuple(os.path.realpath(f"{self.home}/{rel}").split("/")))
-        for rel in _FILES:
+        for rel in FILES:
             self.files.add(tuple(os.path.realpath(f"{self.home}/{rel}").split("/")))
         self.depth = min(len(r.split("/")) for r in roots)
         self.links: dict[str, str] = {}
         user = re.escape(posixpath.basename(self.home))
         self.home_word = re.compile(rf"(~(?:{user})?|{_HOME_SPELLINGS})(?=/|$)")
         spelled = "|".join(re.escape(r) for r in sorted(roots))
-        names = "|".join(re.escape(rel) for rel in _DIRS + _FILES)
-        in_dirs = "|".join(re.escape(rel) + r"/[\w.-]" for rel in _DIRS)
-        in_files = "|".join(re.escape(rel) + r"(?![\w.-])" for rel in _FILES)
+        names = "|".join(re.escape(rel) for rel in DIRS + FILES)
+        in_dirs = "|".join(re.escape(rel) + r"/[\w.-]" for rel in DIRS)
+        in_files = "|".join(re.escape(rel) + r"(?![\w.-])" for rel in FILES)
         at_home = rf"(?:~(?:{user})?|{_HOME_SPELLINGS}|{spelled})/"
         flags = re.IGNORECASE if _CASELESS else 0
         self.text = re.compile(rf"{at_home}(?:{names})(?![\w.-])", flags)
@@ -533,6 +558,24 @@ def _writes(text: str, protected: _Set, cwd: str | None, depth: int = 0) -> bool
         if as_shell and any(_writes(body, protected, cwd, depth + 1) for body in seg.heredocs):
             return True
     return any(_writes(body, protected, None, depth + 1) for body in p.substitutions)
+
+
+def protects_file(path: str, cwd: str, home: str) -> bool:
+    """Whether `path`, as a file tool names it, is a protected path under `home`.
+
+    A relative `path` is joined to `cwd`. The path is compared as written and through the
+    links on disk, so a file reached through a linked directory counts."""
+    if not home or not path:
+        return False
+    if not path.startswith("/"):
+        path = f"{cwd}/{path}"
+    path = posixpath.normpath(path)
+    protected = _Set(home)
+    try:
+        real = os.path.realpath(path)
+    except OSError, ValueError:
+        real = path
+    return "inside" in (protected._relation(path), protected._relation(real))
 
 
 def writes_protected_path(command: str, cwd: str, home: str) -> bool:

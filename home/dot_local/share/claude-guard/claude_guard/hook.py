@@ -23,7 +23,15 @@ import json
 import os
 from collections.abc import Mapping
 
-from claude_guard import apply_guard, bypass, prompt_tool, tq_wrap, waits, wrapped
+from claude_guard import (
+    apply_guard,
+    bypass,
+    prompt_tool,
+    protected_paths,
+    tq_wrap,
+    waits,
+    wrapped,
+)
 from claude_guard.checks import (
     git_conventions,
     homelab_deploy,
@@ -42,6 +50,7 @@ from claude_guard.rules import load_rules
 from claude_guard.segment import parse
 from claude_guard.tables import scratch_roots
 
+FILE_TOOLS = frozenset({"Edit", "Write", "NotebookEdit"})
 ALLOW_JSON = (
     '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}'
 )
@@ -292,8 +301,24 @@ def combine_conventions(rules: Verdict, conv: Verdict | None) -> Verdict:
     return rules
 
 
+def file_tool_json(event: PreToolUseEvent, env: Mapping[str, str]) -> str | None:
+    """The deny JSON for a file-tool call whose path `claude_guard.protected_paths` lists,
+    or None. The path is `file_path`, or `notebook_path` for NotebookEdit."""
+    tool_input = event.tool_input
+    path = tool_input.get("file_path") or tool_input.get("notebook_path")
+    if not isinstance(path, str):
+        return None
+    if protected_paths.protects_file(path, event.cwd or "", env.get("HOME", "")):
+        return pre_tool_use_json(
+            Verdict("deny", protected_paths.FILE_RULE, protected_paths.FILE_REASON)
+        )
+    return None
+
+
 def pre_tool_use(stdin_text: str, env: Mapping[str, str]) -> str | None:
     """The deny/ask/allow JSON, or None for no decision.
+
+    A file-tool call is judged by `file_tool_json` alone, under the same failure contract.
 
     Never raises. An exception in the deny rules becomes ASK_JSON: the deny side fails closed
     to ask (spec, Failure contracts), the posture the bash took on a missing jq. The
@@ -310,6 +335,11 @@ def pre_tool_use(stdin_text: str, env: Mapping[str, str]) -> str | None:
     event = parse_event(stdin_text)
     if event is None:
         return None
+    if event.tool_name in FILE_TOOLS:
+        try:
+            return file_tool_json(event, env)
+        except Exception:
+            return ASK_JSON
     prompt_tool.record_context(event, env)
     if event.bash is None:
         return None

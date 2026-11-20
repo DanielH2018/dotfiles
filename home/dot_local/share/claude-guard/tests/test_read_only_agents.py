@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from claude_guard.checks import read_only_agents
 from claude_guard.hook import pre_tool_use
 
 AGENTS_SOURCE = Path(__file__).resolve().parents[4] / "private_dot_claude" / "agents"
@@ -312,7 +313,15 @@ def test_a_string_the_segmenter_cannot_read_is_denied_for_the_command_it_names()
     assert problem("frobnicate 'a.b; <(('", ("/tmp",)) is None
 
 
-def test_the_three_read_only_agents_declare_it_in_their_frontmatter():
-    for name in READ_ONLY_AGENTS:
-        frontmatter = (AGENTS_SOURCE / f"{name}.md").read_text().split("\n---", 1)[0]
-        assert "\nread_only: true" in frontmatter, name
+def test_the_shipped_list_names_every_source_agent_that_declares_read_only():
+    if not AGENTS_SOURCE.is_dir():
+        pytest.skip("not in the chezmoi source tree")
+    assert read_only_agents.read_only_agents(AGENTS_SOURCE) == read_only_agents.SHIPPED
+
+
+def test_a_shipped_agent_stays_read_only_when_its_deployed_file_drops_the_flag(env):
+    agents = Path(env["HOME"]) / ".claude" / "agents"
+    (agents / "deep-review.md").write_text("---\nname: deep-review\ntools: '*'\n---\nbody\n")
+    (agents / "root-cause.md").unlink()
+    assert decision("rm src/a.py", env, "deep-review") == "deny"
+    assert decision("rm src/a.py", env, "root-cause") == "deny"
