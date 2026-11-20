@@ -41,7 +41,7 @@ test('the template renders valid TOML', { skip: tomlSkip }, () => {
   assert.ok(doc.appearance && doc.terminal, 'a parse that loses the top-level tables is not a parse');
 });
 
-test('the recapture keeps the header and the three template actions', { skip }, () => {
+test('the recapture keeps the header and the template actions', { skip }, () => {
   // A `cp` of the deployed file over this template drops all of them. Nothing else in the file
   // would look wrong afterwards -- it stays valid TOML and deploys -- so this is the only signal.
   const raw = fs.readFileSync(TMPL, 'utf8');
@@ -109,4 +109,15 @@ test('use_latest_prompt_as_title stays off', { skip: tomlSkip }, () => {
   const vt = doc.appearance.vertical_tabs || {};
   assert.notStrictEqual(vt.use_latest_prompt_as_title, true,
     'this overrides the OSC 0 session title; leave it at its default of false');
+});
+
+test('restore and the login item are off only where the startup shortcut replaces them', { skip: tomlSkip || (process.platform === 'win32' ? false : 'the shortcut is Windows-only') }, () => {
+  // Left on beside warp-homelab.url, each one opens a second window at login. On any machine
+  // without the shortcut, turning them off would leave Warp neither starting nor restoring.
+  const personal = parseToml(renderFile(TMPL, { data: { work: false } })).general;
+  assert.strictEqual(personal.restore_session, false);
+  assert.strictEqual(personal.login_item, false);
+  const work = parseToml(renderFile(TMPL, { data: { work: true } })).general;
+  assert.strictEqual(work.restore_session, true);
+  assert.strictEqual(work.login_item, undefined);
 });

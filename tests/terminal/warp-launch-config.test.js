@@ -3,14 +3,18 @@
 // Warp fails silently on both mistakes these guard against. A launch configuration with a `~`
 // or empty `cwd` is left out of the list with no error. A tab whose `group` index points past
 // the end of `tab_groups` loses its group. And the file names homelab hosts, so the `.work` gate
-// that keeps it off a work machine has to match the path Windows deploys.
+// that keeps it off a work machine has to match the path Windows deploys. The Startup-folder
+// shortcut that opens it at login is gated with it, and has to name it.
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 const { renderFile, chezmoiAvailable } = require('../lib/render');
 const { srcPath } = require('../lib/paths');
 
 const SOURCE = srcPath('AppData', 'Roaming', 'warp', 'Warp', 'data', 'launch_configurations', 'homelab.yaml.tmpl');
-const TARGET = 'AppData/Roaming/warp/Warp/data/launch_configurations/homelab.yaml';
+const STARTUP = 'AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/warp-homelab.url';
+const TARGETS = ['AppData/Roaming/warp/Warp/data/launch_configurations/homelab.yaml', STARTUP];
 const skip = chezmoiAvailable ? false : 'chezmoi unavailable';
 // The ignore file spells this path only in its Windows branch, so other OSes cannot check the gate.
 const gateSkip = skip || (process.platform === 'win32' ? false : 'the gate is Windows-only');
@@ -18,12 +22,20 @@ const gateSkip = skip || (process.platform === 'win32' ? false : 'the gate is Wi
 const ignored = (work) =>
   new Set(renderFile(srcPath('.chezmoiignore'), { data: { work } }).split('\n').map((l) => l.trim()));
 
-test('a work machine does not get the homelab launch configuration', { skip: gateSkip }, () => {
-  assert.ok(ignored(true).has(TARGET), 'the launch configuration names homelab hosts and must be gated');
+test('a work machine gets neither the launch configuration nor its startup shortcut', { skip: gateSkip }, () => {
+  const gated = ignored(true);
+  for (const target of TARGETS) assert.ok(gated.has(target), `${target} names homelab hosts and must be gated`);
 });
 
-test('a personal machine gets the homelab launch configuration', { skip: gateSkip }, () => {
-  assert.ok(!ignored(false).has(TARGET), 'the gate is inverted; the personal PC loses its layout');
+test('a personal machine gets the launch configuration and its startup shortcut', { skip: gateSkip }, () => {
+  const gated = ignored(false);
+  for (const target of TARGETS) assert.ok(!gated.has(target), `the gate is inverted; the personal PC loses ${target}`);
+});
+
+test('the startup shortcut opens the tracked launch configuration', () => {
+  const url = fs.readFileSync(srcPath(...STARTUP.split('/')), 'utf8').match(/^URL=warp:\/\/launch\/(\S+)/m);
+  assert.ok(url, 'the shortcut must be an [InternetShortcut] with a warp://launch/ URL');
+  assert.strictEqual(path.basename(SOURCE, '.tmpl'), url[1], 'the shortcut names a launch configuration that is not tracked');
 });
 
 test('every tab has an absolute cwd', { skip }, () => {

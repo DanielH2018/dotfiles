@@ -6,9 +6,10 @@
 # gives it no field for a group. `tab_groups` exists only in this legacy format, which Warp
 # still reads (docs.warp.dev/terminal/sessions/launch-configurations).
 #
-# Session restoration (`restore_session = true` in settings.toml) already reopens these
-# groups at every launch. Warp overwrites that state each time it quits, though, so a
-# closed group stays closed. This file is the copy that survives that.
+# This file is what opens at login. The Startup-folder shortcut warp-homelab.url opens it as
+# `warp://launch/homelab.yaml`, which runs each tab's commands. Session restoration is off on
+# this PC (settings.toml), because a Windows shutdown kills the shells before Warp saves, and
+# the restored window held only the panes that have no shell.
 #
 # The layout mirrors the `tab_groups` and `tabs` rows in warp.sqlite on 2026-11-19.
 #

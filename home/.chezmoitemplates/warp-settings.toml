@@ -16,15 +16,16 @@
 #   macOS:   cp ~/.warp/settings.toml                              <source>/home/.chezmoitemplates/warp-settings.toml
 #   Linux:   cp ~/.config/warp-terminal/settings.toml              <source>/home/.chezmoitemplates/warp-settings.toml
 #   Windows: cp "$LOCALAPPDATA/warp/Warp/config/settings.toml"     <source>/home/.chezmoitemplates/warp-settings.toml
-# then restore this header and the three template actions below.
+# then restore this header and the four template actions below.
 #
-# Three things are templated, because Warp resolves nothing relative and a literal would
+# Four things are templated, because Warp resolves nothing relative and a literal would
 # deploy wrong under another user or OS:
 #   - `default_tab_config_path`, an absolute path into the tab_configs dir
+#   - `[general]`'s restore and login-item keys, off only on the personal Windows PC
 #   - `[session]`'s shell overrides, which name a Windows-only bash.exe
 #   - `[system]`'s graphics keys, whose backend enum is Windows-only
 #
-# A recapture drops all three, and the deployed file stays valid TOML afterwards — so the
+# A recapture drops all four, and the deployed file stays valid TOML afterwards — so the
 # tests in tests/terminal/warp-settings.test.js are the only thing that notices.
 
 [terminal]
@@ -124,10 +125,20 @@ default_session_mode = "tab_config"
 show_warning_before_quitting = false
 default_tab_config_path = "{{ includeTemplate "warp-tab-configs-dir" . }}/local-shell.toml"
 new_tab_placement = "after_all_tabs"
+{{- if and (eq .chezmoi.os "windows") (not .work) }}
+# On the personal PC, the Startup-folder shortcut warp-homelab.url opens the homelab launch
+# configuration at login, so both of Warp's own mechanisms are off. Restore cannot survive a
+# Windows shutdown: the shells die first, Warp saves each as a closed tab, and only non-shell
+# panes come back. `login_item` is Warp's "launch at login" toggle; Warp keeps its
+# HKCU\...\Run entry in step with it, and that entry would open a second, bare window.
+restore_session = false
+login_item = false
+{{- else }}
 # Warp's own default, pinned rather than left implicit. It is what reopens the previous
 # windows, tabs, panes and tab groups on launch, and it is a single toggle in the UI —
 # so leaving it unset means one stray click loses the layout with nothing to revert to.
 restore_session = true
+{{- end }}
 
 [appearance]
 
