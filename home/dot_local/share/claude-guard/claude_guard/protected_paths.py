@@ -15,11 +15,20 @@ a protected path as a word passes only when it cannot write the path:
     link points at. A later word of the same command that goes through the link is
     compared at its target, and a later command meets the link on disk;
   * it is `chezmoi`, which `apply_guard` judges;
-  * it runs a program the guard cannot read: an interpreter, or a command spelled with a
-    directory outside the system ones (`bin/deployed`, `./check.sh`). Such a program can
-    write any path without naming it, so the name on its command line adds nothing. An
-    interpreter's inline program is read by `deny.python_write` and
-    `deny.interpreter_write`, which match these paths through `deny.WRITE_TARGETS`.
+  * it runs a program file the guard cannot read: an interpreter given a script, or a
+    command spelled with a directory outside the system ones (`bin/deployed`,
+    `./check.sh`). Such a program can write any path without naming it, so the name on
+    its command line adds nothing.
+
+An interpreter's inline program is read here too (`python3 -c`, `node -e`, a program in
+a heredoc). One that spells a protected path in its text is refused, and so is an
+interpreter given a protected path when its first word is an option, not a script. A
+Python program passes when `inert_python.read_only` proves it changes no file, and
+Python is refused over an operand only for such a `-c` program, so `python3 -m json.tool
+<path>` passes. `deny.WRITE_TARGETS` does not list `~/.local/bin`, because the rules that read it
+match a path named anywhere in the command, and running a tool by its full path is
+ordinary. A sed script is read the same way: one that writes a file and spells a
+protected path is refused.
 
 Every other command is refused, so `cp`, `mv`, `install`, `ln`, `tee`, `dd`, `rsync`, an
 editor, `chmod`, `rm`, `touch`, `curl -o` and a verb nobody listed are one case. A write
@@ -35,9 +44,10 @@ does not match as text is resolved through the links on disk and compared again.
 command with each literal `for` list value in place of its variable.
 
 A path can reach a command as data the guard does not follow: through a pipe into `xargs`
-or a `while read` loop, or out of a substitution. From the point where a stage or a
-substitution names a protected path, a command given unseen arguments or an expansion
-passes only when it is a read or a program the guard cannot read.
+or a `while read` loop, or in a variable set from a substitution. After a pipeline stage
+names a protected path, a command given unseen arguments or an expansion passes only when
+it is a read or a program the guard cannot read. So does a command that expands a
+variable set from a substitution that names one.
 
 A directory above the set (`~`, `~/.claude`, `~/.local`, `~/.local/share`) is named by too
 many ordinary commands to refuse by default. It is refused for the verbs in `_TREE_VERBS`
@@ -45,11 +55,9 @@ only: one that moves, removes or re-modes the directory, a copy whose result lan
 set (`cp -r /tmp/bin ~/.local`), a copy that merges into the directory, and an archive
 unpacked there.
 
-A link directly inside a protected directory protects the file it points at as well, when
-that file is under the home directory.
-
-Not read: a path only an unset variable spells, the other files of a linked tool's
-install, a command that writes into the set without naming it (`uv tool install`),
+Not read: a path only an unset variable spells, a path a program builds from parts, the
+file a link inside a protected directory points at (the install behind a `uv tool`
+entry), a command that writes into the set without naming it (`uv tool install`),
 arguments `xargs` reads from a file, and an archive unpacked in a working directory above
 the set.
 
@@ -65,6 +73,7 @@ import shlex
 import sys
 
 from claude_guard import deny as d
+from claude_guard.checks import sed
 from claude_guard.readonly import command_reads_only
 from claude_guard.segment import parse
 
@@ -73,7 +82,8 @@ REASON = (
     "Blocked: this command can change a Claude Code hook, a claude-guard file, the settings "
     "the guard reads, or a tool in ~/.local/bin, and the guard cannot prove that it only "
     "reads them. Change the chezmoi source and run `chezmoi apply`, or ask the user to make "
-    "the change."
+    "the change. If the path is only text in a file you are changing, make the change with "
+    "the Edit or Write tool instead."
 )
 
 _DIRS = (".claude/hooks", ".local/bin", ".local/share/claude-guard")
@@ -90,6 +100,7 @@ _GLOB = re.compile(r"[*?\[]")
 _DESCRIPTOR = re.compile(r"[0-9]+|-")
 _VAR = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 _KEPT_VARS = frozenset({"HOME", "PWD"})
+_SUBSTITUTED_NAME = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)=\"?(?:\$\(|`)")
 
 _COPIERS = frozenset({"cp", "mv", "install", "ln", "rsync", "scp"})
 _UNPACKERS = frozenset({"tar", "bsdtar", "unzip", "cpio", "7z", "unar"})
@@ -109,6 +120,7 @@ _TEXT_RUNNERS = d._SHELLS | {
     "batch", "nohup", "timeout",
 }  # fmt: skip
 _UNSEEN_ARGUMENTS = frozenset({"xargs", "parallel"})
+_CHDIR_OPTS = frozenset({"-C", "--chdir", "--directory", "--cwd"})
 _LOOP_HEADS = frozenset({"while", "until", "for"})
 _SOURCERS = frozenset({"source", "."})
 _AWKS = frozenset({"awk", "gawk", "mawk", "nawk"})
@@ -116,7 +128,7 @@ _BINDERS = frozenset({"[[", "for", "select", "case", "read"})
 _SCRIPT_SUFFIXES = (".py", ".sh")
 _SHELL_COMMAND_OPT = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
 # Tools of this repo that only read the files they are given.
-_READ_TOOLS = frozenset({"jsonq"})
+_READ_TOOLS = frozenset({"jsonq", "rootq"})
 
 
 class _Set:
@@ -131,17 +143,20 @@ class _Set:
             self.dirs.add(tuple(os.path.realpath(f"{self.home}/{rel}").split("/")))
         for rel in _FILES:
             self.files.add(tuple(os.path.realpath(f"{self.home}/{rel}").split("/")))
-        self.files |= {tuple(target.split("/")) for target in _linked_files(self.home)}
         self.depth = min(len(r.split("/")) for r in roots)
         self.links: dict[str, str] = {}
         user = re.escape(posixpath.basename(self.home))
         self.home_word = re.compile(rf"(~(?:{user})?|{_HOME_SPELLINGS})(?=/|$)")
         spelled = "|".join(re.escape(r) for r in sorted(roots))
         names = "|".join(re.escape(rel) for rel in _DIRS + _FILES)
-        self.text = re.compile(
-            rf"(?:~(?:{user})?|{_HOME_SPELLINGS}|{spelled})/(?:{names})(?![\w.-])",
-            re.IGNORECASE if _CASELESS else 0,
-        )
+        in_dirs = "|".join(re.escape(rel) + r"/[\w.-]" for rel in _DIRS)
+        in_files = "|".join(re.escape(rel) + r"(?![\w.-])" for rel in _FILES)
+        at_home = rf"(?:~(?:{user})?|{_HOME_SPELLINGS}|{spelled})/"
+        flags = re.IGNORECASE if _CASELESS else 0
+        self.text = re.compile(rf"{at_home}(?:{names})(?![\w.-])", flags)
+        # In a program's text a bare directory is most often a PATH entry, so a program
+        # is matched on a protected file or a path under a protected directory.
+        self.file_text = re.compile(rf"{at_home}(?:{in_dirs}|{in_files})", flags)
 
     def _relation(self, path: str) -> str | None:
         for link, target in self.links.items():
@@ -204,24 +219,6 @@ class _Set:
         if words is None:
             return self.text.search(text) is not None
         return any(self.relation(w.strip("()"), cwd) for w in words)
-
-
-def _linked_files(home: str) -> list[str]:
-    """The files that the links directly inside the protected directories point at, such
-    as the binary behind a `uv tool` entry in `~/.local/bin`. A link to a file outside the
-    home directory is left out, since only root writes one."""
-    found = []
-    for rel in _DIRS:
-        try:
-            entries = list(os.scandir(f"{home}/{rel}"))
-        except OSError:
-            continue
-        for entry in entries:
-            if entry.is_symlink():
-                target = os.path.realpath(entry.path)
-                if target.startswith(os.path.realpath(home) + "/") and not os.path.isdir(target):
-                    found.append(target)
-    return found
 
 
 def _resolved(path: str) -> str:
@@ -356,6 +353,29 @@ def _cannot_write(argv: list[str]) -> bool:
     return _unreadable_program(argv) or _reads_only(argv)
 
 
+def _inline_programs(argv: list[str]) -> list[str] | None:
+    """The program texts the interpreter `argv` is given on its command line, or None when
+    `argv` runs no interpreter the guard reads inline programs for. An option's value
+    counts as a program when it holds whitespace or a call, which is what tells
+    `-c 'open(p)'` from `-W ignore`."""
+    name = posixpath.basename(argv[0])
+    if not (d._PYTHON_WORD.fullmatch(name) or d._stdin_cli(name) or d._is_interpreter(name)):
+        return None
+    if name in _AWKS:
+        return None
+    return [
+        a
+        for prev, a in zip(argv, argv[1:], strict=False)
+        if prev.startswith("-") and (any(c.isspace() for c in a) or "(" in a)
+    ]
+
+
+def _program_writes(name: str, program: str, protected: _Set) -> bool:
+    if not protected.file_text.search(program):
+        return False
+    return not (d._PYTHON_WORD.fullmatch(name) and d.read_only(program))
+
+
 def _remote_payloads(argv: list[str]) -> list[str]:
     quoted = [a for a in argv[1:] if any(c.isspace() for c in a)]
     if quoted:
@@ -387,23 +407,40 @@ def _command_writes(
         for tail in tails:
             leader = argv[: len(argv) - len(tail)]
             unseen = fed and name in _UNSEEN_ARGUMENTS
-            named = any(protected.relation(w, cwd) == "inside" for w in leader[1:])
+            where = cwd
+            for option, value in zip(leader, leader[1:], strict=False):
+                if option in _CHDIR_OPTS and len(protected.paths(value, cwd)) == 1:
+                    where = protected.paths(value, cwd)[0]
             if unseen and not command_reads_only(shlex.join(tail), unseen_arguments=True):
                 return True
-            if named and not _cannot_write(tail):
-                return True
-            if _command_writes(tail, protected, cwd, fed, depth):
+            if _command_writes(tail, protected, where, fed, depth):
                 return True
         return False
     relations = [protected.relation(w, cwd) for w in argv]
+    programs = _inline_programs(argv)
+    if programs is not None:
+        if any(_program_writes(name, text, protected) for text in programs):
+            return True
+        if d._PYTHON_WORD.fullmatch(name):
+            unproven = any(not d.read_only(text) for text in programs)
+        else:
+            unproven = len(argv) > 1 and argv[1].startswith("-")
+        if unproven and "inside" in relations[1:] and not _reads_only(argv):
+            return True
+    if name in sed.SED_NAMES:
+        script = "\n".join(sed.scripts(argv[1:]) or [])
+        found = sed.effects(script)
+        if protected.file_text.search(script) and (found is None or sed.WRITE in found):
+            return True
     run = relations[0] == "inside"
     inside = {i for i, r in enumerate(relations) if r == "inside" and i > 0}
     linking = name == "ln" and any(_SYMBOLIC.fullmatch(a) for a in argv[1:])
+    dest, _ = _destination(argv)
     if name == "cp" or linking:
-        dest, _ = _destination(argv)
         inside &= {dest}
     judged = [name, *argv[1:]] if run else argv
-    expands = fed and any("$" in a for a in argv[1:])
+    written = [argv[dest]] if (name == "cp" or linking) and dest is not None else argv[1:]
+    expands = fed and any("$" in a for a in written)
     if (inside or expands) and name != "chezmoi" and not _cannot_write(judged):
         return True
     if linking:
@@ -452,8 +489,8 @@ def _writes(text: str, protected: _Set, cwd: str | None, depth: int = 0) -> bool
     runs_lines = any(
         posixpath.basename(w) in d._LINE_RUNNERS for words in segment_words for w in words or []
     )
-    substituted = any(protected.named_in(body, cwd) for body in p.substitutions)
     piped = looping = False
+    fed_names: set[str] = set()
     bound: dict[str, str] = {}
     for seg, words in zip(p.segments, segment_words, strict=True):
         if words is None:
@@ -466,6 +503,8 @@ def _writes(text: str, protected: _Set, cwd: str | None, depth: int = 0) -> bool
             return m.group() if name in _KEPT_VARS else bound.get(name, m.group())
 
         words = [_VAR.sub(value, w) for w in words]
+        if protected.text.search(seg.text):
+            fed_names |= {m.group(1) for m in _SUBSTITUTED_NAME.finditer(seg.text)}
         _bind(words, bound, protected, cwd)
         commands, written = _simple_commands(words)
         if any(protected.relation(w, cwd) == "inside" for w in written):
@@ -473,7 +512,10 @@ def _writes(text: str, protected: _Set, cwd: str | None, depth: int = 0) -> bool
         named = False
         for command in commands:
             argv = d._argv(command)
-            if _command_writes(argv, protected, cwd, substituted or piped, depth):
+            fed = piped or any(
+                (m.group(1) or m.group(2)) in fed_names for w in argv for m in _VAR.finditer(w)
+            )
+            if _command_writes(argv, protected, cwd, fed, depth):
                 return True
             named |= any(protected.relation(w, cwd) for w in argv)
             if argv and argv[0] in ("cd", "pushd"):
@@ -482,7 +524,10 @@ def _writes(text: str, protected: _Set, cwd: str | None, depth: int = 0) -> bool
         looping = piped and (head in _LOOP_HEADS or (looping and head != "done"))
         piped = (piped or named) if seg.sep == "|" else looping
         owner = posixpath.basename(((d._argv(commands[0]) if commands else []) or [""])[0])
-        as_shell = runs_lines and not (d._is_interpreter(owner) or d._stdin_cli(owner))
+        interpreter = d._is_interpreter(owner) or d._stdin_cli(owner) is not None
+        if interpreter and any(_program_writes(owner, b, protected) for b in seg.heredocs):
+            return True
+        as_shell = runs_lines and not interpreter
         if as_shell and any(_writes(body, protected, cwd, depth + 1) for body in seg.heredocs):
             return True
     return any(_writes(body, protected, None, depth + 1) for body in p.substitutions)

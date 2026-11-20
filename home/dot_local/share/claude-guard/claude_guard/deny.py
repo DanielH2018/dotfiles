@@ -2051,14 +2051,10 @@ GIT_CONFIG_PATHS = (
     rf"|hooks[^/[:space:];&|]*(/|{_GIT_END}))"
     rf"|\.gitconfig{_GIT_END}|/etc/gitconfig{_GIT_END}|\.config/git/|/git/config{_GIT_END})"
 )
-# A home directory as a command spells it. The tools and the guard package are matched
-# under one, because a repository names the same relative paths as text.
-_HOME_AT = r"(~|\$HOME|\$\{HOME\}|/(home|Users)/[^/[:space:]]+|/root)"
 # :1064. SOPS basenames on the WRITE side only (:1057-1063).
 WRITE_TARGETS = (
     rf"({SECRET_PATHS}|{SOPS_BASENAMES}|authorized_keys|{SHELL_STARTUP_FILES}|"
-    rf"\.claude/settings(\.local)?\.json|\.claude/hooks/|"
-    rf"{_HOME_AT}/\.local/(bin|share/claude-guard)/|{GIT_CONFIG_PATHS})"
+    rf"\.claude/settings(\.local)?\.json|\.claude/hooks/|{GIT_CONFIG_PATHS})"
 )
 # :1081. Editors that unambiguously rewrite the file they name; cp/mv deliberately absent.
 # GNU sed reads everything after `-i` in the word as the backup suffix, so `-ie` is `-i`

@@ -169,6 +169,7 @@ GUARD_ROUTES = [
     ("guard-file-write", "cp /tmp/x ~/.claude/hook?/guard-pre-tool-use.sh"),
     ("guard-file-write", "cp /tmp/x ${HOME:-/x}/.local/bin/envq"),
     ("guard-file-write", "(cd ~/.claude/hooks && cp /tmp/x read-nudge.sh)"),
+    ("guard-file-write", "env -C ~/.claude/hooks cp /tmp/x read-nudge.sh"),
     ("guard-file-write", f"tmux new -d 'cp /tmp/x {TOOL}'"),
     # the path reaches the writer as data
     ("guard-file-write", f'ls {TOOL} | while read f; do cp /tmp/x "$f"; done'),
@@ -180,13 +181,21 @@ GUARD_ROUTES = [
     ("guard-file-write", "mv ~/.local ~/.local.off"),
     ("guard-file-write", "tar -xf /tmp/a.tar -C ~/.local"),
     # the write verbs the older rules already read, now for every protected path
-    ("write-target", f"echo x > {TOOL}"),
-    ("write-target", f"echo x | tee {TOOL}"),
     ("write-target", "echo x > ~/.claude/settings.local.json"),
-    ("write-target", f"sed -n '1w {TOOL}' docs/a.md"),
-    ("inplace-edit", f"sed -i s/a/b/ {TOOL}"),
-    ("inplace-edit", f"dd if=/tmp/x of={TOOL}"),
-    ("python-write", "python3 -c \"open('/home/u/.local/bin/envq','w').write('x')\""),
+    ("guard-file-write", f"echo x > {TOOL}"),
+    ("guard-file-write", f"echo x | tee {TOOL}"),
+    ("guard-file-write", f"sed -n '1w {TOOL}' docs/a.md"),
+    ("guard-file-write", f"sed -i s/a/b/ {TOOL}"),
+    ("guard-file-write", f"perl -pi -e s/a/b/ {TOOL}"),
+    ("guard-file-write", f"dd if=/tmp/x of={TOOL}"),
+    # an interpreter's inline program
+    ("guard-file-write", f"python3 -c \"open(__import__('os').path.expanduser('{TOOL}'),'w')\""),
+    (
+        "guard-file-write",
+        f"python3 - <<'EOF'\nimport os\nopen(os.path.expanduser('{TOOL}'), 'w')\nEOF",
+    ),
+    ("guard-file-write", f"node -e \"require('fs').writeFileSync(process.argv[1], 'x')\" {TOOL}"),
+    ("guard-file-write", f"lua -e \"io.open(arg[1], 'w')\" {TOOL}"),
     # a sed script that runs a command, or one the guard cannot read
     ("sed-exec", "sed -n '1e id' /dev/null"),
     ("sed-exec", "sed 's/x/id/e' /dev/null"),

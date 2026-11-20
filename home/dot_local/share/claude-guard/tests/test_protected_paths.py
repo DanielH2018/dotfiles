@@ -29,15 +29,6 @@ def test_a_protected_directory_that_is_a_link_is_protected_where_it_points(home,
     assert writes_protected_path(f"cp /tmp/x {real}/envq", f"{home}/repo", home)
 
 
-def test_a_tool_that_is_a_link_is_protected_at_the_file_it_points_to(home):
-    tool = f"{home}/tools/ruff/bin/ruff"
-    os.makedirs(os.path.dirname(tool))
-    open(tool, "w").close()
-    os.symlink(tool, f"{home}/.local/bin/ruff")
-    assert writes_protected_path(f"cp /tmp/x {tool}", f"{home}/repo", home)
-    assert not writes_protected_path(f"cp /tmp/x {tool}.orig", f"{home}/repo", home)
-
-
 @pytest.mark.parametrize(
     ("command", "cwd", "refused"),
     [
@@ -71,6 +62,13 @@ def test_a_relative_word_is_read_from_the_working_directory(home, command, cwd, 
         "tar -czf /tmp/backup.tgz ~/.claude",
         "cp notes.md ~/",
         "rsync -a ~/.claude/ /tmp/backup/",
+        "~/.local/bin/uv run pytest -q; node --test tests/x.test.js",
+        "uv run --python ~/.local/bin/python3.15 pytest -q",
+        "python3 -c \"print(open('/tmp/notes.md').read())\" ~/notes.md",
+        "python3 -m json.tool ~/.claude/settings.json",
+        "python3 -c \"import os; os.environ['PATH'] = os.path.expanduser('~/.local/bin')\"",
+        'c=$(ls ~/.local/bin/chezmoi); ln -sfn "$c" /tmp/chezmoi',
+        "sed -n 's|~/.local/bin/||p' docs/tools.md",
     ],
 )
 def test_a_command_that_cannot_write_the_path_it_names_passes(home, command):
