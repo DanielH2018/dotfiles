@@ -320,11 +320,11 @@ def test_the_rerun_nudge_names_the_raw_form_for_a_repo_the_account_does_not_own(
 
 @pytest.fixture
 def server_checkout(tmp_path, monkeypatch):
-    """A server checkout holding both readers, with gh-quota and unitq on PATH."""
+    """A server checkout holding its probe, with gh-quota and unitq on PATH."""
     root = tmp_path / "server"
-    for script in ("scripts/diagnostics/probe.py", "scripts/dev/prune_worktrees.py"):
-        (root / script).parent.mkdir(parents=True, exist_ok=True)
-        (root / script).write_text("")
+    probe = root / "scripts" / "diagnostics" / "probe.py"
+    probe.parent.mkdir(parents=True)
+    probe.write_text("")
     (root / "ansible").mkdir()
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -341,9 +341,9 @@ def server_checkout(tmp_path, monkeypatch):
         (
             "ghread pr list --head fix-1 --state merged",
             "landed-check",
-            "prune_worktrees.py --check",
+            "prune-worktrees.py --check",
         ),
-        ("git log --oneline origin/master..fix-1", "landed-check", "prune_worktrees.py --check"),
+        ("git log --oneline origin/master..fix-1", "landed-check", "prune-worktrees.py --check"),
         ("pgrep -af 'land.sh --pr 8857'", "landing-inflight", "probe.py landing`"),
         ("ps aux | grep land.sh", "landing-inflight", "probe.py landing`"),
         ("tail -n 40 /tmp/land-8857.out", "landing-verdicts", "probe.py landing-verdicts"),

@@ -565,7 +565,7 @@
            ~/.local/bin and the repo scripts are writable by the session. The classifier does
            see an edit, a function or a PATH change in the transcript, so this names those
            rather than moving the tools under root. */}}
-      "Every entry in this list that clears a named tool or repo script (`secretq`, `unitq`, `killown`, `envq`, `rootq`, `ghread`, `gh-rerun-failed`, `runlog`, `redproof`, `claude-guard replay`, `scripts/diagnostics/probe.py`, `scripts/dev/fanout.py`, `scripts/dev/findings.py`, `scripts/dev/prune_worktrees.py`, `scripts/deploy_tools/land.sh`) clears it for what that file does as installed. The clearance does not apply when this session wrote, edited or moved that file or a file it imports, defined a shell function or alias with the tool's name, changed PATH, or ran the tool from a path other than `~/.local/bin/<name>`, `/usr/local/bin/rootq` or the repo's own `scripts/` tree. Such a run is judged as running code the session wrote",
+      "Every entry in this list that clears a named tool or repo script (`secretq`, `unitq`, `killown`, `envq`, `rootq`, `ghread`, `gh-rerun-failed`, `runlog`, `redproof`, `claude-guard replay`, `scripts/diagnostics/probe.py`, `scripts/dev/fanout.py`, `scripts/dev/findings.py`, `~/.claude/hooks/prune-worktrees.py`, `scripts/deploy_tools/land.sh`) clears it for what that file does as installed. The clearance does not apply when this session wrote, edited or moved that file or a file it imports, defined a shell function or alias with the tool's name, changed PATH, or ran the tool from a path other than `~/.local/bin/<name>`, `/usr/local/bin/rootq`, `~/.claude/hooks/prune-worktrees.py` or the repo's own `scripts/` tree. Such a run is judged as running code the session wrote",
       {{/* Denied as "External System Writes" on 2026-09-25 while polling a fan-out wave. The
            command reaches two hosts and GitHub, which is what the classifier keyed on, but every
            reach is a read: cmd_status in scripts/dev/fanout_lib/place.py loads the manifest, runs
@@ -601,7 +601,7 @@
            branch had landed. A plain remove needs no ownership clause: git refuses a dirty tree,
            and refuses a locked one, which every live EnterWorktree session's tree is. Requiring
            "this session created it" would refuse worktree-cleanup's retirement of merged trees. */}}
-      "Git worktree lifecycle under .claude/worktrees/ is routine: creating and entering a worktree (`git worktree add`), removing one with a plain `git worktree remove`, and deleting a branch whose work is already on origin/master. A plain remove is safe because git refuses a tree with uncommitted changes and refuses a locked tree, and every live session's tree is locked. `git worktree remove --force` or `-f` overrides both refusals and is not covered. `git branch -d` covers the ordinary case. `git branch -D` is needed only for a squash- or rebase-merged branch, whose content landed under a new SHA that git's own ancestor test can no longer see; the branch tip stays in the reflog. A `-D` is covered only with evidence of the landing: a merged PR for that branch visible in this transcript, or the deletion done by `uv run python scripts/dev/prune_worktrees.py --prune`, which applies that content check itself before it removes anything. Several sessions work this repo in parallel and each owns its own worktree",
+      "Git worktree lifecycle under .claude/worktrees/ is routine: creating and entering a worktree (`git worktree add`), removing one with a plain `git worktree remove`, and deleting a branch whose work is already on origin/master. A plain remove is safe because git refuses a tree with uncommitted changes and refuses a locked tree, and every live session's tree is locked. `git worktree remove --force` or `-f` overrides both refusals and is not covered. `git branch -d` covers the ordinary case. `git branch -D` is needed only for a squash- or rebase-merged branch, whose content landed under a new SHA that git's own ancestor test can no longer see; the branch tip stays in the reflog. A `-D` is covered only with evidence of the landing: a merged PR for that branch visible in this transcript, or the deletion done by `~/.claude/hooks/prune-worktrees.py --prune`, which applies that content check itself before it removes anything. Several sessions work this repo in parallel and each owns its own worktree",
       {{/* The 2026-11-01 critique: "checkout, switch" covered the pathspec and discard forms,
            which overwrite uncommitted edits that no reflog holds. `git restore` in the session's
            own worktree is claude_guard's worktree_restore_safe, not this entry. */}}
@@ -719,7 +719,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/lib/run-python.sh prune-worktrees.py --prune",
+            "command": "bash ~/.claude/hooks/lib/run-python.sh prune-worktrees.py --hook",
             "timeout": 15
           }
         ]

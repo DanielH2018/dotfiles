@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
-"""Standalone tests for prune-worktrees.py.
+"""Standalone tests for the worktree pruner behind prune-worktrees.py.
 
 Run: python3 test_prune_worktrees.py
 
-Two halves. The unit half pins the classifier, because everything that keeps this hook
-from deleting live work lives there — above all `session_is_alive`, where a wrong answer
-costs a sibling session its uncommitted changes.
+Two halves. The unit half pins the classifier, because everything that keeps the
+pruner from deleting live work lives there — above all `session_is_alive`, where a
+wrong answer costs a sibling session its uncommitted changes.
 
-The end-to-end half builds real git repos in a temp dir and runs the script on them,
-because the interesting failure is not in the logic: `git worktree remove` refuses while
-a worktree is locked, and Claude Code locks every session worktree, so a version that
-never unlocks passes every unit test and removes nothing at all.
+The end-to-end half builds real git repos in a temp dir and runs the launcher on
+them, because the interesting failure is not in the logic: `git worktree remove`
+refuses while a worktree is locked, and Claude Code locks every session worktree, so a
+version that never unlocks passes every unit test and removes nothing at all.
+
+The logic lives in the claude-worktree package (`claude_worktree`, the library, and
+`claude_worktree_sweep`, the sweep and CLI). The launcher only finds that package.
 """
 
-import importlib.util
 import json
 import os
 import subprocess
@@ -26,11 +28,11 @@ from _testkit import check, finish, git
 
 try:
     import fcntl
-except ImportError:  # Windows: no flock, so the hook skips its sweep lock
+except ImportError:  # Windows: no flock, so the sweep skips its lock
     fcntl = None
 
-# Importing the hook below would otherwise write a __pycache__ into the chezmoi source
-# tree, which `git status --porcelain` would then see as an untracked file.
+# Importing the package below would otherwise write a __pycache__ into the chezmoi
+# source tree, which `git status --porcelain` would then see as an untracked file.
 sys.dont_write_bytecode = True
 
 HERE = Path(__file__).resolve().parent
@@ -38,21 +40,22 @@ SCRIPT = HERE / "executable_prune-worktrees.py"
 if not SCRIPT.exists():  # deployed copy drops chezmoi's mode prefix
     SCRIPT = HERE / "prune-worktrees.py"
 
-# The hook imports its readers from the claude-worktree package. In the source tree the
-# package sits beside this file's ancestors and is not deployed on a CI runner, so point
-# the hook at it; the deployed copy has no such sibling and falls through to
-# ~/.local/share/claude-worktree. Set before the hook loads AND inherited by the
+# The launcher imports the pruner from the claude-worktree package. In the source tree
+# the package sits beside this file's ancestors and is not deployed on a CI runner, so
+# point the launcher at it; the deployed copy has no such sibling and falls through to
+# ~/.local/share/claude-worktree. Set before the package loads AND inherited by the
 # end-to-end subprocesses below, which is why it goes into os.environ rather than a
 # per-call env.
 _PACKAGE_SOURCE = HERE.parent.parent / "dot_local" / "share" / "claude-worktree"
 if _PACKAGE_SOURCE.is_dir():
     os.environ.setdefault("CLAUDE_WORKTREE_HOME", str(_PACKAGE_SOURCE))
+PACKAGE = Path(
+    os.environ.get("CLAUDE_WORKTREE_HOME", Path.home() / ".local/share/claude-worktree")
+)
+sys.path.insert(0, str(PACKAGE))
 
-spec = importlib.util.spec_from_file_location("prune_worktrees", SCRIPT)
-mod = importlib.util.module_from_spec(spec)
-# @dataclass resolves annotations through sys.modules, so register before executing.
-sys.modules["prune_worktrees"] = mod
-spec.loader.exec_module(mod)
+import claude_worktree as cw  # noqa: E402
+import claude_worktree_sweep as sw  # noqa: E402
 
 # Scrub git's own environment before anything runs. These tests build real repositories
 # in a temp dir and drive them with `cwd=`, but GIT_DIR and GIT_WORK_TREE outrank cwd —
@@ -62,13 +65,62 @@ spec.loader.exec_module(mod)
 # every env dict built from os.environ below.
 for _var in [k for k in os.environ if k.startswith("GIT_")]:
     del os.environ[_var]
-# Every --prune run below would otherwise ask the machine's real Docker daemon for
-# containers. `false` reads as Docker being down; the compose checks swap in a fake.
+# Every sweep below would otherwise ask the machine's real Docker daemon for
+# containers and the real forge for pull requests. `false` reads as Docker being down
+# and as a forge that answers nothing; the checks that need either swap in a fake.
 os.environ["DOCKER_BIN"] = "false"
+os.environ["GH_BIN"] = "false"
 
 
 def wt(path="/w", head="abc", branch="b", locked=False, reason=""):
-    return mod.Worktree(path, head, branch, locked, reason)
+    return cw.Worktree(path, head, branch, locked, reason)
+
+
+def run(args, cwd, env, stdin=""):
+    """Run the launcher; empty `stdin` (a hook input) keeps the sweep from waiting."""
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), *args],
+        cwd=cwd,
+        input=stdin,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def fake_proc(root, pid, cwd=None, project_dir=None, other_uid=None):
+    """A /proc entry the way the scan reads one.
+
+    A process whose cwd the scan can read has `cwd` and no `environ` (an unreadable one
+    is skipped). `other_uid` makes an unreadable process of another user inside this
+    user's login slice: `status` and `cgroup` readable, nothing else.
+    """
+    entry = root / str(pid)
+    entry.mkdir(parents=True)
+    if cwd is not None:
+        os.symlink(cwd, entry / "cwd")
+    if project_dir is not None:
+        (entry / "environ").write_bytes(
+            f"A=b\0CLAUDE_PROJECT_DIR={project_dir}\0".encode()
+        )
+    if other_uid is not None:
+        mine = os.getuid() if hasattr(os, "getuid") else -1
+        (entry / "status").write_text(f"Uid:\t{other_uid}\t{other_uid}\t0\t0\n")
+        (entry / "cgroup").write_text(f"0::/user.slice/user-{mine}.slice/x\n")
+    return entry
+
+
+def listed_under(stdout, heading):
+    """The names a `--check` listing indents under `heading`."""
+    names, inside = [], False
+    for line in stdout.splitlines():
+        if line == heading:
+            inside = True
+        elif inside and line.startswith("  "):
+            names.append(line.strip())
+        elif inside:
+            break
+    return names
 
 
 # ── a live lock: this process, whose start time /proc reports ───────────────────
@@ -103,141 +155,150 @@ LIVE_REASON = (
 
 check(
     "merged + clean + unlocked is removable",
-    mod.classify(wt(), merged=True, dirty=False, is_current=False)[0] == mod.REMOVABLE,
+    cw.classify(wt(), "ancestry", dirty=False, is_current=False)[0] == cw.REMOVABLE,
 )
 check(
     "the session's own worktree is kept even when merged and clean",
-    mod.classify(wt(), merged=True, dirty=False, is_current=True)[0] == mod.KEEP,
+    cw.classify(wt(), "ancestry", dirty=False, is_current=True)[0] == cw.KEEP,
 )
 check(
     "a live lock outranks merged + clean",
-    mod.classify(
+    cw.classify(
         wt(locked=True, reason=LIVE_REASON),
-        merged=True,
+        "ancestry",
         dirty=False,
         is_current=False,
     )[0]
-    == mod.KEEP,
+    == cw.KEEP,
 )
 check(
     "a dead owner's lock does not keep a merged tree",
-    mod.classify(
+    cw.classify(
         wt(locked=True, reason="claude session x (pid 4194303 start 1)"),
-        merged=True,
+        "ancestry",
         dirty=False,
         is_current=False,
     )[0]
-    == mod.REMOVABLE,
+    == cw.REMOVABLE,
 )
 check(
     "dirty is kept",
-    mod.classify(wt(), merged=True, dirty=True, is_current=False)[0] == mod.KEEP,
+    cw.classify(wt(), "ancestry", dirty=True, is_current=False)[0] == cw.KEEP,
 )
 check(
     "unmerged is kept",
-    mod.classify(wt(), merged=False, dirty=False, is_current=False)[0] == mod.KEEP,
+    cw.classify(wt(), None, dirty=False, is_current=False) == (cw.KEEP, "b not merged"),
 )
 check(
     "detached HEAD is kept",
-    mod.classify(wt(branch=None), merged=True, dirty=False, is_current=False)[0]
-    == mod.KEEP,
+    cw.classify(wt(branch=None), "ancestry", dirty=False, is_current=False)[0]
+    == cw.KEEP,
 )
 check(
-    "a process running from a merged tree keeps it, reported as busy",
-    mod.classify(wt(), merged=True, dirty=False, is_current=False, busy="pid 7")
-    == (mod.KEEP, f"{mod.BUSY_PREFIX} pid 7 uses it"),
+    "a forge-confirmed tree is removable and says the pull request matched its tip",
+    cw.classify(wt(), "forge", dirty=False, is_current=False)
+    == (cw.REMOVABLE, "b merged as a pull request from this tip, clean, unlocked"),
 )
+
+# What keeps a tree a live process holds is `remove`, which asks `in_use_reason`
+# right before it acts; `classify` never sees the process. The scan itself is
+# `process_holds`, tested in the claude-worktree suite; these pin how a hold is matched.
 check(
-    "busy is reported only where it is what blocks removal",
-    mod.classify(wt(), merged=False, dirty=False, is_current=False, busy="pid 7")[1]
-    == "b not merged",
+    "a hold matches the tree and below it, not a sibling sharing its prefix",
+    cw.holds_tree("/w/a/sub", {"/w/a"})
+    and cw.holds_tree("/w/a", {"/w/a"})
+    and not cw.holds_tree("/w/ab", {"/w/a"}),
 )
-check(
-    "busy_process matches the tree and below it, not a sibling sharing its prefix",
-    mod.busy_process("/w/a", [(1, "/w/ab", "cwd"), (2, "/w/a/sub", "cwd")]).startswith(
-        "pid 2"
+with tempfile.TemporaryDirectory() as tmp:
+    base = Path(tmp).resolve() / "w"
+    proc = Path(tmp).resolve() / "proc"
+    proc.mkdir()
+    fake_proc(proc, 1, cwd=str(base / "ab"))
+    fake_proc(proc, 2, cwd=str(base / "a" / "sub"))
+    held = cw.processes_using(str(base / "a"), proc=proc, privileged=lambda _t: None)
+    check(
+        "processes_using matches the tree and below it, "
+        "not a sibling sharing its prefix",
+        [pid for pid, _ in held] == [2]
+        and cw.processes_using(str(base / "b"), proc=proc, privileged=lambda _t: None)
+        == [],
     )
-    and mod.busy_process("/w/a", [(1, "/w/ab", "cwd")]) == "",
-)
-check(
-    "busy_process names which hold matched",
-    mod.busy_process("/w/a", [(3, "/w/a", "CLAUDE_PROJECT_DIR")]).endswith(
-        "by its CLAUDE_PROJECT_DIR"
-    ),
-)
-# The scan itself is claude_worktree.process_holds, tested in that package.
-check(
-    "busy_process counts another uid's unreadable process against any tree",
-    mod.busy_process("/w/a", [(4, "", "another uid")]).startswith("pid 4"),
-)
+
+with tempfile.TemporaryDirectory() as tmp:
+    base = Path(tmp).resolve() / "w"
+    proc = Path(tmp).resolve() / "proc"
+    proc.mkdir()
+    fake_proc(proc, 3, project_dir=str(base / "a"))
+    held = cw.processes_using(str(base / "a"), proc=proc, privileged=lambda _t: None)
+    check(
+        "processes_using names which hold matched",
+        len(held) == 1
+        and held[0][0] == 3
+        and held[0][1].startswith("CLAUDE_PROJECT_DIR="),
+    )
+
+with tempfile.TemporaryDirectory() as tmp:
+    base = Path(tmp).resolve() / "w"
+    proc = Path(tmp).resolve() / "proc"
+    proc.mkdir()
+    mine = os.getuid() if hasattr(os, "getuid") else -1
+    fake_proc(proc, 4, other_uid=mine + 1000)
+    held = cw.processes_using(str(base / "a"), proc=proc, privileged=lambda _t: None)
+    check(
+        "processes_using counts another uid's unreadable process against any tree",
+        cw.holds_tree("", {"/w/a"})
+        and len(held) == 1
+        and held[0][0] == 4
+        and "another uid" in held[0][1],
+    )
 
 # ── the removal policy: three conditions act, two weaker signals only report ──────
 #
-# Ancestry is the only "merged" signal that reaches REMOVABLE. Patch-id equivalence and
-# content containment each downgrade "not merged" to REVIEW and nothing more — with any
-# of the three conditions failing, they cannot even do that.
+# Ancestry is the only local "merged" signal that reaches REMOVABLE. Patch-id
+# equivalence and content containment each downgrade "not merged" to REVIEW and
+# nothing more — with any of the three conditions failing, they cannot even do that.
 
 check(
     "patch-id equivalence alone is review, never removable",
-    mod.classify(wt(), merged=False, dirty=False, is_current=False, equivalent=True)[0]
-    == mod.REVIEW,
+    cw.classify(wt(), "patch-id", dirty=False, is_current=False)[0] == cw.REVIEW,
 )
 check(
     "content containment alone is review, never removable",
-    mod.classify(wt(), merged=False, dirty=False, is_current=False, contained=True)[0]
-    == mod.REVIEW,
+    cw.classify(wt(), "content", dirty=False, is_current=False)[0] == cw.REVIEW,
 )
 check(
     "the two review reasons are distinct",
-    mod.classify(wt(), merged=False, dirty=False, is_current=False, equivalent=True)[1]
-    != mod.classify(wt(), merged=False, dirty=False, is_current=False, contained=True)[
-        1
-    ],
+    cw.classify(wt(), "patch-id", dirty=False, is_current=False)[1]
+    != cw.classify(wt(), "content", dirty=False, is_current=False)[1],
 )
 check(
     "the content reason names the command that settles it",
     "ghread pr list --state merged --search head:b"
-    in mod.classify(wt(), merged=False, dirty=False, is_current=False, contained=True)[
-        1
-    ],
+    in cw.classify(wt(), "content", dirty=False, is_current=False)[1],
 )
 check(
     "a weak signal does not outrank dirty",
-    mod.classify(wt(), merged=False, dirty=True, is_current=False, contained=True)[0]
-    == mod.KEEP,
+    cw.classify(wt(), "content", dirty=True, is_current=False)[0] == cw.KEEP,
 )
 check(
     "a weak signal does not outrank a live lock",
-    mod.classify(
+    cw.classify(
         wt(locked=True, reason=LIVE_REASON),
-        merged=False,
+        "content",
         dirty=False,
         is_current=False,
-        contained=True,
     )[0]
-    == mod.KEEP,
-)
-check(
-    "ancestry outranks both weak signals",
-    mod.classify(
-        wt(),
-        merged=True,
-        dirty=False,
-        is_current=False,
-        equivalent=True,
-        contained=True,
-    )[0]
-    == mod.REMOVABLE,
+    == cw.KEEP,
 )
 
 # ── is_dirty ──────────────────────────────────────────────────────────────────
 
 # A path git cannot read status for stands in for the shared-index failure: the answer
 # has to be "dirty", because reading a failure as clean is what would delete live work.
-check("is_dirty fails closed when git errors", mod.is_dirty("/nonexistent-path-xyz"))
+check("is_dirty fails closed when git errors", cw.is_dirty("/nonexistent-path-xyz"))
 check(
     "tree_created has no answer, not a traceback, for a vanished tree",
-    mod.tree_created("/nonexistent-path-xyz") is None,
+    cw.tree_created("/nonexistent-path-xyz") is None,
 )
 
 # ── end to end ────────────────────────────────────────────────────────────────
@@ -329,66 +390,59 @@ def build_repo(root):
 
 
 with tempfile.TemporaryDirectory() as tmp:
-    # .resolve() because the checks below compare paths against the hook's own output,
-    # and git reports a worktree by its real path. On macOS the temp dir sits under
-    # /var/folders, a symlink to /private/var/folders, so an unresolved root makes every
-    # such comparison miss on a prefix neither side chose.
+    # .resolve() because the checks below compare paths against the pruner's own
+    # output, and git reports a worktree by its real path. On macOS the temp dir sits
+    # under /var/folders, a symlink to /private/var/folders, so an unresolved root makes
+    # every such comparison miss on a prefix neither side chose.
     root = Path(tmp).resolve()
     repo, trees = build_repo(root)
     env = {**os.environ, "CLAUDE_CONFIG_DIR": str(root / "cfg")}
+    policy_file = repo / sw.POLICY_FILE
 
-    report = subprocess.run(
-        [sys.executable, str(SCRIPT)], cwd=repo, capture_output=True, text=True, env=env
-    )
+    report = run([], repo, env)
     check("report exits 0", report.returncode == 0)
-    check("report names the removable tree", "1 removable" in report.stdout)
+    check(
+        "report names the removable tree",
+        f"[{cw.REMOVABLE:9}] {(trees / 'merged').as_posix()}" in report.stdout,
+    )
     check("report leaves it on disk", (trees / "merged").exists())
 
-    off = subprocess.run(
-        [sys.executable, str(SCRIPT), "--prune"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        env={**env, "CLAUDE_WORKTREE_AUTOPRUNE": "0"},
-    )
+    off = run(["--hook"], repo, {**env, "CLAUDE_WORKTREE_AUTOPRUNE": "0"})
     check("the opt-out removes nothing", (trees / "merged").exists())
     check("the opt-out says so", "disabled" in off.stdout)
 
-    # A repo that ships its own pruner is skipped, silently under --prune. The prune
-    # below, run once the file is gone again, is the other half: the same removable
-    # tree does go when the repo carries no pruner of its own.
-    own = repo / mod.OWN_PRUNER
-    own.parent.mkdir(parents=True)
-    own.write_text("")
-    deferred = subprocess.run(
-        [sys.executable, str(SCRIPT), "--prune"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    check("a repo with its own pruner keeps the tree", (trees / "merged").exists())
-    check("deferring under --prune is silent", deferred.stdout == "")
-    deferred_report = subprocess.run(
-        [sys.executable, str(SCRIPT)], cwd=repo, capture_output=True, text=True, env=env
-    )
+    # A repo that prunes from its own timer switches the SessionStart sweep off in its
+    # policy file. The sweep below, run once the file is gone again, is the other half:
+    # the same removable tree does go when the repo's policy leaves the sweep on.
+    policy_file.write_text(json.dumps({"session_start": "off"}))
+    deferred = run(["--hook"], repo, env)
     check(
-        "the report names the pruner it defers to",
-        str(mod.OWN_PRUNER) in deferred_report.stdout,
+        "a repo whose policy switches the session sweep off keeps the tree",
+        (trees / "merged").exists() and deferred.returncode == 0,
     )
-    own.unlink()
+    check("switching the session sweep off is silent", deferred.stdout == "")
+    deferred_report = run([], repo, env)
+    check(
+        "the report still reports where the session sweep is off",
+        f"[{cw.REMOVABLE:9}] {(trees / 'merged').as_posix()}" in deferred_report.stdout,
+    )
+    # A policy the sweep cannot read is a policy it cannot honour, so it removes
+    # nothing rather than guessing what it may delete.
+    policy_file.write_text("{not json")
+    unreadable = run(["--hook"], repo, env)
+    check(
+        "a malformed policy file removes nothing, exits 0 and says so",
+        (trees / "merged").exists()
+        and unreadable.returncode == 0
+        and "nothing was pruned" in unreadable.stdout,
+    )
+    policy_file.unlink()
 
     # Another sweep holding the lock: this one stands aside, silently.
     if fcntl:
-        lock_fd = os.open(repo / ".git" / mod.PRUNE_LOCK, os.O_RDWR | os.O_CREAT)
+        lock_fd = os.open(repo / ".git" / sw.PRUNE_LOCK, os.O_RDWR | os.O_CREAT)
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        contended = subprocess.run(
-            [sys.executable, str(SCRIPT), "--prune"],
-            cwd=repo,
-            capture_output=True,
-            text=True,
-            env=env,
-        )
+        contended = run(["--hook"], repo, env)
         os.close(lock_fd)
         check(
             "a sweep that finds the lock held removes nothing and says nothing",
@@ -397,14 +451,8 @@ with tempfile.TemporaryDirectory() as tmp:
     else:
         print("SKIP 1 lock-contention check: no fcntl, so the sweep takes no lock")
 
-    pruned = subprocess.run(
-        [sys.executable, str(SCRIPT), "--prune"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    check("prune exits 0", pruned.returncode == 0)
+    pruned = run(["--hook"], repo, env)
+    check("the session sweep exits 0", pruned.returncode == 0)
     check(
         "removes the merged tree despite its dead owner's lock",
         not (trees / "merged").exists(),
@@ -423,10 +471,10 @@ with tempfile.TemporaryDirectory() as tmp:
     )
     check(
         "judges a no-reflog tree by ancestry once it is past the grace period",
-        not mod.is_fresh(
+        not cw.is_fresh(
             str(repo),
             "claude/desktop",
-            now=time.time() + mod.FRESH_GRACE_S + 60,
+            now=time.time() + cw.FRESH_GRACE_S + 60,
             tree_path=str(trees / "desktop"),
         ),
     )
@@ -435,24 +483,12 @@ with tempfile.TemporaryDirectory() as tmp:
     check("logs the removal", "event=worktree_pruned" in log and "wt-merged" in log)
 
     # A second run has nothing to do and must say nothing at all.
-    quiet = subprocess.run(
-        [sys.executable, str(SCRIPT), "--prune"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    check("a no-op prune is silent", quiet.stdout == "")
+    quiet = run(["--hook"], repo, env)
+    check("a no-op sweep is silent", quiet.stdout == "")
 
     # Run from inside a worktree that is itself removable: it must survive.
     add_landed_tree(repo, trees / "self", "wt-self")
-    self_run = subprocess.run(
-        [sys.executable, str(SCRIPT), "--prune"],
-        cwd=trees / "self",
-        capture_output=True,
-        text=True,
-        env=env,
-    )
+    self_run = run(["--hook"], trees / "self", env)
     check("never removes the worktree it is running in", (trees / "self").exists())
     check("self run exits 0", self_run.returncode == 0)
 
@@ -460,67 +496,52 @@ with tempfile.TemporaryDirectory() as tmp:
     # session starts in its worktree, so the hook's own cwd never names the tree. The
     # hook input's `cwd` and CLAUDE_PROJECT_DIR do, and either one must keep it.
     add_landed_tree(repo, trees / "starting", "wt-starting")
-    named = subprocess.run(
-        [sys.executable, str(SCRIPT), "--prune"],
-        cwd=repo,
-        input=json.dumps(
+    named = run(
+        ["--hook"],
+        repo,
+        env,
+        stdin=json.dumps(
             {"hook_event_name": "SessionStart", "cwd": str(trees / "starting")}
         ),
-        capture_output=True,
-        text=True,
-        env=env,
     )
     check(
         "keeps the tree the hook input's cwd names, run from the primary checkout",
         named.returncode == 0 and (trees / "starting").exists(),
     )
-    subprocess.run(
-        [sys.executable, str(SCRIPT), "--prune"],
-        cwd=repo,
-        input="",
-        capture_output=True,
-        text=True,
-        env={**env, "CLAUDE_PROJECT_DIR": str(trees / "starting")},
-    )
+    run(["--hook"], repo, {**env, "CLAUDE_PROJECT_DIR": str(trees / "starting")})
     check(
         "keeps the tree CLAUDE_PROJECT_DIR names, run from the primary checkout",
         (trees / "starting").exists(),
     )
 
     # A merged, clean, unlocked tree a live process still runs from: the detached
-    # land.sh case (dotfiles#755). Skipped where /proc cannot show a cwd.
+    # land.sh case. Skipped where /proc cannot show a cwd.
     if HAVE_PROC:
         add_landed_tree(repo, trees / "busy", "wt-busy")
         sleeper = subprocess.Popen(["sleep", "60"], cwd=trees / "busy")
         try:
-            held = subprocess.run(
-                [sys.executable, str(SCRIPT), "--prune"],
-                cwd=repo,
-                capture_output=True,
-                text=True,
-                env=env,
-            )
+            held = run(["--hook"], repo, env)
             check(
                 "keeps a merged tree a live process runs from",
                 (trees / "busy").exists(),
             )
             check(
                 "says why the busy tree was kept",
-                f"pid {sleeper.pid}" in held.stdout and mod.BUSY_PREFIX in held.stdout,
+                f"pid {sleeper.pid}" in held.stdout and cw.IN_USE in held.stdout,
+            )
+            check(
+                "in_use_reason names the pid and the hold",
+                cw.in_use_reason(str(trees / "busy")).startswith(cw.IN_USE)
+                and f"pid {sleeper.pid} (cwd " in cw.in_use_reason(str(trees / "busy")),
             )
         finally:
             sleeper.kill()
             sleeper.wait()
-        subprocess.run(
-            [sys.executable, str(SCRIPT), "--prune"],
-            cwd=repo,
-            capture_output=True,
-            env=env,
-        )
+        run(["--hook"], repo, env)
         check("removes it once the process exits", not (trees / "busy").exists())
 
         # A session whose project dir is the tree while its cwd is elsewhere: deleting
-        # the tree would break every repo hook it runs (server#3887).
+        # the tree would break every repo hook it runs.
         add_landed_tree(repo, trees / "project", "wt-project")
         session = subprocess.Popen(
             ["sleep", "60"],
@@ -528,50 +549,40 @@ with tempfile.TemporaryDirectory() as tmp:
             env={**env, "CLAUDE_PROJECT_DIR": str(trees / "project")},
         )
         try:
-            held = subprocess.run(
-                [sys.executable, str(SCRIPT), "--prune"],
-                cwd=repo,
-                capture_output=True,
-                text=True,
-                env=env,
-            )
+            held = run(["--hook"], repo, env)
             check(
                 "keeps a merged tree a live process names as CLAUDE_PROJECT_DIR",
                 (trees / "project").exists()
-                and "by its CLAUDE_PROJECT_DIR" in held.stdout,
+                and "CLAUDE_PROJECT_DIR" in held.stdout
+                and f"pid {session.pid}" in held.stdout,
             )
             # The removal itself re-scans, so a hold that appears after the sweep's
             # first scan still stops it.
             tree = next(
                 t
-                for t in mod.parse_worktree_list(
+                for t in cw.parse_worktree_list(
                     git(["worktree", "list", "--porcelain"], repo).stdout
                 )
                 if t.branch == "wt-project"
             )
-            ok, error = mod.remove(str(repo), tree)
+            ok, error = cw.remove(str(repo), tree)
             check(
                 "remove() refuses a tree a live process holds",
                 not ok
+                and error.startswith(cw.IN_USE)
                 and f"pid {session.pid}" in error
                 and (trees / "project").exists(),
             )
         finally:
             session.kill()
             session.wait()
-        ok, _ = mod.remove(str(repo), tree)
+        ok, _ = cw.remove(str(repo), tree)
         check("remove() removes it once the process exits", ok)
     else:
-        print("SKIP 6 live-process checks: no /proc to read a process's cwd from")
+        print("SKIP 7 live-process checks: no /proc to read a process's cwd from")
 
     # Outside a git repo: silent, successful, no-op.
-    outside = subprocess.run(
-        [sys.executable, str(SCRIPT), "--prune"],
-        cwd=tmp,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
+    outside = run(["--hook"], tmp, env)
     check(
         "outside a repo it is a silent no-op",
         outside.returncode == 0 and outside.stdout == "",
@@ -717,15 +728,24 @@ with tempfile.TemporaryDirectory() as tmp:
     repo, trees = build_branch_repo(root)
     # A stub `gh` answering from a table, empty until the forge block at the end, so no
     # run here reaches the network and every squash case is left to the local signals.
+    # It answers the two shapes the forge layer asks: `pr list --json headRefOid`, and
+    # the same with `--jq` for one head per line. An `api` compare call fails, so a
+    # merged PR counts only where its head is this tip exactly.
     merged_prs = root / "merged-prs.json"
     merged_prs.write_text("[]")
     gh_stub = root / "gh"
     gh_stub.write_text(
         f"#!{sys.executable}\n"
         "import json, sys\n"
+        "if sys.argv[1] == 'api':\n"
+        "    sys.exit(1)\n"
         "branch = sys.argv[sys.argv.index('--head') + 1]\n"
         f"rows = json.load(open({str(merged_prs)!r}))\n"
-        "print(json.dumps([{'headRefOid': h} for b, h in rows if b == branch]))\n"
+        "heads = [h for b, h in rows if b == branch]\n"
+        "if '--jq' in sys.argv:\n"
+        "    print('\\n'.join(heads))\n"
+        "else:\n"
+        "    print(json.dumps([{'headRefOid': h} for h in heads]))\n"
     )
     gh_stub.chmod(0o755)
     if sys.platform == "win32":
@@ -739,77 +759,70 @@ with tempfile.TemporaryDirectory() as tmp:
         "CLAUDE_CONFIG_DIR": str(root / "cfg"),
         "GH_BIN": str(gh_stub),
     }
-
-    check(
-        "is_equivalent sees a squash-merged branch",
-        mod.is_equivalent(str(repo), "worktree-squashed", "origin/main"),
-    )
-    check(
-        "is_equivalent rejects a branch with unlanded work",
-        not mod.is_equivalent(str(repo), "worktree-orphan-live", "origin/main"),
-    )
-    check(
-        "is_equivalent rejects a branch with no commits of its own",
-        not mod.is_equivalent(str(repo), "worktree-orphan-merged", "origin/main"),
-    )
-
-    # The content signal only earns its place where patch-id says no: the collapsed
-    # branch must fail is_equivalent AND pass is_contained, or merge-tree is never the
-    # thing being tested.
-    check(
-        "is_equivalent cannot see a two-commit squash",
-        not mod.is_equivalent(str(repo), "worktree-collapsed", "origin/main"),
-    )
-    check(
-        "is_contained sees a two-commit squash",
-        mod.is_contained(str(repo), "worktree-collapsed", "origin/main"),
-    )
+    base = "origin/main"
 
     # An unlanded branch's merge result is a tree the store has never seen, so a
     # merge-tree run against the real store would add loose objects here. This must be
-    # the first merge of that branch: a second run would find the tree already written.
+    # the first merge of that branch: a second run would find the verdict cached.
     def loose_objects():
         counts = git(["count-objects", "-v"], repo).stdout
         return next(ln for ln in counts.splitlines() if ln.startswith("count:"))
 
     before = loose_objects()
-    mod.is_contained(str(repo), "worktree-orphan-live", "origin/main")
+    live_layer = cw.local_layer(str(repo), "worktree-orphan-live", base)
     check(
-        "is_contained writes no loose objects into the repository",
+        "local_layer writes no loose objects into the repository",
         loose_objects() == before,
     )
+    check("local_layer rejects a branch with unlanded work", live_layer is None)
+
     check(
-        "is_contained rejects a branch with unlanded work",
-        not mod.is_contained(str(repo), "worktree-orphan-live", "origin/main"),
+        "local_layer sees a squash-merged branch by patch-id",
+        cw.local_layer(str(repo), "worktree-squashed", base) == "patch-id",
+    )
+    # An ancestor settles at the first rung; the patch-id and content rungs are asked
+    # only of a branch ancestry does not settle, so a branch with no commits of its own
+    # is never read as an equivalent one.
+    check(
+        "local_layer reads a branch with no commits of its own as ancestry",
+        cw.local_layer(str(repo), "worktree-orphan-merged", base) == "ancestry",
     )
     check(
-        "is_contained has no verdict on a conflict",
-        not mod.is_contained(str(repo), "worktree-conflict", "origin/main"),
+        "an empty `git cherry` listing is no evidence of a landed branch",
+        not cw.cherry_says_landed("", empty_means=False),
     )
 
-    report = subprocess.run(
-        [sys.executable, str(SCRIPT)], cwd=repo, capture_output=True, text=True, env=env
+    # The content signal only earns its place where patch-id says no: the collapsed
+    # branch must fail the patch-id rung AND pass the content rung, or merge-tree is
+    # never the thing being tested.
+    collapsed_layer = cw.local_layer(str(repo), "worktree-collapsed", base)
+    check("patch-id cannot see a two-commit squash", collapsed_layer != "patch-id")
+    check("content sees a two-commit squash", collapsed_layer == "content")
+    check(
+        "local_layer has no verdict on a conflict",
+        cw.local_layer(str(repo), "worktree-conflict", base) is None,
     )
+
+    report = run([], repo, env)
     check(
         "report names the squash-merged tree for review",
         "worktree-squashed" in report.stdout and "review" in report.stdout,
     )
     check(
         "report names the orphan merged branch",
-        "worktree-orphan-merged" in report.stdout,
+        f"[{sw.STALE:9}] worktree-orphan-merged" in report.stdout,
     )
 
-    pruned = subprocess.run(
-        [sys.executable, str(SCRIPT), "--prune"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
+    pruned = run(["--prune"], repo, env)
     branches = git(
         ["for-each-ref", "--format=%(refname:short)", "refs/heads/"], repo
     ).stdout.split()
 
+    check(
+        "the full sweep ends on its result line",
+        pruned.stdout.splitlines()[-1].startswith("PRUNE-RESULT: removed=1 ")
+        and pruned.returncode == 0,
+    )
     check("the merged worktree is gone", not (trees / "merged").exists())
     check("its branch is deleted too", "worktree-merged" not in branches)
     check(
@@ -835,38 +848,34 @@ with tempfile.TemporaryDirectory() as tmp:
     # reported, and both are still there afterwards.
     check(
         "report names the collapsed tree for review",
-        f"[{mod.REVIEW:9}] {(trees / 'collapsed').as_posix()}" in report.stdout,
+        f"[{cw.REVIEW:9}] {(trees / 'collapsed').as_posix()}" in report.stdout,
     )
     check("the collapsed worktree survives", (trees / "collapsed").exists())
     check("the collapsed branch survives", "worktree-collapsed" in branches)
     # Landed-looking orphans are counted by default and itemised only on request: a row
     # each is what flooded a session start once they piled up.
-    orphans = subprocess.run(
-        [sys.executable, str(SCRIPT), "--orphans"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
+    hooked = run(["--hook"], repo, env)
+    listing = run(["--check", "--all"], repo, env)
+    reviewable = listed_under(listing.stdout, f"kept ({sw.REVIEWABLE}):")
     check(
         "the orphan collapsed branch is reported, not deleted",
-        f"[{mod.REVIEW:9}] branch worktree-orphan-collapsed" in orphans.stdout
+        "worktree-orphan-collapsed" in reviewable
         and "worktree-orphan-collapsed" in branches,
     )
     check(
-        "--orphans lists the patch-id orphan too",
-        f"[{mod.REVIEW:9}] branch worktree-orphan-squashed" in orphans.stdout,
+        "--check --all lists the patch-id orphan too",
+        "worktree-orphan-squashed" in reviewable,
     )
     check(
         "the default report counts the orphans instead of naming them",
-        "--orphans" in report.stdout
+        "--check --all" in report.stdout
         and "worktree-orphan-collapsed" not in report.stdout
         and "worktree-orphan-squashed" not in report.stdout,
     )
     check(
-        "the prune output counts them too",
-        "--orphans" in pruned.stdout
-        and "worktree-orphan-collapsed" not in pruned.stdout,
+        "the session sweep counts them too",
+        "--check --all" in hooked.stdout
+        and "worktree-orphan-collapsed" not in hooked.stdout,
     )
     check(
         "the conflicting tree is kept without a review line",
@@ -878,12 +887,13 @@ with tempfile.TemporaryDirectory() as tmp:
     )
     check(
         "prune reports the deleted branches",
-        "worktree-merged" in pruned.stdout,
+        "deleted worktree-merged" in pruned.stdout,
     )
     log = (root / "cfg" / "logs" / "sessions.log").read_text()
     check(
         "logs both branch deletions",
-        "event=branch_deleted" in log and "event=orphan_branch_deleted" in log,
+        "event=branch_deleted branch=worktree-merged" in log
+        and "event=branch_deleted branch=worktree-orphan-merged" in log,
     )
 
     # The forge settles what the local signals only flag. GitHub says it merged the
@@ -894,6 +904,13 @@ with tempfile.TemporaryDirectory() as tmp:
     def tip(ref):
         return git(["rev-parse", ref], repo).stdout.strip()
 
+    # The forge's "no" is cached for fifteen minutes, so every run above left one; a
+    # run that expects the stub's new answer starts without them.
+    def reset_forge_no():
+        for key in cw.read_verdicts(str(repo)):
+            if key.startswith("forge-no:"):
+                cw.record_verdict(str(repo), key, "0")
+
     merged_prs.write_text(
         json.dumps(
             [
@@ -903,46 +920,37 @@ with tempfile.TemporaryDirectory() as tmp:
             ]
         )
     )
-    forge_report = subprocess.run(
-        [sys.executable, str(SCRIPT)], cwd=repo, capture_output=True, text=True, env=env
-    )
+    reset_forge_no()
+    forge_report = run([], repo, env)
     check(
         "report calls the forge-confirmed tree removable",
-        f"[{mod.REMOVABLE:9}] {(trees / 'squashed').as_posix()}" in forge_report.stdout
-        and "exactly this tip" in forge_report.stdout,
+        f"[{cw.REMOVABLE:9}] {(trees / 'squashed').as_posix()}" in forge_report.stdout
+        and "merged as a pull request from this tip" in forge_report.stdout,
     )
     # The merged-verdict cache lives in the git common dir. A forge positive is stored
-    # against the exact tip; a PR from another tip, and every forge negative, is not.
-    cache_file = repo / ".git" / mod.VERDICT_CACHE
-    stored = json.loads(cache_file.read_text())
-    by_head = {k.split(":")[0]: v for k, v in stored.items()}
+    # against the exact tip; a PR from another tip, and every forge negative, is kept
+    # apart from the local verdict.
+    stored = cw.read_verdicts(str(repo))
     check(
         "a forge positive is cached against the tip it confirmed",
-        by_head.get(tip("worktree-squashed")) == "forge",
+        stored.get(cw.verdict_key(str(repo), tip("worktree-squashed"), base))
+        == "forge",
     )
     check(
-        "a forge negative is not cached: the pure verdict stays",
-        by_head.get(tip("worktree-collapsed")) == "contained",
+        "a forge negative leaves the local verdict standing and is cached apart",
+        stored.get(cw.verdict_key(str(repo), tip("worktree-collapsed"), base))
+        == "content"
+        and stored.get(
+            f"forge-no:{tip('worktree-collapsed')}:worktree-collapsed", ""
+        ).isdigit(),
     )
     # With gh down, the cached positive still settles the tree.
-    offline = subprocess.run(
-        [sys.executable, str(SCRIPT)],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        env={**env, "GH_BIN": "false"},
-    )
+    offline = run([], repo, {**env, "GH_BIN": "false"})
     check(
         "a cached forge positive needs no gh call",
-        f"[{mod.REMOVABLE:9}] {(trees / 'squashed').as_posix()}" in offline.stdout,
+        f"[{cw.REMOVABLE:9}] {(trees / 'squashed').as_posix()}" in offline.stdout,
     )
-    subprocess.run(
-        [sys.executable, str(SCRIPT), "--prune"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
+    run(["--prune"], repo, env)
     branches = git(
         ["for-each-ref", "--format=%(refname:short)", "refs/heads/"], repo
     ).stdout.split()
@@ -962,75 +970,89 @@ with tempfile.TemporaryDirectory() as tmp:
     )
 
     # A failing forge is no verdict: the tree the stub would confirm stays at review.
-    failing = {**env, "GH_BIN": "false"}
-    failed_report = subprocess.run(
-        [sys.executable, str(SCRIPT)],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        env=failing,
-    )
+    reset_forge_no()
+    failed_report = run([], repo, {**env, "GH_BIN": "false"})
     check(
         "a failing gh leaves the collapsed tree at review",
-        f"[{mod.REVIEW:9}] {(trees / 'collapsed').as_posix()}" in failed_report.stdout,
+        f"[{cw.REVIEW:9}] {(trees / 'collapsed').as_posix()}" in failed_report.stdout,
     )
 
 # ── the merged-verdict cache ─────────────────────────────────────────────────────
 
 with tempfile.TemporaryDirectory() as tmp:
-    common = Path(tmp)
-    calls = []
-    real = (mod.is_equivalent, mod.is_contained)
-    mod.is_equivalent = lambda *a: calls.append("cherry") or False
-    mod.is_contained = lambda *a: calls.append("merge-tree") or False
-    try:
-        # Seed the cache with a negative verdict for (head1, base1).
-        first = mod.VerdictCache(common, "base1")
-        mod.landed_layer("r", "b", "head1", "t", first)
-        first.save({"head1"})
-        calls.clear()
-        again = mod.VerdictCache(common, "base1")
-        check(
-            "a cache hit skips the git layers, negative verdicts included",
-            mod.landed_layer("r", "b", "head1", "t", again) == "" and calls == [],
-        )
-        moved = mod.VerdictCache(common, "base2")
-        mod.landed_layer("r", "b", "head1", "t", moved)
-        check("a moved base sha is a miss", len(calls) == 2)
-    finally:
-        mod.is_equivalent, mod.is_contained = real
+    vc = Path(tmp).resolve() / "vc"
+    vc.mkdir()
+    git(["init", "-q", "-b", "main"], vc)
+    git(["config", "user.email", "t@t"], vc)
+    git(["config", "user.name", "t"], vc)
+    (vc / "a").write_text("a\n")
+    git(["add", "a"], vc)
+    git(["commit", "-qm", "base"], vc)
+    git(["checkout", "-q", "-b", "feat"], vc)
+    (vc / "f").write_text("f\n")
+    git(["add", "f"], vc)
+    git(["commit", "-qm", "own work"], vc)
+    git(["checkout", "-q", "main"], vc)
+    repo_arg = str(vc)
+    feat = git(["rev-parse", "feat"], vc).stdout.strip()
+    main_tip = git(["rev-parse", "main"], vc).stdout.strip()
 
-with tempfile.TemporaryDirectory() as tmp:
-    common = Path(tmp)
-    for junk in ("{not json", "[1, 2]", '{"h:b": 7}'):
-        (common / mod.VERDICT_CACHE).write_text(junk)
-        check(
-            f"a corrupt cache reads as empty: {junk}",
-            mod.VerdictCache(common, "b").get("h") is None,
-        )
-    stale = mod.VerdictCache(common, "b")
-    stale.put("deadbeef", "equivalent")
-    stale.put("live", "contained")
-    stale.save({"live"})
+    # A recorded verdict answers without the git layers running: record one git would
+    # never compute and read it back through local_layer.
+    cw.record_verdict(repo_arg, cw.verdict_key(repo_arg, feat, "main"), "content")
     check(
-        "a head that is no longer a ref tip is dropped on save",
-        json.loads((common / mod.VERDICT_CACHE).read_text()) == {"live:b": "contained"}
-        and not list(common.glob("*.tmp")),
+        "a cache hit skips the git layers",
+        cw.local_layer(repo_arg, feat, "main") == "content",
+    )
+    # main's tip is an ancestor of feat, so git would say ancestry; the empty verdict
+    # is a recorded "no" and has to answer too.
+    cw.record_verdict(repo_arg, cw.verdict_key(repo_arg, main_tip, "feat"), "")
+    check(
+        "a cache hit skips the git layers, negative verdicts included",
+        cw.local_layer(repo_arg, main_tip, "feat") is None,
+    )
+    # The base moves: the key holds the base's sha, so the recorded "content" for the
+    # old base is a miss and git answers afresh.
+    (vc / "b").write_text("b\n")
+    git(["add", "b"], vc)
+    git(["commit", "-qm", "base moved"], vc)
+    check(
+        "a moved base sha is a miss",
+        cw.local_layer(repo_arg, feat, "main") is None,
+    )
+
+    cache = cw.verdict_cache_path(repo_arg)
+    for junk in ("{not json", "[1, 2]", '{"h:b": 7}'):
+        cache.write_text(junk)
+        check(
+            f"a corrupt cache reads as empty: {junk}", cw.read_verdicts(repo_arg) == {}
+        )
+
+    cache.unlink()
+    cw.record_verdict(repo_arg, "deadbeef:b", "patch-id")
+    cw.record_verdict(repo_arg, "live:b", "content")
+    cw.record_verdict(repo_arg, "forge-no:deadbeef:br", "1")
+    cw.record_verdict(repo_arg, "forge-no:live:br", "2")
+    cw.drop_dead_verdicts(repo_arg, {"live"})
+    check(
+        "a head that is no longer a ref tip is dropped, forge negatives included",
+        cw.read_verdicts(repo_arg) == {"live:b": "content", "forge-no:live:br": "2"}
+        and not list(cache.parent.glob("*.tmp")),
     )
 
 # ── compose stacks of removed worktrees ──────────────────────────────────────────
 
 check(
     "compose's default name lowercases and drops what compose drops",
-    mod.compose_default_name("/r/.claude/worktrees/Ops_T112.Mark-4bd202")
+    sw.compose_default_name("/r/.claude/worktrees/Ops_T112.Mark-4bd202")
     == "ops_t112mark-4bd202",
 )
 check(
     "compose's default name trims leading separators",
-    mod.compose_default_name("/r/-_x") == "x",
+    sw.compose_default_name("/r/-_x") == "x",
 )
 
-stop, keep = mod.compose_stacks(
+stop, keep = sw.compose_stacks(
     ["/r/wt/a"],
     [
         "a\t/r/wt/a",
@@ -1067,13 +1089,7 @@ with tempfile.TemporaryDirectory() as tmp:
         "CLAUDE_CONFIG_DIR": str(root / "cfg"),
         "DOCKER_BIN": str(fake),
     }
-    pruned = subprocess.run(
-        [sys.executable, str(SCRIPT), "--prune"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
+    pruned = run(["--hook"], repo, env)
     deadline = time.monotonic() + 5
     while not calls.exists() and time.monotonic() < deadline:
         time.sleep(0.05)
@@ -1084,7 +1100,7 @@ with tempfile.TemporaryDirectory() as tmp:
     )
     check(
         "a named project in the removed tree is reported, not stopped",
-        "Kept compose project team-stack" in pruned.stdout,
+        "kept compose project team-stack" in pruned.stdout,
     )
 
 finish()

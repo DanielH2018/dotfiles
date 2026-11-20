@@ -1,7 +1,7 @@
 [project]
 name = "claude-worktree"
 version = "0.1.0"
-description = "The pure readers two Claude worktree pruners share: porcelain, lock liveness, cherry and merge-tree verdicts."
+description = "The Claude session-worktree pruner, and the library that judges one worktree: landed ladder, holds, classify, remove."
 requires-python = ">=3.10"
 dependencies = []
 
@@ -17,6 +17,6 @@ package = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
-# Unlike claude-guard, this module runs under the SYSTEM interpreter: the
-# prune-worktrees.py SessionStart hook is a bare `#!/usr/bin/env python3`. The repo
-# floor is 3.10 (PEP 604 unions in annotations, no __future__ import), not 3.14.
+# Unlike claude-guard, these modules can run under the SYSTEM interpreter:
+# hooks/lib/run-python.sh falls back to `python3` on a host with no managed 3.15, and a
+# timer runs prune-worktrees.py by its `#!/usr/bin/env python3`. The floor is 3.10.

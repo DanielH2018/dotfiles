@@ -68,4 +68,12 @@
 .local/share/claude-guard/tests/test_worktree_scratch.py
 .local/share/claude-guard/tests/test_wrapped.py
 .local/share/claude-worktree/tests
+.local/share/claude-worktree/tests/_repo.py
+.local/share/claude-worktree/tests/conftest.py
+.local/share/claude-worktree/tests/test_classify_remove.py
+.local/share/claude-worktree/tests/test_holds.py
+.local/share/claude-worktree/tests/test_landed.py
 .local/share/claude-worktree/tests/test_readers.py
+.local/share/claude-worktree/tests/test_sweep.py
+.local/share/claude-worktree/tests/test_sweep_branches.py
+.local/share/claude-worktree/tests/test_sweep_orphan_dirs.py

@@ -236,7 +236,8 @@ test('claude_guard and claude_worktree deploy to the agent from this repo, with 
   const managed = execFileSync('chezmoi', ['--config', config, '--source', SOURCE, '--destination', '/nonexistent-home',
     'managed', '--include', 'files'], { encoding: 'utf8' }).split('\n');
   for (const p of ['.local/bin/claude-guard', '.local/share/claude-guard/claude_guard/__init__.py',
-    '.local/share/claude-worktree/claude_worktree.py']) {
+    '.local/share/claude-worktree/claude_worktree.py',
+    '.local/share/claude-worktree/claude_worktree_sweep.py', '.claude/hooks/prune-worktrees.py']) {
     assert.ok(managed.includes(p), `${p} is not deployed to the agent`);
   }
   const claude = srcPath('.chezmoiscripts', 'os-unix', 'run_once_after_install-claude.sh.tmpl');

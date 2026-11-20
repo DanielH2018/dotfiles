@@ -70,7 +70,7 @@ command instead. `_READERS` holds them as one table, a row per pair, so the next
 pair is one more row:
 
   landed-check: `ghread pr list --head B`, or `git log origin/master..B` for any B but
-    HEAD, asking whether B has landed. `prune_worktrees.py --check B` answers that and
+    HEAD, asking whether B has landed. `prune-worktrees.py --check B` answers that and
     sees a squash merge, which an ancestry check misses.
   landing-inflight: `ps` or `pgrep` in a command that names `land.sh` -> `probe.py landing`.
   landing-verdicts: `tail` of a file whose name holds `land`, or of an absolute path whose
@@ -488,17 +488,15 @@ def _on_path(tool: str):
 
 
 _PROBE = "scripts/diagnostics/probe.py"
-_PRUNE = "scripts/dev/prune_worktrees.py"
 
 # (rule, matcher, gate, text): the raw command, where its reader exists, and the pointer.
 _READERS = (
     (
         "landed-check",
         _asks_if_landed,
-        _in_server_checkout(_PRUNE),
-        "To ask whether branch B has landed, run `uv run python scripts/dev/prune_worktrees.py "
-        "--check B`. It sees a squash merge, which `git log origin/master..B` and a PR list "
-        "miss.",
+        _in_server_checkout(_PROBE),
+        "To ask whether branch B has landed, run `~/.claude/hooks/prune-worktrees.py --check "
+        "B`. It sees a squash merge, which `git log origin/master..B` and a PR list miss.",
     ),
     (
         "landing-inflight",
