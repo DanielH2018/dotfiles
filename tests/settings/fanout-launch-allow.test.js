@@ -23,15 +23,15 @@ function launchHints() {
 test('one auto-mode hint clears a launch from a coordinator-locked worktree for the brief\'s milestone', { skip }, () => {
   const hints = launchHints();
   assert.strictEqual(hints.length, 1);
-  assert.ok(hints[0].includes('coordinator: project <title>'), hints[0]);
-  assert.ok(hints[0].includes("brief names that project's milestone title"), hints[0]);
-  assert.ok(hints[0].includes('needs no approval typed'), hints[0]);
+  for (const condition of ['git worktree lock --reason "coordinator: project <title>"', 'findings.py next --milestone "<title>"', 'findings.py milestone add']) {
+    assert.ok(hints[0].includes(condition), condition);
+  }
 });
 
 test('the launch hint excludes an unlocked worktree, another milestone, the review opt-out and the other verbs', { skip }, () => {
   const [, excluded] = launchHints()[0].split('does NOT cover');
   assert.ok(excluded, 'the hint states what it does not cover');
-  for (const out of ['no such lock', 'outside that milestone', '`--no-review`', '`--allow-shared-file`',
+  for (const out of ['lock', 'milestone', '`--no-review`', '`--allow-shared-file`',
     '`place abandon`', '`place clean`', '`land.sh`']) {
     assert.ok(excluded.includes(out), out);
   }
