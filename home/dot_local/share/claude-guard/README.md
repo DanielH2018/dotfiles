@@ -324,8 +324,10 @@ of `cp`, the target of `ln -s`, `chezmoi`, or a program the guard cannot read, s
 script file. So no write verb needs a rule of its own. The module docstring lists how a
 word is resolved (home spellings, the working directory, globs, links on disk, variables
 the command sets) and what the rule does not read. `deny()` takes the session's working
-directory for this rule alone. `WRITE_TARGETS` carries the same paths, so the redirect,
-`tee`, in-place edit and interpreter rules cover them too.
+directory for this rule alone. The rule also reads an interpreter's inline program and a
+sed script that writes a file, for a protected path spelled from the home directory.
+`WRITE_TARGETS` does not list `~/.local/bin`: the rules that read that list match a path
+named anywhere in the command, and running a tool by its full path is ordinary.
 
 `checks/sed.py` and `checks/program_options.py` deny a command an allow rule approves by
 name when it runs a program the guard does not read. `sed.py` parses each sed script and
