@@ -7,6 +7,10 @@ paths:
 - Type hints on function signatures; skip inline variable annotations unless non-obvious
 - Tests use pytest; match existing fixture patterns in conftest.py
 - Prefer pathlib over os.path
+- Parse a value read from JSON, YAML or a command's output into a typed value where it is
+  read, and pass that value on. `HookEvent` in `~/.claude/hooks/lib/hook_input.py` is the
+  model. Don't copy a `(obj.get("metadata") or {}).get(...)` chain, which re-checks the
+  shape at every read.
 
 ## Comments and docstrings
 
