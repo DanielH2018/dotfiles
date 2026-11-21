@@ -347,3 +347,12 @@ Scripts/wslhost-interop-reaper
 # routes and moved to checks/homelab_deploy.py with its test.
 .local/share/claude-guard/claude_guard/checks/promote_dispatch.py
 .local/share/claude-guard/tests/test_promote_dispatch.py
+
+# 2026-11-21: the clipboard bridge and clip2server, which no host used.
+# run_onchange_before_disable-clip-bridge disables the units before these go.
+.local/bin/clip-bridge
+.local/bin/clip2server
+.config/systemd/user/clip-bridge.socket
+.config/systemd/user/clip-bridge@.service
+.config/systemd/user/clip-bridge-tunnel@.service
+.local/share/applications/clip2server.desktop

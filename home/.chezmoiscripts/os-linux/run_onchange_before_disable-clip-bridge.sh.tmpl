@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# The clipboard bridge and clip2server are retired. Disable the bridge's socket and tunnels before
+# this apply's .chezmoiremove entries delete the unit files, or sockets.target.wants and
+# default.target.wants keep dangling links. Then drop clip2server's KDE shortcut, whose launcher
+# goes too. Idempotent; a no-op where user systemd or KDE isn't running.
+set -eu
+if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+  for host in daniel-box daniel-server; do
+    systemctl --user disable --now "clip-bridge-tunnel@${host}.service" 2>/dev/null || true
+  done
+  systemctl --user disable --now clip-bridge.socket 2>/dev/null || true
+  systemctl --user stop 'clip-bridge@*.service' 2>/dev/null || true
+fi
+if command -v kwriteconfig6 >/dev/null 2>&1; then
+  kwriteconfig6 --file kglobalshortcutsrc --group services --group clip2server.desktop \
+    --key _launch --delete 2>/dev/null || true
+fi
