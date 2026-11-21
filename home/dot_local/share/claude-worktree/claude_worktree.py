@@ -446,7 +446,9 @@ def primary_checkout(start: str | None = None) -> str | None:
 # The merged verdict, kept on disk across processes, in the git common dir so it is
 # never in a working tree. Keyed by "<head sha>:<base sha>". The three local layers are
 # pure functions of those two commits, so a recorded answer cannot go stale: a moved
-# base or a new commit is a new key. A value is the layer that said landed, or "" when
+# base or a new commit is a new key. A "" recorded against an older base is carried to
+# a newer one by `_unlanded_since_older_base`, which saves the `git cherry` that a new
+# key would cost. A value is the layer that said landed, or "" when
 # the local layers settled "no". The forge's "merged" holds for a head forever and is
 # written over any other value.
 #
@@ -573,14 +575,84 @@ def merge_tree(base: str, head: str, cwd: str | Path) -> subprocess.CompletedPro
         )
 
 
-def _compute_local_layer(repo: str, head: str, base: str) -> tuple[str | None, bool]:
+@functools.cache
+def _is_ancestor(repo: str, ancestor: str, descendant: str) -> bool:
+    return (
+        git("merge-base", "--is-ancestor", ancestor, descendant, cwd=repo).returncode
+        == 0
+    )
+
+
+def _footprint(
+    repo: str, *log_args: str
+) -> tuple[frozenset[str], frozenset[str]] | None:
+    """(patch IDs, touched files) of the non-merge commits `git log <log_args>` lists.
+
+    None when git failed. One `git log -p` and one `git patch-id` read the whole set. A
+    file is its `diff --git` header, which is one string per path because renames are
+    off.
+    """
+    log = git(
+        "log", "-p", "--no-merges", "--no-renames", "--no-color",
+        "--format=commit %H", *log_args, cwd=repo,
+    )  # fmt: skip
+    if log.returncode != 0:
+        return None
+    ids = git("patch-id", "--stable", cwd=repo, stdin=log.stdout)
+    if ids.returncode != 0:
+        return None
+    files = frozenset(
+        line for line in log.stdout.splitlines() if line.startswith("diff --git ")
+    )
+    return frozenset(line.split()[0] for line in ids.stdout.splitlines()), files
+
+
+@functools.cache
+def _range_footprint(repo: str, old: str, new: str):
+    return _footprint(repo, f"{old}..{new}")
+
+
+def _unlanded_since_older_base(repo: str, head: str, base: str) -> bool:
+    """Whether a "no" recorded for `head` against an older base still holds on `base`.
+
+    `head` and `base` are SHAs. Re-running `git cherry` for every branch each time the
+    base moves is the cost this avoids. A cached "no" survives when the commits that
+    entered the base since carry none of the branch's patch IDs, and touch none of its
+    files. The patch IDs keep the patch-id layer's answer, since a branch commit
+    reachable from the base now would be in that range. The files keep the content
+    layer's, since a squash of the branch leaves no patch ID to match but must touch
+    the files the branch changed. Any doubt, such as a base that was force-pushed
+    instead of advanced, is False, and the caller computes the answer.
+    """
+    olds = [
+        key.split(":")[1]
+        for key, layer in reversed(read_verdicts(repo).items())
+        if layer == "" and key.startswith(f"{head}:")
+    ]
+    old = next((o for o in olds if o != base and _is_ancestor(repo, o, base)), None)
+    if old is None:
+        return False
+    entered = _range_footprint(repo, old, base)
+    own = _footprint(repo, head, "--not", old)
+    if entered is None or own is None or not own[0]:
+        return False
+    return own[0].isdisjoint(entered[0]) and own[1].isdisjoint(entered[1])
+
+
+def _compute_local_layer(
+    repo: str, head: str, base: str, key: str | None = None
+) -> tuple[str | None, bool]:
     """(layer, settled). `settled` is False when a git call failed, not answered.
 
     Only a settled answer is cached: a failed call reads as not landed, the KEEP
-    direction, and recording it would keep that tree from ever being pruned.
+    direction, and recording it would keep that tree from ever being pruned. `key` is
+    the pair's verdict key, which lets an unlanded head recorded against an older base
+    skip `git cherry`.
     """
     if git("merge-base", "--is-ancestor", head, base, cwd=repo).returncode == 0:
         return "ancestry", True
+    if key is not None and _unlanded_since_older_base(repo, *key.split(":")):
+        return None, True
     cherry = git("cherry", base, head, cwd=repo)
     if cherry.returncode != 0:
         return None, False
@@ -613,7 +685,7 @@ def local_layer(repo: str, head: str, base: str) -> str | None:
         if cached is not None:
             # "forge" was written over whatever the local layers had said.
             return cached if cached in LOCAL_LAYERS else None
-    layer, settled = _compute_local_layer(repo, head, base)
+    layer, settled = _compute_local_layer(repo, head, base, key)
     if settled and key is not None:
         record_verdict(repo, key, layer or "")
     return layer
