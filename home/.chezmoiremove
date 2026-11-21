@@ -364,3 +364,19 @@ Scripts/wslhost-interop-reaper
 .claude/hooks/read-nudge.sh
 .claude/skills/security-audit/SKILL.md
 .claude/skills/systematic-debugging
+
+# 2026-11-21, dotfiles #1471: the security-audit companion docs SKILL.md linked; nothing else reads them.
+.claude/skills/security-audit/AI-AND-LLM.md
+.claude/skills/security-audit/ATTACK-CLASSES.md
+.claude/skills/security-audit/CLIENT-SIDE.md
+.claude/skills/security-audit/CLOUD-AND-DEPLOYMENT.md
+.claude/skills/security-audit/DATA-ISOLATION-AND-LIFECYCLE.md
+.claude/skills/security-audit/DESKTOP-MOBILE-AND-LOCAL-IPC.md
+.claude/skills/security-audit/HUNTING.md
+.claude/skills/security-audit/MEMORY-SAFETY-AND-BINARY.md
+.claude/skills/security-audit/PROTOCOLS-RPC-AND-MESSAGING.md
+.claude/skills/security-audit/RECONNAISSANCE.md
+.claude/skills/security-audit/RESOURCE-EXHAUSTION-AND-AVAILABILITY.md
+.claude/skills/security-audit/SUPPLY-CHAIN-AND-RELEASE.md
+.claude/skills/security-audit/VALIDATION-AND-REPORTING.md
+.claude/skills/security-audit/WEB-PROTOCOL-AND-AUTH.md
