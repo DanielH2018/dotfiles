@@ -197,7 +197,6 @@ original pass sat untriaged for a week, which reads the same as "deliberately sk
 | `gh-stack` | cases — non-interactive flag contract (`view --json`, `submit --auto`); work overlay, needs `EVAL_SKILL_DIRS` |
 | `orchestrating-subagents` | cases — agent count lands in the stated band; brief carries objective/format/budget |
 | `homelab` | skip — connection details and an ssh verb allowlist; nothing to exhibit without the server |
-| `security-audit` | skip — the full audit needs a sandboxed target, and distill mode's regex validation loop needs node execution |
 | `writing-great-skills` | skip — open-ended authoring judgment, low regression value |
 
 ## Rules cases

@@ -356,3 +356,11 @@ Scripts/wslhost-interop-reaper
 .config/systemd/user/clip-bridge@.service
 .config/systemd/user/clip-bridge-tunnel@.service
 .local/share/applications/clip2server.desktop
+
+# 2026-11-21, dotfiles #1450 delete pass: the read-nudge hook (claude-guard read-nudge went with it),
+# the security-audit skill trigger (its DISTILL-SCAN.md, scan-patterns.json and validators stay for
+# the vault pre-commit), and the systematic-debugging skill (the root-cause agent carries its
+# useful part).
+.claude/hooks/read-nudge.sh
+.claude/skills/security-audit/SKILL.md
+.claude/skills/systematic-debugging

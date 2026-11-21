@@ -34,27 +34,19 @@ A sixth reads the filesystem, which no other rule does:
      the command; a path that does not resolve to a regular file gets no nudge, and
      neither does a `cat` whose stdout goes to a redirect.
 
-The Read tool's whole-file reads are the other half of that census, 70 of the 218 calls
-(dotfiles #1085). A Bash hook never sees them, so `read_nudge()` judges a Read's
-tool_input for the `read-nudge` hook entry instead:
-
-  7. whole-file-read: a Read of a regular file over 20 KB with neither `offset` nor
-     `limit`. An image or a PDF is skipped: the harness does not put its bytes into the
-     context as text.
-
 Two point at a wrapper where a deny would refuse legitimate calls (dotfiles #1223). Each
 fires only where its wrapper is on PATH, since a host may have gh without either:
 
-  8. gh-rerun-failed: `gh run rerun … --failed`. The wrapper refuses a repo the
+  7. gh-rerun-failed: `gh run rerun … --failed`. The wrapper refuses a repo the
      logged-in account does not own, and the command text does not name the owner, so a
      work-org rerun is left to run raw.
-  9. runlog: a stage that sends stdout to a file and stderr after it (`> f 2>&1`, `&> f`),
+  8. runlog: a stage that sends stdout to a file and stderr after it (`> f 2>&1`, `&> f`),
      the hand-written capture `runlog` replaces. `/dev/null` is not a capture. `runlog`
      swaps the Bash tool's non-blocking stdio for blocking files, which some CLIs refuse.
 
 One warns about a host tool, the way footguns.py's ugrep-flag rule does:
 
- 10. ugrep-bounded-class: an extended-regex grep whose pattern bounds a negated class,
+  9. ugrep-bounded-class: an extended-regex grep whose pattern bounds a negated class,
      such as `[^"]{0,200}`, where grep is ugrep. ugrep expands the class into every UTF-8
      byte sequence before it applies the bound. Two such classes with literals between
      them exceed its complexity limit: grep prints an error to stderr, exits 2 and
@@ -135,8 +127,6 @@ _LANDED_RANGE = re.compile(r"^origin/(?:master|main)\.\.(?!HEAD$)[^.\s]\S*$")
 # The first line `land` prints, which opens a backgrounded run's task-id-named output file:
 # `land --detach: running in background`, `land: 3 landings are already live`.
 _LAND_FIRST_LINE = re.compile(rb"land(?: --[a-z-]+)*: ")
-# Read renders these as images or pages, not as text the size of the file.
-_NON_TEXT_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"})
 
 
 def _stages(command: str) -> list[tuple[list[str], str]] | None:
@@ -581,34 +571,6 @@ def nudge(command: str, cwd: str = "") -> tuple[str, str] | None:
             if found:
                 return rule, f"{tag(rule)} {found}"
     return None
-
-
-def read_nudge(tool_input: dict, cwd: str = "") -> tuple[str, str] | None:
-    """(rule, tagged text) when a Read's `tool_input` reads a big file whole, or None.
-
-    A relative `file_path` resolves against `cwd`, and without one it is left alone.
-    """
-    name = tool_input.get("file_path")
-    if not isinstance(name, str) or not name:
-        return None
-    if tool_input.get("offset") is not None or tool_input.get("limit") is not None:
-        return None
-    path = os.path.expanduser(name)
-    if not os.path.isabs(path):
-        if not cwd:
-            return None
-        path = os.path.join(cwd, path)
-    if os.path.splitext(path)[1].lower() in _NON_TEXT_SUFFIXES or not os.path.isfile(path):
-        return None
-    size = os.path.getsize(path)
-    if size <= _BIG_CAT_BYTES:
-        return None
-    rule = "whole-file-read"
-    return rule, (
-        f"{tag(rule)} This Read puts {size // 1000} KB into the context, where it stays for "
-        "the rest of the session. Find the section first with `rg -n <pattern> <file>`, then "
-        "Read it with `offset` and `limit`."
-    )
 
 
 # A marker older than this is pruned; a session resumed after it may see a nudge again.

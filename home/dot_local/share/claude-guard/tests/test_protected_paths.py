@@ -17,7 +17,7 @@ def home(tmp_path):
 def test_a_write_through_a_link_on_disk_is_compared_at_its_target(home, tmp_path):
     link = tmp_path / "elsewhere"
     os.symlink(f"{home}/.claude/hooks", link)
-    assert writes_protected_path(f"cp /tmp/x {link}/read-nudge.sh", f"{home}/repo", home)
+    assert writes_protected_path(f"cp /tmp/x {link}/guard-pre-tool-use.sh", f"{home}/repo", home)
     assert not writes_protected_path(f"cp /tmp/x {tmp_path}/other.sh", f"{home}/repo", home)
 
 

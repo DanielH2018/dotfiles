@@ -11,9 +11,9 @@ Distill a finding only when it describes a recurring class: a hardcoded internal
 hostname, raw SQL string concatenation, a private key committed as base64. Skip a
 one-off finding that cannot recur. Work from the class, not the one instance.
 
-Distill mode needs concrete findings: output from a diff review or full audit in
-this skill, from `/code-review`, or a vulnerability class the user describes. It
-does not hunt for new findings.
+Distill mode needs concrete findings: output from a diff review or audit, from
+`/code-review` or `security-sweep`, or a vulnerability class the user describes. It does
+not hunt for new findings.
 
 ## Procedure
 

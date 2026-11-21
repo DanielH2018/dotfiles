@@ -12,8 +12,6 @@
     claude-guard replay <jsonl> --deny     # deny/ask/allow verdict and reason per record,
                                             # git conventions included; a {file_path, cwd}
                                             # record is judged as a file-tool call
-    claude-guard read-nudge                # PreToolUse/Read hook entry: hook JSON on stdin,
-                                            # a whole-file-read nudge or nothing on stdout
     claude-guard post-tool-use             # bash-write-fanout.sh's helper: hook JSON on
                                             # stdin, {stripped, context} JSON on stdout
     claude-guard prompt-server             # stdio MCP server: the headless sessions'
@@ -40,7 +38,6 @@ from claude_guard.hook import (
     permission_request,
     post_tool_use,
     pre_tool_use,
-    read_nudge_json,
 )
 from claude_guard.protected_paths import FILE_REASON, FILE_RULE, protects_file
 from claude_guard.segment import Parsed, parse
@@ -185,14 +182,6 @@ def cmd_pre_tool_use(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_read_nudge(args: argparse.Namespace) -> int:
-    # read_nudge_json() never raises; a nudge is advice, so the Read hook fails silent.
-    out = read_nudge_json(sys.stdin.read())
-    if out:
-        print(out)
-    return 0
-
-
 def cmd_post_tool_use(args: argparse.Namespace) -> int:
     # post_tool_use() catches what it can decide about; anything else is the shim's
     # "Python failed" path, which it reports.
@@ -213,9 +202,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     pt = sub.add_parser("pre-tool-use", help="PreToolUse hook entry (stdin JSON): deny rules")
     pt.set_defaults(fn=cmd_pre_tool_use)
-
-    rn = sub.add_parser("read-nudge", help="PreToolUse/Read hook entry (stdin JSON): nudge")
-    rn.set_defaults(fn=cmd_read_nudge)
 
     po = sub.add_parser("post-tool-use", help="bash-write-fanout.sh's parser and apply report")
     po.set_defaults(fn=cmd_post_tool_use)

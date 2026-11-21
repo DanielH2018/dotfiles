@@ -39,12 +39,12 @@ from claude_guard.checks import (
     worktree_escape,
 )
 from claude_guard.checks.awk import awk_risk
-from claude_guard.deny import NONE, Verdict, deny
+from claude_guard.deny import Verdict, deny
 from claude_guard.event import PreToolUseEvent
 from claude_guard.event import parse as parse_event
 from claude_guard.footguns import footgun
 from claude_guard.judge import Decision, judge
-from claude_guard.nudges import claim, nudge, read_nudge
+from claude_guard.nudges import claim, nudge
 from claude_guard.readonly import readonly
 from claude_guard.rules import load_rules
 from claude_guard.segment import parse
@@ -188,24 +188,6 @@ def nudge_for(event: PreToolUseEvent) -> str | None:
         if found is None or not claim(context_transcript(event), found[0]):
             return None
         return found[1]
-    except Exception:
-        return None
-
-
-def read_nudge_json(stdin_text: str) -> str | None:
-    """The PreToolUse/Read stdout: a whole-file-read nudge as additionalContext, or None.
-
-    None also when the session has already had that nudge, and on any failure: the Read
-    hook decides nothing, so a failure in it must not stand in the way of the Read.
-    """
-    try:
-        event = parse_event(stdin_text)
-        if event is None:
-            return None
-        found = read_nudge(event.tool_input, event.cwd or "")
-        if found is None or not claim(context_transcript(event), found[0]):
-            return None
-        return pre_tool_use_json(NONE, found[1])
     except Exception:
         return None
 
