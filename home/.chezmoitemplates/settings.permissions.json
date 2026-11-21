@@ -447,11 +447,20 @@
            so a write tool added upstream must not inherit auto-approval. scan_secrets and every tool
            that changes dashboard state are in the ask list instead. bin/lib/mcp-tools.json lists the
            tools the server exposes, and config-lint fails on a rule that names any other. */}}
+      "mcp__gitguardian__count_internal_incidents",
+      "mcp__gitguardian__get_gitguardian_resource",
+      "mcp__gitguardian__get_internal_incident",
       "mcp__gitguardian__get_member",
+      "mcp__gitguardian__get_my_identity",
       "mcp__gitguardian__get_public_incident",
       "mcp__gitguardian__get_remediation_workflow",
       "mcp__gitguardian__list_detectors",
       "mcp__gitguardian__list_honeytokens",
+      "mcp__gitguardian__list_internal_incident_locations",
+      "mcp__gitguardian__list_internal_incident_members",
+      "mcp__gitguardian__list_internal_incidents",
+      "mcp__gitguardian__list_internal_occurrences",
+      "mcp__gitguardian__list_members",
       "mcp__gitguardian__list_public_incidents",
       "mcp__gitguardian__list_public_occurrences",
       "mcp__gitguardian__list_sources",
