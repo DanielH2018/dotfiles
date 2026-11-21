@@ -64,16 +64,18 @@ hook_field() {
 
 # hook_common_fields
 #   Set HOOK_CWD, HOOK_SESSION and HOOK_TRANSCRIPT from the payload, so a hook does not
-#   spell out the same three filters. HOOK_CWD and HOOK_TRANSCRIPT stay empty unless they
-#   name an absolute path, the rule HookEvent applies in lib/hook_input.py; HOOK_SESSION is
+#   spell out the same three filters. HOOK_CWD and HOOK_TRANSCRIPT expand a leading `~` to
+#   $HOME and stay empty unless they then name an absolute path, the rule HookEvent applies
+#   in lib/hook_input.py (which also expands `~user`); HOOK_SESSION is
 #   empty when the payload has no string session_id. Call it as a plain statement, never as
 #   `$(hook_common_fields)`, because the variables live in the caller's process.
 # shellcheck disable=SC2034  # the sourcing hook reads the three variables
 hook_common_fields() {
   hook_read_input
-  HOOK_CWD=$(hook_field '.cwd | strings | select(startswith("/"))')
+  local absolute='strings | sub("^~(?=/|$)"; env.HOME // "~") | select(startswith("/"))'
+  HOOK_CWD=$(hook_field ".cwd | $absolute")
   HOOK_SESSION=$(hook_field '.session_id | strings')
-  HOOK_TRANSCRIPT=$(hook_field '.transcript_path | strings | select(startswith("/"))')
+  HOOK_TRANSCRIPT=$(hook_field ".transcript_path | $absolute")
 }
 
 # hook_file_path

@@ -104,6 +104,15 @@ test('hook_common_fields leaves a relative cwd and transcript empty but keeps th
   assert.deepStrictEqual(commonFields({ cwd: 'repo', session_id: 's2', transcript_path: 't.jsonl' }), ['', 's2', '']);
 });
 
+test('hook_common_fields expands a leading ~ in cwd and transcript, as HookEvent does', { skip }, () => {
+  const home = os.homedir();
+  assert.deepStrictEqual(commonFields({ cwd: '~/repo', session_id: 's3', transcript_path: '~' }), [
+    path.join(home, 'repo'),
+    's3',
+    home,
+  ]);
+});
+
 test('hook_common_fields leaves missing, non-string and unparseable fields empty', { skip }, () => {
   assert.deepStrictEqual(commonFields({ cwd: 7, session_id: null }), ['', '', '']);
   assert.deepStrictEqual(commonFields('not json'), ['', '', '']);
