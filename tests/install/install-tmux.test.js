@@ -66,13 +66,21 @@ test('a distrobox or toolbox container renders no builder', { skip }, () => {
 // dpkg reports every package missing, so the build deps always need installing. `sudoOk`
 // decides whether `sudo -v` succeeds. curl serves a fake release tarball whose configure
 // records --prefix, and the make stub installs a tmux reporting the pinned version there.
-function build(t, { sudoOk }) {
+// `stale` is an already-installed ~/.local/bin/tmux; `builtTmux` is what the make stub installs.
+const WORKING_TMUX = `#!/bin/sh\necho "tmux ${TMUX_VERSION}"\n`;
+const BROKEN_TMUX = '#!/bin/sh\necho "tmux: libtinfo.so.6: version NCURSES6_TINFO_6.4.current not found" >&2\nexit 1\n';
+function build(t, { sudoOk, stale, builtTmux = WORKING_TMUX }) {
   const root = scratch(os.tmpdir(), 'tmux-build-', t);
   const home = path.join(root, 'home');
   const bin = path.join(root, 'bin');
   const log = path.join(root, 'calls');
   fs.mkdirSync(home);
   fs.mkdirSync(bin);
+  if (stale) {
+    fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.local', 'bin', 'tmux'), stale, { mode: 0o755 });
+  }
+  fs.writeFileSync(path.join(root, 'built-tmux'), builtTmux, { mode: 0o755 });
 
   // The release tarball unpacks to tmux-<version>/, which the shell assembles. Spelling that
   // directory with fs.* would put TMUX_VERSION (read from the repo file) in an fs write path,
@@ -93,7 +101,7 @@ function build(t, { sudoOk }) {
   stub('curl', `while [ $# -gt 0 ]; do [ "$1" = -o ] && cp "${tarball}" "$2"; shift; done`);
   stub('make', `[ "$1" = install ] || exit 0
 p="$(cat .prefix)"; mkdir -p "$p/bin"
-printf '#!/bin/sh\\necho "tmux ${TMUX_VERSION}"\\n' > "$p/bin/tmux"; chmod +x "$p/bin/tmux"`);
+cp "${path.join(root, 'built-tmux')}" "$p/bin/tmux"`);
 
   const scriptFile = path.join(root, 'render.sh');
   fs.writeFileSync(scriptFile, renderTemplate(body, { profile: 'workstation', data: HOST }));
@@ -136,6 +144,35 @@ test('with sudo it installs the deps and builds the pinned release into ~/.local
   assert.match(calls,
     new RegExp(`^curl .*https://github\\.com/tmux/tmux/releases/download/${TMUX_VERSION}/tmux-${TMUX_VERSION}\\.tar\\.gz`, 'm'));
   assert.strictEqual(execFileSync(tmux, ['-V'], { encoding: 'utf8' }).trim(), `tmux ${TMUX_VERSION}`);
+});
+
+// 5b. An ncurses upgrade can leave the installed tmux unable to start. It then shadows the
+//     distro tmux on PATH, so a rebuild that cannot run (no sudo) must delete it, and one that
+//     can run must replace it.
+test('a local tmux that does not start is removed even when the rebuild is deferred', { skip: linuxSkip }, (t) => {
+  const { status, out, tmux } = build(t, { sudoOk: false, stale: BROKEN_TMUX });
+  assert.strictEqual(status, 1);
+  assert.match(out, /does not start/);
+  assert.ok(!fs.existsSync(tmux), 'the broken binary must not stay on PATH');
+});
+
+test('a local tmux that does not start is rebuilt', { skip: linuxSkip }, (t) => {
+  const { status, out, tmux } = build(t, { sudoOk: true, stale: BROKEN_TMUX });
+  assert.strictEqual(status, 0, out);
+  assert.strictEqual(execFileSync(tmux, ['-V'], { encoding: 'utf8' }).trim(), `tmux ${TMUX_VERSION}`);
+});
+
+test('a freshly built tmux that does not start is removed and the run fails', { skip: linuxSkip }, (t) => {
+  const { status, out, tmux } = build(t, { sudoOk: true, builtTmux: BROKEN_TMUX });
+  assert.strictEqual(status, 1);
+  assert.match(out, /built tmux does not start/);
+  assert.ok(!fs.existsSync(tmux));
+});
+
+// The rendered script carries the host ncurses version, so chezmoi re-runs it after an ncurses
+// upgrade that the pinned version alone would never trigger.
+test('the render carries a host ncurses line', { skip: linuxSkip }, () => {
+  assert.match(renderTemplate(body, { profile: 'workstation', data: HOST }), /^# host ncurses: /m);
 });
 
 // 6. Idempotence: an already-current ~/.local/bin/tmux must short-circuit before any apt/build,

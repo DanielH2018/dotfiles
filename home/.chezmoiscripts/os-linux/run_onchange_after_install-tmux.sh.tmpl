@@ -12,8 +12,14 @@
 # to pull a newer build. Linux + non-minimal only (the Pi opts out; macOS gets tmux via Brewfile).
 # A sudo-less run defers the build-deps and exits 1 so chezmoi retries next apply, but the after_
 # placement means that does NOT block dotfile deployment.
+# The binary links the host's libtinfo, so an ncurses upgrade can leave it unable to start, and a
+# broken tmux in BIN_DIR shadows the working distro one. The comment below renders the installed
+# ncurses version, so chezmoi re-runs this script when that version changes; the skip check then
+# rebuilds only a binary that no longer starts. A binary that does not start is deleted, so a
+# deferred or failed rebuild leaves the distro tmux on PATH.
 set -u
 TAG=install-tmux
+# host ncurses: {{ output "sh" "-c" "dpkg-query -W -f='${Version}' libtinfo6 2>/dev/null || rpm -q --qf '%{VERSION}-%{RELEASE}' ncurses-libs 2>/dev/null || true" | trim }}
 {{ includeTemplate "linux-install.sh" . }}
 
 # Renovate bumps this pin (renovate.json, the install-tmux manager). The release tarball has no
@@ -30,6 +36,10 @@ if [ -x "$BIN_DIR/tmux" ]; then
   if [ -n "$have" ] && [ "$(printf '%s\n%s\n' "$have" "$TMUX_VERSION" | sort -V | head -1)" = "$TMUX_VERSION" ]; then
     echo "$TAG: ~/.local/bin/tmux is $have (>= $TMUX_VERSION); skipping build" >&2
     exit 0
+  fi
+  if [ -z "$have" ]; then
+    echo "$TAG: $BIN_DIR/tmux does not start; removing it so the system tmux is used, then rebuilding" >&2
+    rm -f "$BIN_DIR/tmux"
   fi
 fi
 
@@ -72,5 +82,9 @@ src="$tmp/tmux-${TMUX_VERSION}"
 if ! ( cd "$src" && ./configure --prefix="$PREFIX" >/dev/null && make >/dev/null && make install >/dev/null ); then
   echo "$TAG: build failed" >&2; exit 1
 fi
-echo "$TAG: installed $("$BIN_DIR/tmux" -V) to $BIN_DIR (run 'tmux kill-server' or restart WSL to pick it up)" >&2
+if ! built="$("$BIN_DIR/tmux" -V 2>&1)"; then
+  echo "$TAG: the built tmux does not start ($built); removing it so the system tmux is used" >&2
+  rm -f "$BIN_DIR/tmux"; exit 1
+fi
+echo "$TAG: installed $built to $BIN_DIR (run 'tmux kill-server' or restart WSL to pick it up)" >&2
 {{ end -}}
