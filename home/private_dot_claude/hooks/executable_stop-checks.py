@@ -81,6 +81,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 # The shared modules live in lib/ beside this hook, deployed or in the source tree.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "lib"))
@@ -139,7 +140,7 @@ def outside_fences(text: str) -> str:
 
 
 def _records(lines):
-    """Parse JSONL lines into conversation records, skipping lines that do not parse.
+    """Parse JSONL lines into `TranscriptRecord`s, skipping lines that do not parse.
 
     An `api-request-blob` record is Claude Code's copy of a request it sent. It repeats
     earlier user text and tool calls, each call with its input rewritten for the wire.
@@ -153,28 +154,63 @@ def _records(lines):
         except ValueError:
             continue
         if isinstance(record, dict) and record.get("type") != "api-request-blob":
-            yield record
+            yield parse_record(record)
 
 
-def _user_text(record: dict) -> str | None:
-    """A user record's text, or None when it is the harness answering a tool call."""
-    message = record.get("message")
-    if not isinstance(message, dict) or message.get("role") != "user":
-        return None
+class TranscriptRecord(NamedTuple):
+    """One transcript record, with the shape checks done once, here."""
+
+    role: str | None
+    is_sidechain: bool
+    user_text: str | None  # None unless a user wrote it: tool results are the harness
+    texts: tuple[str, ...]  # an assistant record's text blocks, in order
+    tool_uses: tuple[tuple[str, object], ...]  # (name, input) of its tool_use blocks
+    created: str | None  # the path a Write result reports as new
+
+
+def _user_text(message: dict) -> str | None:
     content = message.get("content")
     if isinstance(content, str):
         return content
-    if isinstance(content, list):
-        if content and all(
-            isinstance(b, dict) and b.get("type") == "tool_result" for b in content
-        ):
-            return None
-        return "\n".join(
-            b.get("text", "")
-            for b in content
-            if isinstance(b, dict) and b.get("type") == "text"
-        )
-    return None
+    if not isinstance(content, list):
+        return None
+    if content and all(
+        isinstance(b, dict) and b.get("type") == "tool_result" for b in content
+    ):
+        return None
+    return "\n".join(
+        b.get("text", "")
+        for b in content
+        if isinstance(b, dict) and b.get("type") == "text"
+    )
+
+
+def parse_record(record: dict) -> TranscriptRecord:
+    message = record.get("message")
+    if not isinstance(message, dict):
+        message = {}
+    role = message.get("role")
+    content = message.get("content") if role == "assistant" else None
+    blocks = (
+        [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
+    )
+    result = record.get("toolUseResult")
+    created = None
+    if isinstance(result, dict) and result.get("type") == "create":
+        path = result.get("filePath")
+        created = path if isinstance(path, str) else None
+    return TranscriptRecord(
+        role=role if isinstance(role, str) else None,
+        is_sidechain=bool(record.get("isSidechain")),
+        user_text=_user_text(message) if role == "user" else None,
+        texts=tuple(b.get("text", "") for b in blocks if b.get("type") == "text"),
+        tool_uses=tuple(
+            (str(b.get("name")), b.get("input"))
+            for b in blocks
+            if b.get("type") == "tool_use"
+        ),
+        created=created,
+    )
 
 
 class Turn:
@@ -189,7 +225,7 @@ class Turn:
         self._reply = None
         self._session = None
 
-    def _tail_records(self) -> list[dict]:
+    def _tail_records(self) -> list[TranscriptRecord]:
         if not self.transcript or not self.transcript.is_file():
             return []
         with self.transcript.open("rb") as handle:
@@ -208,23 +244,13 @@ class Turn:
         texts: list[str] = []
         tools: set[str] = set()
         for record in reversed(self._tail_records()):
-            if record.get("isSidechain"):
+            if record.is_sidechain:
                 continue
-            message = record.get("message")
-            if not isinstance(message, dict):
+            if record.role == "assistant":
+                texts.extend(reversed(record.texts))
+                tools.update(name for name, _ in record.tool_uses)
                 continue
-            if message.get("role") == "assistant":
-                content = message.get("content")
-                if isinstance(content, list):
-                    for block in reversed(content):
-                        if not isinstance(block, dict):
-                            continue
-                        if block.get("type") == "text":
-                            texts.append(block.get("text", ""))
-                        elif block.get("type") == "tool_use":
-                            tools.add(str(block.get("name")))
-                continue
-            text = _user_text(record)
+            text = record.user_text
             if text is None:
                 continue
             if text.startswith(FEEDBACK_PREFIX):
@@ -289,23 +315,16 @@ class Session:
         with transcript.open("rb") as handle:
             lines = [ln for ln in handle if any(n in ln for n in _SESSION_NEEDLES)]
         for record in _records(lines):
-            if record.get("isSidechain"):
+            if record.is_sidechain:
                 continue
-            result = record.get("toolUseResult")
-            if isinstance(result, dict) and result.get("type") == "create":
-                path = result.get("filePath")
-                if isinstance(path, str):
-                    self.created.add(path)
-            text = _user_text(record)
-            if text is not None and text.startswith(FEEDBACK_PREFIX):
-                self.feedback.append(text)
-            message = record.get("message")
-            if not isinstance(message, dict) or message.get("role") != "assistant":
-                continue
-            content = message.get("content")
-            for block in content if isinstance(content, list) else []:
-                if isinstance(block, dict) and block.get("type") == "tool_use":
-                    self._tool(block.get("name"), block.get("input"))
+            if record.created is not None:
+                self.created.add(record.created)
+            if record.user_text is not None and record.user_text.startswith(
+                FEEDBACK_PREFIX
+            ):
+                self.feedback.append(record.user_text)
+            for name, data in record.tool_uses:
+                self._tool(name, data)
 
     def _tool(self, name, data) -> None:
         if not isinstance(data, dict):

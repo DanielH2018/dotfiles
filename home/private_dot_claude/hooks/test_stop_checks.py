@@ -137,6 +137,53 @@ check(
     ),
 )
 
+# ---------------------------------------------------------------- transcript records
+
+parsed = mod.parse_record(
+    {
+        "isSidechain": True,
+        "message": {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "a"},
+                {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}},
+                {"type": "text", "text": "b"},
+            ],
+        },
+    }
+)
+check(
+    "an assistant record keeps its text blocks and tool_use calls in order",
+    parsed.role == "assistant"
+    and parsed.is_sidechain
+    and parsed.texts == ("a", "b")
+    and parsed.tool_uses == (("Bash", {"command": "ls"}),)
+    and parsed.user_text is None,
+)
+check(
+    "a user record of only tool_result blocks has no user text",
+    mod.parse_record(
+        {"message": {"role": "user", "content": [{"type": "tool_result"}]}}
+    ).user_text
+    is None,
+)
+check(
+    "a user record joins its text blocks, and a string body is its own text",
+    mod.parse_record(user("hi")).user_text == "hi"
+    and mod.parse_record(feedback("x")).user_text == "Stop hook feedback:\nx",
+)
+check(
+    "a record without a dict message parses to an empty record",
+    mod.parse_record({"message": "oops"}).role is None
+    and mod.parse_record({"message": {"role": "assistant", "content": 5}}).texts == (),
+)
+check(
+    "a Write result that created a file reports the path",
+    mod.parse_record(created("/a/b")[1]).created == "/a/b"
+    and mod.parse_record(user("x")).created is None,
+)
+
+
 # ---------------------------------------------------------------- once per turn
 
 BAD = f"{LINK}\ntrailing prose"
