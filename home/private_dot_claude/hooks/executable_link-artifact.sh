@@ -30,7 +30,8 @@ set -u
 . "${ARTIFACT_STATE_LIB:-${BASH_SOURCE[0]%/*}/lib/artifact-state.sh}"
 hook_read_input
 path=$(hook_field '.tool_input.file_path // .tool_response.filePath // empty')
-session_id=$(hook_field '.session_id // empty')
+hook_common_fields
+session_id=$HOOK_SESSION
 [ -z "$path" ] && exit 0
 
 case "$path" in

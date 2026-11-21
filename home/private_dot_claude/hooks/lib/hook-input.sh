@@ -62,6 +62,20 @@ hook_field() {
   printf '%s' "$_HOOK_INPUT_RAW" | jq -r "$1" 2>/dev/null
 }
 
+# hook_common_fields
+#   Set HOOK_CWD, HOOK_SESSION and HOOK_TRANSCRIPT from the payload, so a hook does not
+#   spell out the same three filters. HOOK_CWD and HOOK_TRANSCRIPT stay empty unless they
+#   name an absolute path, the rule HookEvent applies in lib/hook_input.py; HOOK_SESSION is
+#   empty when the payload has no string session_id. Call it as a plain statement, never as
+#   `$(hook_common_fields)`, because the variables live in the caller's process.
+# shellcheck disable=SC2034  # the sourcing hook reads the three variables
+hook_common_fields() {
+  hook_read_input
+  HOOK_CWD=$(hook_field '.cwd | strings | select(startswith("/"))')
+  HOOK_SESSION=$(hook_field '.session_id | strings')
+  HOOK_TRANSCRIPT=$(hook_field '.transcript_path | strings | select(startswith("/"))')
+}
+
 # hook_file_path
 #   The file an Edit, Write or NotebookEdit call names, or empty. NotebookEdit sends
 #   `notebook_path`, so a hook registered for it that reads only `file_path` misses it.

@@ -77,10 +77,10 @@ INSIDE=$(git -C "$DIR" rev-parse --is-inside-work-tree 2>/dev/null) || exit 0
 # works when they differ. An unreadable cwd keeps the original message.
 FILE_TOP=$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null)
 FILE_COMMON=$(git -C "$DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
-CWD=$(hook_field '.cwd // empty')
+hook_common_fields
 SESSION_COMMON=""
-if [ -n "$CWD" ] && [ -d "$CWD" ]; then
-  SESSION_COMMON=$(git -C "$CWD" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+if [ -n "$HOOK_CWD" ] && [ -d "$HOOK_CWD" ]; then
+  SESSION_COMMON=$(git -C "$HOOK_CWD" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
 fi
 
 if [ -n "$FILE_COMMON" ] && [ -n "$SESSION_COMMON" ] && [ "$FILE_COMMON" != "$SESSION_COMMON" ]; then

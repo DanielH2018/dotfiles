@@ -26,7 +26,7 @@ set -u
 hook_read_input
 TRIGGER=$(hook_field '.trigger // "auto"')
 [ -n "$TRIGGER" ] || TRIGGER=auto
-TRANSCRIPT=$(hook_field '.transcript_path // empty')
+hook_common_fields
 
 case "$TRIGGER" in
   manual) MSG="Manual /compact proceeding." ;;
@@ -68,7 +68,7 @@ fi
 # Transcript-derived state. One pass over the JSONL, tagging each row so files and commands
 # come out of the same scan: F = a file this session edited, B = a shell command it ran.
 # An api-request-blob row repeats an earlier call with its input rewritten for the wire.
-if [ -n "$TRANSCRIPT" ] && [ -r "$TRANSCRIPT" ]; then
+if [ -n "$HOOK_TRANSCRIPT" ] && [ -r "$HOOK_TRANSCRIPT" ]; then
   SCAN=$(jq -Rr '
     fromjson?
     | select(type == "object" and .type != "api-request-blob")
@@ -81,7 +81,7 @@ if [ -n "$TRANSCRIPT" ] && [ -r "$TRANSCRIPT" ]; then
       elif .name == "Bash"
       then "B\t" + ((.input.command // "") | split("\n")[0])
       else empty
-      end' "$TRANSCRIPT" 2>/dev/null || true)
+      end' "$HOOK_TRANSCRIPT" 2>/dev/null || true)
 
   # Scratch files under a job's tmp dir are not "work done" — they'd crowd the real edits
   # out of the list, which is the opposite of the point.

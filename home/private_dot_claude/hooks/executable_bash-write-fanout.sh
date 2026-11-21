@@ -68,9 +68,9 @@ case "$CMD" in
 esac
 
 HOOK_DIR=${BASH_SOURCE[0]%/*}
-CWD=$(hook_field '.cwd // empty')
-SESSION=$(hook_field '.session_id // empty')
-[ -n "$CWD" ] || CWD=$PWD
+hook_common_fields
+CWD=${HOOK_CWD:-$PWD}
+SESSION=$HOOK_SESSION
 
 # ── path extraction ──────────────────────────────────────────────────────────────────
 #

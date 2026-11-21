@@ -79,3 +79,32 @@ test('a file outside every root is not under one', { skip }, () => {
 test('an empty root list matches nothing', { skip }, () => {
   assert.strictEqual(underTempRoot(path.join(REAL_ROOT, 'f.md'), ''), 1);
 });
+
+// hook_common_fields reads the payload from HOOK_INPUT_STDIN, the library's own test seam.
+function commonFields(payload) {
+  const file = path.join(DIR, 'payload.json');
+  fs.writeFileSync(file, typeof payload === 'string' ? payload : JSON.stringify(payload));
+  const r = spawnSync(
+    'bash',
+    ['-c', `. ${JSON.stringify(LIB)}; hook_common_fields; printf '%s|%s|%s' "$HOOK_CWD" "$HOOK_SESSION" "$HOOK_TRANSCRIPT"`],
+    { encoding: 'utf8', env: { ...process.env, HOOK_INPUT_STDIN: file } },
+  );
+  return r.stdout.split('|');
+}
+
+test('hook_common_fields sets all three from absolute paths and a session id', { skip }, () => {
+  assert.deepStrictEqual(commonFields({ cwd: '/work/repo', session_id: 's1', transcript_path: '/t/s1.jsonl' }), [
+    '/work/repo',
+    's1',
+    '/t/s1.jsonl',
+  ]);
+});
+
+test('hook_common_fields leaves a relative cwd and transcript empty but keeps the session', { skip }, () => {
+  assert.deepStrictEqual(commonFields({ cwd: 'repo', session_id: 's2', transcript_path: 't.jsonl' }), ['', 's2', '']);
+});
+
+test('hook_common_fields leaves missing, non-string and unparseable fields empty', { skip }, () => {
+  assert.deepStrictEqual(commonFields({ cwd: 7, session_id: null }), ['', '', '']);
+  assert.deepStrictEqual(commonFields('not json'), ['', '', '']);
+});
