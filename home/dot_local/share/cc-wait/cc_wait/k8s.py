@@ -89,61 +89,146 @@ def kubectl(run: Runner, context: str | None, namespace: str | None, args: list[
     return out.stdout
 
 
-def _status(obj: dict) -> dict:
-    return obj.get("status") or {}
+@dataclass(frozen=True)
+class Condition:
+    type: str | None
+    status: str | None
+    reason: str | None
+    message: str | None
 
 
-def _labels(obj: dict) -> dict:
-    return (obj.get("metadata") or {}).get("labels") or {}
+@dataclass(frozen=True)
+class Container:
+    name: str
+    restarts: int
+    waiting_reason: str | None
+    waiting_message: str
 
 
-def _annotation(obj: dict, key: str) -> str | None:
-    return ((obj.get("metadata") or {}).get("annotations") or {}).get(key)
+@dataclass(frozen=True)
+class KubeObject:
+    """The fields the wait sources read from one kubectl object, with absent ones defaulted.
+
+    A Deployment, StatefulSet, DaemonSet, Job, ReplicaSet or Pod all parse to this shape. A
+    field that the kind does not carry keeps its default and is never read for that kind.
+    """
+
+    api_kind: str | None
+    name: str
+    uid: str | None
+    generation: int
+    labels: dict[str, str]
+    annotations: dict[str, str]
+    owner_uids: tuple[str | None, ...]
+    selector: dict[str, str]
+    conditions: tuple[Condition, ...]
+    containers: tuple[Container, ...]
+    observed_generation: int
+    want_replicas: int
+    update_type: str
+    partition: int
+    # Deployment and StatefulSet status
+    replicas: int
+    updated_replicas: int
+    available_replicas: int
+    ready_replicas: int
+    update_revision: str | None
+    current_revision: str | None
+    # DaemonSet status
+    desired_scheduled: int
+    updated_scheduled: int
+    available_scheduled: int
+    # Job status
+    active: int
+    succeeded: int
+    failed: int
+
+    def condition(self, type_: str) -> Condition | None:
+        return next((c for c in self.conditions if c.type == type_), None)
 
 
-def _condition(obj: dict, kind: str) -> dict | None:
-    for cond in _status(obj).get("conditions") or []:
-        if cond.get("type") == kind:
-            return cond
-    return None
+def _section(parent: dict, key: str) -> dict:
+    return parent.get(key) or {}
 
 
-def pod_problems(pods: list[dict]) -> tuple[str | None, list[str]]:
+def _container(raw: dict) -> Container:
+    waiting = _section(_section(raw, "state"), "waiting")
+    return Container(
+        name=raw.get("name", "?"),
+        restarts=raw.get("restartCount", 0),
+        waiting_reason=waiting.get("reason"),
+        waiting_message=(waiting.get("message") or "").strip(),
+    )
+
+
+def parse_object(obj: dict) -> KubeObject:
+    """The typed fields of one kubectl JSON object, read once so no caller re-checks its shape."""
+    meta, spec, status = _section(obj, "metadata"), _section(obj, "spec"), _section(obj, "status")
+    strategy = _section(spec, "updateStrategy")
+    return KubeObject(
+        api_kind=obj.get("kind"),
+        name=meta.get("name", "?"),
+        uid=meta.get("uid"),
+        generation=meta.get("generation", 0),
+        labels=_section(meta, "labels"),
+        annotations=_section(meta, "annotations"),
+        owner_uids=tuple(o.get("uid") for o in meta.get("ownerReferences") or []),
+        selector=_section(_section(spec, "selector"), "matchLabels"),
+        conditions=tuple(
+            Condition(c.get("type"), c.get("status"), c.get("reason"), c.get("message"))
+            for c in status.get("conditions") or []
+        ),
+        containers=tuple(
+            _container(cs)
+            for cs in (status.get("initContainerStatuses") or [])
+            + (status.get("containerStatuses") or [])
+        ),
+        observed_generation=status.get("observedGeneration", 0),
+        want_replicas=spec.get("replicas", 1),
+        update_type=strategy.get("type", "RollingUpdate"),
+        partition=_section(strategy, "rollingUpdate").get("partition") or 0,
+        replicas=status.get("replicas", 0),
+        updated_replicas=status.get("updatedReplicas", 0),
+        available_replicas=status.get("availableReplicas", 0),
+        ready_replicas=status.get("readyReplicas", 0),
+        update_revision=status.get("updateRevision"),
+        current_revision=status.get("currentRevision"),
+        desired_scheduled=status.get("desiredNumberScheduled", 0),
+        updated_scheduled=status.get("updatedNumberScheduled", 0),
+        available_scheduled=status.get("numberAvailable", 0),
+        active=status.get("active", 0),
+        succeeded=status.get("succeeded", 0),
+        failed=status.get("failed", 0),
+    )
+
+
+def pod_problems(pods: list[KubeObject]) -> tuple[str | None, list[str]]:
     """The first fatal container problem among `pods`, and every other non-routine one."""
     notes: list[str] = []
     for pod in pods:
-        name = (pod.get("metadata") or {}).get("name", "?")
-        status = _status(pod)
-        for cs in (status.get("initContainerStatuses") or []) + (
-            status.get("containerStatuses") or []
-        ):
-            waiting = (cs.get("state") or {}).get("waiting") or {}
-            reason = waiting.get("reason")
+        for cs in pod.containers:
+            reason = cs.waiting_reason
             if not reason or reason in ROUTINE_REASONS:
                 continue
-            restarts = cs.get("restartCount", 0)
-            line = f"{name}/{cs.get('name', '?')}: {reason}"
+            line = f"{pod.name}/{cs.name}: {reason}"
             if reason == "CrashLoopBackOff":
-                line += f" after {restarts} restarts"
+                line += f" after {cs.restarts} restarts"
             fatal = reason in FATAL_REASONS or (
-                reason == "CrashLoopBackOff" and restarts >= CRASH_LOOP_RESTARTS
+                reason == "CrashLoopBackOff" and cs.restarts >= CRASH_LOOP_RESTARTS
             )
             if fatal:
-                message = (waiting.get("message") or "").strip()
+                message = cs.waiting_message
                 return f"{line}: {message}"[:400] if message else line, notes
             notes.append(line)
     return None, notes
 
 
-def _deployment_progress(obj: dict) -> Reading:
-    spec, status = obj.get("spec") or {}, _status(obj)
-    progressing = _condition(obj, "Progressing")
-    if progressing and progressing.get("reason") == "ProgressDeadlineExceeded":
-        return Reading("failed", f"progress deadline exceeded: {progressing.get('message', '')}")
-    want = spec.get("replicas", 1)
-    updated = status.get("updatedReplicas", 0)
-    total = status.get("replicas", 0)
-    available = status.get("availableReplicas", 0)
+def _deployment_progress(obj: KubeObject) -> Reading:
+    progressing = obj.condition("Progressing")
+    if progressing and progressing.reason == "ProgressDeadlineExceeded":
+        return Reading("failed", f"progress deadline exceeded: {progressing.message or ''}")
+    want, updated = obj.want_replicas, obj.updated_replicas
+    total, available = obj.replicas, obj.available_replicas
     if updated < want:
         return Reading("running", f"{updated} of {want} replicas updated")
     if total > updated:
@@ -153,33 +238,27 @@ def _deployment_progress(obj: dict) -> Reading:
     return Reading("rolled-out", f"{updated} of {want} replicas updated and available")
 
 
-def _statefulset_progress(obj: dict) -> Reading:
-    spec, status = obj.get("spec") or {}, _status(obj)
-    strategy = spec.get("updateStrategy") or {}
-    if strategy.get("type", "RollingUpdate") != "RollingUpdate":
+def _statefulset_progress(obj: KubeObject) -> Reading:
+    if obj.update_type != "RollingUpdate":
         raise ReadError("an OnDelete StatefulSet has no rollout to wait on")
-    want = spec.get("replicas", 1)
-    ready = status.get("readyReplicas", 0)
-    updated = status.get("updatedReplicas", 0)
+    want, ready, updated = obj.want_replicas, obj.ready_replicas, obj.updated_replicas
     if ready < want:
         return Reading("running", f"{ready} of {want} pods ready")
-    partition = (strategy.get("rollingUpdate") or {}).get("partition") or 0
-    if partition:
-        if updated < want - partition:
-            return Reading("running", f"{updated} of {want - partition} partitioned pods updated")
+    if obj.partition:
+        if updated < want - obj.partition:
+            return Reading(
+                "running", f"{updated} of {want - obj.partition} partitioned pods updated"
+            )
         return Reading("rolled-out", f"partitioned roll out complete: {updated} pods updated")
-    if status.get("updateRevision") != status.get("currentRevision"):
+    if obj.update_revision != obj.current_revision:
         return Reading("running", f"{updated} of {want} pods at the new revision")
     return Reading("rolled-out", f"{want} of {want} pods ready at the new revision")
 
 
-def _daemonset_progress(obj: dict) -> Reading:
-    spec, status = obj.get("spec") or {}, _status(obj)
-    if (spec.get("updateStrategy") or {}).get("type", "RollingUpdate") != "RollingUpdate":
+def _daemonset_progress(obj: KubeObject) -> Reading:
+    if obj.update_type != "RollingUpdate":
         raise ReadError("an OnDelete DaemonSet has no rollout to wait on")
-    want = status.get("desiredNumberScheduled", 0)
-    updated = status.get("updatedNumberScheduled", 0)
-    available = status.get("numberAvailable", 0)
+    want, updated, available = obj.desired_scheduled, obj.updated_scheduled, obj.available_scheduled
     if updated < want:
         return Reading("running", f"{updated} of {want} new pods scheduled")
     if available < want:
@@ -187,45 +266,39 @@ def _daemonset_progress(obj: dict) -> Reading:
     return Reading("rolled-out", f"{want} of {want} pods updated and available")
 
 
-def _job_progress(obj: dict) -> Reading:
+def _job_progress(obj: KubeObject) -> Reading:
     for kind, state in (("Failed", "failed"), ("Complete", "complete")):
-        cond = _condition(obj, kind)
-        if cond and cond.get("status") == "True":
-            detail = cond.get("message") or cond.get("reason") or kind
-            return Reading(state, detail)
-    status = _status(obj)
-    counts = ", ".join(f"{status.get(k, 0)} {k}" for k in ("active", "succeeded", "failed"))
+        cond = obj.condition(kind)
+        if cond and cond.status == "True":
+            return Reading(state, cond.message or cond.reason or kind)
+    counts = f"{obj.active} active, {obj.succeeded} succeeded, {obj.failed} failed"
     return Reading("running", counts)
 
 
-def new_pods(kind: str, obj: dict, items: list[dict]) -> list[dict]:
+def new_pods(kind: str, obj: KubeObject, items: list[KubeObject]) -> list[KubeObject]:
     """The pods of the revision being rolled out, from a list of pods (and ReplicaSets)."""
-    pods = [i for i in items if i.get("kind") == "Pod"]
+    pods = [i for i in items if i.api_kind == "Pod"]
     if kind == "job":
         return pods
     if kind == "deployment":
-        revision = _annotation(obj, "deployment.kubernetes.io/revision")
-        uid = (obj.get("metadata") or {}).get("uid")
+        revision_key = "deployment.kubernetes.io/revision"
+        revision = obj.annotations.get(revision_key)
         hashes = {
-            _labels(rs).get("pod-template-hash")
+            rs.labels.get("pod-template-hash")
             for rs in items
-            if rs.get("kind") == "ReplicaSet"
-            and _annotation(rs, "deployment.kubernetes.io/revision") == revision
-            and any(
-                o.get("uid") == uid for o in (rs.get("metadata") or {}).get("ownerReferences") or []
-            )
+            if rs.api_kind == "ReplicaSet"
+            and rs.annotations.get(revision_key) == revision
+            and obj.uid in rs.owner_uids
         }
-        return [p for p in pods if _labels(p).get("pod-template-hash") in hashes - {None}]
+        return [p for p in pods if p.labels.get("pod-template-hash") in hashes - {None}]
     if kind == "statefulset":
-        revision = _status(obj).get("updateRevision")
+        revision = obj.update_revision
         return [
-            p for p in pods if revision and _labels(p).get("controller-revision-hash") == revision
+            p for p in pods if revision and p.labels.get("controller-revision-hash") == revision
         ]
     # A DaemonSet's status names no revision; its pods carry the template generation instead.
-    generation = _annotation(obj, "deprecated.daemonset.template.generation")
-    return [
-        p for p in pods if generation and _labels(p).get("pod-template-generation") == generation
-    ]
+    generation = obj.annotations.get("deprecated.daemonset.template.generation")
+    return [p for p in pods if generation and p.labels.get("pod-template-generation") == generation]
 
 
 PROGRESS = {
@@ -257,21 +330,19 @@ class RolloutWait:
             raise ReadError(f"kubectl {' '.join(args[:2])} printed no JSON") from exc
 
     def read(self) -> Reading:
-        obj = self._kubectl(["get", f"{self.kind}/{self.name}"])
-        generation = (obj.get("metadata") or {}).get("generation", 0)
-        observed = _status(obj).get("observedGeneration", 0)
-        if self.kind != "job" and observed < generation:
+        obj = parse_object(self._kubectl(["get", f"{self.kind}/{self.name}"]))
+        if self.kind != "job" and obj.observed_generation < obj.generation:
             # The status still describes the previous spec, so nothing below can be judged.
-            return Reading("running", f"waiting for generation {generation} to be observed")
+            return Reading("running", f"waiting for generation {obj.generation} to be observed")
         progress = PROGRESS[self.kind](obj)
         if progress.state != "running":
             return progress
-        selector = ((obj.get("spec") or {}).get("selector") or {}).get("matchLabels") or {}
-        if not selector:
+        if not obj.selector:
             return progress
         kinds = "replicasets,pods" if self.kind == "deployment" else "pods"
-        labels = ",".join(f"{k}={v}" for k, v in sorted(selector.items()))
-        items = self._kubectl(["get", kinds, "--selector", labels]).get("items") or []
+        labels = ",".join(f"{k}={v}" for k, v in sorted(obj.selector.items()))
+        listing = self._kubectl(["get", kinds, "--selector", labels]).get("items") or []
+        items = [parse_object(i) for i in listing]
         fatal, notes = pod_problems(new_pods(self.kind, obj, items))
         if fatal:
             return Reading("failed", fatal)

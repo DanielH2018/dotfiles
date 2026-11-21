@@ -71,6 +71,37 @@ def pod(labels: dict, reason: str | None = None, restarts: int = 0, name: str = 
     return {"kind": "Pod", "metadata": {"name": name, "labels": labels}, "status": status}
 
 
+def test_parse_object_reads_the_fields_once_and_defaults_the_absent_ones():
+    cond = {"type": "Progressing", "status": "True", "reason": "NewReplicaSetAvailable"}
+    parsed = k8s.parse_object(deployment(gen=3, observed=2, want=4, updated=3, conditions=[cond]))
+    assert (parsed.generation, parsed.observed_generation) == (3, 2)
+    assert (parsed.want_replicas, parsed.updated_replicas, parsed.ready_replicas) == (4, 3, 0)
+    assert parsed.selector == {"app": "app"}
+    assert parsed.condition("Progressing") == k8s.Condition(
+        "Progressing", "True", "NewReplicaSetAvailable", None
+    )
+    assert parsed.condition("Available") is None
+
+    bare = k8s.parse_object({"metadata": None, "status": None})
+    assert (bare.generation, bare.want_replicas, bare.name, bare.update_type) == (
+        0,
+        1,
+        "?",
+        "RollingUpdate",
+    )
+    assert bare.conditions == () and bare.selector == {}
+
+
+def test_parse_object_lists_init_containers_before_containers_with_their_wait_reason():
+    raw = pod({"app": "x"}, reason="CrashLoopBackOff", restarts=5)
+    raw["status"]["initContainerStatuses"] = [{"name": "init", "state": {}}]
+    raw["status"]["containerStatuses"][0]["state"]["waiting"]["message"] = " back-off \n"
+    parsed = k8s.parse_object(raw)
+    assert [c.name for c in parsed.containers] == ["init", "app"]
+    assert parsed.containers[0].waiting_reason is None
+    assert parsed.containers[1] == k8s.Container("app", 5, "CrashLoopBackOff", "back-off")
+
+
 def test_a_rolled_out_deployment_ends_rolled_out():
     assert read("deployment", deployment()).state == "rolled-out"
 
