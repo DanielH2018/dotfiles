@@ -318,8 +318,8 @@
     "CLAUDE_ARTIFACTS_PORT": "8183"{{ end }}
   },
   "attribution": {
-    "commit": "🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>",
-    "pr": "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+    "commit": "Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>",
+    "pr": "Generated with [Claude Code](https://claude.com/claude-code)"
   },
   "includeGitInstructions": false,
   {{/* The permission model lives in its own template — 550 of this file's lines were

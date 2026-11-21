@@ -209,12 +209,6 @@
       "Bash(git config --get:*)",
       "Bash(git config --list)",
       "Bash(git fetch:*)",
-      {{/* The stash protocol the harness prescribes for a shared stash stack: push under a
-           unique tag, apply by the entry's SHA. Neither is in the ask tier, but neither was
-           allowed either, so a headless session was refused both (#861). A bare `apply`
-           still meets claude_guard's bare-stash deny. */}}
-      "Bash(git stash push -u -m:*)",
-      "Bash(git stash apply:*)",
       {{/* Reads the 2026-10-20 transcript replay found prompting. `merge-tree --write-tree` writes the merged tree's objects
            into the object store and moves no ref, so nothing a reader sees changes; the
            older trivial-merge form is left out because nobody used it. `git grep` is NOT
