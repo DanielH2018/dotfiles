@@ -12,8 +12,9 @@ rule below serves that one job.
 
 1. **A repo's own `.github/pull_request_template.md` wins.** When one exists, fill its
    sections rather than replacing them; the rules here govern *how you write inside*
-   those sections. Check for it before drafting: `ls .github/pull_request_template.md
-   .github/PULL_REQUEST_TEMPLATE.md`.
+   those sections. Check for it before drafting: `git ls-files
+   ':(icase).github/pull_request_template.md'` prints the path, or nothing and exit 0
+   when the repo has none.
 2. **This skill owns the prose, and the size and history check.** Splitting and
    stacking belong to `gh-stack` (work machines only); dispatching review agents belongs
    to the `## Code review` rule in `~/.claude/CLAUDE.md`. Do not restate their rules

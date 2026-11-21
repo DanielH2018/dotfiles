@@ -302,6 +302,21 @@ test('hermetic agent-eval transcripts are counted apart, not reported silent', {
   assert.strictEqual(result.eval_sessions_skipped_48h, 1, 'the skipped eval stays visible as a count');
 });
 
+test('an agent eval started from a desktop session is counted apart; an interactive --agent session is not', { skip }, (t) => {
+  // On 2026-11-20 30 eval transcripts whose user records said `claude-desktop` read as silent.
+  const { home } = homeWithTranscripts(t, 0);
+  const dir = path.join(home, '.claude', 'projects', 'proj');
+  const stamp = new Date(Date.now() - 60000).toISOString();
+  const agent = '{"type":"agent-setting","agentSetting":"judge"}\n';
+  const user = (entrypoint) => `{"type":"user","entrypoint":"${entrypoint}","timestamp":"${stamp}"}\n`;
+  fs.writeFileSync(path.join(dir, 'desktop-eval.jsonl'), agent + user('claude-desktop'));
+  fs.writeFileSync(path.join(dir, 'interactive-agent.jsonl'), agent + user('cli'));
+
+  const result = deepScan(home, true);
+  assert.deepStrictEqual(result.silent_sessions.map((s) => s.session), ['interactive-agent']);
+  assert.strictEqual(result.eval_sessions_skipped_48h, 1);
+});
+
 test('empty transcripts are counted apart, not reported silent', { skip }, (t) => {
   // A 0-byte transcript has no timestamp, so last_activity() fell back to its mtime
   // and it read as a silent session (dotfiles #1077). The control is a real

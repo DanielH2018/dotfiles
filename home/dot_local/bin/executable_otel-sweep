@@ -357,9 +357,11 @@ if MODE == "deep":
         sessions never export by design. On 2026-10-03 one eval fan-out wrote 203
         of them and they buried the real silent sessions for two days (dotfiles
         #784). The signature is both halves: an `agent-setting` record (only
-        `--agent` writes one, and no other headless launcher passes it) and an
-        `sdk-cli` entrypoint on the first user record. `entrypoint` alone is too
-        broad — every fan-out agent and cron run is sdk-cli and does export.
+        `--agent` writes one, and no other headless launcher passes it) and a
+        first user record whose entrypoint is not `cli`. An eval started from
+        inside a desktop session records `claude-desktop`, not `sdk-cli`, and an
+        interactive `claude --agent` records `cli` and exports. `entrypoint` alone
+        is too broad — every fan-out agent and cron run is sdk-cli and does export.
         """
         agent = False
         try:
@@ -375,7 +377,7 @@ if MODE == "deep":
             if rec.get("type") == "agent-setting":
                 agent = True
             elif rec.get("type") == "user":
-                return agent and rec.get("entrypoint") == "sdk-cli"
+                return agent and rec.get("entrypoint") != "cli"
         return False
 
     # A session whose transcript is being written while Loki has none of its
