@@ -615,11 +615,11 @@ def _classify(command: str, scope: _Scope) -> str | None:
     return "read-only: " + " | ".join(reasons) if reasons else None
 
 
-def classify(command: str, cwd: str, home: str) -> str | None:
+def classify(command: str, cwd: str | None, home: str) -> str | None:
     """A reason string when `command`, run in `cwd`, is provably read-only, else None.
 
     None also when `home` is empty or `cwd` is neither `home` nor inside a trusted repo."""
-    if not home or not cwd:
+    if not home or cwd is None:
         return None
     home = os.path.realpath(home)
     if not _trusted(cwd, home):
@@ -660,7 +660,7 @@ def command_reads_only(segment: str, *, unseen_arguments: bool = False) -> bool:
     return _argv_readonly(argv, _Scope("", None, remote=True)) is not None
 
 
-def readonly(command: str, cwd: str, env: Mapping[str, str]) -> Verdict | None:
+def readonly(command: str, cwd: str | None, env: Mapping[str, str]) -> Verdict | None:
     """`classify` as an allow Verdict, or None. Never raises: a failure here is no decision,
     not the deny side's ask, because this side can only ever remove a prompt."""
     try:

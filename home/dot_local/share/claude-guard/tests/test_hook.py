@@ -86,6 +86,33 @@ def test_permission_request_threads_the_sessions_cwd_into_the_decision(tmp_path)
     assert permission_request(stdin, env_for(home)) == ALLOW_JSON
 
 
+def test_permission_request_passes_a_missing_cwd_to_the_judge_as_none(tmp_path, monkeypatch):
+    seen = []
+
+    def spy(command, rules, roots, cwd, *rest):
+        seen.append(cwd)
+        return hook.Decision(False, "spy", ())
+
+    monkeypatch.setattr(hook, "judge", spy)
+    permission_request(payload("git status"), env_for(home_with(tmp_path)))
+    assert seen == [None]
+
+
+def test_a_missing_cwd_never_probes_the_hook_processs_own_directory(tmp_path, monkeypatch):
+    # The process sits in a clean repo behind origin, where the reset is allowed given a cwd.
+    # With no cwd in the payload, `git -C` must not fall back to this directory.
+    home = home_with(tmp_path)
+    monkeypatch.chdir(_make_repo(tmp_path))
+    command = "git reset --hard origin/master"
+    assert permission_request(payload(command), env_for(home)) is None
+    assert (
+        permission_request(
+            json.dumps({**json.loads(payload(command)), "cwd": os.getcwd()}), env_for(home)
+        )
+        == ALLOW_JSON
+    )
+
+
 @pytest.mark.skipif(not os.path.exists("/proc/self/stat"), reason="lock ownership reads /proc")
 def test_permission_request_threads_the_subagents_id_into_the_decision(tmp_path):
     # A subagent's isolation worktree is owned only through the payload's agent_id, so a

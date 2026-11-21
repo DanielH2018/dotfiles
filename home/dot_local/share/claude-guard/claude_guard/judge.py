@@ -261,7 +261,7 @@ def python_heredoc_prefix(text: str, heredocs: tuple[str, ...]) -> str | None:
     return None if delimiter in lines else prefix
 
 
-def _under_session_cwd_win(path: str, cwd: str) -> bool:
+def _under_session_cwd_win(path: str, cwd: str | None) -> bool:
     """`_under_session_cwd` for Windows path forms; reached only on win32.
 
     The POSIX body compares `/`-joined strings against `os.path.realpath`, which on Windows
@@ -275,7 +275,7 @@ def _under_session_cwd_win(path: str, cwd: str) -> bool:
     the drive would sit under it. A path that resolves outside the cwd refuses, and so does
     one that passes through a component `winpath.opaque_component` cannot judge.
     """
-    if not cwd or not is_drive_abs(cwd) or ".." in path or path.startswith(("~", "$")):
+    if cwd is None or not is_drive_abs(cwd) or ".." in path or path.startswith(("~", "$")):
         return False
     if "\\" in path or path[:1] == "/":
         return False
@@ -293,7 +293,7 @@ def _under_session_cwd_win(path: str, cwd: str) -> bool:
     return False
 
 
-def _under_session_cwd(path: str, cwd: str) -> bool:
+def _under_session_cwd(path: str, cwd: str | None) -> bool:
     """PR #477's heredoc_write_ok, the cwd arm (:169-194, cwd branch :183-191): the path a
     quoted-delimiter heredoc write targets is ALSO safe when it resolves under the
     session's own `cwd`, not only under a scratch root. `..`, a leading `~`, or a leading
@@ -339,7 +339,7 @@ def _under_session_cwd(path: str, cwd: str) -> bool:
     if sys.platform == "win32":
         return _under_session_cwd_win(path, cwd)
     if (
-        not cwd
+        cwd is None
         or not cwd.startswith("/")
         or ".." in path
         or path.startswith("~")
@@ -410,7 +410,7 @@ def _changes_cwd(part: str) -> bool:
     return target is not None and target != part and _basename(_first_word(target)) in _CD_LIKE
 
 
-def _cd_stays(part: str, cwd: str) -> bool:
+def _cd_stays(part: str, cwd: str | None) -> bool:
     """True when `part` is a bare `cd` to one literal absolute path that resolves to `cwd`.
 
     `_changes_cwd` does not ask where a `cd` goes, and that stays its rule. This is the one
@@ -423,7 +423,7 @@ def _cd_stays(part: str, cwd: str) -> bool:
     if not words or len(words) != 2 or words[0] != "cd":
         return False
     target = words[1]
-    if not target.startswith("/") or not cwd.startswith("/"):
+    if cwd is None or not target.startswith("/") or not cwd.startswith("/"):
         return False
     return os.path.realpath(target) == os.path.realpath(cwd)
 
@@ -916,7 +916,7 @@ def judge_segment(
     part: str,
     rules: Rules,
     roots: tuple[str, ...],
-    cwd: str,
+    cwd: str | None,
     cwd_changed: bool,
     project_dir: str = "",
     scratch_ok: bool = False,
@@ -1141,14 +1141,14 @@ def judge_segment(
             if not (_QUOTED_PATH.fullmatch(path) and _git_reads(_strip_harmless(rest))):
                 return False, "git-C-unreadable"
             return judge_segment(
-                rest, rules, roots, "", cwd_changed, project_dir, scratch_ok, job_dir, agent_id
+                rest, rules, roots, None, cwd_changed, project_dir, scratch_ok, job_dir, agent_id
             )
         if path.startswith("/"):
             git_cwd = path
-        elif cwd and not cwd_changed:
+        elif cwd is not None and not cwd_changed:
             git_cwd = os.path.join(cwd, path)
         else:
-            git_cwd = ""
+            git_cwd = None
         return judge_segment(
             rest, rules, roots, git_cwd, cwd_changed, project_dir, scratch_ok, job_dir, agent_id
         )
@@ -1271,7 +1271,7 @@ def judge(
     command: str,
     rules: Rules,
     roots: tuple[str, ...],
-    cwd: str,
+    cwd: str | None,
     project_dir: str = "",
     job_dir: str = "",
     agent_id: str = "",
@@ -1384,7 +1384,7 @@ def judge(
         if masked is None:
             return Decision(False, "unjudgeable:substitution", ())
         for k, inner in enumerate(masked.inner):
-            d = judge(inner, rules, roots, "", project_dir, job_dir)
+            d = judge(inner, rules, roots, None, project_dir, job_dir)
             if not d.allow:
                 return Decision(False, f"substitution:{k}:{d.rule}", d.reasons)
         parsed = parse(masked.command)

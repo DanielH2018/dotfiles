@@ -245,25 +245,25 @@ def _bounded_by_next(stages, i) -> bool:
     return consumer[0] == "sed" and "-n" in consumer[1:]
 
 
-def _cwd_at(stages, i, cwd: str) -> str:
+def _cwd_at(stages, i, cwd: str | None) -> str | None:
     """The directory stage `i` runs in: the session cwd moved by each earlier `cd`, or
-    "" once a `cd` goes somewhere this cannot follow (`cd -`, bare `cd`, an expansion)."""
+    None once a `cd` goes somewhere this cannot follow (`cd -`, bare `cd`, an expansion)."""
     for words, _ in stages[:i]:
         if words[0] != "cd":
             continue
         args = [w for w in words[1:] if not w.startswith("-")]
         if len(args) != 1 or "$" in args[0]:
-            return ""
+            return None
         target = os.path.expanduser(args[0])
         if not os.path.isabs(target):
-            if not cwd:
-                return ""
+            if cwd is None:
+                return None
             target = os.path.join(cwd, target)
         cwd = target
     return cwd
 
 
-def _whole_file_cat(stages, i, cwd: str) -> str | None:
+def _whole_file_cat(stages, i, cwd: str | None) -> str | None:
     stage = stages[i][0]
     while stage and stage[0] in _CONTROL_WORDS:
         stage = stage[1:]
@@ -294,7 +294,7 @@ def _whole_file_cat(stages, i, cwd: str) -> str | None:
     for name in files:
         path = os.path.expanduser(name)
         if not os.path.isabs(path):
-            if not base:
+            if base is None:
                 return None
             path = os.path.join(base, path)
         if not os.path.isfile(path):
@@ -463,9 +463,9 @@ def _shows_unit_property(stages, i) -> bool:
 def _in_server_checkout(script: str):
     """A gate that holds when the stage runs inside a checkout holding `script`."""
 
-    def gate(stages, i, cwd: str) -> bool:
+    def gate(stages, i, cwd: str | None) -> bool:
         base = _cwd_at(stages, i, cwd)
-        if not base:
+        if base is None:
             return False
         here = Path(base)
         return any((d / script).is_file() for d in (here, *here.parents))
@@ -560,7 +560,7 @@ def tag(rule: str) -> str:
     return f"[claude-guard:nudge:{rule}]"
 
 
-def nudge(command: str, cwd: str = "") -> tuple[str, str] | None:
+def nudge(command: str, cwd: str | None = None) -> tuple[str, str] | None:
     """(rule, tagged text) for the first rule `command` trips, or None. `cwd` is the
     session's working directory; without it a relative path never trips whole-file-cat and
     no rule whose reader lives in a server checkout fires."""

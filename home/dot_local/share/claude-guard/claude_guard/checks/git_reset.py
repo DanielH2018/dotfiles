@@ -92,7 +92,7 @@ def _git(cwd: str, *args: str) -> str | None:
     return proc.stdout
 
 
-def clean_reset_safe(command: str, cwd: str) -> bool:
+def clean_reset_safe(command: str, cwd: str | None) -> bool:
     """:61-107. True only when `command` is `git reset --hard origin/master`/`origin/main`
     (optionally `-q`/`--quiet` and a trailing `2>&1`, optionally piped into `tail`), with no
     substitution anywhere, run against a `cwd` that is a git worktree, outside a
@@ -103,7 +103,7 @@ def clean_reset_safe(command: str, cwd: str) -> bool:
     the git probes themselves (:96-97, :104), the same fall-through as the bash's
     unconditional `exit 0`.
 
-    Fix round 1, F1: a falsy or non-absolute `cwd` is refused here, before anything else
+    Fix round 1, F1: a missing or non-absolute `cwd` is refused here, before anything else
     runs. `git -C ""` is a documented no-op — it silently probes the HOOK PROCESS's own
     cwd, not the session's, and `"" + "/" + ".git"` (below) can never find a
     MERGE_HEAD/CHERRY_PICK_HEAD marker, disabling the rebase/merge/cherry-pick guard
@@ -112,7 +112,7 @@ def clean_reset_safe(command: str, cwd: str) -> bool:
     fail-closed is the right posture for a security gate's fall-through, even diverging
     from the bash it ports.
     """
-    if not cwd or not _is_abs(cwd):
+    if cwd is None or not _is_abs(cwd):
         return False
     if not command:
         return False

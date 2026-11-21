@@ -186,7 +186,7 @@ _PULL_SHORT_WITH_ARG = frozenset("sXoj")
 _GIT_FALSE = frozenset({"false", "no", "off", "0", ""})
 
 # A git config reader: (directory, keys) -> {key: value}, the last value of each key set.
-ConfigReader = Callable[[str, tuple[str, ...]], dict[str, str]]
+ConfigReader = Callable[[str | None, tuple[str, ...]], dict[str, str]]
 
 
 def _flags(args: list[str], with_arg: frozenset[str], short_with_arg: frozenset[str]) -> set:
@@ -385,19 +385,24 @@ def _inline_config(global_opts: list[str]) -> dict[str, str]:
     return out
 
 
-def _repo_dir(global_opts: list[str], cwd: str) -> str:
-    """The directory `git pull` runs in: the session cwd, moved by each `-C` in turn."""
+def _repo_dir(global_opts: list[str], cwd: str | None) -> str | None:
+    """The directory `git pull` runs in: the session cwd, moved by each `-C` in turn. None
+    while no absolute directory is known."""
     here = cwd
     for j, tok in enumerate(global_opts):
         if tok == "-C" and j + 1 < len(global_opts):
-            here = os.path.join(here, os.path.expanduser(global_opts[j + 1]))
+            target = os.path.expanduser(global_opts[j + 1])
+            if os.path.isabs(target):
+                here = target
+            elif here is not None:
+                here = os.path.join(here, target)
     return here
 
 
-def read_git_config(directory: str, keys: tuple[str, ...]) -> dict[str, str]:
+def read_git_config(directory: str | None, keys: tuple[str, ...]) -> dict[str, str]:
     """`git config` as a pull in `directory` reads it, every scope. {} when git cannot
     answer, which leaves the pull to ask."""
-    if not directory or not os.path.isabs(directory):
+    if directory is None or not os.path.isabs(directory):
         return {}
     pattern = "^(" + "|".join(re.escape(k) for k in keys) + ")$"
     try:
@@ -417,7 +422,7 @@ def read_git_config(directory: str, keys: tuple[str, ...]) -> dict[str, str]:
 
 
 def _pull_can_merge(
-    args: list[str], global_opts: list[str], cwd: str, read_config: ConfigReader
+    args: list[str], global_opts: list[str], cwd: str | None, read_config: ConfigReader
 ) -> bool:
     rebase, ff_only = _pull_flags(args)
     if rebase or ff_only:
@@ -439,7 +444,7 @@ def _title_deny(what: str, title: str, problem: str, why: str) -> tuple[str, str
     )
 
 
-def _one(argv: list[str], cwd: str, read_config: ConfigReader) -> tuple[str, str] | None:
+def _one(argv: list[str], cwd: str | None, read_config: ConfigReader) -> tuple[str, str] | None:
     git = invocation(argv)  # before strip_env: GIT_CONFIG_* assignments are config
     argv = strip_env(argv)
     for card_title in _planka_titles(argv):
@@ -487,7 +492,7 @@ _CANDIDATE = re.compile(r"\b(git|gh|planka)\b")
 
 
 def verdict(
-    command: str, cwd: str = "", read_config: ConfigReader = read_git_config
+    command: str, cwd: str | None = None, read_config: ConfigReader = read_git_config
 ) -> tuple[str, str] | None:
     """("deny" | "ask", reason) for the first rule any command in `command` breaks, with a
     deny winning over an ask. None when nothing does, or when the parser refuses (module

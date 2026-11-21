@@ -69,7 +69,7 @@ def decide(
     when that hook could not run. The settings carry no deny rule for a command those
     checks deny, so without the gate an allow rule such as `git push:*` would approve a
     forced push here."""
-    refused = combine_conventions(deny(command, cwd or "", env), conventions(command, cwd))
+    refused = combine_conventions(deny(command, cwd, env), conventions(command, cwd))
     if refused.kind == "deny":
         return Decision(False, f"deny-rule:{refused.rule}", ())
     rules = load_rules(env=env)
@@ -78,7 +78,7 @@ def decide(
         command,
         rules,
         roots,
-        cwd or "",
+        cwd,
         env.get("CLAUDE_PROJECT_DIR", ""),
         env.get("CLAUDE_JOB_DIR", ""),
         agent_id or "",
@@ -184,7 +184,7 @@ def nudge_for(event: PreToolUseEvent) -> str | None:
     try:
         if event.bash is None:
             return None
-        found = nudge(event.bash.command, event.cwd or "")
+        found = nudge(event.bash.command, event.cwd)
         if found is None or not claim(context_transcript(event), found[0]):
             return None
         return found[1]
@@ -232,8 +232,6 @@ def escape_verdict(command: str, cwd: str | None) -> Verdict | None:
     """claude_guard.checks.worktree_escape as a Verdict, or None (server#2818). It is a deny
     rule, so it runs inside pre_tool_use's fail-closed try rather than beside it. With no
     session cwd there is no worktree to escape, so it says nothing."""
-    if cwd is None:
-        return None
     v = worktree_escape.verdict(command, cwd)
     return Verdict(v[0], "worktree-escape", v[1]) if v else None
 
@@ -267,7 +265,7 @@ def conventions(command: str, cwd: str | None) -> Verdict | None:
     """claude_guard.checks.git_conventions as a Verdict, or None. Never raises: a failure in
     a convention check is no decision (that module's DECIDED), not the deny side's ask."""
     try:
-        v = git_conventions.verdict(command, cwd or "", git_conventions.read_git_config)
+        v = git_conventions.verdict(command, cwd, git_conventions.read_git_config)
     except Exception:
         return None
     return Verdict(v[0], "git-conventions", v[1]) if v else None
@@ -327,7 +325,7 @@ def pre_tool_use(stdin_text: str, env: Mapping[str, str]) -> str | None:
         return None
     command, cwd = event.bash.command, event.cwd
     try:
-        denied = deny(command, cwd or "", env)
+        denied = deny(command, cwd, env)
         rules = merge(merge(denied, footgun(command)), awk_verdict(command))
         rules = merge(rules, escape_verdict(command, cwd))
         rules = merge(rules, read_only_agent_verdict(event, env))
@@ -345,7 +343,7 @@ def pre_tool_use(stdin_text: str, env: Mapping[str, str]) -> str | None:
     # a chezmoi status it no longer needs.
     if verdict.kind != "deny":
         verdict = merge(verdict, apply_guard_verdict(command, env))
-    if verdict.kind == "none" and cwd is not None:
+    if verdict.kind == "none":
         verdict = readonly(command, cwd, env) or verdict
     # One updatedInput at most. A cc-wait call is never a test run tq claims, and the wait
     # rewrite changes how the call runs, so it goes first.

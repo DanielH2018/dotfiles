@@ -115,7 +115,7 @@ def _heredoc_interpreter(segment: str) -> str | None:
     return None
 
 
-def verdict(command: str, cwd: str) -> tuple[str, str] | None:
+def verdict(command: str, cwd: str | None) -> tuple[str, str] | None:
     """("deny" | "ask", reason) for a write outside the isolated worktree, or None.
 
     Walks the command a segment at a time, carrying the directory a leading `cd` or `pushd`
@@ -131,10 +131,10 @@ def verdict(command: str, cwd: str) -> tuple[str, str] | None:
 
     Args:
       command: the raw Bash text from the hook payload.
-      cwd: the session's working directory; "" or a path outside `.claude/worktrees/` makes
+      cwd: the session's working directory; None or a path outside `.claude/worktrees/` makes
         this check inert.
     """
-    if not cwd or not _in_a_worktree(cwd):
+    if cwd is None or not _in_a_worktree(cwd):
         return None
     parsed = parse(command)
     if not parsed.ok:

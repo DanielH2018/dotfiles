@@ -162,6 +162,11 @@ def test_pull_is_flagged(config, command):
     assert kind(command) == "ask"
 
 
+def test_a_pull_with_no_cwd_reads_no_config_and_asks(config):
+    assert git_conventions.verdict("git pull", None, git_conventions.read_git_config)[0] == "ask"
+    assert config.seen == [None]
+
+
 @pytest.mark.parametrize(
     "command",
     [

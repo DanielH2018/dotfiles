@@ -161,7 +161,7 @@ hook's ask, and never after a hook's deny. The request carries no working direct
 PreToolUse arm records each Bash call's `cwd` and the environment values the judge reads
 under `~/.cache/claude-guard/tool-context/<tool_use_id>.json` (mode 0700, records older than
 an hour pruned on write). `decide` reads and deletes the record. With no record it judges
-with an empty cwd, which every cwd-dependent check refuses.
+with no cwd (`None`), which every cwd-dependent check refuses.
 
 ## The deny rules, live
 

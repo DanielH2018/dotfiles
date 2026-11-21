@@ -291,6 +291,7 @@ def test_an_untrusted_cwd_is_no_decision(home):
     assert ro("ls", home, home / "server-evil") is None
     assert ro("ls", home, Path("/tmp")) is None
     assert classify("ls", str(home / "server"), "") is None
+    assert classify("ls", None, str(home)) is None
 
 
 def test_git_after_a_cd_is_judged_where_it_runs(home):

@@ -578,7 +578,7 @@ def protects_file(path: str, cwd: str, home: str) -> bool:
     return "inside" in (protected._relation(path), protected._relation(real))
 
 
-def writes_protected_path(command: str, cwd: str, home: str) -> bool:
+def writes_protected_path(command: str, cwd: str | None, home: str) -> bool:
     """Whether `command`, run in `cwd`, may change a protected path under `home`.
 
     An empty `cwd` leaves a relative word unresolved, so only a word spelled from the home

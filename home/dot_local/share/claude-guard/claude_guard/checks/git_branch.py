@@ -81,9 +81,9 @@ _REBASE_FLAGS = frozenset({"-q", "--quiet", "--stat", "--no-stat", "-n", "--no-a
 _REBASE_CONTROL = frozenset({"--continue", "--abort", "--quit"})
 
 
-def _scope(cwd: str, cwd_changed: bool, project_dir: str, agent_id: str) -> str | None:
+def _scope(cwd: str | None, cwd_changed: bool, project_dir: str, agent_id: str) -> str | None:
     """`owned`, `plain` or None, as the module docstring defines them."""
-    if not cwd or not cwd.startswith("/") or cwd_changed:
+    if cwd is None or not cwd.startswith("/") or cwd_changed:
         return None
     if head_root(cwd, project_dir, agent_id) is not None:
         return "owned"
@@ -108,7 +108,7 @@ def _one_remote_branch(cwd: str, name: str) -> bool:
 
 
 def checkout_branch_safe(
-    argv: list[str], cwd: str, cwd_changed: bool, project_dir: str = "", agent_id: str = ""
+    argv: list[str], cwd: str | None, cwd_changed: bool, project_dir: str = "", agent_id: str = ""
 ) -> bool:
     """True when `argv` is `git checkout` or `git switch` to one existing ref, or creating a
     branch with `-b`/`-c` (or resetting one with `-B`/`-C` in an owned worktree), with only
@@ -152,7 +152,7 @@ def checkout_branch_safe(
 
 
 def merge_safe(
-    argv: list[str], cwd: str, cwd_changed: bool, project_dir: str = "", agent_id: str = ""
+    argv: list[str], cwd: str | None, cwd_changed: bool, project_dir: str = "", agent_id: str = ""
 ) -> bool:
     """True when `argv` is `git merge` of one or more refs that resolve to commits, with only
     options from the table above and at most one `-m` message."""
@@ -178,7 +178,7 @@ def merge_safe(
 
 
 def rebase_safe(
-    argv: list[str], cwd: str, cwd_changed: bool, project_dir: str = "", agent_id: str = ""
+    argv: list[str], cwd: str | None, cwd_changed: bool, project_dir: str = "", agent_id: str = ""
 ) -> bool:
     """True when `argv` is, in an owned worktree, a non-interactive `git rebase [--onto
     <newbase>] <upstream> [<branch>]` of refs that resolve, or one of `--continue`,

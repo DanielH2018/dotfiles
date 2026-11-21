@@ -4979,7 +4979,7 @@ _TEXT_RULES: frozenset[Rule] = frozenset(
 )
 
 
-def deny(command: str, cwd: str = "", env: Mapping[str, str] | None = None) -> Verdict:
+def deny(command: str, cwd: str | None = None, env: Mapping[str, str] | None = None) -> Verdict:
     """The bash's decision for one command. `cwd` resolves a relative word for
     `guard_file_write`, the one rule that reads the working directory; an empty `cwd`
     leaves such a word unread. `env`
@@ -5077,7 +5077,7 @@ def unread_program(command: str) -> Verdict | None:
     return None
 
 
-def guard_file_write(command: str, cwd: str, home: str) -> Verdict | None:
+def guard_file_write(command: str, cwd: str | None, home: str) -> Verdict | None:
     """A deny for a command that may change a path `claude_guard.protected_paths` lists,
     read as typed and with each `$NAME` it sets to a literal replaced by the value."""
     # Imported here because protected_paths reads this module's word helpers.

@@ -129,9 +129,9 @@ def test_the_check_is_inert_outside_an_isolated_session(checkouts):
 
 
 def test_the_check_is_inert_on_a_payload_with_no_cwd(checkouts):
-    """An empty cwd must read as "not isolated", never as the hook process's own directory."""
+    """A missing cwd must read as "not isolated", never as the hook process's own directory."""
     _, primary = checkouts
-    assert worktree_escape.verdict(f"cd {primary} && {HEREDOC}", "") is None
+    assert worktree_escape.verdict(f"cd {primary} && {HEREDOC}", None) is None
 
 
 def test_the_interpreter_set_contains_the_incidents_own_command_word():

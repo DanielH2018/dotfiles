@@ -80,9 +80,9 @@ _RESTORE_FLAGS = frozenset({"--staged", "--worktree", "--quiet"})
 _RESTORE_SHORT = frozenset("SWq")
 
 
-def _worktree_root(cwd: str) -> str | None:
+def _worktree_root(cwd: str | None) -> str | None:
     """The git toplevel of `cwd` when it is a session worktree, else None."""
-    if not cwd or not cwd.startswith("/"):
+    if cwd is None or not cwd.startswith("/"):
         return None
     out = _git(cwd, "rev-parse", "--show-toplevel")
     if out is None:
@@ -149,7 +149,7 @@ def _own_agent_lock(holder: tuple[str, str] | None, agent_id: str) -> bool:
     return bool(agent_id) and holder == ("agent", f"agent-{agent_id}")
 
 
-def session_root(cwd: str, project_dir: str, agent_id: str = "") -> str | None:
+def session_root(cwd: str | None, project_dir: str, agent_id: str = "") -> str | None:
     """The worktree root `cwd` sits in, when this session owns it: `project_dir` sits in
     the same worktree, the worktree's session lock names an ancestor of this process, or it
     is the isolation worktree of the subagent `agent_id` (the hook payload's field)."""
@@ -164,7 +164,7 @@ def session_root(cwd: str, project_dir: str, agent_id: str = "") -> str | None:
     return None
 
 
-def head_root(cwd: str, project_dir: str, agent_id: str = "") -> str | None:
+def head_root(cwd: str | None, project_dir: str, agent_id: str = "") -> str | None:
     """The worktree root `cwd` sits in, when this caller may move that worktree's HEAD.
 
     Stricter than `session_root` for a subagent: it may move HEAD only in its own isolation
@@ -179,11 +179,11 @@ def head_root(cwd: str, project_dir: str, agent_id: str = "") -> str | None:
     return root if _own_agent_lock(_lock_holder(root), agent_id) else None
 
 
-def shares_session_worktrees(cwd: str) -> bool:
+def shares_session_worktrees(cwd: str | None) -> bool:
     """True when the repository at `cwd` has a linked worktree under `.claude/worktrees/`,
     the mark of a repo several sessions work at once. A probe failure counts as True, so
     the caller refuses rather than treating an unread repo as an ordinary one."""
-    if not cwd or not cwd.startswith("/"):
+    if cwd is None or not cwd.startswith("/"):
         return True
     out = _git(cwd, "worktree", "list", "--porcelain")
     if out is None:
@@ -209,7 +209,7 @@ def _confined(path: str, root: str, cwd: str, cwd_changed: bool) -> str | None:
 
 
 def worktree_rm_safe(
-    part: str, cwd: str, cwd_changed: bool, project_dir: str, agent_id: str = ""
+    part: str, cwd: str | None, cwd_changed: bool, project_dir: str, agent_id: str = ""
 ) -> bool:
     """True when `part` is an `rm` whose every operand is an untracked path below the
     session worktree that holds both `cwd` and `project_dir`. Options are scratch.py's
@@ -297,7 +297,7 @@ def _is_one_tracked_file(real: str, root: str) -> bool:
 
 
 def worktree_restore_safe(
-    part: str, cwd: str, cwd_changed: bool, project_dir: str, agent_id: str = ""
+    part: str, cwd: str | None, cwd_changed: bool, project_dir: str, agent_id: str = ""
 ) -> bool:
     """True when `part` is `git restore [--staged] [--worktree] [--source=HEAD] [--] paths`
     with every path one tracked file below the session worktree that holds both `cwd` and
@@ -339,7 +339,7 @@ _GIT_RM_FLAGS = frozenset({"-q", "--quiet", "--cached"})
 
 
 def worktree_git_rm_safe(
-    part: str, cwd: str, cwd_changed: bool, project_dir: str, agent_id: str = ""
+    part: str, cwd: str | None, cwd_changed: bool, project_dir: str, agent_id: str = ""
 ) -> bool:
     """True when `part` is `git rm [-q] [--cached] [--] paths` with every path one tracked
     file below the session worktree that holds both `cwd` and `project_dir`.
@@ -378,7 +378,7 @@ _CLEAN_LONG = frozenset({"--force", "--quiet", "--dry-run"})
 
 
 def worktree_clean_safe(
-    part: str, cwd: str, cwd_changed: bool, project_dir: str, agent_id: str = ""
+    part: str, cwd: str | None, cwd_changed: bool, project_dir: str, agent_id: str = ""
 ) -> bool:
     """True when `part` is `git clean -f [-d] [-q] [--] paths` with every path untracked
     scratch below the session worktree that holds both `cwd` and `project_dir`, held to the
@@ -430,7 +430,7 @@ _BARE_STASH_INDEX = re.compile(r"(?<![^ \t])(stash@\{\d+\})(?![^ \t])")
 
 
 def worktree_stash_drop_safe(
-    part: str, cwd: str, cwd_changed: bool, project_dir: str, agent_id: str = ""
+    part: str, cwd: str | None, cwd_changed: bool, project_dir: str, agent_id: str = ""
 ) -> bool:
     """True when `part` is `git stash drop [-q] stash@{n}` and entry `n` was created on the
     branch the session worktree holding `cwd` and `project_dir` has checked out (dotfiles
