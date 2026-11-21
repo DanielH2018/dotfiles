@@ -64,6 +64,16 @@ test('a path the base lacks is deleted in the copy, and a subdirectory cwd is ke
   assert.ok(fs.existsSync(path.join(dir, 'sub', 'new.py')));
 });
 
+test('the command runs with uv pointed at a scratch venv, away from the caller\'s', { skip }, (t) => {
+  const { dir, base } = repo(t);
+  const probe = 'import os, sys; print("UVENV=" + os.environ["UV_PROJECT_ENVIRONMENT"]); sys.exit(1)';
+  const r = run(dir, [base, 'README', '--', 'python3', '-c', probe]);
+  const venv = /^UVENV=(.+)$/m.exec(r.stdout)[1];
+  assert.match(path.basename(path.dirname(venv)), /^redproof-/);
+  assert.ok(!venv.startsWith(dir));
+  assert.ok(!fs.existsSync(venv));
+});
+
 test('a usage error or a ref that is no commit runs nothing', { skip }, (t) => {
   const { dir, base } = repo(t);
   for (const args of [[base, 'mod.py', 'python3'], [base, '--', 'true'], [base, 'mod.py', '--'],

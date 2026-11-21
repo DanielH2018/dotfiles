@@ -9,7 +9,9 @@ the checkout. It copies HEAD into a temporary worktree, applies the checkout's
 uncommitted changes and copies its untracked files, then puts each PATH back at REF (or
 deletes it, where REF has no such path). It runs COMMAND there, from the same
 subdirectory the caller is in, with stdin from /dev/null and its output passed through,
-and removes the copy.
+and removes the copy. `UV_PROJECT_ENVIRONMENT` points at a virtualenv inside the copy's
+temporary directory, so a `uv run` command builds its own environment and does not
+reinstall the project's editable package from the copy into the caller's `.venv`.
 
 Exit codes: 0 when COMMAND failed, which is the red proof; 1 when COMMAND passed, so the
 named paths at REF do not make it fail; 2 on a usage error; 3 when the copy could not be
@@ -120,7 +122,10 @@ def main() -> int:
         )
         try:
             code = subprocess.run(
-                command, cwd=run_in, stdin=subprocess.DEVNULL
+                command,
+                cwd=run_in,
+                stdin=subprocess.DEVNULL,
+                env={**os.environ, "UV_PROJECT_ENVIRONMENT": str(copy.parent / "venv")},
             ).returncode
         except OSError as exc:
             print(f"redproof: {command[0]}: {exc.strerror}", file=sys.stderr)
