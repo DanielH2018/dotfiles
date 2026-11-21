@@ -166,6 +166,11 @@ unset _d
 export PATH
 
 # --- Starship prompt ---
+# The Claude desktop app's Terminal panel draws Nerd Font icons as boxes, and has no font
+# setting. The app sets TERM_PROGRAM=claude-desktop in its shells, SSH ones included.
+if [ "${TERM_PROGRAM:-}" = claude-desktop ] && [ -r "$HOME/.config/starship-plain.toml" ]; then
+  export STARSHIP_CONFIG="$HOME/.config/starship-plain.toml"
+fi
 command -v starship >/dev/null 2>&1 && eval "$(starship init "$_CUR_SHELL")"
 
 # --- Zoxide (smart cd) ---

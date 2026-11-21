@@ -1,0 +1,13 @@
+{{- /*
+starship.toml minus Nerd Font icons, for the Claude app's Terminal panel. The final strip keeps
+U+E0B0-E0B7: xterm.js draws those powerline separators itself, without a font.
+*/ -}}
+{{- include "dot_config/starship.toml"
+  | replaceAllRegex `(?ms)^\[directory\.substitutions\]\n.*?\n\n` ""
+  | replaceAllRegex `(?m)^\[(\w+)\]\nsymbol = "[^"]*"` "[${1}]\nsymbol = \"${1}\""
+  | replace `symbol = "git_branch"` `symbol = ""`
+  | replace `symbol = "docker_context"` `symbol = "docker"`
+  | replace `symbol = "aws"` `symbol = "aws "`
+  | replaceAllRegex `(?m)^((?:success|error)_symbol = '\[)[^\]]*\]` "${1}>]"
+  | replaceAllRegex `(?m)^(vimcmd\w*_symbol = '\[)[^\]]*\]` "${1}<]"
+  | replaceAllRegex `[\x{E000}-\x{E0AF}\x{E0B8}-\x{F8FF}\x{F0000}-\x{10FFFF}]` "" }}
