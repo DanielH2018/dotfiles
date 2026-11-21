@@ -285,3 +285,29 @@ test("no agent file in this repo's source sets allowed-tools:", () => {
   const sourceAgents = path.join(__dirname, "..", "..", "home", "private_dot_claude", "agents");
   assert.deepStrictEqual(m.findAgentAllowedTools(m.readAgentFiles(sourceAgents)), []);
 });
+
+const MCP_TOOLS = { gg: { read: ["list_things"], write: ["delete_thing"] } };
+
+test("checkMcpRules reports a rule naming a tool the server does not expose", () => {
+  const msgs = m.checkMcpRules({
+    allow: ["mcp__gg__list_things", "mcp__gg__list_old_things"],
+    ask: ["mcp__gg__delete_thing"],
+  }, MCP_TOOLS).map((f) => f.msg);
+  assert.deepStrictEqual(msgs, ["allow rule names a tool gg does not expose: mcp__gg__list_old_things"]);
+});
+
+test("checkMcpRules reports a write tool without an ask rule, and one that is allowed", () => {
+  const msgs = m.checkMcpRules({ allow: ["mcp__gg__delete_thing"] }, MCP_TOOLS).map((f) => f.msg);
+  assert.deepStrictEqual(msgs, [
+    "write tool has no ask rule: mcp__gg__delete_thing",
+    "write tool is allowed without a prompt: mcp__gg__delete_thing",
+  ]);
+});
+
+test("checkMcpRules skips servers the snapshot does not list and server-wide rules", () => {
+  const findings = m.checkMcpRules({
+    allow: ["mcp__other__anything", "mcp__gg__*", "Bash(ls)"],
+    ask: ["mcp__gg__delete_thing"],
+  }, MCP_TOOLS);
+  assert.deepStrictEqual(findings, []);
+});

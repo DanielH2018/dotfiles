@@ -1,0 +1,49 @@
+{
+  "gitguardian": {
+    "read": [
+      "count_internal_incidents",
+      "get_gitguardian_resource",
+      "get_internal_incident",
+      "get_member",
+      "get_my_identity",
+      "get_public_incident",
+      "get_remediation_workflow",
+      "list_detectors",
+      "list_honeytokens",
+      "list_internal_incident_locations",
+      "list_internal_incident_members",
+      "list_internal_incidents",
+      "list_internal_occurrences",
+      "list_members",
+      "list_public_incidents",
+      "list_public_occurrences",
+      "list_sources"
+    ],
+    "write": [
+      "add_internal_incident_comment",
+      "add_internal_incident_custom_tag",
+      "add_public_incident_comment",
+      "add_public_incident_custom_tag",
+      "assign_internal_incident",
+      "assign_public_incident",
+      "create_internal_incident_code_fix_request",
+      "edit_internal_incident_comment",
+      "edit_public_incident_comment",
+      "generate_honeytoken",
+      "ignore_internal_incident",
+      "ignore_public_incident",
+      "remove_internal_incident_custom_tag",
+      "remove_public_incident_custom_tag",
+      "reopen_internal_incident",
+      "reopen_public_incident",
+      "resolve_internal_incident",
+      "resolve_public_incident",
+      "revoke_secret",
+      "scan_secrets",
+      "set_internal_incident_severity",
+      "set_public_incident_severity",
+      "unassign_internal_incident",
+      "unassign_public_incident"
+    ]
+  }
+}

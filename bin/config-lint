@@ -16,6 +16,9 @@
  *     specs/env-modules)
  *   - agent files under agents/ whose frontmatter sets `allowed-tools:`, the
  *     skill key; Claude Code ignores it in an agent, which then gets every tool
+ *   - `mcp__<server>__<tool>` permission rules against bin/lib/mcp-tools.json, the
+ *     tools each listed server exposes: a rule naming any other tool, and a write
+ *     tool without an ask rule or with an allow rule
  *
  * Usage: bin/config-lint [rootDir] [--strict] [--json]
  *   rootDir  config dir to audit (default: ~/.claude)
@@ -315,6 +318,42 @@ function findAgentAllowedTools(files) {
 
 // ── fs wrappers ───────────────────────────────────────────────────────────────
 
+/**
+ * Checks the `mcp__<server>__<tool>` permission rules against a snapshot of the tools each
+ * server exposes.
+ *
+ * A rule for a server the snapshot does not list is skipped, as is a server-wide rule
+ * (`mcp__<server>` or a `*` tool). Reports, as should-fix, a rule that names a tool the server
+ * does not expose, a write tool with no ask rule, and a write tool with an allow rule.
+ *
+ * @param {{allow?: !Array<string>, ask?: !Array<string>, deny?: !Array<string>}} permissions
+ * @param {!Object<string, {read: !Array<string>, write: !Array<string>}>} tools
+ * @return {!Array<{sev: string, area: string, msg: string}>}
+ */
+function checkMcpRules(permissions, tools) {
+    const findings = [];
+    const add = (msg) => findings.push({ sev: "should-fix", area: "mcp", msg });
+    const named = { allow: new Set(), ask: new Set() };
+    for (const list of ["allow", "ask", "deny"]) {
+        for (const rule of permissions[list] || []) {
+            const m = /^mcp__(.+?)__(.+)$/.exec(rule);
+            if (!m || !tools[m[1]] || m[2].includes("*")) continue;
+            const [, server, tool] = m;
+            const known = tools[server].read.includes(tool) || tools[server].write.includes(tool);
+            if (!known) add(`${list} rule names a tool ${server} does not expose: ${rule}`);
+            if (named[list]) named[list].add(rule);
+        }
+    }
+    for (const [server, { write }] of Object.entries(tools)) {
+        for (const tool of write) {
+            const rule = `mcp__${server}__${tool}`;
+            if (!named.ask.has(rule)) add(`write tool has no ask rule: ${rule}`);
+            if (named.allow.has(rule)) add(`write tool is allowed without a prompt: ${rule}`);
+        }
+    }
+    return findings;
+}
+
 function readJSON(file) {
     try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { return null; }
 }
@@ -433,6 +472,9 @@ function audit(root, home) {
         add("should-fix", "agents", `${p} sets allowed-tools:, the skill key, which an agent ignores and so gets every tool; use tools:`);
     }
 
+    const mcpTools = readJSON(path.join(__dirname, "lib", "mcp-tools.json")) || {};
+    for (const f of checkMcpRules(settings.permissions || {}, mcpTools)) add(f.sev, f.area, f.msg);
+
     // Binary/tool dependencies (report-only: always info)
     const hookScripts = readHookScripts(path.join(root, "hooks"));
     const binaryDeps = extractBinaryDeps(hookScripts)
@@ -488,7 +530,7 @@ module.exports = {
     findDuplicateSkills, checkBloat, extractBinaryDeps, checkBinaryDeps, audit,
     extractPermissionDeps, extractPathDeps, checkPathDeps,
     extractShellFunctionNames, enumeratePluginSkills, readHookScripts,
-    findAgentAllowedTools, readAgentFiles,
+    findAgentAllowedTools, readAgentFiles, checkMcpRules,
     BLOAT_MAX_BYTES, BLOAT_MAX_LINES,
 };
 
