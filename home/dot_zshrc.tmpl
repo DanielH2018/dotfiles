@@ -97,7 +97,7 @@ zstyle ':completion:*' cache-path "${XDG_CACHE_HOME:-$HOME/.cache}/zsh/zcompcach
 # =============================================================================
 # Sourced after PATH + completion setup so tool detection sees Homebrew, and starship's/
 # zoxide's hooks register alongside compinit. Sets EDITOR, CLAUDE_CODE_MAX_OUTPUT_TOKENS,
-# the eza/qol aliases, the ff/mkcd/zz functions, fnm, and the FZF_* env.
+# the ls/qol aliases, the claude/vault/chezmoi functions, fnm, and the FZF_* env.
 [[ -r "$HOME/.config/shell/common.sh" ]] && source "$HOME/.config/shell/common.sh"
 
 # =============================================================================
@@ -121,10 +121,8 @@ if command -v fzf >/dev/null 2>&1; then
 fi
 
 # =============================================================================
-# QUALITY OF LIFE (zsh-specific config aliases; generic ones live in common.sh)
+# QUALITY OF LIFE (zsh-specific aliases; generic ones live in common.sh)
 # =============================================================================
-# Opens the chezmoi sources, not the deployed files, which the next apply overwrites.
-alias zshconfig="chezmoi edit ~/.zshrc ~/.config/starship.toml"
 {{- if eq .chezmoi.os "linux" }}
 
 # marketplace.visualstudio.com returns 403 to some Mullvad exit IPs, so VS Code cannot

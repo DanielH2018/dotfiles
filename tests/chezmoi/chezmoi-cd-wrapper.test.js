@@ -1,6 +1,6 @@
 // Regression guard for the bare-`chezmoi` cd wrapper in shell/common.sh: an argument-less
 // call cds to `chezmoi source-path`, and EVERY invocation with arguments reaches the real
-// binary untouched (so `apply`, `diff`, `source-path` and the czv/czs aliases still work).
+// binary untouched (so `apply`, `diff` and `source-path` still work).
 // Extracts the ACTUAL function from the source and drives it with a stub chezmoi on PATH,
 // in bash and (when present) zsh — the two shells that source common.sh.
 const { test } = require('node:test');

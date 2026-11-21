@@ -198,20 +198,6 @@ if command -v zoxide >/dev/null 2>&1; then
     # preexec framework owns the prompt its check reports a problem that isn't there.
     _ZO_DOCTOR=0
   fi
-  alias zi='zoxide query -i'
-  # Escape hatch to use the real cd when zoxide's override gets in the way.
-  cdreal() { builtin cd "$@" || return; }
-  # Interactive zoxide jump via fzf.
-  zz() {
-    command -v fzf >/dev/null 2>&1 || { echo "fzf not installed"; return 1; }
-    local dir
-    # `zoxide query -ls` right-aligns the score, so every row starts with spaces:
-    # "  32.0 /path". `^[^ ]* ` matched an empty run at position 0 and ate one space,
-    # leaving " 32.0 /path" — which `cd` (aliased to zoxide above) then treated as a
-    # query that matched nothing, so this never jumped anywhere.
-    dir="$(zoxide query -ls | sed 's/^[[:space:]]*[0-9.]*[[:space:]]*//' | fzf --tac --prompt='zoxide> ')" || return
-    cd "$dir" || return
-  }
 fi
 
 # --- fnm (Fast Node Manager): auto-switch Node per directory ---
@@ -255,28 +241,17 @@ fi
 # --- Listing aliases (eza if present, else platform ls) ---
 if command -v eza >/dev/null 2>&1; then
   alias ls="eza --icons --group-directories-first --git --color=auto"
-  alias ll="eza -la --icons --git --time-style=relative"
-  alias la="eza -la --icons --git --group-directories-first --time-style=relative"
-  alias lt="eza --tree --level=2 --icons -a"
-  alias lg="eza -l --git --icons"
 elif command ls --color=auto -d . >/dev/null 2>&1; then
   # GNU coreutils (Linux / Git Bash)
   alias ls='ls --color=auto --group-directories-first'
-  alias ll='ls -lA --color=auto --group-directories-first'
-  alias la='ls -lA --color=auto --group-directories-first'
 else
   # BSD/macOS ls
   alias ls='ls -G'
-  alias ll='ls -lGA'
-  alias la='ls -lGA'
 fi
-
-# --- fd helper ---
-command -v fd >/dev/null 2>&1 && ff() { fd "$1" "${2:-.}" --hidden --follow --exclude .git; }
 
 # --- fastfetch: system-info banner with the best logo/image protocol per terminal ---
 # One implementation for both shells (bash and zsh diverged here before): each rc calls it
-# in its login-only block, and `sysinfo` runs it on demand. Windows ships a trimmed-logo
+# in its login-only block. Windows ships a trimmed-logo
 # dir (chezmoiignore'd elsewhere) for a random iterm image; other terminals pick their
 # native protocol; everything else falls back to fastfetch's own globbed logo.
 if command -v fastfetch >/dev/null 2>&1; then
@@ -299,68 +274,10 @@ if command -v fastfetch >/dev/null 2>&1; then
       command fastfetch
     fi
   }
-  # `sysinfo` runs the banner on demand. Under bash+ble.sh the image probe collides with
-  # ble.sh's terminal-query handling and fastfetch falls back to the ASCII logo, so re-run
-  # _ff_banner in a clean --norc subshell (no ble.sh = clean terminal I/O, image renders).
-  # zsh's line-editor plugins don't interfere, so it calls _ff_banner directly.
-  sysinfo() {
-    if [ -n "$BASH_VERSION" ] && [ -n "${BLE_VERSION-}" ]; then
-      command bash --norc --noprofile -c "$(declare -f _ff_banner); _ff_banner"
-    else
-      _ff_banner
-    fi
-  }
-fi
-
-# --- fzf + git helpers (ported from hendrikmi/dotfiles) ---
-# Functions (not zsh ZLE widgets) so they work the same under bash+ble.sh and zsh.
-# `while read` instead of `xargs -o` (that flag is BSD-only; breaks on GNU/Git Bash).
-if command -v fzf >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
-  # Check out a branch picked with fzf.
-  gcofzf() {
-    local b
-    b=$(git branch --format='%(refname:short)' | fzf) || return
-    [ -n "$b" ] && git checkout "$b"
-  }
-  # Stage modified/untracked files picked with fzf (Tab = multi-select).
-  gafzf() {
-    git ls-files -m -o --exclude-standard | grep -v '__pycache__' \
-      | fzf -m --preview 'git diff --color=always -- {}' \
-      | while IFS= read -r f; do [ -n "$f" ] && git add -- "$f"; done
-  }
-  # Unstage (git restore --staged) files picked with fzf.
-  grsfzf() {
-    git diff --name-only --cached \
-      | fzf -m --preview 'git diff --color=always --cached -- {}' \
-      | while IFS= read -r f; do [ -n "$f" ] && git restore --staged -- "$f"; done
-  }
-  # Discard working-tree changes (git restore) for files picked with fzf.
-  grfzf() {
-    git diff --name-only \
-      | fzf -m --preview 'git diff --color=always -- {}' \
-      | while IFS= read -r f; do [ -n "$f" ] && git restore -- "$f"; done
-  }
-fi
-
-# Search shell history with fzf and run the chosen command.
-if command -v fzf >/dev/null 2>&1; then
-  fh() {
-    local cmd
-    if [ -n "$ZSH_VERSION" ]; then
-      cmd=$(fc -l 1 | sed 's/^[[:space:]]*[0-9]*[[:space:]]*//' | fzf --tac +s) || return
-    else
-      cmd=$(history | sed 's/^[[:space:]]*[0-9]*[[:space:]]*//' | fzf --tac +s) || return
-    fi
-    [ -n "$cmd" ] && eval "$cmd"
-  }
 fi
 
 # --- Quality-of-life aliases & functions ---
 alias c="clear"
-alias ..='cd ..'
-alias ...='cd ../..'
-command -v ncdu >/dev/null 2>&1 && alias duu='ncdu .'
-mkcd() { mkdir -p -- "$1" && cd -- "$1" || return; }
 # Jump to the Obsidian vault. Not CLAUDE_VAULT_DIR: that points at the LLM Wiki that /wiki-lint and
 # /healthcheck rewrite in place (index.md + frontmatter), a different tree from the personal
 # vault — pointing it here would aim those commands at the wrong notes. Override with
@@ -370,14 +287,10 @@ vault() {
   [ -d "$_v" ] || { echo "vault: no vault at $_v" >&2; return 1; }
   cd "$_v" || return
 }
-# Drift checks that ignore run_ scripts. A run_onchange_ script whose contents changed reads
-# as "pending" to plain `chezmoi verify` and `chezmoi status`, and that is not config drift.
 if command -v chezmoi >/dev/null 2>&1; then
-  alias czv='chezmoi verify --exclude=scripts'
-  alias czs='chezmoi status --exclude=scripts'
   # Bare `chezmoi` only prints help, so spend it on the thing actually done constantly: cd to
   # the source dir. Every invocation WITH arguments passes straight through, so `chezmoi apply`,
-  # `diff`, `source-path` and the czv/czs aliases above are untouched. The path is asked of
+  # `diff` and `source-path` are untouched. The path is asked of
   # `source-path` rather than hardcoded, because the source dir differs per machine (this WSL
   # clone is ~/.local/share/chezmoi; the Windows one is C:\Users\daniel\dotfiles).
   chezmoi() {
@@ -391,8 +304,6 @@ if command -v chezmoi >/dev/null 2>&1; then
     cd "${_root:-$_src}" || return
   }
 fi
-# shellcheck disable=SC2009  # deliberately shows the full `ps aux` line, which pgrep doesn't
-psgrep() { ps aux | grep -i "$1" | grep -v grep; }
 
 # --- Dump the clipboard image to a PNG for Claude Code ---
 # Claude can't take a clipboard image straight from the terminal, so save it to a file and
