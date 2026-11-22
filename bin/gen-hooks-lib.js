@@ -51,7 +51,9 @@ const REGISTER_KEYS = new Set([
 // The events the harness evaluates a handler's `if` on. On any other event a handler that
 // carries `if` never runs, which is the registered-but-fires-nowhere gap this file exists
 // to close, so it is an error here.
-const IF_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PermissionRequest']);
+const IF_EVENTS = new Set([
+  'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'PermissionDenied',
+]);
 const LIBRARY_KEYS = new Set(['reason']);
 
 // The order events are written in. It is the order the hand-written block had, kept so the

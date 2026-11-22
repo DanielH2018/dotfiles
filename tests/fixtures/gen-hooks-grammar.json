@@ -35,9 +35,15 @@
       "library": null
     },
     {
+      "name": "an if rule on a tool failure event",
+      "text": "# gen-hooks: register\n#   event: PostToolUseFailure\n#   matcher: Bash\n#   timeout: 10\n#   order: 10\n#   if: Bash(git push*)\n",
+      "registrations": [{"event": "PostToolUseFailure", "matcher": "Bash", "timeout": 10, "order": 10, "if": "Bash(git push*)"}],
+      "library": null
+    },
+    {
       "name": "an if rule on an event that never evaluates it",
       "text": "# gen-hooks: register\n#   event: Stop\n#   timeout: 5\n#   order: 1\n#   if: Bash(git *)\n",
-      "error": "if: is evaluated only on PreToolUse, PostToolUse, PermissionRequest; on Stop the hook would never run."
+      "error": "if: is evaluated only on PreToolUse, PostToolUse, PostToolUseFailure, PermissionRequest, PermissionDenied; on Stop the hook would never run."
     },
     {
       "name": "a library block",
