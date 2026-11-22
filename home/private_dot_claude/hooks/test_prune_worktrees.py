@@ -789,7 +789,7 @@ with tempfile.TemporaryDirectory() as tmp:
     )
     check(
         "an empty `git cherry` listing is no evidence of a landed branch",
-        not cw.cherry_says_landed("", empty_means=False),
+        not cw.cherry_says_landed(""),
     )
 
     # The content signal only earns its place where patch-id says no: the collapsed

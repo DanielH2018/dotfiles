@@ -116,31 +116,19 @@ def test_a_bare_locked_line_still_counts_as_locked():
 
 
 def test_every_commit_upstream_reads_as_landed():
-    assert cherry_says_landed("- abc\n- def\n", empty_means=False)
+    assert cherry_says_landed("- abc\n- def\n")
 
 
 def test_a_commit_the_target_lacks_is_not_landed():
-    assert not cherry_says_landed("- abc\n+ def\n", empty_means=True)
+    assert not cherry_says_landed("- abc\n+ def\n")
 
 
 def test_blank_lines_do_not_change_the_verdict():
-    assert cherry_says_landed("\n- abc\n\n", empty_means=False)
+    assert cherry_says_landed("\n- abc\n\n")
 
 
-# The red-proof pair for `empty_means`: the two callers need opposite verdicts on empty
-# output, and a default would delete a fresh worktree on one side or keep a merged one
-# forever on the other. Both directions are pinned so a hardcoded answer fails one.
-def test_empty_output_reads_as_the_caller_says_when_true():
-    assert cherry_says_landed("", empty_means=True)
-
-
-def test_empty_output_reads_as_the_caller_says_when_false():
-    assert not cherry_says_landed("", empty_means=False)
-
-
-def test_empty_means_is_keyword_only():
-    with pytest.raises(TypeError):
-        cherry_says_landed("", True)  # type: ignore[misc]
+def test_empty_output_is_not_landed():
+    assert not cherry_says_landed("")
 
 
 # --- merge_tree_says_contained ------------------------------------------------------

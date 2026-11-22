@@ -117,23 +117,18 @@ def session_is_alive(lock_reason: str) -> bool:
     return len(fields) > 19 and fields[19] == start
 
 
-def cherry_says_landed(cherry_output: str, *, empty_means: bool) -> bool:
+def cherry_says_landed(cherry_output: str) -> bool:
     """Read `git cherry <target> <head>`: True when every commit is on the target.
 
     One line per commit on `head`, prefixed `-` when a patch-identical commit is already
     on the target and `+` when none is. Any `+` line is a commit the target lacks.
 
-    `empty_means` is the verdict for output with no lines at all, and the caller MUST
-    choose it, because the two callers need opposite answers. The server pruner gates on
-    the command's exit status first, so for it an empty listing means nothing is ahead
-    of upstream — merged. The dotfiles hook has no such gate and reads emptiness as no
-    evidence, because a freshly created worktree with no commits of its own also lists
-    nothing, and calling that "landed" would report every new worktree.
+    Output with no lines is no evidence of a landed branch, because a freshly created
+    worktree with no commits of its own also lists nothing, and calling that "landed"
+    would report every new worktree.
     """
     lines = [line for line in cherry_output.splitlines() if line.strip()]
-    if not lines:
-        return empty_means
-    return all(line.startswith("-") for line in lines)
+    return bool(lines) and all(line.startswith("-") for line in lines)
 
 
 def merge_tree_says_contained(merge_tree_stdout: str, target_tree: str) -> bool:
@@ -659,7 +654,7 @@ def _compute_local_layer(
     # An empty listing is no evidence. Past the ancestry test it means every commit
     # the base lacks is a merge commit, which `git cherry` skips, and the content
     # layer below is the one that can judge those.
-    if cherry_says_landed(cherry.stdout, empty_means=False):
+    if cherry_says_landed(cherry.stdout):
         return "patch-id", True
     base_tree = git("rev-parse", f"{base}^{{tree}}", cwd=repo)
     if base_tree.returncode != 0:
