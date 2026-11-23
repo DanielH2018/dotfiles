@@ -471,12 +471,6 @@
            change, not the workload" step), and moved to the hook that decides on this host. */}}
       "Bash(~/.claude/hooks/guard-pre-tool-use.sh)",
       "Skill(keybindings-help)",
-      {{/* Dependabot PR triage. The agent pushes branches, opens combined PRs and closes the
-           superseded originals, so this is not a read-only grant — it is allowed because the
-           work is repetitive and the agent's own brief carries the guardrails (draft PRs,
-           never force-push a dependabot branch, merge nothing). Named specifically rather
-           than a bare Agent rule, which would auto-approve every subagent type. */}}
-      "Agent(lpt-dependabot-reviewer:dependabot-reviewer)",
       {{/* Messages between my own Claude sessions: SendMessage is Claude Code's tool, the
            mcp__ccd_session_mgmt one is the desktop app's. The receiving session treats a message
            as data, not as an instruction from me, so this grant relays text and approves no
