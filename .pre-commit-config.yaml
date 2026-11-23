@@ -37,7 +37,7 @@ repos:
       - id: gitleaks
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.17.5
+    rev: v0.17.6
     hooks:
       # `files:` is a WIDENER here, not an allowlist. It once was an allowlist, reaching
       # only 23 of the repo's 51 Python files, so config-map, vault-index, quality/ and a
