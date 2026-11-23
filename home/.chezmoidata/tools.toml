@@ -201,7 +201,7 @@ fzf = { repo = "junegunn/fzf", tag = "v0.75.0" }
 # renovate: datasource=github-releases depName=ajeetdsouza/zoxide
 zoxide = { repo = "ajeetdsouza/zoxide", tag = "v0.10.0" }
 # renovate: datasource=github-releases depName=BurntSushi/ripgrep
-rg = { repo = "BurntSushi/ripgrep", tag = "15.2.0" }
+rg = { repo = "BurntSushi/ripgrep", tag = "16.0.0" }
 # renovate: datasource=github-releases depName=ryanoasis/nerd-fonts
 nerd-fonts = { repo = "ryanoasis/nerd-fonts", tag = "v3.5.1" }
 
