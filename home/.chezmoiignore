@@ -191,9 +191,12 @@ Scripts
 .config/claude/settings.work.json
 **/*.work.json
 
-# ~/.ssh/config holds client-side Host entries (IdentityFiles, the artifact-port
-# forward) that only mean something from a workstation. The homelab hosts are what
-# those entries connect TO, and none of them has the referenced keys.
+# ~/.ssh/config names per-host IdentityFiles (~/.ssh/daniel-server, ~/.ssh/daniel-pi)
+# that exist only on a workstation, and no homelab host has them. daniel-box is still an
+# ssh client of daniel-server and daniel-pi, through a hand-kept config that uses
+# ~/.ssh/id_ed25519. Deploying this source there would break those connections, so the
+# file stays unmanaged on all three hosts. A change to a Host block in the source
+# reaches daniel-box only when someone repeats it there by hand (#1449).
 {{ if has .chezmoi.hostname (list "daniel-server" "daniel-pi" "daniel-box") }}
 .ssh/config
 {{ end }}
