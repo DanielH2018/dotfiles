@@ -10,6 +10,7 @@
 // key-detection branch for real rather than by grepping the template text.
 const { test } = require('node:test');
 const assert = require('node:assert');
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -131,6 +132,21 @@ test('allowed_signers prefers id_ed25519, like the gitconfig', { skip }, () => {
   const out = renderSigners({ 'id_ed25519.pub': 'LINUXKEY', 'github-signing.pub': 'WINDOWSKEY' });
   assert.match(out, /^danielh\.2018@gmail\.com ssh-ed25519 LINUXKEY$/m);
   assert.doesNotMatch(out, /WINDOWSKEY/);
+});
+
+// PowerShell has no `cut`, and a template that fails to render leaves the deployed file stale.
+test('allowed_signers renders with no external command on PATH', { skip }, () => {
+  const home = fakeHome();
+  fs.writeFileSync(path.join(home, '.ssh', 'github-signing.pub'), 'ssh-ed25519 AAAAwin some long comment\r\n');
+  const chezmoi = process.platform === 'win32' ? 'chezmoi.exe' : 'chezmoi';
+  const dir = process.env.PATH.split(path.delimiter).find((d) => fs.existsSync(path.join(d, chezmoi)));
+  const r = spawnSync(path.join(dir, chezmoi), ['--source', srcPath(), 'execute-template'], {
+    input: fs.readFileSync(SIGNERS, 'utf8'),
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home, USERPROFILE: home, PATH: home },
+  });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^danielh\.2018@gmail\.com ssh-ed25519 AAAAwin$/m);
 });
 
 test('allowed_signers keeps only the 1Password key without a local one', { skip }, () => {

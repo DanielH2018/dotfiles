@@ -7,5 +7,5 @@ danielh.2018@gmail.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDA7LulgtoUwepzoMDD4U
 {{-   $key = printf "%s/.ssh/github-signing.pub" .chezmoi.homeDir }}
 {{- end }}
 {{- if $key }}
-danielh.2018@gmail.com {{ output "cut" "-d" " " "-f1-2" $key | trim }}
+danielh.2018@gmail.com {{ slice (include $key | trim | splitList " ") 0 2 | join " " }}
 {{- end }}
