@@ -127,7 +127,12 @@ test('the requested Linux apps really do resolve to a route', { skip }, (t) => {
 
 // The Windows installer is OS-gated and renders empty on this host, so render it as Windows.
 const WIN_SRC = srcPath('.chezmoiscripts', 'os-windows', 'run_onchange_after_install-apps.ps1.tmpl');
-const asWindows = (file) => `{{ $_ := set .chezmoi "os" "windows" }}${fs.readFileSync(file, 'utf8')}`;
+// The hostname is pinned too: the list depends on it (skip_hosts), so an unpinned render would
+// assert something different on each machine.
+const asWindows = (file, host = 'some-pc') =>
+  `{{ $_ := set .chezmoi "os" "windows" }}{{ $_ := set .chezmoi "hostname" "${host}" }}${fs.readFileSync(file, 'utf8')}`;
+const wingetIds = (host) =>
+  [...render(asWindows(WIN_SRC, host)).matchAll(/^ {4}'([^']+)'$/gm)].map((m) => m[1]).sort();
 
 test('a server-profile Windows box skips the GUI app installer', { skip }, () => {
   const rendered = renderTemplate(asWindows(WIN_SRC), { source: srcPath(), profile: 'server' });
@@ -139,12 +144,21 @@ test('the shared packages.toml still feeds the Windows installer', { skip }, () 
   // here would catch. Two concrete hazards: a bare `.winget` on a Linux-only entry is a template
   // ERROR (not an empty string), which would abort the whole Windows apply; and a restructure can
   // quietly drop ids.
-  const rendered = render(asWindows(WIN_SRC));
-  const ids = [...rendered.matchAll(/^ {4}'([^']+)'$/gm)].map((m) => m[1]).sort();
+  const ids = wingetIds();
   const declared = [...packages.matchAll(/^winget = "([^"]+)"/gm)].map((m) => m[1]).sort();
   assert.deepStrictEqual(ids, declared, 'every winget id in packages.toml must reach the Windows list');
   assert.ok(ids.length > 35, 'sanity: the Windows list is not near-empty');
   assert.strictEqual(new Set(declared).size, declared.length, 'winget ids must be unique');
+});
+
+test('skip_hosts leaves exactly the marked apps off daniel-tablet', { skip }, () => {
+  const skipped = [
+    'Corsair.iCUE.5', 'ElectronicArts.EADesktop', 'Elgato.StreamDeck',
+    'EpicGames.EpicGamesLauncher', 'Logitech.GHUB', 'Logitech.OptionsPlus',
+    'OBSProject.OBSStudio', 'SteelSeries.GG',
+  ];
+  const onTablet = new Set(wingetIds('daniel-tablet'));
+  assert.deepStrictEqual(wingetIds().filter((id) => !onTablet.has(id)), skipped);
 });
 
 // ---------------------------------------------------------------------------------------------

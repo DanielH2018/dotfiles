@@ -7,6 +7,8 @@
 #   apt      = Debian/Ubuntu package    -> same
 #   flatpak  = Flathub application id   -> same; the fallback when dnf/apt can't supply it
 #   copr     = Fedora COPR to enable first (dnf only)
+#   skip_hosts = hostnames the Windows installer leaves this app off (Linux ignores it). It only stops
+#              installs; an app already on the machine is never removed
 #   repo     = third-party repo key the Linux installer knows how to add (see its REPO section)
 #   manual   = why there is NO automated route on the other platform; rendered into
 #              LINUX-SETUP.md so an unavailable app is documented rather than silently dropped
@@ -130,6 +132,7 @@ dnf = "onedriver"
 [[apps.base]]
 name = "OBS Studio"
 winget = "OBSProject.OBSStudio"
+skip_hosts = ["daniel-tablet"]
 manual = "Windows-only by choice: it was never launched on the Fedora desktop. `sudo dnf install obs-studio` installs it if that changes."
 
 [[apps.base]]
@@ -141,6 +144,7 @@ apt = "vlc"
 [[apps.base]]
 name = "Elgato Stream Deck"
 winget = "Elgato.StreamDeck"
+skip_hosts = ["daniel-tablet"]
 # Elgato ships no Linux software; StreamController is the community client, and the only one
 # installed here on purpose — install exactly one. It drives the deck over libusb, which detaches
 # the kernel usbhid driver and deletes the hidraw node, so any second Stream Deck client fights it
@@ -180,21 +184,25 @@ manual = "Windows-only. On KDE, Plasma's built-in Night Light (search System Set
 [[apps.base]]
 name = "Corsair iCUE"
 winget = "Corsair.iCUE.5"
+skip_hosts = ["daniel-tablet"]
 manual = "No Linux build. OpenRGB (below) drives the same Corsair lighting; fan curves and AIO control are not covered."
 
 [[apps.base]]
 name = "SteelSeries GG"
 winget = "SteelSeries.GG"
+skip_hosts = ["daniel-tablet"]
 manual = "No Linux build. OpenRGB (below) covers the lighting; Sonar's audio routing has no equivalent."
 
 [[apps.base]]
 name = "Logitech G HUB"
 winget = "Logitech.GHUB"
+skip_hosts = ["daniel-tablet"]
 manual = "No Linux build. Solaar + Piper (below) cover pairing, battery and per-device DPI/buttons."
 
 [[apps.base]]
 name = "Logitech Options+"
 winget = "Logitech.OptionsPlus"
+skip_hosts = ["daniel-tablet"]
 manual = "No Linux build. Solaar (below) handles Unifying/Bolt receivers, battery and key remapping."
 
 [[apps.base]]
@@ -385,6 +393,7 @@ apt = "openjdk-25-jre"
 [[apps.gaming]]
 name = "Epic Games Launcher"
 winget = "EpicGames.EpicGamesLauncher"
+skip_hosts = ["daniel-tablet"]
 # No native Linux client. Heroic is the maintained open-source launcher for Epic (and Amazon)
 # libraries, running titles through Wine/Proton.
 flatpak = "com.heroicgameslauncher.hgl"
@@ -392,6 +401,7 @@ flatpak = "com.heroicgameslauncher.hgl"
 [[apps.gaming]]
 name = "EA Desktop"
 winget = "ElectronicArts.EADesktop"   # verify: not winget-sourced on the Windows box
+skip_hosts = ["daniel-tablet"]
 manual = "No Linux client. Heroic (installed above) can add the EA app as a third-party source under Wine/Proton; expect per-title breakage."
 
 [[apps.gaming]]

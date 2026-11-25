@@ -18,10 +18,11 @@
 # Linux-only (OpenRGB, Solaar, Piper) and skipped here.
 # `get` (not .winget) because Linux-only entries omit the field entirely, and a bare .winget on a
 # map without that key is a template error rather than an empty string.
+# skip_hosts drops an entry on the hosts it names.
 $packages = @(
-{{- range concat .apps.base .apps.coding .apps.gaming }}{{ with get . "winget" }}
+{{- range concat .apps.base .apps.coding .apps.gaming }}{{ if not (has $.chezmoi.hostname (get . "skip_hosts" | default list)) }}{{ with get . "winget" }}
     '{{ . }}'
-{{- end }}{{ end }}
+{{- end }}{{ end }}{{ end }}
 )
 
 foreach ($id in $packages) { Install-WingetPackage $id }
