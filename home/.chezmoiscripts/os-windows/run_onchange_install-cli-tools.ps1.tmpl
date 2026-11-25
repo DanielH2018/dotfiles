@@ -63,6 +63,14 @@ if ($uv) {
     Write-Host "[install] managed CPython 3.12 via uv ..."
     & $uv.Source python install 3.12 --default
 
+    # claude-guard is 3.15-only: its shims resolve this interpreter at call time with
+    # `uv python find --managed-python`. The pinned uv does the install because each uv release
+    # lists only the CPython builds it knew about, and nothing here upgrades a uv that is
+    # already on PATH: 0.12.3 answered "No download found" for 3.15.2.
+    Write-Host "[install] managed CPython {{ .toolchain.python }} via uv {{ .toolchain.uv }} ..."
+    & $uv.Source tool run --from 'uv=={{ .toolchain.uv }}' uv python install '{{ .toolchain.python }}'
+    if ($LASTEXITCODE -ne 0) { Write-Warning "uv python install {{ .toolchain.python }} exited $LASTEXITCODE; claude-guard will not run (continuing)." }
+
     # The two Python CLIs that are machine-global rather than per-project - the Windows half
     # of os-unix/run_onchange_after_install-python-tools.sh.tmpl (see its header for the full
     # rationale, including why pytest is deliberately NOT installed globally). ruff backs

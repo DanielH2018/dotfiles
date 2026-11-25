@@ -25,7 +25,7 @@ const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
-const { renderFile } = require('../lib/render');
+const { renderFile, renderTemplate } = require('../lib/render');
 const {
   REPO, SCRIPTS_DIR, skip, skipTty, tmpdir, realBin, readLog, runSh, SUDO_STUB,
 } = require('../lib/chezmoi-scripts');
@@ -96,6 +96,14 @@ for (const file of WSL_TMPLS) {
     execFileSync('bash', ['-n', out], { stdio: ['ignore', 'pipe', 'pipe'] });
   });
 }
+
+// claude-guard is 3.15-only, and a hook that cannot find that interpreter stops judging commands.
+test('the Windows CLI installer provisions the pinned Python with the pinned uv', { skip }, () => {
+  const src = fs.readFileSync(path.join(SCRIPTS_DIR, 'os-windows', 'run_onchange_install-cli-tools.ps1.tmpl'), 'utf8');
+  const out = renderTemplate(`{{ $_ := set .chezmoi "os" "windows" }}${src}`);
+  assert.match(out, /tool run --from 'uv==\d+\.\d+\.\d+' uv python install '3\.\d+\.\d+'/);
+  assert.match(out, /python install 3\.12 --default/, 'plain python must stay 3.12');
+});
 
 // The Docker installer used to hand-roll the keyring/source/apt-get dance that apt_repo_add
 // already does for the GitHub CLI and three apps in install-apps. Pin the shared call so it does
