@@ -8,9 +8,17 @@ dependencies = []
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 
-# Not built or installed: callers reach it by path at its deployed location, the same
-# way claude-guard, jsonq and tq are laid out. `package = false` keeps `uv run` from
-# trying to build it.
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["claude_worktree", "claude_worktree_sweep"]
+
+# Callers run it by path at its deployed location, the same way claude-guard, jsonq and tq
+# are laid out. The build backend exists only so a type checker can install it from a
+# pinned git ref and read its signatures. The server repo's bootstrap refuses an installed
+# copy at runtime. `package = false` keeps `uv run` here from building it.
 [tool.uv]
 package = false
 
