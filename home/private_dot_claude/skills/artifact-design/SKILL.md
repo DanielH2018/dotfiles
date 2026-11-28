@@ -202,7 +202,7 @@ green `#40a02b`, yellow `#df8e1d`, red `#d20f39`, mauve `#8839ef`) rather than i
 - Let structure encode information, not decorate it. Don't add `01 / 02 / 03` numbering or step markers unless the content is genuinely a sequence where order carries meaning. Every element earns its place — don't pad with filler sections or restate the summary as a sidebar just to fill space.
 - Avoid AI-slop tropes: no gradient backgrounds, no rounded-corner cards with a left-border accent stripe (the single most recognizable LLM-report tic), no decorative icon-in-a-circle bullets.
 
-The artifact server draws a clickable contents panel from the page's h2/h3 headings. The panel marks sections that changed since the reader's last visit, and shows each slice's `data-status` as a dot. So mark sections with h2/h3, keep each slice's `data-status` equal to its chip, and don't hand-build a sticky contents list. A page with fewer than three headings gets no panel, and `data-outline="off"` on `<html>` or `<body>` turns it off.
+The artifact server draws a clickable contents panel from the page's h2/h3 headings. Each h2 in it folds the h3s under it. The panel marks sections that changed since the reader's last visit, and shows each slice's `data-status` as a dot. So mark sections with h2/h3, keep each slice's `data-status` equal to its chip, and don't hand-build a sticky contents list. A page with fewer than three headings gets no panel, and `data-outline="off"` on `<html>` or `<body>` turns it off.
 
 ## CSS gotcha
 

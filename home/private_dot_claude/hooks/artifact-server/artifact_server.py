@@ -39,7 +39,7 @@ Three siblings ship beside this one in the same ConfigMap: `artifact_meta.py` ho
 taxonomy and the metadata parsers, `_gui_html.py` holds the page served at `/`, and
 `_page_scripts.py` holds the scripts every served HTML artifact loads.
 
-Local copy: vendored from DanielH2018/Server at 24790d6dc3b2, from the role that master keeps at
+Local copy: vendored from DanielH2018/Server at 798af1cc36d7, from the role that master keeps at
 k8s/roles/artifacts/files/, and started by serve-artifacts.sh on each workstation. The star list (StarStore, POST
 /api/star) was ported from upstream later, in DanielH2018/Server#4430. It differs from upstream
 in eight places:
