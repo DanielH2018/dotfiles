@@ -15,11 +15,14 @@ const { skipUnless } = require('../lib/probe');
 const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_serve-artifacts.sh');
 const skip = skipUnless('bash', 'python3', 'pgrep', 'pkill');
 
-// Records "<pid> <stars file> <read-only flag>" on each start, then idles like a server.
+// Records "<pid> <stars file> <read-only flag> <retention days> swept=<hosts>" on each start,
+// then idles like a server.
 const STUB = `import os, time
 with open(os.environ["STUB_LOG"], "a") as f:
-    f.write("%d %s %s\\n" % (os.getpid(), os.environ.get("ARTIFACTS_STARS_FILE", ""),
-                             os.environ.get("ARTIFACTS_STARS_READONLY", "")))
+    f.write("%d %s %s %s swept=%s\\n" % (os.getpid(), os.environ.get("ARTIFACTS_STARS_FILE", ""),
+        os.environ.get("ARTIFACTS_STARS_READONLY", ""),
+        os.environ.get("ARTIFACTS_RETENTION_DAYS", ""),
+        os.environ.get("ARTIFACTS_SWEPT_HOSTS", "")))
 time.sleep(60)
 `;
 
@@ -32,9 +35,14 @@ function fixture(t) {
   fs.writeFileSync(server, STUB);
   t.after(() => spawnSync('pkill', ['-f', server]));
   const log = path.join(home, 'starts.log');
+  // Stands in for the machine's own timer state: `is-enabled` exits TIMER_RC.
+  const bin = path.join(home, 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'systemctl'), '#!/bin/sh\nexit "${TIMER_RC:-1}"\n', { mode: 0o755 });
   const env = {
     ...process.env,
     HOME: home,
+    PATH: `${bin}${path.delimiter}${process.env.PATH}`,
     STUB_LOG: log,
     // A port nothing real listens on: the hook also stops a legacy http.server on its port.
     CLAUDE_ARTIFACTS_PORT: '18999',
@@ -43,6 +51,7 @@ function fixture(t) {
   };
   delete env.CLAUDE_ARTIFACTS_BASE_URL;
   delete env.CLAUDE_ARTIFACT_STATE_DIR;
+  delete env.CLAUDE_ARTIFACT_RETENTION_DAYS;
 
   const run = (extra = {}) => {
     const r = spawnSync('bash', [HOOK], { input: '{}', encoding: 'utf8', env: { ...env, ...extra } });
@@ -83,10 +92,29 @@ test('the star list is writable on a workstation and read-only behind the cluste
     const f = fixture(t);
     f.run();
     const [first] = await f.waitForStarts(1);
-    assert.match(first, /stars\.txt 0$/, 'a workstation owns its own list');
+    assert.match(first, /stars\.txt 0 /, 'a workstation owns its own list');
 
     f.run({ CLAUDE_ARTIFACTS_BASE_URL: 'https://artifacts.example' });
     const lines = await f.waitForStarts(2);
     assert.strictEqual(lines.length, 2, 'a settings change restarts the server too');
-    assert.match(lines[1], /stars\.txt 1$/, 'where the cluster owns the list, it is read-only');
+    assert.match(lines[1], /stars\.txt 1 /, 'where the cluster owns the list, it is read-only');
   });
+
+test('the host counts as swept only while the sweep timer is enabled, and a change restarts',
+  { skip }, async (t) => {
+    const f = fixture(t);
+    f.run({ TIMER_RC: '1' });
+    const [first] = await f.waitForStarts(1);
+    assert.match(first, / 30 swept=$/, 'a disabled or unavailable timer prunes nothing');
+
+    f.run({ TIMER_RC: '0', CLAUDE_ARTIFACT_RETENTION_DAYS: '7' });
+    const lines = await f.waitForStarts(2);
+    assert.match(lines[1], / 7 swept=testhost$/);
+  });
+
+test('a retention window the sweep refuses leaves the host unswept', { skip }, async (t) => {
+  const f = fixture(t);
+  f.run({ TIMER_RC: '0', CLAUDE_ARTIFACT_RETENTION_DAYS: '0' });
+  const [first] = await f.waitForStarts(1);
+  assert.match(first, / 30 swept=$/);
+});

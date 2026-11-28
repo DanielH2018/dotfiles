@@ -52,13 +52,24 @@ REPOS_FILE="$ARTIFACT_REPOS_FILE"
 # overwrites daniel-server's copy, so this server shows stars but does not set them.
 STARS_READONLY=0
 [[ -n "${CLAUDE_ARTIFACTS_BASE_URL:-}" ]] && STARS_READONLY=1
+# The star button counts down to the prune, so name this host's tree as swept only where the
+# sweep runs: its timer is enabled and its window is a positive number of days. The sweep
+# prunes nothing on 0 or a non-number. Without systemctl (macOS) the host counts as unswept.
+RETENTION_DAYS="${CLAUDE_ARTIFACT_RETENTION_DAYS:-30}"
+SWEPT_HOSTS=""
+if [[ ! "$RETENTION_DAYS" =~ ^[1-9][0-9]*$ ]]; then
+  RETENTION_DAYS=30
+elif systemctl --user is-enabled --quiet retention-sweep.timer 2>/dev/null; then
+  SWEPT_HOSTS="$HOST"
+fi
 # A running server keeps the code and environment it started with, so without this an
 # apply that changes either reaches the browser only after a reboot. The stamp records
 # both at launch, and a mismatch restarts the server.
 STAMP="$HOME/.claude/.artifacts-server.stamp"
 stamp=$(
   cat "${SERVER%/*}"/*.py 2>/dev/null | cksum
-  printf '%s\n' "$PORT" "$HOST" "$REPOS_FILE" "$ARTIFACT_STARS_FILE" "$STARS_READONLY"
+  printf '%s\n' "$PORT" "$HOST" "$REPOS_FILE" "$ARTIFACT_STARS_FILE" "$STARS_READONLY" \
+    "$RETENTION_DAYS" "$SWEPT_HOSTS"
 )
 
 mkdir -p "$DIR" "$ROOT"
@@ -111,6 +122,7 @@ printf '%s' "$stamp" >"$STAMP"
 ARTIFACTS_ROOT="$ROOT" ARTIFACTS_PORT="$PORT" ARTIFACTS_BIND=127.0.0.1 \
   ARTIFACTS_LOCAL_HOST="$HOST" ARTIFACTS_REPOS_FILE="$REPOS_FILE" \
   ARTIFACTS_STARS_FILE="$ARTIFACT_STARS_FILE" ARTIFACTS_STARS_READONLY="$STARS_READONLY" \
+  ARTIFACTS_RETENTION_DAYS="$RETENTION_DAYS" ARTIFACTS_SWEPT_HOSTS="$SWEPT_HOSTS" \
   ARTIFACTS_TRASH=1 PYTHONDONTWRITEBYTECODE=1 \
   detach python3 "$SERVER" >"$LOG" 2>&1 </dev/null &
 disown 2>/dev/null || true

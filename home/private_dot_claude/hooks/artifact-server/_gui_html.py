@@ -1,5 +1,4 @@
-"""The single-page GUI artifact_server.py serves at `/`, and the star button script it
-serves at `/api/star.js`.
+"""The single-page GUI artifact_server.py serves at `/`.
 
 Raw strings, no Python logic. It is a module rather than a `.html` file so that the pod
 needs only the ConfigMap keys it already mounts — a separate asset would need its own key,
@@ -178,7 +177,7 @@ function render() {
            title="Move it back to ${esc(a.path)}">Restore</button>`
       : a.starred ? ""
       : `<button type="button" class="trash" ${ids} aria-label="Move to trash"
-           title="Move to trash: restorable for 30 days"><svg viewBox="0 0 24 24" fill="none"
+           title="Move to trash: restorable for ${DATA.retention_days} days"><svg viewBox="0 0 24 24" fill="none"
            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
            aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg></button>`;
     return `<div class="row${a.trashed ? " trashed" : ""}"><a class="card" href="${esc(a.url)}" target="_blank" rel="noopener">
@@ -260,8 +259,9 @@ async function load() {
   fill("status", "Any status", DATA.statuses);
   $("trashbox").hidden = !DATA.trash_host;
   $("foot").textContent = "Indexed " + fmtDate(DATA.generated) +
-    " - starred artifacts are kept; the rest are pruned 30 days after their last update," +
-    " and trashed ones 30 days after they were trashed.";
+    " - starred artifacts are kept; the rest are pruned " + DATA.retention_days +
+    " days after their last update, and trashed ones " + DATA.retention_days +
+    " days after they were trashed.";
   render();
 }
 ["q", "host", "repo", "category", "status", "sort", "starred", "dupes", "trashed"].forEach(
@@ -275,61 +275,4 @@ $("list").addEventListener("click", e => {
 load();
 </script>
 </body></html>
-"""
-
-# Served at /api/star.js and loaded by the tag artifact_server.py adds to each HTML artifact
-# it serves. It draws nothing until GET /api/star answers, so a copy saved from the browser
-# and opened anywhere else shows no button.
-STAR_JS = r"""(() => {
-  const me = document.currentScript;
-  if (!me) return;
-  const host = me.dataset.host, path = me.dataset.path;
-  const url = "/api/star?host=" + encodeURIComponent(host) + "&path=" + encodeURIComponent(path);
-  fetch(url).then(r => r.ok ? r.json() : null).then(state => {
-    if (!state) return;
-    let starred = state.starred;
-    const box = document.createElement("div");
-    // A closed shadow root keeps the artifact's CSS off the button and the button's off the page.
-    const root = box.attachShadow({mode: "closed"});
-    root.innerHTML = `<style>
-:host{position:fixed;top:12px;right:12px;z-index:2147483647}
-button,span{display:block;font:20px/1 system-ui,sans-serif;padding:6px 9px;border-radius:999px;
-  border:1px solid #45475a;background:#1e1e2ee6;color:#a6adc8;box-shadow:0 1px 4px #0004}
-button{cursor:pointer}button:hover,.on{color:#f9e2af}
-button:focus-visible{outline:2px solid #f9e2af;outline-offset:2px}
-@media print{:host{display:none}}
-</style>`;
-    const el = document.createElement(state.writable ? "button" : "span");
-    const draw = () => {
-      el.textContent = starred ? "★" : "☆";
-      el.className = starred ? "on" : "";
-      el.title = state.writable
-        ? (starred ? "Starred: never pruned. Click to unstar." : "Star to keep it from being pruned")
-        : (starred ? "Starred: never pruned" : "Not starred");
-      if (state.writable) el.setAttribute("aria-pressed", String(starred));
-    };
-    if (state.writable) {
-      el.type = "button";
-      el.setAttribute("aria-label", "Star this artifact");
-      el.addEventListener("click", async () => {
-        el.disabled = true;
-        try {
-          const res = await fetch("/api/star", {method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({host, path, starred: !starred})});
-          if (!res.ok) throw new Error((await res.text()).trim() || res.status);
-          starred = (await res.json()).starred;
-          draw();
-        } catch (err) {
-          el.title = "Could not change the star: " + err.message;
-        } finally {
-          el.disabled = false;
-        }
-      });
-    }
-    draw();
-    root.append(el);
-    document.body.append(box);
-  }).catch(() => {});
-})();
 """

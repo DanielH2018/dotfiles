@@ -14,6 +14,7 @@ that wrote the file:
     /api/star               POST: star or unstar one artifact (see StarStore)
                             GET ?host=&path=: that artifact's star, and whether it can change
     /api/star.js            the star button each served HTML artifact loads
+    /api/outline.js         the contents panel each served HTML artifact loads
     /api/trash              POST: move one local artifact into its tree's .trash/ (see Trash)
     /api/restore            POST: move one trashed artifact back where it was
     /a/<host>/<relpath>     one artifact, served from ROOT/<host>/<relpath>
@@ -29,10 +30,16 @@ every file under ROOT. It is not built on a timer: retention-sweep deletes artif
 30 days, so a timer-built index serves links to files that are already gone. Building on
 request cannot. ~50 files parse in single-digit milliseconds.
 
-Two siblings ship beside this one in the same ConfigMap: `artifact_meta.py` holds the
-taxonomy and the metadata parsers, and `_gui_html.py` holds the page served at `/`.
+Each HTML artifact is served with an added `<script src="/api/outline.js">` tag, which draws a
+contents panel from the page's h2/h3 headings, and, when a star list is configured, a
+`<script src="/api/star.js">` tag, so the page can be starred where it is read. The file on
+disk is never changed, so a copied artifact carries neither.
 
-Local copy: vendored from DanielH2018/Server at 977d9bf3ab41, from the role that master keeps at
+Three siblings ship beside this one in the same ConfigMap: `artifact_meta.py` holds the
+taxonomy and the metadata parsers, `_gui_html.py` holds the page served at `/`, and
+`_page_scripts.py` holds the scripts every served HTML artifact loads.
+
+Local copy: vendored from DanielH2018/Server at 24790d6dc3b2, from the role that master keeps at
 k8s/roles/artifacts/files/, and started by serve-artifacts.sh on each workstation. The star list (StarStore, POST
 /api/star) was ported from upstream later, in DanielH2018/Server#4430. It differs from upstream
 in eight places:
@@ -66,7 +73,7 @@ import posixpath
 import tempfile
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -74,7 +81,8 @@ from urllib.parse import parse_qs, unquote, urlparse
 # Flat siblings in the same directory, mounted together at /app from one ConfigMap, so a
 # plain import resolves each under `python3 /app/artifact_server.py` and under the tests'
 # path insert. None of them imports back.
-from _gui_html import GUI_HTML, STAR_JS
+from _gui_html import GUI_HTML
+from _page_scripts import OUTLINE_JS, STAR_JS
 from artifact_meta import (
     apply_metadata,
     load_known_services,
@@ -94,6 +102,12 @@ REPOS_FILE = os.environ.get("ARTIFACTS_REPOS_FILE", "")
 STARS_FILE = os.environ.get("ARTIFACTS_STARS_FILE", "")
 STARS_READONLY = os.environ.get("ARTIFACTS_STARS_READONLY", "") == "1"
 TRASH_ENABLED = os.environ.get("ARTIFACTS_TRASH", "") == "1"
+# Days without an update before retention-sweep deletes an artifact.
+RETENTION_DAYS = int(os.environ.get("ARTIFACTS_RETENTION_DAYS", "30"))
+# Comma-separated host trees a sweep prunes; only these show a prune date on the star button.
+SWEPT_HOSTS = frozenset(
+    h for h in os.environ.get("ARTIFACTS_SWEPT_HOSTS", "").split(",") if h
+)
 # Inside each host's tree, so retention-sweep's `~/.claude/artifacts/**/*` row ages trashed
 # files out like any other. Trash touches the mtime, which gives each one 30 days to restore.
 TRASH_DIR = ".trash"
@@ -348,8 +362,9 @@ def build_index(
 
     Returns:
         The index dict, with keys `generated`, `count`, `hosts`, `repos`, `categories`,
-        `statuses`, `star_writable`, `trash_host` and `artifacts`. An artifact under a
-        host's `.trash/` carries `trashed: true` and the relpath it is restored to.
+        `statuses`, `star_writable`, `trash_host`, `retention_days` and `artifacts`. An
+        artifact under a host's `.trash/` carries `trashed: true` and the relpath it is
+        restored to.
     """
     known = load_known_services() if known_services is None else known_services
     repos = load_repos() if repos is None else repos
@@ -401,6 +416,7 @@ def build_index(
         "statuses": sorted({e["status"] for e in entries if e.get("status")}),
         "star_writable": bool(stars and stars.writable),
         "trash_host": trash_host,
+        "retention_days": RETENTION_DAYS,
         "artifacts": entries,
     }
 
@@ -470,14 +486,45 @@ def safe_path(root: Path, host: str, rel: str) -> Path | None:
     return target
 
 
-def add_star_tag(body: bytes, host: str, rel: str) -> bytes:
-    """Inserts the star button's script tag before the page's last `</body>`, or at the end."""
-    tag = (
-        f'<script src="/api/star.js" data-host="{html.escape(host)}" '
-        f'data-path="{html.escape(rel)}" defer></script>'
-    ).encode()
+def prunes_at(
+    host: str, rel: str, path: Path, swept_hosts: frozenset[str]
+) -> str | None:
+    """When retention-sweep deletes this artifact unless it is updated first, as UTC ISO 8601.
+
+    The clock runs from the file's mtime. A star stops it too, which is the caller's to check.
+
+    Args:
+        host: The tree's `/a/<host>/` segment.
+        rel: The artifact's path inside that tree.
+        path: The file itself.
+        swept_hosts: The trees a sweep prunes.
+
+    Returns:
+        None when `host` is not in `swept_hosts`, or when the sweep keeps the file: an
+        executable, or anything under `pinned/`.
+    """
+    if host not in swept_hosts or rel.startswith("pinned/"):
+        return None
+    st = path.stat()
+    if st.st_mode & 0o111:
+        return None
+    mtime = datetime.fromtimestamp(st.st_mtime, timezone.utc)
+    return (mtime + timedelta(days=RETENTION_DAYS)).isoformat()
+
+
+def add_page_scripts(body: bytes, host: str, rel: str, *, star: bool) -> bytes:
+    """Inserts the outline's script tag, and the star button's when `star`, into an HTML page.
+
+    The tags go before the page's last `</body>`, or at the end when it has none.
+    """
+    tags = '<script src="/api/outline.js" defer></script>'
+    if star:
+        tags += (
+            f'<script src="/api/star.js" data-host="{html.escape(host)}" '
+            f'data-path="{html.escape(rel)}" defer></script>'
+        )
     at = body.lower().rfind(b"</body>")
-    return body + tag if at < 0 else body[:at] + tag + body[at:]
+    return body + tags.encode() if at < 0 else body[:at] + tags.encode() + body[at:]
 
 
 def render_gui() -> bytes:
@@ -491,6 +538,7 @@ class Handler(BaseHTTPRequestHandler):
         cache: The shared IndexCache instance serving /api/index.json.
         stars: The star list POST /api/star changes; None turns starring off.
         trash: The tree POST /api/trash and /api/restore change; None turns trash off.
+        swept_hosts: The host trees whose star button reports a prune date.
         allowed_origins: The origins every request's Host and Origin must match; empty
             refuses every request.
     """
@@ -499,6 +547,7 @@ class Handler(BaseHTTPRequestHandler):
     cache: IndexCache = None  # type: ignore[assignment]
     stars: StarStore | None = None
     trash: Trash | None = None
+    swept_hosts: frozenset[str] = SWEPT_HOSTS
     allowed_origins: tuple[Allowed, ...] = ()
 
     # `format` shadows the builtin, and is the parameter name BaseHTTPRequestHandler.log_message
@@ -555,6 +604,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/star.js":
             self._send(200, STAR_JS.encode("utf-8"), "text/javascript; charset=utf-8")
+            return
+        if path == "/api/outline.js":
+            self._send(
+                200, OUTLINE_JS.encode("utf-8"), "text/javascript; charset=utf-8"
+            )
             return
         if path == "/api/index.json":
             body = json.dumps(self.cache.get()).encode("utf-8")
@@ -719,7 +773,7 @@ class Handler(BaseHTTPRequestHandler):
         return rel
 
     def _get_star(self) -> None:
-        """Answers `{"starred", "writable"}` for the artifact named by ?host=&path=.
+        """Answers `{"starred", "writable", "prunes_at"}` for the artifact named by ?host=&path=.
 
         404 when starring is off or the pair names no artifact, which the star button reads
         as "draw nothing".
@@ -735,7 +789,14 @@ class Handler(BaseHTTPRequestHandler):
         if not host or rel is None:
             self._send(404, b"no such artifact\n", text)
             return
-        body = {"starred": f"{host}/{rel}" in stars.load(), "writable": stars.writable}
+        target = safe_path(self.cache.root, host, rel)
+        body = {
+            "starred": f"{host}/{rel}" in stars.load(),
+            "writable": stars.writable,
+            "prunes_at": (
+                prunes_at(host, rel, target, self.swept_hosts) if target else None
+            ),
+        }
         self._send(200, json.dumps(body).encode("utf-8"), "application/json")
 
     def _serve_artifact(self, rest: str) -> None:
@@ -753,8 +814,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, b"not found\n", "text/plain; charset=utf-8")
             return
         ctype = CONTENT_TYPES.get(target.suffix.lower(), "application/octet-stream")
-        if self.stars is not None and ctype.startswith("text/html"):
-            body = add_star_tag(body, host, rel)
+        if ctype.startswith("text/html"):
+            body = add_page_scripts(body, host, rel, star=self.stars is not None)
         st = target.stat()
         self._send(
             200,

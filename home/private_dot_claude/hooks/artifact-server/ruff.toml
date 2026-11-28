@@ -20,3 +20,4 @@ max-line-length = 100
 # The page is JavaScript and CSS inside one Python string; ruff's width rule has nothing to say
 # about it.
 "_gui_html.py" = ["E501"]
+"_page_scripts.py" = ["E501"]

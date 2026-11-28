@@ -9,8 +9,8 @@ link-artifact.sh's URLs working, a root laid out the way serve-artifacts.sh lays
 it out (one symlink per host), the loopback default bind, the Host/Origin guard
 on a live server, the star list's read-only mode, and the star button added to
 served HTML pages. One star round trip also runs here, because the port to 3.9 is
-local and upstream's tests never execute it. So do trash and restore, which only the
-local copy has.
+local and upstream's tests never execute it, and so do the outline script and the
+prune date. So do trash and restore, which only the local copy has.
 """
 
 import http.client
@@ -95,7 +95,13 @@ def main():
         f.write("plan.html\told-repo\nplan.html\tmyrepo\n")
 
     # The module reads its configuration at import time, as it does under the hook.
-    for name in ("ARTIFACTS_BIND", "ARTIFACTS_PORT", "ARTIFACTS_ALLOWED_ORIGINS"):
+    for name in (
+        "ARTIFACTS_BIND",
+        "ARTIFACTS_PORT",
+        "ARTIFACTS_ALLOWED_ORIGINS",
+        "ARTIFACTS_RETENTION_DAYS",
+        "ARTIFACTS_SWEPT_HOSTS",
+    ):
         os.environ.pop(name, None)
     os.environ["ARTIFACTS_ROOT"] = root
     os.environ["ARTIFACTS_LOCAL_HOST"] = HOST
@@ -132,10 +138,17 @@ def main():
             "a bare /<relpath> serves the local host's file",
             status == 200 and b"plan" in body,
         )
+        outline = '<script src="/api/outline.js" defer></script>'
         check(
-            "with no star list, served HTML is the file byte for byte",
-            body == PLAN_HTML.encode(),
+            "with no star list, served HTML gains only the outline tag",
+            body == PLAN_HTML.replace("</body>", outline + "</body>").encode(),
         )
+        with urllib.request.urlopen(base + "/api/outline.js") as resp:
+            check(
+                "the outline route serves its script as JavaScript",
+                resp.headers["Content-Type"] == "text/javascript; charset=utf-8"
+                and resp.read() == artifact_server.OUTLINE_JS.encode(),
+            )
         check(
             "with no star list, GET /api/star answers 404",
             get(base, f"/api/star?host={HOST}&path=plan.html")[0] == 404,
@@ -212,6 +225,10 @@ def main():
         check(
             "the repos facet lists only repos in use", index.get("repos") == ["myrepo"]
         )
+        check(
+            "the index carries the retention window the GUI footer names",
+            index.get("retention_days") == 30,
+        )
 
         stars_file = os.path.join(tmp, "stars.txt")
         stars = artifact_server.StarStore(artifact_server.Path(stars_file))
@@ -235,7 +252,34 @@ def main():
         status, body = get(base, f"/api/star?host={HOST}&path=plan.html")
         check(
             "GET /api/star reports the star and that it can change",
-            status == 200 and json.loads(body) == {"starred": True, "writable": True},
+            status == 200
+            and json.loads(body)
+            == {"starred": True, "writable": True, "prunes_at": None},
+        )
+        plan = os.path.join(tree, "plan.html")
+        os.utime(plan, (0, 1_800_000_000))
+        artifact_server.Handler.swept_hosts = frozenset({HOST})
+        body = get(base, f"/api/star?host={HOST}&path=plan.html")[1]
+        # 1_800_000_000 is 2027-01-15T08:00:00Z; the default retention adds 30 days.
+        check(
+            "GET /api/star on a swept tree reports the prune date",
+            json.loads(body)["prunes_at"] == "2027-02-14T08:00:00+00:00",
+        )
+        artifact_server.Handler.swept_hosts = frozenset()
+        swept = frozenset({HOST})
+        check(
+            "a pinned page is never pruned",
+            artifact_server.prunes_at(
+                HOST, "pinned/map.html", artifact_server.Path(plan), swept
+            )
+            is None,
+        )
+        tool = artifact_server.Path(tmp) / "tool.sh"
+        tool.write_text("true\n")
+        tool.chmod(0o755)
+        check(
+            "an executable is never pruned",
+            artifact_server.prunes_at(HOST, "tool.sh", tool, swept) is None,
         )
         check(
             "GET /api/star on a missing artifact answers 404",
@@ -262,9 +306,10 @@ def main():
             get(base, "/sub/notes.md")[1] == b"# Notes\n",
         )
         check(
-            "the tag escapes the path and goes at the end when there is no </body>",
-            artifact_server.add_star_tag(b"<p>x", "h", 'a"b.html')
-            == b'<p>x<script src="/api/star.js" data-host="h" '
+            "the tags escape the path and go at the end when there is no </body>",
+            artifact_server.add_page_scripts(b"<p>x", "h", 'a"b.html', star=True)
+            == b'<p>x<script src="/api/outline.js" defer></script>'
+            b'<script src="/api/star.js" data-host="h" '
             b'data-path="a&quot;b.html" defer></script>',
         )
         check(
@@ -293,7 +338,7 @@ def main():
         status, body = get(base, f"/api/star?host={HOST}&path=plan.html")
         check(
             "GET /api/star tells the page button a read-only star cannot change",
-            json.loads(body) == {"starred": True, "writable": False},
+            json.loads(body)["writable"] is False,
         )
 
         old = {"host": HOST, "path": "sub/old.html"}
